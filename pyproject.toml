@@ -1,14 +1,51 @@
 [project]
 name = "sciagent"
 version = "0.1.0"
-description = "Add your description here"
+description = "Constrained agentic scientific investigation under model misspecification"
 readme = "README.md"
 authors = [
     { name = "Ebinezer Rajaram", email = "ebinezer.rajaram04@gmail.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "numpy>=2.1",
+    "scipy>=1.14",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "hypothesis>=6.112",
+    "mypy>=1.11",
+    "ruff>=0.6",
+]
 
 [build-system]
-requires = ["uv_build>=0.11.28,<0.12.0"]
-build-backend = "uv_build"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sciagent", "src/environments"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+files = ["src/sciagent", "src/environments", "scripts", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["scipy.*"]
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 88
+src = ["src"]
+# docs/SPEC.md is frozen. Ruff reformats the Python blocks inside it, so
+# `ruff format .` would silently edit a document that must not change.
+extend-exclude = ["docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]

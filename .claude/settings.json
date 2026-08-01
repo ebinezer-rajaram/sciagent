@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv run pytest *)",
+      "Bash(uv run mypy *)",
+      "Bash(uv run ruff *)",
+      "Bash(uv run python scripts/status.py *)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git check-ignore *)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run python scripts/status.py",
+            "timeout": 60,
+            "statusMessage": "Reading build status"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'Before this context is lost: append anything not derivable from the repository to docs/DECISIONS.md - spec ambiguities and how they were resolved, approaches tried and abandoned, measured numbers, and work left deliberately incomplete. Append only; do not edit existing entries.'",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

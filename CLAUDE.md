@@ -49,6 +49,10 @@ Violating any of these is a bug regardless of tests passing.
 - Every public function gets a docstring stating what it guarantees, not what it does.
 - Errors are typed exceptions from `sciagent.core.errors`, never bare `ValueError`.
 - No I/O in `core/`. Pure functions only.
+- **Acceptance tests are named for their criterion**: `test_a7_...` in a class
+  `TestA7MonteCarloError`. This naming is load-bearing — `scripts/status.py`
+  derives gate coverage from it. A test not named this way is invisible to the
+  status report.
 
 ## Working style
 
@@ -59,7 +63,18 @@ Violating any of these is a bug regardless of tests passing.
 - Run `uv run pytest` and `uv run mypy --strict sciagent` before saying done.
 - Commit at each working state with a message naming the backlog item.
 - If something in the spec seems wrong, say so. Do not silently work around it.
+- **Append to `docs/DECISIONS.md` the moment a decision is made**, not at the
+  end of a session. Sessions end by context exhaustion or a closed laptop, and
+  neither offers a chance to write things down. Four things go in it: a spec
+  ambiguity and how it was resolved, an approach tried and abandoned, a measured
+  number that is expensive to reproduce, and work left deliberately incomplete.
+  Nothing else — if `scripts/status.py`, the diff or `git log` already shows it,
+  it does not belong there. Append only; never edit an existing entry. New ideas
+  that would touch a frozen decision go to `docs/BACKLOG.md` per SPEC §13.
 
 ## Current position
 
-Backlog items 2-3. See `docs/SPEC.md` §11.
+Run `uv run python scripts/status.py` — it derives the §11 cursor and A-gate
+coverage from the repository. Add `--run` to verify gates by execution rather
+than by their tests merely existing. Do not maintain a hand-written status here;
+it would drift. Read `docs/DECISIONS.md` for what the repository cannot tell you.

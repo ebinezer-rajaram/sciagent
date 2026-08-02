@@ -29,6 +29,16 @@ GrammarVersion = NewType("GrammarVersion", str)
 Seed = NewType("Seed", int)
 Probability = NewType("Probability", float)
 
+#: The four versioned quantities a registered experiment is addressed by, plus
+#: the address itself (SPEC §6.3 A13). Each is a distinct type rather than a bare
+#: ``str`` so that transposing two of them in a five-field key is a type error and
+#: not a silently different content address.
+EnvVersion = NewType("EnvVersion", str)
+DataVersion = NewType("DataVersion", str)
+MetricVersion = NewType("MetricVersion", str)
+MetricName = NewType("MetricName", str)
+Digest = NewType("Digest", str)
+
 ComponentKind = Literal["arrival", "size", "sign", "observation"]
 
 #: Every component kind, in the canonical order used for display and sorting.

@@ -72,3 +72,66 @@ class OffGridParameterError(GrammarError):
 
 class UnknownParameterError(GrammarError):
     """An edit supplied a parameter name the target construct does not declare."""
+
+
+# --------------------------------------------------------------------------
+# Registry, partitions and budget
+# --------------------------------------------------------------------------
+
+
+class RegistryError(SciAgentError):
+    """Base for faults in the experiment registry."""
+
+
+class AppendOnlyViolationError(RegistryError):
+    """A statement attempted to update, delete or restructure registered rows.
+
+    The registry is append-only by specification (SPEC §6.3 A12), so this is
+    raised rather than silently refused, including when the attempt reaches past
+    the store's API to raw SQL.
+    """
+
+
+class RegistryConflictError(RegistryError):
+    """One content address was offered two different results.
+
+    Since the address covers (env version, config, data version, metric version,
+    seed), two disagreeing results mean the experiment is not reproducible, or
+    that something outside the address influenced it. Either is a framework bug.
+    """
+
+
+class UnknownRecordError(RegistryError):
+    """A digest was queried that the registry does not hold."""
+
+
+class PartitionAccessError(RegistryError):
+    """Sealed partition data was requested through an unprivileged path.
+
+    HOLDOUT and TEST are reachable only by presenting a
+    :class:`~sciagent.registry.partitions.SealedAccess` token (SPEC §6.3 A14).
+    """
+
+
+class MetricError(SciAgentError):
+    """Base for faults in the versioned metric registry."""
+
+
+class UnknownMetricError(MetricError):
+    """A metric name was requested that the registry does not declare."""
+
+
+class DuplicateMetricError(MetricError):
+    """A metric name was registered twice under different definitions.
+
+    The metric registry is versioned and append-only: redefining a name in place
+    would silently change the meaning of every result already recorded under it.
+    """
+
+
+class BudgetError(SciAgentError):
+    """Base for faults in budget accounting."""
+
+
+class BudgetExhaustedError(BudgetError):
+    """A charge exceeded the remaining budget."""

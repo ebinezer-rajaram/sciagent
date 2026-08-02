@@ -202,3 +202,167 @@ autocorrelation added to the loss (about ten minutes), versus keeping
 autocorrelation out of S10's early diagnostic budget, which is a scenario-design
 workaround for a calibration gap. Not done unilaterally because it changes a
 frozen scenario parameter after the numbers were reported.
+
+## 2026-08-02 — item 4: the two partition axes
+
+**Decision.** `DataPartition = DEV | HOLDOUT | TEST` labels registered rows and is
+the axis A14 restricts. The `exploratory | confirmatory` axis stays a property of
+a `Claim` under SPEC §3.3 and does not enter the registry. A partition belonging
+to neither `AGENT_REACHABLE` nor `SEALED` is a test failure, not a default.
+
+**Why.** The spec names three vocabularies for one module: §10's comment says
+"exploratory / confirmatory / holdout", A14 says "HOLDOUT or TEST", A8 says "200
+DEV scenarios". Read as one axis they contradict each other, since a claim's
+evidential status and a dataset's seal are independent — a confirmatory claim can
+rest on DEV data during development. Two axes satisfy all four references without
+amendment. The alternative, a single four-valued enum, would have forced the
+registry to store a claim property it has no business knowing.
+
+**Closes off.** `records()` with no partition argument returns AGENT_REACHABLE
+rows only, never everything. An unfiltered read that silently included HOLDOUT is
+exactly the failure A14 exists to prevent, and defaulting to "all" would have made
+the guard depend on every caller remembering to pass an argument.
+
+## 2026-08-02 — item 4: A14 before there is an agent
+
+**Decision.** A14 is discharged by three assertions, not one: that
+`AGENT_TOOL_SURFACE` is declared and non-empty, that the analyser finds a planted
+violation in `tests/acceptance/fixtures/holdout_violator.py`, and that it clears
+`fixtures/clean_tool.py`. The surface names modules that do not exist yet
+(`sciagent.systems.*`, `sciagent.experiments.dsl`).
+
+**Why.** Item 12 is the first item containing an agent, so a reachability search
+over `src` today starts from no entry points and returns clean whatever the
+analyser does. Passing a gate by examining nothing is worse than not having the
+gate, because the report then reads "A14 verified". The negative control makes the
+analyser's competence a tested property; the positive control stops a checker that
+flags everything from also "passing".
+
+**Tried and abandoned.** Resolving calls purely by simple name, with no module
+preference. It is sound — it cannot miss a path — but it linked `clean_tool._lookup`
+to `holdout_violator._lookup` merely because two unrelated modules used the same
+private helper name, so the positive control failed. Resolution now prefers a
+definition in the calling module and falls back to the whole tree only for names
+the caller does not define, which mirrors how Python resolves a bare call.
+Attribute calls (`store.sealed_records(...)`) are never local, so the
+over-approximation that keeps the analysis sound is still where it needs to be.
+
+**Closes off.** Item 12 must extend `AGENT_TOOL_SURFACE` when it adds the agent.
+If it does not, A14 keeps passing while checking nothing real — the declaration is
+now the load-bearing part, and no test can tell that a *newly written* agent module
+was omitted from it.
+
+## 2026-08-02 — item 4: three enforcement layers, and why the triggers are not redundant
+
+**Decision.** Append-only is enforced at three levels: no mutating method on the
+API, a sqlite authorizer allowlist on the connection, and aborting `BEFORE
+UPDATE`/`BEFORE DELETE` triggers in the schema. `PRAGMA recursive_triggers` is on.
+
+**Measured.** The layers do not overlap the way they appear to. Probing all seven
+mutation routes: `UPDATE`, `DELETE`, `DROP TABLE`, `ALTER TABLE`, `DROP TRIGGER`
+and `PRAGMA writable_schema` are all stopped by the authorizer and never reach the
+triggers. `INSERT OR REPLACE` is stopped by **the trigger alone** — the authorizer
+is consulted at prepare time and sees only an INSERT, while the row deletion that
+REPLACE performs is a runtime event it never authorises. That deletion fires the
+delete trigger only when `recursive_triggers` is on; with the pragma off, a single
+supported SQL statement silently overwrites a registered result.
+
+**Closes off.** The triggers cannot be dropped as belt-and-braces duplication of
+the authorizer, and the pragma cannot be dropped as a performance nicety. The A12
+fuzz arm covers `INSERT OR REPLACE` specifically for this reason.
+
+## 2026-08-02 — item 4: EnvVersion is a version string, not yet a content hash
+
+**Left incomplete.** SPEC §3.2 defines `EnvVersion` as a content hash over code
+plus reference programme. What exists is a composed version string
+(`pointproc/<grammar version>+<library version>`), assembled in the acceptance
+test rather than by the environment.
+
+**Why it matters.** The content-hash form is what makes a stale environment
+detectable: an edited kernel that nobody remembered to version would currently
+produce the same `EnvVersion`, so old rows and new rows would share a content
+address while meaning different things. `ExperimentStore` would then raise
+`RegistryConflictError` and the failure would look like irreproducibility rather
+than like a missed version bump.
+
+**Waiting on.** `core/environment.py` and the `Environment` protocol, which no
+backlog item owns — §3 says "implement first", §11 never lists it. The registry
+requires only that the field be a stable string, so nothing in item 4 is blocked;
+whichever item first needs `Environment` should close this.
+
+## 2026-08-02 — item 3: match autocorrelation for the Hawkes/regime pair
+
+**Decision.** The calibration loss now carries a fourth term, count
+autocorrelation at the reference window, applied to regime switching alone and
+targeted at the Hawkes value. Regime switching was recalibrated against it.
+
+**Why.** This closes the item left open on 2026-08-01. Constraining only the
+mean rate, dispersion and one Fano factor left Hawkes and regime switching
+separable at 4.33 standard deviations on autocorrelation, and SPEC §4.2 assigns
+that pair to stage 3 of the minimum plan, so no dispersion diagnostic may
+separate them. Scenario S10's non-identifiability depended on it.
+
+The term is deliberately *not* applied to the mixture or to seasonality. Both
+are meant to be separable by temporal structure — the mixture by having none,
+seasonality by phase-locking — so constraining their autocorrelation would
+destroy a designed discriminator rather than close a leak.
+
+**Measured.** Hawkes versus regime switching is now separable at **0.22 at
+worst across every statistic measured**, at every window: rate 0.22, cv2 0.10,
+Fano 0.00 to 0.12, autocorrelation 0.08. The pair is indistinguishable by any
+dispersion diagnostic, which is what leaves intervention as the only route.
+Nothing else regressed: worst separability at the reference operating point is
+unchanged at 1.90, and the mixture and seasonality still separate where SPEC
+§4.2 says they should.
+
+**Closes off.** Any future recalibration of regime switching must keep the
+autocorrelation term, or S10 silently stops being non-identifiable. The target
+is the *Hawkes* value, so recalibrating Hawkes without recalibrating regime
+switching afterwards breaks the pairing.
+
+## 2026-08-02 — item 3: what the run-length diagnostic actually measures
+
+**Decision.** `run_length_geometric_deviation` measures temporal dependence in
+the run pattern of above-average windows, and its docstring now says so. It is
+*not* a measure of the latent regime's sojourn law, which is what it was
+originally documented as.
+
+**Why.** The original claim was that a near-zero value indicated memoryless
+high-rate periods and therefore a Markov regime. Measurement showed the reverse
+ordering, and the reason is elementary: under a homogeneous Poisson process,
+whether a window exceeds the mean is an iid Bernoulli trial, so its runs are
+*exactly* geometric. The undefective reference therefore scores lowest, not
+highest.
+
+**Measured** (window 1.0, eight seeds, 20000 events): reference 0.012, Poisson
+mixture 0.016, seasonality 0.271, Hawkes 0.455, regime switching 0.523. The
+statistic separates cleanly, but along the axis of temporal dependence rather
+than regime geometry — the two independent-window cases sit at or below 0.036
+and the three clustered ones at or above 0.148.
+
+**Left incomplete.** SPEC §4.2's actual regime discriminator, the geometric
+sojourn distribution of the *latent* high-rate periods, is not recoverable by
+thresholding counts at their mean: Poisson noise fragments one long high-rate
+period into several short runs, so the observed runs are a thinned version of
+the regime's and are not geometric even when the regime's are. Recovering them
+needs the regime state inferred, which belongs with the posterior engine
+(item 6), not with a summary statistic over an event log.
+
+## 2026-08-02 — item 3: the diagnostic catalogue was not covered by its gates
+
+**Left incomplete, now closed.** Backlog item 3 reads "reference programme, four
+mechanisms, diagnostics", and `scripts/status.py` reported it at 2/2 gates while
+only three of SPEC §4.3's eight diagnostics existed. A1 and A2 test determinism
+and edit soundness; neither touches the catalogue, so the gate count said nothing
+about it.
+
+**Decision.** All eight are now implemented in
+`environments/pointproc/diagnostics.py`, with the five discriminators covered by
+`tests/test_diagnostics.py`. Those tests are deliberately *not* named for an
+acceptance criterion, since none applies; they appear in the status report only
+in the "not named for a gate" line.
+
+**Closes off.** A gate count is evidence about the criteria that exist, not
+about a backlog item being complete. Items 7, 9, and 11 through 15 have no
+A-gate at all, so the same gap will recur there and the status report already
+says so on its last line.

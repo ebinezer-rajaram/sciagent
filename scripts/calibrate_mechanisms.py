@@ -49,6 +49,7 @@ from environments.pointproc.components import (
     TWO_STATE_MARKOV,
 )
 from environments.pointproc.diagnostics import (
+    count_autocorrelation,
     fano_factor,
     inter_arrival_dispersion,
     mean_rate,
@@ -183,37 +184,59 @@ def analytic_rate(name: str, p: FrozenDict[str, float]) -> float:
     raise SciAgentError(f"no closed-form rate for mechanism {name!r}")
 
 
+#: Mechanisms whose count autocorrelation must also be matched, and to what.
+#: Only regime switching carries an entry, and its target is the Hawkes value.
+#: SPEC §4.2 assigns that pair to stage 3 of the minimum plan -- intervention --
+#: so no dispersion diagnostic may separate them; without this term the search
+#: leaves them separable at about 4 standard deviations on autocorrelation alone.
+#: The mixture and seasonality are deliberately absent: they are *supposed* to be
+#: separable by temporal structure, and constraining them here would destroy a
+#: designed discriminator rather than close a leak.
+TARGET_AUTOCORRELATION: dict[str, float] = {"regime_switching": 0.490}
+
+
 @dataclass(frozen=True)
 class Measurement:
     rate: float
     dispersion: float
     fano: float
+    autocorrelation: float
 
-    @property
-    def loss(self) -> float:
-        """Worst relative deviation from the target, on a log scale."""
-        return max(
+    def loss(self, name: str) -> float:
+        """Return the worst relative deviation from the target, on a log scale.
+
+        The autocorrelation term applies only to mechanisms listed in
+        :data:`TARGET_AUTOCORRELATION`, so a mechanism that is meant to be
+        distinguishable by temporal structure is not penalised for being so.
+        """
+        deviations = [
             abs(math.log(self.rate / TARGET_RATE)),
             abs(math.log(self.dispersion / TARGET_DISPERSION)),
             abs(math.log(self.fano / TARGET_FANO)),
-        )
+        ]
+        target = TARGET_AUTOCORRELATION.get(name)
+        if target is not None:
+            deviations.append(abs(math.log(self.autocorrelation / target)))
+        return max(deviations)
 
 
 def measure(defect: Defect, n_events: int, seeds: Sequence[Seed]) -> Measurement:
     """Return the mean operating point of ``defect`` over ``seeds``."""
     grammar = edit_grammar()
     program = grammar.apply(reference_program(), defect)
-    rates, dispersions, fanos = [], [], []
+    rates, dispersions, fanos, correlations = [], [], [], []
     for seed in seeds:
         log = program.execute(seed, n_events)
         rates.append(mean_rate(log))
         dispersions.append(inter_arrival_dispersion(log))
         fanos.append(fano_factor(log, REFERENCE_WINDOW))
+        correlations.append(count_autocorrelation(log, REFERENCE_WINDOW))
     count = len(seeds)
     return Measurement(
         rate=math.fsum(rates) / count,
         dispersion=math.fsum(dispersions) / count,
         fano=math.fsum(fanos) / count,
+        autocorrelation=math.fsum(correlations) / count,
     )
 
 
@@ -259,7 +282,7 @@ def calibrate(
             measurement = measure(defect, search_events, SEARCH_SEEDS)
         except SciAgentError:
             continue
-        scored.append((measurement.loss, parameters))
+        scored.append((measurement.loss(name), parameters))
     scored.sort(key=lambda pair: pair[0])
 
     print(f"  re-measuring the top {shortlist} at {verify_events} events")
@@ -267,8 +290,8 @@ def calibrate(
     for _, parameters in scored[:shortlist]:
         defect = frozenset({build_edit(name, parameters)})
         measurement = measure(defect, verify_events, VERIFY_SEEDS)
-        if best is None or measurement.loss < best[0]:
-            best = (measurement.loss, parameters, measurement)
+        if best is None or measurement.loss(name) < best[0]:
+            best = (measurement.loss(name), parameters, measurement)
 
     if best is None:
         print("  no feasible candidate")
@@ -277,6 +300,7 @@ def calibrate(
     print(
         f"  best: rate={measurement.rate:.4f} cv2={measurement.dispersion:.4f} "
         f"F{REFERENCE_WINDOW:g}={measurement.fano:.4f} "
+        f"ac={measurement.autocorrelation:.4f} "
         f"worst deviation {100 * (math.exp(loss) - 1):.1f}%"
     )
     body = ", ".join(f"{k}={v!r}" for k, v in sorted(parameters.items()))

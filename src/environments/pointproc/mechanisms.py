@@ -87,15 +87,19 @@ HAWKES: Edit = AddDependency(
 
 #: Latent two-state regime switching. Discriminated by the geometric run-length
 #: distribution of high-rate periods, and by conditioning on the inferred state.
-#: Calibrated: rate 1.007, cv2 3.487, F2 3.185.
+#: Calibrated: rate 1.001, cv2 3.551, F2 3.264, count autocorrelation 0.480.
+#: The autocorrelation is matched to the Hawkes value deliberately: SPEC §4.2
+#: assigns that pair to stage 3 of the minimum plan, so no dispersion
+#: diagnostic may separate them. Calibrating without that constraint left them
+#: separable at about four standard deviations on autocorrelation alone.
 REGIME_SWITCHING: Edit = AddLatentVariable(
     target=ARRIVAL,
     spec=TWO_STATE_MARKOV,
     parameters=on_grid(
         TWO_STATE_GRIDS,
-        mult_low=0.21174128961651792,
-        mult_high=3.057876921606392,
-        switch_rate=0.6580560108683832,
+        mult_low=0.2714417616594907,
+        mult_high=2.8737714334780025,
+        switch_rate=0.2924017738212867,
         p_high=0.27904761904761904,
     ),
 )

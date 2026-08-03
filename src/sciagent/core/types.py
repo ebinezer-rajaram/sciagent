@@ -1,8 +1,7 @@
 """Core value types and identifier aliases.
 
-Only the types backlog items 2-3 need live here. ``Claim``, ``Diagnosis``,
-``Prediction``, ``Estimand`` and ``Scope`` (SPEC §3.3-3.4) arrive with their own
-backlog items.
+``Prediction`` (SPEC §3.3) arrives here with backlog item 5. ``Claim``,
+``Diagnosis``, ``Estimand`` and ``Scope`` arrive with their own later items.
 
 Everything here is immutable and hashable, so programmes and defects can be
 content-addressed by the registry later without a separate serialisation path.
@@ -12,10 +11,13 @@ from __future__ import annotations
 
 from collections.abc import Hashable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Literal, NewType, TypeVar
 
 import numpy as np
 import numpy.typing as npt
+
+from sciagent.core.conditions import Condition
 
 # --------------------------------------------------------------------------
 # Identifiers
@@ -38,6 +40,17 @@ DataVersion = NewType("DataVersion", str)
 MetricVersion = NewType("MetricVersion", str)
 MetricName = NewType("MetricName", str)
 Digest = NewType("Digest", str)
+
+#: Identifiers for the investigation record (SPEC §3.3).
+HypothesisId = NewType("HypothesisId", str)
+PredictionId = NewType("PredictionId", str)
+ExperimentId = NewType("ExperimentId", str)
+
+#: Placeholder for SPEC §3.3's ``ExperimentTemplate``, which is a structure in
+#: the experiment DSL and therefore arrives with backlog item 7. Until then a
+#: prediction names the template it is made under; item 7 replaces this with the
+#: DSL type and the field keeps its meaning.
+ExperimentTemplateId = NewType("ExperimentTemplateId", str)
 
 ComponentKind = Literal["arrival", "size", "sign", "observation"]
 
@@ -186,3 +199,96 @@ class EventLog:
 
     def __hash__(self) -> int:
         return hash(self.to_bytes())
+
+
+# --------------------------------------------------------------------------
+# Diagnostics
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class MetricRef:
+    """A metric named at a specific version (SPEC §3.3).
+
+    Lives here rather than with :class:`~sciagent.registry.metrics.MetricRegistry`
+    because :class:`Prediction` names a diagnostic and ``core`` may not import
+    from ``registry``. ``sciagent.registry.metrics`` re-exports it, so either
+    import path is valid.
+    """
+
+    name: MetricName
+    version: str
+
+    def __str__(self) -> str:
+        return f"{self.name}@{self.version}"
+
+
+# --------------------------------------------------------------------------
+# Hypotheses and predictions
+# --------------------------------------------------------------------------
+
+HypothesisStatus = Literal["live", "suspended", "rejected", "confirmed"]
+
+#: Every status, in the canonical order used for display.
+HYPOTHESIS_STATUSES: tuple[HypothesisStatus, ...] = (
+    "live",
+    "suspended",
+    "rejected",
+    "confirmed",
+)
+
+
+class RejectionCode(Enum):
+    """Why a hypothesis or one of its predictions was refused.
+
+    Codes are recorded rather than raised alone, so that a refusal is a datum in
+    the investigation record and not only a control-flow event. The first two
+    lines are the criterion SPEC §6.4 A16 states; the rest are neighbouring
+    incoherences the same interval arithmetic decides for free, kept separate so
+    that A16's own gate measures exactly what A16 claims.
+    """
+
+    NO_PREDICTIONS = "no_predictions"
+    """No prediction at all. SPEC §3.3 requires at least one."""
+
+    UNSATISFIABLE_REFUTATION = "unsatisfiable_refutation"
+    """No attainable diagnostic value could refute the hypothesis (A16)."""
+
+    TAUTOLOGICAL_REFUTATION = "tautological_refutation"
+    """Every attainable value refutes it, so the prediction carries nothing."""
+
+    OVERLAPPING_REFUTATION = "overlapping_refutation"
+    """Some value both confirms and refutes."""
+
+    UNSATISFIABLE_CONDITION = "unsatisfiable_condition"
+    """No attainable value could confirm the hypothesis."""
+
+    UNKNOWN_METRIC = "unknown_metric"
+    """The diagnostic is not in the metric registry, so it has no range."""
+
+    DUPLICATE = "duplicate"
+    """A structurally identical edit set is already in the graph (A18)."""
+
+    MISMATCHED_HYPOTHESIS = "mismatched_hypothesis"
+    """A prediction claims a different hypothesis than the one carrying it."""
+
+
+@dataclass(frozen=True, slots=True)
+class Prediction:
+    """What a hypothesis says an experiment will show, and what would sink it.
+
+    ``refutation`` must be satisfiable over ``diagnostic``'s declared range and
+    must not overlap ``condition``; both are checked by
+    :func:`sciagent.hypothesis.validator.validate_prediction`.
+
+    SPEC §3.3 lists this without an ``id``, but
+    :attr:`~sciagent.hypothesis.graph.HypothesisNode.predictions` holds
+    ``PredictionId``s, so one is carried here.
+    """
+
+    id: PredictionId
+    hypothesis_id: HypothesisId
+    diagnostic: MetricRef
+    condition: Condition
+    under: ExperimentTemplateId
+    refutation: Condition

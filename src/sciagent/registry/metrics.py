@@ -25,20 +25,26 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 
 from sciagent.core.errors import DuplicateMetricError, UnknownMetricError
-from sciagent.core.types import EventLog, FrozenDict, MetricName, MetricVersion
+from sciagent.core.types import (
+    EventLog,
+    FrozenDict,
+    MetricName,
+    MetricRef,
+    MetricVersion,
+)
 
 type MetricCompute = Callable[[EventLog], float]
 
-
-@dataclass(frozen=True, slots=True)
-class MetricRef:
-    """A metric named at a specific version (SPEC §3.3)."""
-
-    name: MetricName
-    version: str
-
-    def __str__(self) -> str:
-        return f"{self.name}@{self.version}"
+#: ``MetricRef`` moved to ``sciagent.core.types`` with backlog item 5, so that
+#: :class:`~sciagent.core.types.Prediction` could name a diagnostic without
+#: ``core`` importing from ``registry``. Re-exported here because it is part of
+#: this module's published surface and every call site still reads naturally.
+__all__ = [
+    "MetricCompute",
+    "MetricRef",
+    "MetricRegistry",
+    "MetricSpec",
+]
 
 
 @dataclass(frozen=True, slots=True)

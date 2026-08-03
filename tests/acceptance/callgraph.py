@@ -139,7 +139,15 @@ def _called_name(node: ast.expr) -> str | None:
 
 
 def _sealed_symbol(node: ast.AST, sealed: frozenset[str]) -> str | None:
-    """Return the restricted symbol a node names, if any."""
+    """Return the restricted symbol a node names, if any.
+
+    Four syntactic forms count, because a restricted name can be reached through
+    any of them: an attribute (``node.plausibility``), a bare name
+    (``sealed_records``), a string constant (``object.__setattr__(n, "x", v)``),
+    and a keyword or parameter name. The last matters most for a write to a
+    frozen dataclass, which cannot be an assignment and so appears as
+    ``replace(node, plausibility=...)`` -- a keyword, not a reference.
+    """
     if isinstance(node, ast.Attribute) and node.attr in sealed:
         return node.attr
     if isinstance(node, ast.Name) and node.id in sealed:
@@ -150,6 +158,10 @@ def _sealed_symbol(node: ast.AST, sealed: frozenset[str]) -> str | None:
         and node.value in sealed
     ):
         return node.value
+    if isinstance(node, ast.keyword) and node.arg in sealed:
+        return node.arg
+    if isinstance(node, ast.arg) and node.arg in sealed:
+        return node.arg
     return None
 
 

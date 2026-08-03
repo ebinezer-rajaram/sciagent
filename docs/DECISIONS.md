@@ -366,3 +366,125 @@ in the "not named for a gate" line.
 about a backlog item being complete. Items 7, 9, and 11 through 15 have no
 A-gate at all, so the same gap will recur there and the status report already
 says so on its last line.
+
+## 2026-08-03 — item 5: A16 is decided exactly, not sampled
+
+**Decision.** `Prediction.condition` and `refutation` are terms in a small
+closed algebra (`sciagent/core/conditions.py`): comparisons and intervals over
+one diagnostic, combined with and/or/not. Every term denotes a finite union of
+real intervals with explicit open or closed endpoints, and satisfiability over a
+diagnostic's declared range is emptiness of an intersection.
+
+**Why.** A16 asks whether a refutation is satisfiable over the range. Sampling
+answers that correctly for wide conditions and wrongly for `value == 3.0`, and
+the failure is silent. The interval representation decides it, and decides it
+without computing a single new float — every operation compares endpoints the
+caller supplied — so the verdict cannot drift with floating point.
+
+The price is that conditions relating two diagnostics, or involving a computed
+threshold, are not representable. SPEC §3.3 gives `Prediction` one `diagnostic`
+field, so nothing in the slice needs them.
+
+**Closes off.** Item 10's verifier gets `evaluate(condition, value)` for free,
+and item 8's BOED gets `witness`, which names a concrete outcome that would
+refute a hypothesis rather than merely asserting one exists.
+
+## 2026-08-03 — item 5: the condition algebra models the finite reals
+
+**Left incomplete, deliberately.** An infinite endpoint is always open, so a
+declared range of `0..inf` means "arbitrarily large" and not "possibly literally
+infinite". A diagnostic returning `inf` therefore falls outside the domain, and
+`satisfiable_over` could call a refutation unsatisfiable that such an observation
+would in fact meet — a false rejection, which is the direction that costs a good
+hypothesis rather than the direction that admits a bad one.
+
+**Why it is sound here.** The slice's estimators raise on the inputs that would
+produce an infinity rather than returning one, so no such value reaches a
+condition. The alternative — modelling the extended reals — makes `[-inf, inf]`
+and `(-inf, inf)` two spellings of one set and breaks the emptiness test the
+whole decision procedure rests on.
+
+**Waiting on.** An environment whose diagnostics can return an infinity. It will
+fail `test_a16_infinite_values_are_outside_the_domain`, which exists so the
+assumption cannot be inherited in silence.
+
+## 2026-08-03 — item 5: A16's neighbouring checks are separate codes
+
+**Spec ambiguity, resolved.** A16 states one criterion: reject an unsatisfiable
+refutation. Three neighbouring incoherences are decided by the same interval
+arithmetic at no extra cost — a refutation covering the whole range, a refutation
+overlapping the condition it accompanies, and an unsatisfiable condition. The
+spec does not say whether the validator should check them.
+
+**Decision.** It checks all four, under four `RejectionCode`s. A16's own gate
+asserts `UNSATISFIABLE_REFUTATION` specifically, so the criterion measures what
+it claims and the extras cannot inflate it.
+
+**Measured consequence.** `TAUTOLOGICAL_REFUTATION` never appears alone: a
+refutation covering the range leaves the condition either unsatisfiable or
+overlapping, so a second code always follows it. That is a property of the
+codes, not a bug, and the gate asserts membership rather than equality because
+of it.
+
+## 2026-08-03 — item 5: plausibility has no write path at all
+
+**Spec ambiguity, resolved.** A17 asks that no agent-accessible path write
+`plausibility`, which admits a guarded write path — a capability token, as A14
+uses for sealed partitions.
+
+**Decision.** There is no write path, guarded or otherwise. `HypothesisGraph`
+derives the whole vector from the grammar's prefix code as the normalised
+`2 ** -code_length(D)` and re-derives it on every transition. No public
+constructor, method or keyword accepts the number. `__post_init__` re-derives and
+compares by exact equality, so a value planted with `dataclasses.replace` is
+refused the next time a graph is built from those nodes.
+
+**Why.** A guarded path is a path, and it has to stay guarded through every later
+refactor. Deriving the number means the static half of A17 is a statement about a
+thing that does not exist. It also discharges SPEC §0's "the prior is derived,
+not fitted" mechanically rather than by discipline.
+
+**Closes off.** Rejection does not renormalise. The prior is a statement about
+structure; rejecting a hypothesis is a statement about evidence, and moving mass
+between hypotheses on evidential grounds through the prior would be exactly the
+leak invariant 2 exists to prevent. A rejected hypothesis keeps its prior mass
+and the posterior engine (item 6) zeroes it.
+
+**Waiting on.** Uncompiled nodes. SPEC §3.3 types `program_edit` as `Defect |
+None`, "None only before compilation", but a node with no structure has no code
+length and so no derived prior. `propose` requires a compiled defect, so the
+`None` case is unreachable today; the prose-first proposal path that produces one
+arrives with item 12 and will have to say what prior an uncompiled node carries.
+
+## 2026-08-03 — item 5: two placements forced by the layering
+
+**Decision.** `MetricRef` moved from `sciagent/registry/metrics.py` to
+`sciagent/core/types.py`, and the condition algebra went to a new
+`sciagent/core/conditions.py` rather than into `types.py`.
+
+**Why.** SPEC §10 puts `Prediction` in `core/types.py`. A prediction names a
+diagnostic and holds two conditions, and `core` cannot import from `registry` —
+`registry` already imports from `core`. Both types had to move down. `registry/
+metrics.py` re-exports `MetricRef`, so every existing import site is unchanged.
+`conditions.py` is a module SPEC §10 does not list; the alternative was ~200
+lines of interval arithmetic inside a module of value types.
+
+**Closes off.** `core/` now has a module that is not in the §10 layout. That is a
+layout sketch rather than a frozen decision, but it is the first divergence from
+it and later ones should be recorded the same way.
+
+## 2026-08-03 — item 5: the A14 call-graph analyser was blind to keyword writes
+
+**Approach corrected.** `tests/acceptance/callgraph.py` matched restricted
+symbols appearing as attributes, bare names and string constants. A17's realistic
+violation is none of those: `HypothesisNode` is frozen, so an agent-authored tool
+cannot assign to the attribute and would reach past the constructor with
+`replace(node, plausibility=...)`, where the symbol is a keyword argument.
+
+**Decision.** `_sealed_symbol` now also matches `ast.keyword` and `ast.arg`, so a
+restricted name is caught as a keyword argument or as a parameter name. A14's
+six tests are unaffected — none of its sealed symbols appears in either position.
+
+**Closes off.** The analyser over-approximates further than before, which is the
+correct direction for a safety gate and the reason its docstring already argued
+for soundness over precision.

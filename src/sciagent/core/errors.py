@@ -135,3 +135,52 @@ class BudgetError(SciAgentError):
 
 class BudgetExhaustedError(BudgetError):
     """A charge exceeded the remaining budget."""
+
+
+# --------------------------------------------------------------------------
+# Conditions and hypotheses
+# --------------------------------------------------------------------------
+
+
+class ConditionError(SciAgentError):
+    """A condition does not denote a set of real values.
+
+    Raised for a NaN endpoint, an unknown comparison operator, or a declared
+    diagnostic range that is empty. Satisfiability (SPEC §6.4 A16) is decided by
+    interval arithmetic, which is only well posed on conditions that denote.
+    """
+
+
+class HypothesisError(SciAgentError):
+    """Base for faults in the hypothesis graph and its validation."""
+
+
+class UnfalsifiableHypothesisError(HypothesisError):
+    """A hypothesis carries no prediction that any outcome could refute.
+
+    Either it has no predictions at all, or a prediction's ``refutation`` is
+    unsatisfiable over its diagnostic's declared range (SPEC §6.4 A16).
+    """
+
+
+class DuplicateHypothesisError(HypothesisError):
+    """A structurally identical edit set is already in the graph (SPEC §6.4 A18).
+
+    Raised for a duplicate of a *rejected* hypothesis too: re-proposing something
+    already refuted is how a zombie hypothesis enters a graph, and SPEC §12 asks
+    for zero of those.
+    """
+
+
+class PlausibilityWriteError(HypothesisError):
+    """A stored ``plausibility`` is not the value the framework derives.
+
+    ``plausibility`` is the structural prior, normalised from
+    :meth:`~sciagent.core.edits.EditGrammar.code_length`. Nothing supplies it, so
+    a disagreement means a number was planted by reaching past the constructor
+    (SPEC §6.4 A17).
+    """
+
+
+class UnknownHypothesisError(HypothesisError):
+    """A hypothesis id was referenced that the graph does not hold."""

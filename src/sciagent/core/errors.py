@@ -151,6 +151,43 @@ class ConditionError(SciAgentError):
     """
 
 
+# --------------------------------------------------------------------------
+# Inference
+# --------------------------------------------------------------------------
+
+
+class InferenceError(SciAgentError):
+    """Base for faults in the posterior engine and its supporting estimators."""
+
+
+class OutOfRangeError(InferenceError):
+    """A diagnostic value fell outside the range its metric declares.
+
+    The declared range is what makes a discretisation total (SPEC §6.2 A6), so a
+    value outside it means either the metric's declaration is wrong or the
+    estimator returned something it should have raised on. Both are framework
+    faults, and neither may be absorbed by clamping the value into the nearest
+    bin: that would silently move probability mass between hypotheses.
+    """
+
+
+class DiscretisationError(InferenceError):
+    """Bin edges do not denote a partition of a metric's declared range."""
+
+
+class TableError(InferenceError):
+    """The empirical table holds no row for a requested (hypothesis, template)."""
+
+
+class UnknownExperimentError(InferenceError):
+    """An experiment id was referenced that the engine has not recorded."""
+
+
+# --------------------------------------------------------------------------
+# Hypotheses
+# --------------------------------------------------------------------------
+
+
 class HypothesisError(SciAgentError):
     """Base for faults in the hypothesis graph and its validation."""
 

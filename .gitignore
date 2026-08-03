@@ -8,3 +8,8 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Derived artefacts. `.cache/tables/` holds empirical tables, which are a pure
+# function of their content address and are rebuilt on demand (see
+# tests/acceptance/test_a06_a11.py). They are derived, not authored.
+.cache/

@@ -27,6 +27,7 @@ from collections.abc import Sequence
 
 from environments.pointproc.components import (
     ARRIVAL,
+    MIXTURE_OF_EXPONENTIAL_2,
     MIXTURE_OF_POISSON_2,
     POISSON_PERIODIC,
     SIZE,
@@ -34,6 +35,7 @@ from environments.pointproc.components import (
 )
 from environments.pointproc.grammar import (
     EXPONENTIAL_KERNEL,
+    EXPONENTIAL_MIXTURE_GRIDS,
     HAWKES_GRIDS,
     PERIODIC_GRIDS,
     POISSON_MIXTURE_GRIDS,
@@ -147,6 +149,30 @@ SIZE_EXCITATION: Edit = AddDependency(
         base_rate=0.29935772947204886,
         excitation=0.699047619047619,
         decay=0.5987154589440978,
+    ),
+)
+
+
+#: The size-distribution mixture of scenario S8, which pairs it with seasonality
+#: (SPEC §4.5). Calibrated only in the one respect that matters for it to be a
+#: fair test: the mean mark size is preserved at 0.9988, within 0.2% of the
+#: reference, so the defect does not announce itself through a nuisance moment.
+#: Its squared coefficient of variation is 7.45 against the reference's 1.0.
+#:
+#: Unlike the arrival mechanisms this one is not calibrated to be *confounded*
+#: with anything -- S8 tests decomposition, not discrimination, and nothing in
+#: the slice is meant to be mistaken for it. That is what makes it the control
+#: arm of acceptance test A9: a misspecification the posterior predictive check
+#: should detect nearly always, standing against ``SIZE_EXCITATION``, which it
+#: should barely detect at all.
+SIZE_MIXTURE: Edit = ChangeDistributionFamily(
+    target=SIZE,
+    family=MIXTURE_OF_EXPONENTIAL_2,
+    parameters=on_grid(
+        EXPONENTIAL_MIXTURE_GRIDS,
+        mean_low=0.315811383485066,
+        mean_high=5.70784988166157,
+        weight_high=0.12666666666666665,
     ),
 )
 

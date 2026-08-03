@@ -99,3 +99,44 @@ framework immaturity that items 2–11 exist to prevent.
 **Touches.** No frozen decision directly. It compromises R2 by adding a
 training axis to the memory ablation, and it makes R1 unanswerable on any
 scenario whose ground truth lies inside `agent_grammar`.
+## A mark-arrival cross-diagnostic, so S11 Stage A is detectable
+
+**Idea.** Add one diagnostic to the §4.3 catalogue that measures the *joint*
+behaviour of the mark and arrival components — the correlation between a mark's
+size and the inter-arrival gap that follows it is the natural choice, and the
+lag-1 cross-correlation of sizes against subsequent counts is the windowed
+version of the same thing. Every existing catalogue entry is a statistic of one
+component in isolation.
+
+**Rationale.** Measured under item 6: the posterior predictive check detects
+`SIZE_EXCITATION`, scenario S11's out-of-library mechanism, in **3.0%** of 100
+scenarios at alpha 0.05 — below the test's own nominal size. It detects a size-
+component mixture in 100%. The difference is not the check; it is that S11's
+mechanism is a Hawkes process whose marks gate the excitation, calibrated to the
+same operating point as the four it hides among, and no statistic of arrivals
+alone can separate the two. The numbers are in `docs/DECISIONS.md`.
+
+This is load-bearing rather than cosmetic. SPEC §4.6 requirement 1 is "detect
+inadequacy (S11 Stage A, via PPC)". SPEC §12 criterion 4 asks V7 to detect S11
+at a rate at least matching B1, and B1 *is* the PPC, so the exit criterion is
+currently cleared by any system that does nothing. Worse, SPEC §9's preregistered
+primary contrast is explicitly "conditional on inadequacy detection", so with a
+3% detection rate Stage B would be estimated on about three runs in a hundred —
+the contrast the whole slice is built around would have no power for a reason
+that has nothing to do with the LLM.
+
+The obvious alternative — dropping the conditional and reporting Stage B
+unconditionally — is worse, because F6 exists precisely to stop detection and
+extension quality being reported combined.
+
+**Touches.** SPEC §4.3, the frozen diagnostic catalogue for the slice. It also
+changes `MetricRegistry.version` and therefore the content address of every
+experiment registered against the catalogue, so it is a versioning event and not
+an addition. It touches no other frozen decision: F5 keeps inadequacy *detection*
+with conventional methods, and a cross-component statistic is still conventional.
+
+**Sequencing.** Before item 9, since B1's measured Stage A rate is what items 12
+and 15 are compared against, and a baseline measured under the current catalogue
+would have to be re-run. It cannot be settled by implementation alone — whether
+this counts as a demonstrated contradiction between §4.6 and §4.3, or as a
+catalogue that was simply incomplete, is a judgement about the spec.

@@ -488,3 +488,242 @@ six tests are unaffected — none of its sealed symbols appears in either positi
 **Closes off.** The analyser over-approximates further than before, which is the
 correct direction for a safety gate and the reason its docstring already argued
 for soundness over precision.
+
+## 2026-08-03 — item 6: the likelihood is binned, and that is forced
+
+**Decision.** `EmpiricalTableEngine` estimates `p(result | hypothesis)` as a
+frequency over a declared finite partition of the diagnostic's range. Bin edges
+are frozen literals chosen once from a pilot, never derived from the scenario
+under investigation.
+
+**Why.** Three constraints point the same way and only this satisfies all three.
+A6 asks that the estimate sit within two Monte Carlo standard errors of an
+analytically exact likelihood, which is only attainable for an estimator whose
+*estimand is* that likelihood; a binned frequency qualifies and a smoothed
+density does not. A7 mandates the Miller-Madow correction, which is an estimator
+for the entropy of a *discrete* distribution from counts and is meaningless over
+a continuum. And item 8's expected information gain needs a finite outcome space
+to be a sum rather than an integral.
+
+**Tried and abandoned.** (1) A kernel density estimate over the simulated
+replicates. At its optimal bandwidth the smoothing bias is the *same order* as
+the standard error, so the discrepancy A6 measures never shrinks into the
+tolerance however many replicates are spent — the criterion would fail by
+construction, not by implementation. (2) A multivariate Gaussian synthetic
+likelihood, which handles within-experiment correlation exactly but whose
+estimand is the Gaussian approximation and not the likelihood, so A6 would be
+comparing against the wrong number.
+
+**Closes off.** Every diagnostic that reaches the engine needs declared bin
+edges, and they are part of what determines a likelihood. `Discretisation.version`
+and `EmpiricalTable.version` are content hashes for that reason, and
+`EmpiricalTable.load` refuses a stored table whose templates do not reproduce the
+recorded address. Changing an edge invalidates every table built under it.
+
+## 2026-08-03 — item 6: A6 and A7 are the same measurement, read twice
+
+**Spec ambiguity, resolved.** A6 says the estimate is "within 2 MC standard
+errors of exact, across 500 trials". A7 says the reported error has "correct
+empirical coverage: across 500 repeats, true value falls within +/- 2 SE at least
+93% of the time". Read literally these are one test written down twice.
+
+**Decision.** They are separated by what each holds fixed. A6 fixes the
+*standard*: agreement with a closed-form likelihood, on programmes whose sampling
+distribution is exactly known. A7 fixes the *number*: 93% coverage, plus the
+entropy clause. A6 additionally carries a bias check that no coverage statement
+makes, and A7 carries a check that the error bar is not merely wide — coverage
+bought by an error bar ten times too large would satisfy the criterion as written
+and be useless.
+
+**Why the bias check is loose.** Estimating a *log* likelihood from a finite
+sample carries a Jensen term of order `-(1 - p) / (2 M p)`. It shrinks with the
+replicate count but never vanishes, so a tolerance tight enough to be tested at
+two standard errors *of the mean over 500 trials* would measure that term rather
+than test the estimator. The threshold is half of one standard error.
+
+**Measured** (500 independent tables, 200 replicates each, 8 equal-probability
+cells; the three analytic cases are the reference programme read as a first
+inter-arrival gap and as a realised mean rate, and the Poisson mixture read as a
+gap, whose laws are Exponential, Gamma-derived and hyperexponential):
+
+| case | coverage | mean deviation | mean SE | realised sd |
+|---|---|---|---|---|
+| homogeneous Poisson gap | 0.950 | -0.0054 | 0.1885 | 0.1946 |
+| homogeneous Poisson rate | 0.948 | -0.0068 | 0.1887 | 0.1960 |
+| Poisson mixture gap | 0.964 | -0.0093 | 0.1888 | 0.1754 |
+
+The Jensen bias is 3-5% of one standard error at 200 replicates and scales as
+`1/sqrt(M)` relative to it, so at the slice table's 2000 it is about 1.5%.
+
+**Also.** The analytic bins are placed at the exact octiles of the law under
+test. Equal-probability cells make the Krichevsky-Trofimov estimator exactly
+unbiased — its shrinkage is towards the uniform distribution over cells, which is
+then the true one — so what A6 measures is the estimator's Monte Carlo behaviour
+and not the smoothing choice. Away from equiprobable cells the KT shrinkage is
+`(0.5 - pK/2) / (M + K/2)`, which at 200 replicates and `p = 0.5` is 29% of the
+standard error and would dominate the bias check.
+
+**Tried and abandoned.** Keying A6's experiment templates by the metric they
+measure. Two of the three cases read the *same* diagnostic under different
+programmes, so they need different equal-probability edges; the metric-keyed dict
+silently gave the reference gap the mixture's octiles, and the reference's draws
+piled into three cells. Coverage came out at 14/500 and the realised spread at
+0.83 against a reported 0.15. Nothing raised — the likelihoods were simply wrong.
+Templates are keyed by case for that reason.
+
+## 2026-08-03 — item 6: A8 cannot be run under the structural prior
+
+**Spec ambiguity, resolved.** A8 asks for calibration over 200 DEV scenarios.
+Calibration in the Bayesian sense requires the scenarios to be drawn from the
+prior the posterior uses. SPEC §0 forbids precisely that: the structural
+complexity prior is a statement about parsimony, "independent of how often each
+defect type happens to appear in the benchmark", and conflating the two "would
+have made the posterior an artefact of scenario sampling". Under that prior the
+null defect costs 1 bit and every mechanism 23 or more, so a benchmark drawn from
+it is 99.9999% nulls and measures nothing.
+
+**Decision.** A8 measures the calibration of the *likelihood*, over a balanced
+benchmark, through `EmpiricalTableEngine.log_likelihood_total` and a flat prior.
+That is the configuration in which a miscalibration is attributable to the
+estimator, which is what A8 exists to gate. The deployed structural-prior
+posterior is measured over the same benchmark and reported, so the size of SPEC
+§0's deliberate mismatch is a recorded number rather than a later surprise.
+
+`log_likelihood_total` is published for this reason. It is not a write path: the
+engine computes it and the acceptance test does the normalisation.
+
+**Also, two smaller readings.** "Credible intervals" over a finite hypothesis set
+are read as credible *sets* — the smallest set of hypotheses whose mass reaches
+the nominal level. Expected calibration error is computed classwise, over every
+(hypothesis, probability) pair, not over the top-ranked one: top-1 ECE on 200
+scenarios carries about 0.09 of pure binomial noise, so A8's 0.05 threshold would
+be unmeasurable that way and would fail a perfectly calibrated engine.
+
+**Measured** (200 balanced scenarios, four experiments each, 2000-replicate
+table): classwise ECE **0.0100** under the flat prior against A8's 0.05 bound,
+and **0.1987** under the structural prior. The truth is the modal hypothesis in
+86.0% of scenarios under the flat prior and 41.5% under the structural one.
+Credible-set coverage is 0.860 at the 50% level, 0.995 at 80% and 1.000 at 90% —
+over-covering, as a discrete credible set should, since the smallest set reaching
+a level usually overshoots it.
+
+**Closes off.** The 41.5% figure is not a defect. Hawkes and regime switching are
+near-tied on every dispersion diagnostic by design, and their code lengths differ
+by 5 bits, so the prior rather than the evidence decides between them. Any later
+reading of a deployed posterior on the slice has to account for that, as D1 and
+D6 figures already have to state which grammar produced them.
+
+## 2026-08-03 — item 6: the check and the likelihood need different estimators
+
+**Decision.** The posterior predictive check reads
+`EmpiricalTable.resolved_probabilities`, in which every cell probability is
+floored at `3 / M` — the rule-of-three one-sided 95% upper bound for a cell no
+replicate reached — and renormalised. The likelihood keeps the unfloored
+Krichevsky-Trofimov point estimate.
+
+**Why.** A check is a question about tails, and the tails of a simulated table
+are where a point estimate is least trustworthy. A cell no replicate reached is
+assigned `0.5 / (M + K/2)`, which is the right point estimate and a badly wrong
+statement about how surprising an observation there would be: at 2000 replicates
+it is six times smaller than what the simulation budget can actually rule out.
+The two estimators answer different questions and are held to different criteria
+— a likelihood must be unbiased, which A6 measures, and a check must not
+over-reject, which A9 measures.
+
+**Measured** (300 correctly-specified scenarios per configuration, alpha 0.05):
+
+| floor | false-positive rate | power, size mixture | power, size excitation |
+|---|---|---|---|
+| none | 0.087 | 1.000 | 0.063 |
+| 1/M | 0.083 | 1.000 | 0.063 |
+| 2/M | 0.067 | 1.000 | 0.050 |
+| 3/M | 0.033 | 1.000 | 0.050 |
+
+Unfloored, the realised size is 1.7x nominal — inside A9's 2x bound but with no
+margin, and a 100-scenario gate against that bound would be flaky. Floored, the
+check is genuinely conservative and loses nothing on a detectable defect. A
+600-scenario measurement put the unfloored rate at 9.0% +/- 1.2%.
+
+**Also.** `size_dispersion`'s bin edges above 1.25 were coarsened from seven
+cells to three at the same time. No closed-set hypothesis has any mass there, so
+the extra edges bought no discrimination, and they cost detection power: the tail
+is the sum over every cell no more likely than the observed one, and each
+unreached cell contributes the floor.
+
+**Closes off.** Any diagnostic added to a template's outcome space now has a
+power cost as well as a discrimination benefit, and the two are traded in the bin
+edges. Splitting a region no hypothesis occupies is never free.
+
+## 2026-08-03 — item 6: the PPC has no power against S11's mechanism
+
+**Measured.** Against `SIZE_MIXTURE`, a defect in a component no closed-set
+hypothesis touches, the check's detection rate is **1.000**. Against
+`SIZE_EXCITATION`, scenario S11's out-of-library mechanism, it is **0.030** —
+below the nominal 5% size of the test, which is to say the check cannot see it at
+all. Both at alpha 0.05 over 100 scenarios, against the four slice templates.
+
+**Why.** `SIZE_EXCITATION` is calibrated to the same operating point as the four
+mechanisms it hides among (rate 0.990, cv2 3.290, F2 3.444), and structurally it
+is a Hawkes process whose marks gate the excitation. Every one of the four
+templates is a dispersion or correlation statistic of the arrival stream alone,
+and Hawkes covers it on all four. Detection would need a diagnostic of the
+*joint* behaviour of marks and arrivals — the correlation between a mark's size
+and the gap that follows it is the obvious one — and SPEC §4.3's catalogue
+contains no such statistic.
+
+**Why it matters.** SPEC §4.6 requirement 1 is "detect inadequacy (S11 Stage A,
+via PPC)" and SPEC §12 criterion 4 asks V7 to detect it "at a rate at least
+matching B1". B1 is the PPC alone, so the bar is currently 3%, which any system
+clears by doing nothing. The conditional in SPEC §9's preregistered contrast —
+"conditional on inadequacy detection" — would condition on an event that occurs
+three times in a hundred, leaving Stage B measured on a handful of runs.
+
+**Left incomplete, deliberately.** No diagnostic was added. SPEC §4.3's catalogue
+is frozen and this is a design question rather than an implementation one, so it
+goes to `docs/BACKLOG.md` with the frozen decision it would touch. Item 6's gates
+do not depend on it: A9 asks for power to be *reported* per defect type, not to
+clear a threshold, and 0.030 is the honest report.
+
+## 2026-08-03 — item 6: what is left open
+
+**Left incomplete.** Three things.
+
+*The engine is mutable.* Every other value type in the repository is a frozen
+dataclass returning new instances. SPEC §3.5 gives `expand` and `ppc` signatures
+that return a cost and a verdict rather than a new engine, and an investigation
+is a growing record, so `EmpiricalTableEngine` accumulates state. It is strictly
+append-only — experiments are recorded and hypotheses admitted, and no path
+removes or revises either — but it is not a value.
+
+*The prior is deliberately unnormalised.* `log_prior` returns
+`-code_length * ln 2` and `posterior` normalises at the end, so the prior's
+normalising constant cancels. That is what lets `expand(node)` match SPEC §3.5's
+signature exactly: the engine never has to re-derive anyone else's prior, and
+A10's "same posterior as including it from the start" holds by bit-equality
+rather than to within Monte Carlo error. It also keeps
+`sciagent.hypothesis.graph._derive_plausibility` the single place a normalised
+prior is written.
+
+*A17 will bite at item 12.* The A14/A17 call-graph analyser cannot tell a read
+from a write, and `PLAUSIBILITY_SYMBOLS` over-approximates on purpose. When item
+12 adds an agent that can ask for a posterior, any path from the agent tool
+surface to `EmpiricalTableEngine.posterior` reaches a function that reads
+`HypothesisNode.plausibility`, and A17 will flag it. Nothing in item 6 can fix
+that: the resolution is item 12's, and it is the same resolution the deployed
+posterior needs anyway. Recorded so it is not discovered as a mystery failure.
+
+**Also.** `SIZE_MIXTURE` was added to `environments/pointproc/mechanisms.py` as
+A9's control arm. It is calibrated in one respect only — the mean mark size is
+preserved at 0.9988, so the defect does not announce itself through a nuisance
+moment — and its squared coefficient of variation is 7.45 against the reference's
+1.0. Scenario S8 pairs it with seasonality and will need it calibrated properly;
+that belongs with item 11.
+
+**Measured, on cost.** Building the slice's table is 5 structures x 2000
+replicates x 512 events, about 10,000 executions at 13 ms, or **2 minutes 50
+seconds**. It is cached under a gitignored `.cache/tables/`, keyed on a content
+address over the templates, their discretisations, the replicate count and the
+seed. The full suite is **2 minutes 27 seconds** with the table cached, up from
+23.5 seconds before this item; the largest remaining costs are A6's 500
+independent trial tables at 48 s and the rebuild that verifies the cache is
+honest at 26 s.

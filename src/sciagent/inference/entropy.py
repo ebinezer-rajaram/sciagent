@@ -2,9 +2,15 @@
 
 Entropy enters this project twice: as the uncertainty of a posterior over
 hypotheses, and as the uncertainty of a predictive distribution over binned
-diagnostic outcomes, which is what backlog item 8's expected information gain is
-a difference of. Both are distributions over a finite support, so both are
-estimated from counts.
+diagnostic outcomes, which is what :mod:`sciagent.experiments.boed`'s expected
+information gain is a difference of. Both are distributions over a finite
+support.
+
+Only the first arrives here as counts, and only it is corrected. The second
+arrives as the Krichevsky-Trofimov probabilities
+:meth:`~sciagent.inference.empirical.EmpiricalTable.probabilities` returns, and
+is taken by :func:`entropy_bits` uncorrected -- see "Why BOED does not correct"
+below.
 
 Why a correction is needed at all
 ---------------------------------
@@ -13,16 +19,44 @@ Plug-in entropy -- substituting observed frequencies into ``-sum p log p`` -- is
 biased *downward*, and the bias does not vanish with the estimator's variance. To
 first order it is ``-(K - 1) / (2N)`` nats for ``K`` occupied cells and ``N``
 samples, and it is a systematic term: a table built from 2000 replicates over 12
-cells understates every entropy by about the same amount. A difference of
-entropies is what BOED maximises, so a bias common to both terms largely cancels
-there -- but only largely, because the two distributions rarely occupy the same
-number of cells, and the residue is exactly the quantity A7 bounds.
+cells understates every entropy by about the same amount.
 
 :func:`miller_madow_entropy` adds ``(K_hat - 1) / (2N)`` back, using the number of
 *occupied* cells. That is a deliberate under-correction when cells exist but were
 never drawn, and it is the safe direction: over-correcting would inflate an
 entropy difference, which is the error that would make a useless experiment look
 informative.
+
+Why BOED does not correct
+-------------------------
+
+Expected information gain is ``H(Y) - sum_h p(h) H(Y | h)``, and the natural
+move is to correct both terms. It is not made, for one reason of principle and
+one of size.
+
+The reason of principle is that the conditional term's distribution is *already*
+the one the likelihood uses. Reading it from raw frequencies instead would put a
+second definition of a cell probability into the codebase, and the belief update
+:func:`sciagent.experiments.boed.update` performs would stop agreeing with
+:meth:`~sciagent.inference.empirical.EmpiricalTableEngine.posterior` -- an
+agreement that is tested rather than hoped for. Raw frequencies would also assign
+zero to an unvisited cell, killing a hypothesis outright on the evidence of a
+finite simulation budget.
+
+The reason of size is that the correction is already applied, and then some.
+Krichevsky-Trofimov shrinkage pushes an entropy *up*, the direction Miller-Madow
+does, and on the slice's table -- 2000 replicates over 9 cells -- it lifts a row
+by up to 0.032 bits where Miller-Madow would add at most 0.0036. It is the
+larger of the two corrections by an order of magnitude, so stacking them would
+plainly over-correct.
+
+What survives is a bias in the safe direction. Shrinkage lifts a peaked row
+further than a flat one, so it lifts the conditional term more than the
+marginal, and an expected information gain therefore comes out slightly *low* --
+by at most 0.024 bits of 1.47, some 1.6%, with the ranking over the slice's four
+designs unchanged. Understating a design's value cannot make a useless
+experiment look informative, and A24 bounds a 10% difference. The measured
+figures are in ``docs/DECISIONS.md``.
 
 Units are bits throughout, matching the prefix code that defines the prior.
 """
@@ -90,20 +124,31 @@ def _frequencies(counts: Sequence[int]) -> tuple[list[float], int, int]:
     return [count / total for count in counts], total, occupied
 
 
-def _standard_error(frequencies: Sequence[float], bits: float, total: int) -> float:
-    """Return the asymptotic standard error of a plug-in entropy, in bits.
+def entropy_standard_error(probabilities: Sequence[float], samples: float) -> float:
+    """Return the asymptotic standard error of an entropy estimate, in bits.
 
     The delta-method variance of ``-sum p log2 p`` under multinomial sampling is
     ``(E[(log2 p)^2] - H^2) / N``. It is the sampling error of the estimate and
     says nothing about the plug-in bias, which is why A7 checks the two
     separately.
+
+    Guarantees zero for ``samples = inf``, which is how a distribution known in
+    closed form rather than estimated is spelled -- see
+    :class:`sciagent.experiments.boed.Predictive`. ``probabilities`` must be
+    normalised; :func:`entropy_bits` is what checks that, and is always called
+    alongside this.
     """
+    if samples <= 0.0:
+        raise InferenceError(f"samples must be positive, got {samples!r}")
+    if math.isinf(samples):
+        return 0.0
+    bits = entropy_bits(probabilities)
     second = math.fsum(
         value * math.log2(value) * math.log2(value)
-        for value in frequencies
+        for value in probabilities
         if value > 0
     )
-    variance = (second - bits * bits) / total
+    variance = (second - bits * bits) / samples
     return math.sqrt(variance) if variance > 0.0 else 0.0
 
 
@@ -117,7 +162,7 @@ def plugin_entropy(counts: Sequence[int]) -> EntropyEstimate:
     bits = entropy_bits(frequencies)
     return EntropyEstimate(
         bits=bits,
-        standard_error=_standard_error(frequencies, bits, total),
+        standard_error=entropy_standard_error(frequencies, total),
         correction=0.0,
         occupied=occupied,
         samples=total,

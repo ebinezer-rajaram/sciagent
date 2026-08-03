@@ -327,9 +327,11 @@ class Executor:
     ) -> CompiledOperation:
         if isinstance(design.operation, CompareCandidates):
             raise UnknownOperationError(
-                f"{render(design.operation)} has no executor path: comparing "
-                f"candidates against each other is what one-step-greedy BOED "
-                f"does, and it arrives with backlog item 8"
+                f"{render(design.operation)} has no executor path and will not "
+                f"acquire one: it measures nothing. Comparing candidates against "
+                f"each other is answered by selection, not by execution -- see "
+                f"sciagent.experiments.boed.compare, which ranks the designs that "
+                f"would separate them without performing any of them"
             )
         program = self._compiled.get(defect)
         if program is None:

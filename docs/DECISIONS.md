@@ -884,3 +884,160 @@ rather than returning something that resembles a registered row.
 it the forced-arrival separation measurement — 250 executions of 512 events, at a
 burst intensity where Hawkes thinning is expensive. The full suite is **2 minutes
 20 seconds** with the table cached, against 2 minutes 27 recorded at item 6.
+
+## 2026-08-03 — item 8: what A24's "greedy optimum" is
+
+**Ambiguity.** SPEC §6.6 A24 requires one-step-greedy BOED's realised
+information gain to be "within 10% of the greedy optimum" and does not say what
+the optimum is. Three readings were available.
+
+**Resolved** as the *exact-EIG greedy* policy: the reference chooses, at each
+step, the design maximising expected information gain computed from outcome
+distributions known in closed form, while the implementation chooses from a
+finite empirical table of the same distributions. What A24 then bounds is the
+implementation's estimation error, which is what "the implementation is a fair
+baseline rather than a straw man" is a claim about.
+
+**Why not the other two.** A *hindsight oracle* — the design maximising the gain
+actually realised on the outcome drawn — is not a target an expectation-maximiser
+can be held to within 10%, so A24 would be unpassable as written. A *non-myopic
+DP optimum* measures the cost of myopia, which is a property of greedy selection
+rather than of this implementation, and SPEC §11 assigns exhaustive DP to item 11.
+
+**Consequence for the test.** A24's scenarios are synthetic, because "computable
+optimal policies" needs distributions that are exactly known and the slice's are
+precisely what the empirical table estimates. Two devices make the number mean
+something: one outcome is pre-drawn for every (step, design) pair before either
+policy runs, so where the policies agree their realised gain is *identical* and
+the aggregate difference carries no outcome noise; and both trajectories are
+scored by exact Bayes updates, so a badly calibrated estimator cannot report a
+large gain by being confidently wrong.
+
+**Measured**, 200 scenarios, 5 hypotheses, 6 designs, 8 cells, horizon 3, table
+at 200 replicates:
+
+| policy | mean realised gain | of optimum |
+|---|---|---|
+| exact-EIG greedy (the reference) | 1.0082 bits | 100% |
+| one-step-greedy BOED (table) | 1.0014 bits | **99.33%** |
+| uniformly random selection | 0.5598 bits | 55.52% |
+
+The two greedy policies chose the same design on 81% of steps, so the 99.33% is
+not agreement by default: they diverge on nearly a fifth of decisions and it
+costs almost nothing, because divergence happens where two designs are nearly
+tied and the loss from picking either is nearly zero.
+
+**On the replicate count.** A24's table is built at 200 replicates, not the
+slice's 2000. The criterion bounds the selector's estimation error, so it is
+measured where that error is visible; at 2000 the policies almost never diverge
+and the bound would be met without testing anything.
+
+**Closes off.** The random-selection row is asserted, not merely reported:
+`test_a24_the_bound_rejects_random_selection` requires random choice to *fail*
+the same 10% bound. A gate a broken implementation also passes is not a gate, and
+this is what shows A24's threshold discriminates.
+
+## 2026-08-03 — item 8: `CompareCandidates` is selection, not execution
+
+**Decision.** SPEC §4.4's sixth operation is realised by
+`sciagent.experiments.boed.compare`, which restricts the belief to the named
+candidate defects and ranks the designs that would separate them. It keeps no
+executor path, permanently. Item 7 left this open (see "Ambiguity 2" above) and
+the refusal in `Executor` now says the reason rather than naming a future item.
+
+**Why.** Every other §4.4 operation is one execution yielding one
+`DiagnosticVector`. This one measures nothing: it asks which experiment would
+tell the candidates apart, and the answer is an inference output, not a datum.
+Giving it an executor path would mean inventing a divergence and a discretisation
+for it, registering a row for an experiment nobody performed, and charging budget
+for arithmetic — which is the same mistake the engine's table-building
+simulations are kept out of the record to avoid.
+
+**Closes off.** Candidates are matched to hypotheses by `defect_key`, so two
+hypotheses proposed under different names for one structure are one candidate. A
+candidate no hypothesis holds raises rather than being dropped: silently
+comparing against fewer candidates than were asked for would be a wrong answer to
+a question that looked answered.
+
+## 2026-08-03 — item 8: BOED does not apply the Miller-Madow correction
+
+**Tried and abandoned.** Correcting both terms of `H(Y) - sum_h p(h) H(Y|h)`
+with Miller-Madow, which `inference/entropy.py` had been written in anticipation
+of. Its module docstring said so, and has been corrected.
+
+**Why abandoned, on principle.** The conditional term's distribution is already
+the one the likelihood uses — Krichevsky-Trofimov, from
+`EmpiricalTable.probabilities`. Reading it from raw frequencies instead would put
+a second definition of a cell probability into the codebase, and `boed.update`
+would stop agreeing with `EmpiricalTableEngine.posterior`. Raw frequencies also
+assign zero to an unvisited cell, which kills a hypothesis outright on the
+evidence of a finite simulation budget.
+
+**Why abandoned, on size.** Measured over the slice's table (2000 replicates,
+9 cells, 5 structures × 4 designs):
+
+| quantity | largest over the table |
+|---|---|
+| KT lift of a row's entropy over plug-in | 0.032 bits |
+| Miller-Madow addition to the same row | 0.0036 bits |
+
+KT is already the larger correction by an order of magnitude and in the same
+direction, so stacking both would over-correct. What survives is a bias in the
+safe direction: shrinkage lifts a peaked row further than a flat one, hence the
+conditional term more than the marginal, so EIG comes out **low** by at most
+0.024 bits of 1.47 (1.6%), with the ranking of the slice's four designs
+unchanged. Understating a design's value cannot make a useless experiment look
+informative.
+
+**Closes off.** `entropy_standard_error` was extracted from the private
+`_standard_error` and made `inf`-tolerant, so an exact predictive
+(`Predictive.samples = math.inf`) reports an error bar of zero rather than
+dividing by an infinite sample count by accident.
+
+## 2026-08-03 — item 8: the structural prior leaves BOED nothing to gain at step zero
+
+**Measured, and it matters for item 9.** With no experiment recorded, the
+engine's posterior *is* SPEC §0's structural prior, under which the null costs
+one bit and every mechanism twenty-three or more. Over the slice's closed set
+that puts 1.000000 (to six places) on the null, leaving a posterior entropy of
+**0.000012 bits** and a best available expected information gain of **0.000005
+bits** across all four slice designs.
+
+**Consequence.** A BOED-only investigation's *first* design is settled by the
+tiebreak — ascending template id — and not by the belief, because every design is
+within a rounding error of every other. This is not a defect to be fixed: SPEC §0
+fixes the prior deliberately and says so. But V1 (item 9) cannot be described as
+"choosing" its opening experiment, and any comparison of V1 against a system that
+opens differently is comparing tiebreaks on step one.
+
+**Closes off.** Recorded as a property of the prior, not of the selector. The
+same measurement is asserted in `tests/test_boed.py`
+(`TestTheStructuralPriorLeavesLittleToGain`), so it fails loudly if the prior or
+the code lengths move.
+
+## 2026-08-03 — item 8: what is left open
+
+**Left incomplete, deliberately.** Two things.
+
+*Two-step lookahead is not implemented.* SPEC §13 lists it in the backlog at
+freeze, and research question R3 — whether an LLM has headroom above lookahead or
+merely substitutes for its depth — depends on it existing later, not now. One
+step is what §5 specifies for V1.
+
+*`greedy` accepts a caller-supplied belief.* SPEC's second invariant says no code
+path reachable from an agent may set a posterior value, and `greedy`'s
+`posterior` argument is such a path in principle: a system could hand it a
+fabricated distribution. It is not closed by a runtime assertion, because A24
+must drive the identical policy from closed-form distributions with no engine in
+existence, and there is nothing at that boundary to assert against. What is
+provided instead is `boed.plan`, which takes both the belief and the predictive
+off the engine and is the entry point a research system is meant to use, so the
+fabrication path exists only between framework functions. Closing it properly
+belongs with the verifier (item 10), where "did this number come from where it
+claims to" is already the subject.
+
+**Measured, on cost.** `tests/test_boed.py` runs in **1.2 seconds** and
+`tests/acceptance/test_a24.py` in **2.5 seconds**; neither simulates a
+programme, which is why item 8 adds 23 tests for under four seconds where item
+7 added 8 seconds for far fewer. The full suite is **2 minutes 50 seconds** with
+the table cached, against 2 minutes 20 recorded at item 7.

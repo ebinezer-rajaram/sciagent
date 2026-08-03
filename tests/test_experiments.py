@@ -350,6 +350,13 @@ class TestExecutorRegisters:
     def test_compare_candidates_is_refused_by_name(
         self, store: ExperimentStore
     ) -> None:
+        """Refused permanently, not pending. Backlog item 8 settled it.
+
+        ``CompareCandidates`` scores candidate defects against each other, which
+        is answered by :func:`sciagent.experiments.boed.compare` as *selection*.
+        It measures nothing, so there is no result to register and no budget to
+        charge, and the executor path it lacks is one it will never acquire.
+        """
         design = ExperimentDesign(
             CompareCandidates(
                 candidates=(closed_set()["hawkes"], closed_set()["seasonality"])
@@ -357,7 +364,7 @@ class TestExecutorRegisters:
             _space("inter_arrival_dispersion"),
             N_EVENTS,
         )
-        with pytest.raises(UnknownOperationError, match="backlog item 8"):
+        with pytest.raises(UnknownOperationError, match="measures nothing"):
             executor(store=store).run(design, closed_set()["null"], Seed(1))
 
     def test_an_unperformable_operation_is_refused(self) -> None:

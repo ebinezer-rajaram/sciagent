@@ -40,13 +40,16 @@ on the reserved-character rule above.
 ``CompareCandidates``
 ---------------------
 
-Present so that SPEC §4.4's operation set is complete, and deliberately without
+Present so that SPEC §4.4's operation set is complete, and permanently without
 an executor path. Every other operation is one execution yielding one
 :data:`~sciagent.inference.binning.DiagnosticVector`; this one scores candidate
-defects against each other, which is precisely what one-step-greedy BOED does,
-and the comparison rule -- which score, which divergence -- is backlog item 8's
-decision to make. :class:`~sciagent.experiments.executor.Executor` refuses it by
-name rather than half-wiring it.
+defects against each other, which is precisely what one-step-greedy BOED does.
+It is realised by :func:`sciagent.experiments.boed.compare`, as *selection*:
+asked which of these candidates is right, BOED answers with the experiment that
+would best tell them apart, and performs none of them.
+:class:`~sciagent.experiments.executor.Executor` therefore refuses it by name,
+and the refusal is settled rather than provisional -- an operation that measures
+nothing has no result to register and no budget to charge.
 """
 
 from __future__ import annotations
@@ -244,8 +247,9 @@ class AblateComponent:
 class CompareCandidates:
     """Score candidate defects against each other.
 
-    Typed here so SPEC §4.4's operation set is complete; realised by backlog
-    item 8. See this module's docstring for why it has no executor path.
+    Typed here so SPEC §4.4's operation set is complete; realised by
+    :func:`sciagent.experiments.boed.compare`. See this module's docstring for
+    why it has no executor path.
     """
 
     candidates: tuple[Defect, ...]

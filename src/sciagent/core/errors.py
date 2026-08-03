@@ -41,6 +41,17 @@ class DeterminismError(ProgramError):
     """A determinism invariant was violated (e.g. non-finite draw, bad seed)."""
 
 
+class ClampError(ProgramError):
+    """An execution clamp does not denote an intervention on this programme.
+
+    Raised for a clamped component the programme does not hold, an event index
+    outside the run, or a non-finite forced value. A clamp is ``do(X = x)``, and
+    every one of those is a statement about a variable or a time that does not
+    exist -- which would otherwise be absorbed silently and produce a log that
+    looks like an intervention and is not.
+    """
+
+
 # --------------------------------------------------------------------------
 # Grammar and edits
 # --------------------------------------------------------------------------
@@ -138,8 +149,32 @@ class BudgetExhaustedError(BudgetError):
 
 
 # --------------------------------------------------------------------------
-# Conditions and hypotheses
+# Experiments
 # --------------------------------------------------------------------------
+
+
+class ExperimentError(SciAgentError):
+    """Base for faults in an experiment design or its execution."""
+
+
+class UnknownOperationError(ExperimentError):
+    """An operation reached a compiler or an executor that cannot carry it out.
+
+    Distinct from a malformed operation. SPEC §4.4's operation set is fixed, but
+    an environment need not realise all of it, and one operation
+    (``CompareCandidates``) is realised by backlog item 8 rather than by the
+    executor. Refusing loudly is the point: an operation that silently measured
+    something other than what it names would be indistinguishable from a result.
+    """
+
+
+class MalformedDesignError(ExperimentError):
+    """An experiment design does not denote a single repeatable measurement.
+
+    Raised for a non-positive run length, for an identifier carrying a character
+    the design's canonical rendering reserves, and for an operation whose fields
+    do not describe an act that could be performed.
+    """
 
 
 class ConditionError(SciAgentError):

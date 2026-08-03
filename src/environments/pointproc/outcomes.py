@@ -12,7 +12,7 @@ where it lives, the numbers in ``docs/DECISIONS.md`` are -- but the edges are
 inputs to every likelihood the framework computes, so they are literals here
 rather than a computation anywhere.
 
-**Templates.** Each names exactly one diagnostic. That is deliberate: two
+**Designs.** Each names exactly one diagnostic. That is deliberate: two
 diagnostics read off the same execution are correlated, and the engine's
 likelihood factorises across experiments only because each experiment is a
 separate execution under its own seed. One diagnostic per template keeps that
@@ -36,10 +36,16 @@ dispersion diagnostic, which is what leaves intervention as the only route and
 what scenario S10's non-identifiability rests on.
 
 **The simulator.** The adapter that turns "apply this defect and measure this
-template" into an execution. It caches the most recent execution, because the
-table asks every template for the same ``(defect, seed)`` in turn and re-running
-the programme once per diagnostic would multiply the build cost by four for no
-change in any number.
+design" into an execution. Since backlog item 7 it is an
+:class:`~sciagent.experiments.executor.Executor` with no registry attached: the
+engine's ten thousand table-building executions are its internal arithmetic and
+not experiments, so they travel the executor's ``measure`` path and never its
+``run`` path. Sharing the path is the point -- a likelihood computed by a
+different route than the observation it scores would hide a discrepancy between
+them. The executor keeps the single-slot execution cache this module used to
+keep, because the table asks every design for the same ``(defect, seed)`` in turn
+and re-running the programme once per diagnostic would multiply the build cost by
+four for no change in any number.
 """
 
 from __future__ import annotations
@@ -47,14 +53,32 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from environments.pointproc.catalogue import metric_registry
-from environments.pointproc.grammar import edit_grammar
+from environments.pointproc.components import LIBRARY_VERSION
+from environments.pointproc.grammar import GRAMMAR_VERSION, edit_grammar
 from environments.pointproc.mechanisms import CONFOUNDED_MECHANISMS
+from environments.pointproc.operations import compiler
 from environments.pointproc.program import reference_program
 from sciagent.core.edits import Defect, EditGrammar
-from sciagent.core.program import GenerativeProgram
-from sciagent.core.types import EventLog, ExperimentTemplateId, MetricName, Seed
-from sciagent.inference.binning import DiagnosticVector, Discretisation, OutcomeSpace
+from sciagent.core.types import DataVersion, EnvVersion, MetricName
+from sciagent.experiments.dsl import ExperimentDesign, QueryDiagnostic
+from sciagent.experiments.executor import Executor
+from sciagent.inference.binning import Discretisation, OutcomeSpace
 from sciagent.inference.interface import ExperimentTemplate, Simulator
+from sciagent.registry.budget import Budget
+from sciagent.registry.partitions import DataPartition
+from sciagent.registry.store import ExperimentStore
+
+#: SPEC §3.2 defines ``EnvVersion`` as a content hash of code plus reference
+#: programme. Until the environment protocol lands, the grammar and family
+#: library versions stand in: between them they cover every construct a
+#: programme can hold and every semantics it can be executed under, which is
+#: what a registered result has to be addressed by.
+ENV_VERSION = EnvVersion(f"pointproc/{GRAMMAR_VERSION}+{LIBRARY_VERSION}")
+
+#: The slice generates its own data, so there is no external dataset to version.
+#: The reference operating point is what a run is relative to, and it moves only
+#: when the mechanisms are recalibrated.
+DATA_VERSION = DataVersion("pointproc/generated/1.0.0")
 
 #: Events per execution. Long enough that every diagnostic in the catalogue is
 #: estimable -- the phase-conditioned dispersion needs several windows per phase
@@ -150,21 +174,31 @@ def discretisation(name: str) -> Discretisation:
     )
 
 
-def _template(name: str) -> ExperimentTemplate:
-    return ExperimentTemplate(
-        id=ExperimentTemplateId(f"query:{name}"),
+def _design(name: str) -> ExperimentDesign:
+    return ExperimentDesign(
+        operation=QueryDiagnostic(),
         outcome=OutcomeSpace(axes=(discretisation(name),)),
         n_events=N_EVENTS,
     )
 
 
-def slice_templates() -> tuple[ExperimentTemplate, ...]:
-    """Return the slice's experiment templates, in a fixed order.
+def slice_designs() -> tuple[ExperimentDesign, ...]:
+    """Return the slice's experiment designs, in a fixed order.
+
+    Every one is an observation under no manipulation, which is what the closed
+    set of SPEC §4.2 can be separated by -- all but the Hawkes/regime-switching
+    pair, whose only discriminator is a forced arrival and therefore belongs to a
+    scenario's plan rather than to the table the posterior is calibrated on.
 
     Guarantees a stable set of ids and outcome spaces, and therefore a stable
     :attr:`~sciagent.inference.empirical.EmpiricalTable.version`.
     """
-    return tuple(_template(name) for name in sorted(_EDGES))
+    return tuple(_design(name) for name in sorted(_EDGES))
+
+
+def slice_templates() -> tuple[ExperimentTemplate, ...]:
+    """Return the posterior engine's view of :func:`slice_designs`."""
+    return tuple(design.template() for design in slice_designs())
 
 
 def closed_set() -> Mapping[str, Defect]:
@@ -183,42 +217,43 @@ def closed_set() -> Mapping[str, Defect]:
     }
 
 
+def executor(
+    grammar: EditGrammar | None = None,
+    *,
+    store: ExperimentStore | None = None,
+    partition: DataPartition = DataPartition.DEV,
+    budget: Budget | None = None,
+) -> Executor:
+    """Return an :class:`~sciagent.experiments.executor.Executor` for this slice.
+
+    Guarantees the environment's own versions, grammar, metric catalogue and
+    operation compiler. With no ``store``, ``run`` refuses and only ``measure``
+    is available -- which is the configuration the posterior engine wants, since
+    a table-building execution is not an experiment.
+    """
+    return Executor(
+        reference=reference_program(),
+        grammar=grammar if grammar is not None else edit_grammar(),
+        compile=compiler(),
+        metrics=metric_registry(),
+        env_version=ENV_VERSION,
+        data_version=DATA_VERSION,
+        store=store,
+        partition=partition,
+        budget=budget,
+    )
+
+
 def simulator(grammar: EditGrammar | None = None) -> Simulator:
     """Return a :data:`~sciagent.inference.interface.Simulator` for this slice.
 
     Guarantees the returned callable is a pure function of
-    ``(defect, template, seed)``: the cache it keeps is keyed on exactly those
+    ``(defect, template, seed)``: the executor's cache is keyed on exactly those
     inputs that determine an execution, so it changes how long a call takes and
-    never what it returns.
+    never what it returns. Nothing it does is registered or charged -- see this
+    module's docstring.
     """
-    resolved = grammar if grammar is not None else edit_grammar()
-    reference = reference_program()
-    registry = metric_registry()
-    compiled: dict[Defect, GenerativeProgram] = {}
-    cache: dict[tuple[Defect, int, int], EventLog] = {}
-
-    def simulate(
-        defect: Defect, template: ExperimentTemplate, seed: Seed
-    ) -> DiagnosticVector:
-        program = compiled.get(defect)
-        if program is None:
-            program = resolved.apply(reference, defect)
-            compiled[defect] = program
-        key = (defect, int(seed), template.n_events)
-        log = cache.get(key)
-        if log is None:
-            log = program.execute(seed, template.n_events)
-            # One entry: the table asks every template for the same
-            # (defect, seed) in turn, so a single slot is the whole win, and
-            # holding more would grow without bound over a table build.
-            cache.clear()
-            cache[key] = log
-        return tuple(
-            registry.spec(str(metric.name)).compute(log)
-            for metric in template.outcome.metrics
-        )
-
-    return simulate
+    return executor(grammar).simulator(slice_designs())
 
 
 def metric_names() -> tuple[MetricName, ...]:

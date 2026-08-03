@@ -26,6 +26,7 @@ from environments.pointproc import (
     CONFOUNDED_MECHANISMS,
     SIZE_EXCITATION,
     agent_grammar,
+    arrival_burst,
     edit_grammar,
     mechanism_defect,
     reference_program,
@@ -128,6 +129,48 @@ class TestA1Determinism:
             f"{name} {digest}\n" for name, digest in determinism_child.digests().items()
         )
         assert completed.stdout == expected
+
+    def test_a1_clamped_execution_is_byte_identical_across_100_repeats(self) -> None:
+        """The in-process arm for clamped execution (backlog item 7).
+
+        Hawkes is the case that matters: it simulates by Ogata thinning, so its
+        draw count depends on its own history, and a forced burst is the input
+        that perturbs that history most.
+        """
+        clamps = {ARRIVAL: dict(arrival_burst(8, 0.01))}
+        program = edited_program(ALL_DEFECTS["hawkes"])
+        expected = program.execute(Seed(4242), 256, clamps=clamps).to_bytes()
+        for repeat in range(100):
+            actual = (
+                edited_program(ALL_DEFECTS["hawkes"])
+                .execute(Seed(4242), 256, clamps=clamps)
+                .to_bytes()
+            )
+            assert actual == expected, f"clamped hawkes diverged on repeat {repeat}"
+
+    def test_a1_clamps_are_not_silently_ignored(self) -> None:
+        """Guards against a degenerate pass of the arms above.
+
+        Every determinism check compares a run against itself, so a clamp that
+        was quietly dropped would satisfy all of them. The three execution modes
+        the child process reports must therefore produce three *different*
+        digests for every programme.
+        """
+        sys.path.insert(0, str(CHILD.parent))
+        try:
+            import determinism_child
+        finally:
+            sys.path.pop(0)
+        digests = determinism_child.digests()
+        for name in ALL_DEFECTS:
+            modes = {
+                suffix: digests[f"{name}{suffix}"]
+                for suffix in determinism_child.CLAMP_MODES
+            }
+            assert len(set(modes.values())) == len(modes), (
+                f"{name}: clamped and unclamped runs agree, so a clamp is being "
+                f"ignored: {modes!r}"
+            )
 
     def test_a1_distinct_seeds_give_distinct_logs(self) -> None:
         """Guards against a degenerate pass: seeds must actually matter."""

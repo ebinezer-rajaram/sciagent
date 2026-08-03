@@ -12,6 +12,14 @@ from environments.pointproc.mechanisms import (
     SIZE_EXCITATION,
     mechanism_defect,
 )
+from environments.pointproc.operations import arrival_burst, compiler
+from environments.pointproc.outcomes import (
+    closed_set,
+    executor,
+    simulator,
+    slice_designs,
+    slice_templates,
+)
 from environments.pointproc.program import reference_program
 
 __all__ = [
@@ -22,7 +30,14 @@ __all__ = [
     "SEASONALITY",
     "SIZE_EXCITATION",
     "agent_grammar",
+    "arrival_burst",
+    "closed_set",
+    "compiler",
     "edit_grammar",
+    "executor",
     "mechanism_defect",
     "reference_program",
+    "simulator",
+    "slice_designs",
+    "slice_templates",
 ]

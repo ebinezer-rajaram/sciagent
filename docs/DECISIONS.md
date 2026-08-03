@@ -727,3 +727,160 @@ seed. The full suite is **2 minutes 27 seconds** with the table cached, up from
 23.5 seconds before this item; the largest remaining costs are A6's 500
 independent trial tables at 48 s and the rebuild that verifies the cache is
 honest at 26 s.
+
+## 2026-08-03 — item 7: three spec ambiguities in the experiment DSL
+
+**Ambiguity 1: how an intervention reaches execution.** SPEC §4.4 lists
+`ForceArrival(intervention)` as an operation, but §3.1's `GenerativeProgram`
+exposes only `execute(seed, n_events)` and `Component.parameters` is float-valued
+by specification, so a forcing schedule cannot ride along as a parameter. The
+spec never says how the two meet.
+
+**Resolved** by an optional keyword argument: `execute(seed, n_events, *, clamps:
+Mapping[ComponentId, Mapping[int, float]] | None = None)`. A clamped component
+takes its value at a clamped index from the schedule and does not draw. An
+unclamped call is byte-identical to before, so A1 and the built empirical table
+are untouched — verified directly rather than assumed: a worktree at the previous
+commit and the current tree both compute table version
+`table/689f679f38d4a4d8419468d49eb584b5` and the same cache stem.
+
+A clamp is an argument rather than a field of the programme because it is
+`do(X = x)`: an act performed on a model, not part of one. The alternative
+considered was an environment-supplied "forced" family, rejected because every
+distinct schedule would become a distinct `FamilyId` and the schedule would still
+have to be encoded in float parameters — the workaround `Component`'s own
+docstring already flags as a last resort.
+
+**Ambiguity 2: `CompareCandidates` does not fit the executor.** Every other §4.4
+operation is one execution yielding one `DiagnosticVector`. This one scores
+candidate defects against each other, which is what one-step-greedy BOED does.
+
+**Resolved** by typing it in `dsl.py` so the §4.4 operation set is complete, and
+refusing it in the executor with `UnknownOperationError` naming item 8. The
+comparison rule — which score, which divergence — is item 8's decision, and
+inventing one here would mean revising it immediately.
+
+**Ambiguity 3: `Prediction.under`.** SPEC §3.3 writes `under: ExperimentTemplate`,
+i.e. the structure. The code has `ExperimentTemplateId`, carrying a note that
+said item 7 would replace it.
+
+**Resolved** by keeping the id, and rewriting the note to say why. A `Prediction`
+is a frozen value type that gets content-addressed; embedding a whole design in
+each one enlarges what is hashed and buys nothing, since `ExperimentDesign.id`
+*is* the design's canonical rendering. Retyping would also ripple through
+`hypothesis/graph.py`, `hypothesis/validator.py` and A16's 72 tests. This is a
+deliberate divergence from the specification's literal type, recorded as one.
+
+**Closes off.** An environment expresses an intervention as a clamp schedule or a
+programme rewrite, and as nothing else. An environment needing a third mechanism
+has found a contradiction worth writing down rather than a gap to fill locally.
+
+## 2026-08-03 — item 7: a forced arrival must declare how long it observes for
+
+**Tried and abandoned.** Reading a forced-arrival experiment over the whole
+remainder of the run. It has no power at all. Post-burst mean rate after a
+20-arrival burst at spacing 0.01, 200 replicates per structure:
+
+| structure | whole-run window (492 events) | 20-event window |
+|---|---|---|
+| hawkes | 1.097 (sd 0.208) | 10.04 (sd 5.09) |
+| regime_switching | 1.011 (sd 0.158) | 1.15 (sd 0.85) |
+| poisson_mixture | 1.010 (sd 0.081) | 1.26 (sd 0.93) |
+| seasonality | 1.004 (sd 0.047) | 1.04 (sd 0.30) |
+| null | 1.000 (sd 0.043) | 1.05 (sd 0.23) |
+
+**Why.** The Hawkes kernel decays at rate 0.928, so the excitation a burst
+contributes is spent within about one time unit, while a 512-event run at the
+reference rate spans some five hundred. Pooling over the whole run averages the
+response against five hundred units of baseline and returns the baseline.
+
+**Consequence for the type.** `ForceArrival` therefore carries an `observe`
+field: how many events after the last forced one the measurement is read over. It
+is a field rather than a compiler constant because the right window is a property
+of the mechanism under test — too long dilutes, too short measures noise — which
+makes it something an experiment *chooses*, and something item 8's BOED will
+choose between. Measured at 500 replicates, AUC for Hawkes against each
+alternative:
+
+| window | vs null | vs mixture | vs regime | vs seasonality |
+|---|---|---|---|---|
+| 10 events | 0.998 | 0.981 | 0.994 | 0.996 |
+| 20 events | 0.986 | 0.980 | 0.979 | 0.986 |
+
+Ten events gives the higher AUC but a much worse operating point: against the
+Poisson mixture only 58% of Hawkes replicates clear the mixture's 99th
+percentile, because over a short window the mixture's own high-rate component
+produces bursts that look like excitation. At twenty events the worst case across
+all four alternatives is 88%. **Twenty is the chosen default.**
+
+**Why this matters beyond the number.** SPEC §4.2 makes the forced arrival the
+only thing separating Hawkes from regime switching, and the pair is calibrated to
+be indistinguishable under every dispersion diagnostic. The integration test
+measures both sides of that contrast in one place: under
+`inter_arrival_dispersion` the pair sits at AUC 0.35–0.65, and under the forced
+burst at 0.98. If that gap ever closes, stage 3 of §4.2's minimum discriminating
+plan has no experiment, S10's non-identifiability stops being budget-bound, and
+A24 would be measuring BOED over a design space containing no discriminating
+design.
+
+## 2026-08-03 — item 7: a clamped component skips its draw
+
+**Decision.** A clamped index does not advance the clamped component's random
+stream. The alternative — draw, then discard — was considered and rejected.
+
+**Why.** Drawing and discarding would keep a clamped run and an unclamped run on
+aligned streams, so the two would differ only where the clamp bites and a forced
+arrival's effect could be measured pairwise, which is far more powerful than
+measuring it across replicates. That alignment is unattainable here: three of the
+five arrival families (Hawkes, periodic, size-excited) simulate by Ogata
+thinning, and a thinned draw consumes a number of variates that depends on the
+history. The streams diverge at the first post-clamp event whatever is done, so
+paying for the discarded draws would buy an alignment that does not survive.
+
+**Consequence.** Every forced-arrival effect in this repository is a
+between-replicate comparison. A clamped run is *not* a counterfactual of its
+unclamped twin, and reading one as such would be wrong. What is preserved, and
+tested, is that clamping one component cannot perturb another's draws at all —
+streams are derived by name, so that holds regardless.
+
+## 2026-08-03 — item 7: what is left open
+
+**Left incomplete, deliberately.** Three things.
+
+*`Intervention` and `Estimand` are not added.* SPEC §3.3 lists both among the
+interfaces to implement first, and item 7 implements neither. The executor does
+derive and record `manipulated` and the collateral set — which is what an
+experiment needs, and it is derived from the programme DAG rather than declared,
+as §3.3 requires. But the typed estimand and its alignment with an intervention
+are what the *verifier* checks, which is A21's business and therefore item 10's.
+Adding the types now would mean guessing what the verifier wants from them.
+
+*`ConditionOn` observes two covariates.* Phase and mark size. SPEC §4.2 also
+names "conditioning on the inferred state" as a discriminator for regime
+switching, and that is deliberately absent: the latent regime is not observable,
+and conditioning on the true trace would be reading the answer off the ground
+truth. Conditioning on an *inferred* state is a hypothesis-dependent analysis
+rather than an experiment operation, so it belongs to whatever performs the
+inference and not to the DSL.
+
+*`ForceArrival` accepts only a prefix of the run on a time-valued component.*
+Arrival values are absolute times and must ascend; whether a mid-run clamp
+violates that depends on times not yet drawn, so it is not checkable at compile
+time. Forcing indices `0..k-1` is the case where monotonicity holds by
+construction. A mid-run intervention would need either a relative schedule
+("insert an arrival `dt` after event `i`") or a two-pass execution, and no
+scenario in §4.5 needs one.
+
+**Also.** `outcomes.simulator()` is now an `Executor` with no registry attached,
+so the posterior engine's table-building executions and an investigation's
+registered experiments travel one code path. They are kept apart by which method
+is called: `measure` executes; `run` executes *and* registers *and* charges. An
+engine that registered its ten thousand internal simulations would fill the
+record with experiments nobody performed and make the reported cost of an
+investigation meaningless, so `run` refuses outright when no store is attached
+rather than returning something that resembles a registered row.
+
+**Measured, on cost.** `tests/test_experiments.py` runs in **8 seconds**, most of
+it the forced-arrival separation measurement — 250 executions of 512 events, at a
+burst intensity where Hawkes thinning is expensive. The full suite is **2 minutes
+20 seconds** with the table cached, against 2 minutes 27 recorded at item 6.

@@ -46,10 +46,17 @@ HypothesisId = NewType("HypothesisId", str)
 PredictionId = NewType("PredictionId", str)
 ExperimentId = NewType("ExperimentId", str)
 
-#: Placeholder for SPEC §3.3's ``ExperimentTemplate``, which is a structure in
-#: the experiment DSL and therefore arrives with backlog item 7. Until then a
-#: prediction names the template it is made under; item 7 replaces this with the
-#: DSL type and the field keeps its meaning.
+#: The identity of an experiment design (SPEC §4.4), which is
+#: :attr:`sciagent.experiments.dsl.ExperimentDesign.id` -- a readable canonical
+#: rendering of the act and the diagnostics it is read over.
+#:
+#: SPEC §3.3 writes ``Prediction.under: ExperimentTemplate``, i.e. the structure
+#: itself. Backlog item 7 kept the id instead, deliberately. A ``Prediction`` is
+#: a frozen value type that gets content-addressed, and embedding a whole design
+#: in each one enlarges what is hashed while adding nothing: the id *is* the
+#: design's canonical rendering, so naming it names the design uniquely. The
+#: divergence from the specification's literal type is recorded in
+#: ``docs/DECISIONS.md``.
 ExperimentTemplateId = NewType("ExperimentTemplateId", str)
 
 ComponentKind = Literal["arrival", "size", "sign", "observation"]

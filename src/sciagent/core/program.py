@@ -25,12 +25,14 @@ global registry: a programme carries everything needed to execute it.
 from __future__ import annotations
 
 import hashlib
+import math
 from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import dataclass, field
 
 import numpy as np
 
 from sciagent.core.errors import (
+    ClampError,
     CyclicDependencyError,
     DeterminismError,
     ExecutionError,
@@ -341,14 +343,59 @@ class GenerativeProgram:
         if component not in self.components:
             raise UnknownComponentError(f"unknown component {component!r}")
 
+    def _resolve_clamps(
+        self,
+        clamps: Mapping[ComponentId, Mapping[int, float]] | None,
+        n_events: int,
+    ) -> Mapping[ComponentId, Mapping[int, float]]:
+        """Return the clamp schedules, checked against this programme and run.
+
+        Every fault is raised here rather than at the clamped event, so a
+        malformed intervention never produces a partial log. An empty mapping is
+        returned for ``None``, which is the branch the whole unclamped path takes
+        and the reason an unclamped execution is unchanged.
+        """
+        if not clamps:
+            return {}
+        for component_id in sorted(clamps):
+            if component_id not in self.components:
+                raise ClampError(
+                    f"clamp names unknown component {component_id!r}; a clamp is "
+                    f"an intervention on a variable this programme does not hold"
+                )
+            schedule = clamps[component_id]
+            if not schedule:
+                raise ClampError(
+                    f"clamp on {component_id!r} forces no event; an intervention "
+                    f"that changes nothing must not be recorded as one"
+                )
+            for index in sorted(schedule):
+                if not 0 <= index < n_events:
+                    raise ClampError(
+                        f"clamp on {component_id!r} forces event {index}, outside "
+                        f"the {n_events}-event run"
+                    )
+                if not math.isfinite(schedule[index]):
+                    raise ClampError(
+                        f"clamp on {component_id!r} forces event {index} to the "
+                        f"non-finite value {schedule[index]!r}"
+                    )
+        return clamps
+
     # -- execution ---------------------------------------------------------
 
-    def execute(self, seed: Seed, n_events: int) -> EventLog:
+    def execute(
+        self,
+        seed: Seed,
+        n_events: int,
+        *,
+        clamps: Mapping[ComponentId, Mapping[int, float]] | None = None,
+    ) -> EventLog:
         """Generate exactly ``n_events`` events and return the log.
 
         Guarantees bit-exact reproducibility: for a fixed
-        ``(seed, n_events, programme, library version)`` the returned log is
-        byte-identical in every process and every run (acceptance test A1).
+        ``(seed, n_events, programme, library version, clamps)`` the returned log
+        is byte-identical in every process and every run (acceptance test A1).
         This rests on three properties and nothing else:
 
         1. every generator is derived by name via :func:`derive_generator`;
@@ -359,9 +406,30 @@ class GenerativeProgram:
         Events are generated one at a time. Within event ``i`` each component is
         drawn in topological order and may condition on its instantaneous
         parents at ``i``, on its lagged parents at ``< i``, and on its own past.
+
+        Clamping
+        --------
+
+        ``clamps`` maps a component to the event indices at which its value is
+        *forced* rather than drawn: it is ``do(X = x)``, the executed form of
+        SPEC §4.4's ``ForceArrival`` and ``AblateComponent``. A clamp is an act
+        performed on a programme and not a part of one, which is why it is an
+        argument here and not a field of :class:`GenerativeProgram`.
+
+        A clamped component does not draw at a clamped index, so its stream is
+        not advanced there. That cannot perturb any other component: streams are
+        derived by name (:func:`derive_generator`), never by draw order. It does
+        mean a clamped run and an unclamped run diverge on the clamped
+        component's own later values, so a forced-arrival effect is measured
+        across replicates rather than pairwise -- which is unavoidable in any
+        case, since three of the point-process arrival families simulate by
+        thinning and their draw count depends on history.
+
+        Passing no clamps is byte-identical to the unclamped programme.
         """
         if n_events <= 0:
             raise ExecutionError(f"n_events must be positive, got {n_events}")
+        schedules = self._resolve_clamps(clamps, n_events)
 
         order = self.order()
         rngs = {
@@ -397,19 +465,23 @@ class GenerativeProgram:
             current: dict[ComponentId, float] = {}
             for component_id in order:
                 component = self.components[component_id]
-                context = DrawContext(
-                    index=index,
-                    component=component,
-                    rng=rngs[component_id],
-                    latent_rngs=latent_rngs[component_id],
-                    latent_state=latent_state,
-                    parents={p: current[p] for p in instant_parents[component_id]},
-                    history={
-                        p: values[p][:index] for p in lagged_parents[component_id]
-                    },
-                    self_history=values[component_id][:index],
-                )
-                drawn = self.library.kernel(component.family)(context)
+                forced = schedules.get(component_id) if schedules else None
+                if forced is not None and index in forced:
+                    drawn = forced[index]
+                else:
+                    context = DrawContext(
+                        index=index,
+                        component=component,
+                        rng=rngs[component_id],
+                        latent_rngs=latent_rngs[component_id],
+                        latent_state=latent_state,
+                        parents={p: current[p] for p in instant_parents[component_id]},
+                        history={
+                            p: values[p][:index] for p in lagged_parents[component_id]
+                        },
+                        self_history=values[component_id][:index],
+                    )
+                    drawn = self.library.kernel(component.family)(context)
                 if not np.isfinite(drawn):
                     raise ExecutionError(
                         f"component {component_id!r} (family {component.family!r}) "

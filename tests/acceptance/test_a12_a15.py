@@ -38,8 +38,7 @@ from environments.pointproc import (
     reference_program,
 )
 from environments.pointproc.catalogue import metric_registry
-from environments.pointproc.components import LIBRARY_VERSION
-from environments.pointproc.grammar import GRAMMAR_VERSION
+from environments.pointproc.outcomes import DATA_VERSION, ENV_VERSION
 from sciagent.core.edits import Defect
 from sciagent.core.errors import (
     AppendOnlyViolationError,
@@ -70,9 +69,9 @@ SOURCE = Path(__file__).resolve().parents[2] / "src"
 #: SPEC §3.2 defines ``EnvVersion`` as a content hash of code plus reference
 #: programme, which arrives with ``core/environment.py``. The registry needs only
 #: that the field be a stable string, so the slice composes one from the versions
-#: it already declares.
-ENV_VERSION = EnvVersion(f"pointproc/{GRAMMAR_VERSION}+{LIBRARY_VERSION}")
-DATA_VERSION = DataVersion("pointproc-slice/1.0.0")
+#: it already declares. Since backlog item 7 the environment declares both, and
+#: they are imported rather than restated here: a second definition would let the
+#: address this test checks drift from the one the executor actually writes.
 
 N_EVENTS = 256
 MECHANISMS: tuple[str, ...] = ("reference", *sorted(CONFOUNDED_MECHANISMS))

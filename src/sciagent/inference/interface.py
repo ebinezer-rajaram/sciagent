@@ -63,8 +63,12 @@ class ExperimentTemplate:
     The engine needs exactly two things from a template: a stable identity, so a
     table row can be addressed by it, and the finite outcome space its result
     falls in. *How* it is carried out -- which parameters are perturbed, which
-    component is ablated -- is the injected :data:`Simulator`'s business and
-    becomes the experiment DSL of backlog item 7.
+    component is ablated -- is
+    :class:`~sciagent.experiments.dsl.ExperimentDesign`'s business, and a
+    template is what :meth:`~sciagent.experiments.dsl.ExperimentDesign.template`
+    projects a design down to. Keeping the projection one-way is the point: the
+    engine cannot come to condition on what was *done*, only on what was
+    measured and how finely.
     """
 
     id: ExperimentTemplateId

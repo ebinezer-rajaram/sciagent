@@ -201,3 +201,46 @@ detection stays a conventional, non-agentic judgement.
 is published. Item 9's baselines can be re-run cheaply — the gate is 10.8 seconds
 warm — so re-measuring after a change costs almost nothing, and no scenario data
 would need rebuilding.
+
+## A prediction per offered design, not one per hypothesis
+
+**Idea.** When a system proposes a hypothesis without supplying predictions,
+`systems.base.table_prediction` derives exactly one, under the scenario's *first*
+design. Derive one per design the scenario offers instead, so a hypothesis says
+what it expects of every experiment that could be run against it rather than of
+one arbitrary experiment.
+
+**Rationale.** Measured under item 10, on A23. The verifier grades a claim that
+carries no measured effect by evaluating the subject's predictions on the cited
+experiments — item 5's condition algebra decides that exactly. A prediction made
+under a design the system never ran bears on nothing, so the claim is *referred*:
+the verifier correctly reports that it cannot decide mechanically.
+
+All 180 of A23's referrals are this, and all of them are V1 on S5, S6 and S10 —
+BOED simply does not select the first design on those three scenarios. That is
+22.5% of V1's claims and 0% of every other baseline's, and it puts A23's measured
+coverage at **90.5%** against a 90% threshold. One more scenario where V1 avoids
+the first design takes the gate below its bar for a reason that is about which
+design a prediction was attached to, not about the verifier.
+
+A hypothesis is a statement about the whole design space, and attaching its
+falsifiability to one arbitrary member of that space is the actual error. The
+current behaviour also quietly weakens A16's guarantee in practice: a hypothesis
+is refutable, but only by an experiment nobody may run.
+
+Two frictions. Every prediction is validated at proposal time, so *n* designs
+means *n* validations and *n* table reads per proposal — cheap, but it is inside
+the loop item 9's beam search runs fifty times per scenario. And a design whose
+outcome space has more than one axis has no table-derived prediction at all
+(`_cell_condition` raises for it, by design, since a `Prediction` names a single
+diagnostic), so the per-design derivation must skip those rather than fail.
+
+**Touches.** No frozen decision. `systems/base.py` is item 9's and
+`hypothesis/graph.py` item 5's; A16 and A18 both re-run unchanged, since more
+predictions per hypothesis is more falsifiability and not less. A23's figure
+must be re-measured after the change, and the current 90.5% is the baseline it
+would be compared against.
+
+**Sequencing.** Before item 12. A23 is re-measured against real agent claims
+there, and doing this first means that measurement is not confounded by an
+artefact of where predictions were attached.

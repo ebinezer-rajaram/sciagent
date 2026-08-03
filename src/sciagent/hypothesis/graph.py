@@ -26,13 +26,30 @@ Rejection does not disturb the prior. The prior is a statement about structure;
 rejecting a hypothesis is a statement about evidence. Renormalising away from a
 rejected hypothesis would silently move mass to its neighbours on evidential
 grounds through a channel that is supposed to be evidence-free.
+
+Relations
+---------
+
+Nodes carry typed, symmetric relations to each other (:class:`Relation`). Item 5
+built the graph without them because nothing then asked a question about two
+hypotheses at once. Two things now do: SPEC §7.1 makes an experiment relevant to
+a claim if its target hypothesis is "within 2 edges" of the claim's subject or
+stands in an ``AlternativeTo`` or ``Contradicts`` relation to it, and SPEC §4.6
+requirement 5 asks for zero graph contradictions across all runs, which is not a
+statement one can make about a graph with no edges.
+
+A relation is structure, so a system may assert one, and it carries no number:
+:func:`_derive_plausibility` never sees the relation set, so relating two
+hypotheses cannot move the prior. That is checked, not merely arranged.
 """
 
 from __future__ import annotations
 
 import math
+from collections import deque
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from enum import Enum
 
 from sciagent.core.edits import Defect, EditGrammar
 from sciagent.core.errors import (
@@ -99,6 +116,24 @@ PLAUSIBILITY_DERIVATION: tuple[str, ...] = (
 )
 
 
+class Relation(Enum):
+    """How two hypotheses stand to each other (SPEC §7.1 clause 6).
+
+    Exactly the two relations §7.1 names. Both are symmetric, so the graph stores
+    one entry per unordered pair and :meth:`HypothesisGraph.relate` sorts the pair
+    before storing it -- an asymmetric store would let ``(a, b)`` and ``(b, a)``
+    carry different relations and make "is a contradicted?" depend on argument
+    order.
+    """
+
+    ALTERNATIVE_TO = "alternative_to"
+    """Both could be true; they are rivals for the same explanandum."""
+
+    CONTRADICTS = "contradicts"
+    """They cannot both be true. Supporting claims on both sides of one of these
+    is what SPEC §4.6 requirement 5 calls a graph contradiction."""
+
+
 @dataclass(frozen=True, slots=True)
 class HypothesisNode:
     """One candidate explanation (SPEC §3.3).
@@ -119,6 +154,12 @@ class HypothesisNode:
     rejection_reason: RejectionCode | None
     proposed_at: ExperimentId | None
     version: int
+
+
+def _pair(left: HypothesisId, right: HypothesisId) -> tuple[HypothesisId, HypothesisId]:
+    """Return the two ids in sorted order, which is how a relation is keyed."""
+    first, second = sorted((left, right))
+    return HypothesisId(first), HypothesisId(second)
 
 
 def _derive_plausibility(
@@ -152,8 +193,9 @@ class HypothesisGraph:
     Guarantees that every stored plausibility is the value
     :func:`_derive_plausibility` computes -- checked on construction, so it holds
     for a graph however it was built -- that no two nodes carry structurally
-    identical edit sets, and that every node has at least one prediction some
-    attainable diagnostic value could refute.
+    identical edit sets, that every node has at least one prediction some
+    attainable diagnostic value could refute, and that every relation names two
+    distinct nodes the graph holds.
     """
 
     grammar: EditGrammar
@@ -162,6 +204,10 @@ class HypothesisGraph:
     predictions: FrozenDict[PredictionId, Prediction] = field(
         default_factory=FrozenDict
     )
+    relations: FrozenDict[tuple[HypothesisId, HypothesisId], Relation] = field(
+        default_factory=FrozenDict
+    )
+    """Keyed by the *sorted* pair, so one unordered pair holds one relation."""
 
     def __post_init__(self) -> None:
         derived = _derive_plausibility(self.grammar, self.nodes)
@@ -173,6 +219,24 @@ class HypothesisGraph:
                     f"structural prior derives {derived[node_id]!r}; plausibility is "
                     f"framework-written and no caller may supply it (SPEC §6.4 A17)"
                 )
+        for pair in sorted(self.relations):
+            left, right = pair
+            if left == right:
+                raise UnknownHypothesisError(
+                    f"hypothesis {left!r} is related to itself; a relation holds "
+                    f"between two hypotheses"
+                )
+            if (left, right) != tuple(sorted(pair)):
+                raise UnknownHypothesisError(
+                    f"relation key {pair!r} is not sorted; relations are symmetric "
+                    f"and are stored once, under the sorted pair"
+                )
+            for node_id in pair:
+                if node_id not in self.nodes:
+                    raise UnknownHypothesisError(
+                        f"relation {pair!r} names {node_id!r}, which the graph does "
+                        f"not hold; it holds {sorted(self.nodes)!r}"
+                    )
 
     @classmethod
     def empty(cls, grammar: EditGrammar, metrics: MetricRegistry) -> HypothesisGraph:
@@ -211,6 +275,47 @@ class HypothesisGraph:
     def live(self) -> tuple[HypothesisId, ...]:
         """Return the ids of every hypothesis still under investigation."""
         return self.with_status("live")
+
+    def relation(self, left: HypothesisId, right: HypothesisId) -> Relation | None:
+        """Return the relation between two hypotheses, in either order."""
+        return self.relations.get(_pair(left, right))
+
+    def neighbours(self, node_id: HypothesisId) -> Mapping[HypothesisId, Relation]:
+        """Return every hypothesis directly related to ``node_id``, in a fixed order."""
+        found: dict[HypothesisId, Relation] = {}
+        for pair in sorted(self.relations):
+            left, right = pair
+            if left == node_id:
+                found[right] = self.relations[pair]
+            elif right == node_id:
+                found[left] = self.relations[pair]
+        return found
+
+    def hops(self, left: HypothesisId, right: HypothesisId) -> int | None:
+        """Return the number of relations on the shortest path between two nodes.
+
+        ``0`` for a node and itself, ``None`` if no chain of relations connects
+        them. This is what SPEC §7.1 clause 1's "within 2 edges" is measured in.
+        Relations are symmetric, so the search is undirected, and the frontier is
+        expanded in sorted order so the answer does not depend on set iteration
+        order -- it could not change the distance, but a search whose order varies
+        is a determinism hazard waiting for the first tie-break to be added.
+        """
+        self.node(left)
+        self.node(right)
+        if left == right:
+            return 0
+        seen = {left}
+        frontier = deque([(left, 0)])
+        while frontier:
+            current, depth = frontier.popleft()
+            for neighbour in sorted(self.neighbours(current)):
+                if neighbour == right:
+                    return depth + 1
+                if neighbour not in seen:
+                    seen.add(neighbour)
+                    frontier.append((neighbour, depth + 1))
+        return None
 
     # -- transitions -------------------------------------------------------
 
@@ -289,6 +394,32 @@ class HypothesisGraph:
             },
         )
 
+    def relate(
+        self, left: HypothesisId, right: HypothesisId, relation: Relation
+    ) -> HypothesisGraph:
+        """Return this graph with ``left`` and ``right`` standing in ``relation``.
+
+        Structure, not a number: the relation set is not an input to
+        :func:`_derive_plausibility`, so asserting one cannot move the prior on
+        either hypothesis or on any other. Symmetric, so the argument order does
+        not matter, and idempotent for a relation already asserted. Re-relating a
+        pair under a *different* relation replaces the old one -- a graph is a
+        value and its history is the sequence of graphs, so there is nothing here
+        to be append-only about.
+        """
+        self.node(left)
+        self.node(right)
+        if left == right:
+            raise UnknownHypothesisError(
+                f"cannot relate hypothesis {left!r} to itself; a relation holds "
+                f"between two hypotheses"
+            )
+        return self._rebuilt(
+            nodes=dict(self.nodes),
+            predictions=dict(self.predictions),
+            relations={**self.relations, _pair(left, right): relation},
+        )
+
     def reject(self, node_id: HypothesisId, reason: RejectionCode) -> HypothesisGraph:
         """Return this graph with ``node_id`` rejected, for a recorded reason."""
         return self._transition(node_id, "rejected", reason)
@@ -330,11 +461,15 @@ class HypothesisGraph:
         *,
         nodes: Mapping[HypothesisId, HypothesisNode],
         predictions: Mapping[PredictionId, Prediction],
+        relations: Mapping[tuple[HypothesisId, HypothesisId], Relation] | None = None,
     ) -> HypothesisGraph:
         """Return a graph over ``nodes`` with the prior re-derived from scratch.
 
         The single place a stored prior is ever written, and it writes only what
-        :func:`_derive_plausibility` returns.
+        :func:`_derive_plausibility` returns. ``relations`` defaults to the ones
+        already held, so every existing transition carries them through unchanged
+        and none of them is a path by which relating two hypotheses could reprice
+        a third.
         """
         derived = _derive_plausibility(self.grammar, nodes)
         priced = {
@@ -346,4 +481,7 @@ class HypothesisGraph:
             metrics=self.metrics,
             nodes=FrozenDict[HypothesisId, HypothesisNode](priced),
             predictions=FrozenDict[PredictionId, Prediction](predictions),
+            relations=FrozenDict[tuple[HypothesisId, HypothesisId], Relation](
+                self.relations if relations is None else relations
+            ),
         )

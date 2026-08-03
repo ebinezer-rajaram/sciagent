@@ -12,6 +12,7 @@ from sciagent.hypothesis.graph import (
     PLAUSIBILITY_SYMBOLS,
     HypothesisGraph,
     HypothesisNode,
+    Relation,
 )
 from sciagent.hypothesis.validator import (
     Rejection,
@@ -26,6 +27,7 @@ __all__ = [
     "HypothesisGraph",
     "HypothesisNode",
     "Rejection",
+    "Relation",
     "ValidationReport",
     "defect_signature",
     "find_duplicate",

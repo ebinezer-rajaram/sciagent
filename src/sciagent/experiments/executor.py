@@ -57,7 +57,9 @@ from sciagent.core.types import (
     EventLog,
     ExperimentId,
     ExperimentTemplateId,
+    FamilyId,
     FrozenDict,
+    Scope,
     Seed,
 )
 from sciagent.experiments.dsl import (
@@ -136,6 +138,16 @@ class ExecutionResult:
     budget: Budget
     """The budget *after* this experiment was charged."""
 
+    held_fixed: frozenset[ComponentId] = frozenset()
+    """Components clamped at every event index of this run.
+
+    SPEC §7.2's controlled-direct-effect row licenses a claim only if "the
+    held-fixed components were actually held fixed in the executed experiment",
+    which is a question about what ran and not about what was declared. Read off
+    the compiled clamp schedule, so a compiler that clamped a prefix and a
+    compiler that clamped the whole run are distinguishable here, and a claim
+    resting on the first is refused by :mod:`sciagent.verify.causal`."""
+
     @property
     def experiment(self) -> ExperimentId:
         """Return this experiment's id, which is its registry content address.
@@ -210,6 +222,48 @@ class Executor:
         """Return the pool this executor registers into."""
         return self._partition
 
+    @property
+    def reference(self) -> GenerativeProgram:
+        """Return the undefected programme every experiment is an edit of.
+
+        Read-only, and safe to hand out: a
+        :class:`~sciagent.core.program.GenerativeProgram` is frozen, and this is
+        the *reference*, so it carries no scenario's ground truth. SPEC §7.2's
+        licensing rules quantify over its DAG, which is why the verifier needs it.
+        """
+        return self._reference
+
+    def scope(self) -> Scope:
+        """Return where the experiments this executor runs are gathered.
+
+        Everything SPEC §7.1 clause 3 compares, derived from what the executor
+        already holds: the environment version, the reference programme's
+        families, and each component's parameters as a degenerate range, since
+        one programme was run at one parameterisation and claiming a wider one
+        would be claiming an experiment nobody performed. Parameters are keyed
+        ``component.parameter`` so that two components declaring ``rate`` do not
+        collapse into one axis.
+
+        Carried here rather than assembled by a caller because a scope built from
+        somewhere other than the executor could describe a run that did not
+        happen, and every claim's coverage is judged against it.
+        """
+        parameters: dict[str, tuple[float, float]] = {}
+        families: set[FamilyId] = set()
+        for component_id in sorted(self._reference.components):
+            component = self._reference.components[component_id]
+            families.add(component.family)
+            for name in sorted(component.parameters):
+                value = component.parameters[name]
+                parameters[f"{component_id}.{name}"] = (value, value)
+        return Scope(
+            families=frozenset(families),
+            parameters=FrozenDict[str, tuple[float, float]](parameters),
+            env_version=self._env_version,
+            metric_version=self._metrics.version,
+            grammar_version=self._grammar.version,
+        )
+
     # -- execution ---------------------------------------------------------
 
     def measure(
@@ -271,9 +325,10 @@ class Executor:
         result = self.measure(design, defect, seed)
         manipulated = compiled.manipulated
         collateral = self._collateral(compiled.program, manipulated)
+        held_fixed = self._held_fixed(compiled, design.n_events)
         key = ExperimentKey(
             env_version=self._env_version,
-            config=self._config(design, defect, manipulated, collateral),
+            config=self._config(design, defect, manipulated, collateral, held_fixed),
             data_version=self._data_version,
             metric_version=self._metrics.version,
             seed=seed,
@@ -289,6 +344,7 @@ class Executor:
             manipulated=manipulated,
             collateral=collateral,
             budget=self._budget,
+            held_fixed=held_fixed,
         )
 
     def simulator(self, designs: Sequence[ExperimentDesign]) -> Simulator:
@@ -349,18 +405,40 @@ class Executor:
             reached |= program.descendants(component_id)
         return reached - manipulated
 
+    @staticmethod
+    def _held_fixed(
+        compiled: CompiledOperation, n_events: int
+    ) -> frozenset[ComponentId]:
+        """Return the components clamped at *every* event index of the run.
+
+        A prefix clamp is an intervention on part of a realisation; a clamp over
+        the whole run is a component held fixed. SPEC §7.2 licenses a controlled
+        direct effect only on the second, so the distinction is drawn from the
+        compiled schedule rather than from the operation's name -- an environment
+        whose ``AblateComponent`` reached only a prefix would be caught here and
+        not silently licensed.
+        """
+        wanted = frozenset(range(n_events))
+        return frozenset(
+            component_id
+            for component_id in sorted(compiled.clamps)
+            if wanted <= frozenset(compiled.clamps[component_id])
+        )
+
     def _config(
         self,
         design: ExperimentDesign,
         defect: Defect,
         manipulated: frozenset[ComponentId],
         collateral: frozenset[ComponentId],
+        held_fixed: frozenset[ComponentId],
     ) -> FrozenDict[str, str]:
         """Return the content-address config for one execution.
 
         The derived sets are recorded rather than recomputed on read: SPEC §7.2's
-        causal licensing asks what an experiment *did* manipulate, and an audit a
-        year later must not depend on the DAG still being what it was.
+        causal licensing asks what an experiment *did* manipulate and what it
+        *did* hold fixed, and an audit a year later must not depend on the DAG,
+        or on the environment's compiler, still being what it was.
         """
         return FrozenDict[str, str](
             {
@@ -369,5 +447,6 @@ class Executor:
                 "defect": defect_key(defect),
                 "manipulated": ",".join(sorted(manipulated)),
                 "collateral": ",".join(sorted(collateral)),
+                "held_fixed": ",".join(sorted(held_fixed)),
             }
         )

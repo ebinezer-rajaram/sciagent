@@ -1,8 +1,9 @@
 """Core value types and identifier aliases.
 
-``Prediction`` (SPEC §3.3) arrives here with backlog item 5 and ``Diagnosis``
-(SPEC §3.4) with item 9. ``Claim``, ``Estimand`` and ``Scope`` arrive with their
-own later items.
+``Prediction`` (SPEC §3.3) arrives here with backlog item 5, ``Diagnosis``
+(SPEC §3.4) with item 9, and ``Claim``, ``Estimand``, ``Intervention`` and
+``Scope`` with item 10, which is the item whose verifier is the only thing that
+reads them.
 
 Everything here is immutable and hashable, so programmes and defects can be
 content-addressed by the registry later without a separate serialisation path.
@@ -20,7 +21,7 @@ import numpy as np
 import numpy.typing as npt
 
 from sciagent.core.conditions import Condition
-from sciagent.core.errors import DiagnosisError
+from sciagent.core.errors import DiagnosisError, EstimandError, MalformedClaimError
 
 if TYPE_CHECKING:
     # ``Defect`` is ``frozenset[Edit]`` and ``edits`` imports this module, so a
@@ -54,6 +55,12 @@ Digest = NewType("Digest", str)
 HypothesisId = NewType("HypothesisId", str)
 PredictionId = NewType("PredictionId", str)
 ExperimentId = NewType("ExperimentId", str)
+
+#: SPEC §3.3 lists ``Claim`` without an id. One is carried for the same reason
+#: :class:`Prediction` acquired one at item 5: a verdict has to name the claim it
+#: is about, and :mod:`sciagent.verify.contradiction` compares a claim against
+#: the ones already accepted, which is not expressible over anonymous values.
+ClaimId = NewType("ClaimId", str)
 
 #: Which of SPEC §4.5's twelve slice scenarios an investigation was run on.
 ScenarioId = NewType("ScenarioId", str)
@@ -385,3 +392,303 @@ class Diagnosis:
                     f"a diagnosis must carry a normalised distribution, got a total "
                     f"of {total!r} over {len(self.distribution)} hypotheses"
                 )
+
+
+# --------------------------------------------------------------------------
+# Estimands (SPEC §3.3, §7.2)
+# --------------------------------------------------------------------------
+
+
+class Direction(Enum):
+    """Which way an effect went, or was preregistered to go."""
+
+    INCREASE = "increase"
+    DECREASE = "decrease"
+    NO_CHANGE = "no_change"
+
+
+class AssumptionCode(Enum):
+    """A declaration the claimant makes that no experiment can establish.
+
+    Exactly the codes SPEC §7.2's licensing table reads, and no others. An
+    assumption vocabulary is a place where unread entries accumulate and start to
+    look like guarantees, so a code enters this enum when the rule that reads it
+    does, and not before.
+    """
+
+    MEDIATORS_BLOCKED = "mediators_blocked"
+    """Every mediating path from target to outcome is blocked. Required by the
+    direct-effect and controlled-direct-effect rows of §7.2."""
+
+    HELD_FIXED = "held_fixed"
+    """The components named by a controlled direct effect were held fixed. §7.2
+    requires this to be true of the *executed* experiment, so the verifier checks
+    it against the record rather than taking the declaration -- the code says what
+    is being claimed, and the evidence says whether it happened."""
+
+    OFF_PATH_CONTROLLED = "off_path_controlled"
+    """Descendants off the claimed path were controlled rather than left free.
+    The path-specific row's alternative to not manipulating them."""
+
+
+@dataclass(frozen=True, slots=True)
+class TotalEffect:
+    """The whole effect of ``target`` on ``outcome``, collateral paths included."""
+
+    target: ComponentId
+    outcome: ComponentId
+
+    def __post_init__(self) -> None:
+        _check_endpoints(self.target, self.outcome)
+
+
+@dataclass(frozen=True, slots=True)
+class DirectEffect:
+    """The effect not carried by any mediator, with the mediators declared."""
+
+    target: ComponentId
+    outcome: ComponentId
+    mediators_blocked: frozenset[ComponentId]
+
+    def __post_init__(self) -> None:
+        _check_endpoints(self.target, self.outcome)
+
+
+@dataclass(frozen=True, slots=True)
+class ControlledDirectEffect:
+    """A direct effect with the mediators held at declared values."""
+
+    target: ComponentId
+    outcome: ComponentId
+    held_fixed: frozenset[ComponentId]
+
+    def __post_init__(self) -> None:
+        _check_endpoints(self.target, self.outcome)
+
+
+@dataclass(frozen=True, slots=True)
+class PathSpecificEffect:
+    """The effect carried by one named path through the programme DAG."""
+
+    target: ComponentId
+    outcome: ComponentId
+    path: tuple[ComponentId, ...]
+
+    def __post_init__(self) -> None:
+        _check_endpoints(self.target, self.outcome)
+        if len(self.path) < 2:
+            raise EstimandError(
+                f"path-specific effect of {self.target!r} on {self.outcome!r} "
+                f"declares the path {self.path!r}, which names fewer than two "
+                f"components; a path is a sequence of edges"
+            )
+        if self.path[0] != self.target or self.path[-1] != self.outcome:
+            raise EstimandError(
+                f"path {self.path!r} does not run from {self.target!r} to "
+                f"{self.outcome!r}; a path-specific effect is an effect along the "
+                f"path it names"
+            )
+        if len(set(self.path)) != len(self.path):
+            raise EstimandError(
+                f"path {self.path!r} repeats a component; a path through a DAG "
+                f"visits each node at most once"
+            )
+
+
+def _check_endpoints(target: ComponentId, outcome: ComponentId) -> None:
+    """Raise unless an estimand's two endpoints are distinct components.
+
+    Whether they are *connected* is a question about a programme and belongs to
+    :mod:`sciagent.verify.causal`. Whether they are the same component is a
+    question about the estimand alone, and an effect of a thing on itself is not
+    one a licensing rule could either grant or refuse.
+    """
+    if target == outcome:
+        raise EstimandError(
+            f"an estimand names {target!r} as both its target and its outcome; an "
+            f"effect of a component on itself is not an effect"
+        )
+
+
+type Estimand = TotalEffect | DirectEffect | ControlledDirectEffect | PathSpecificEffect
+
+#: Every estimand type, in a fixed order independent of import or hash order.
+ESTIMAND_TYPES: tuple[type, ...] = (
+    TotalEffect,
+    DirectEffect,
+    ControlledDirectEffect,
+    PathSpecificEffect,
+)
+
+
+def estimand_endpoints(estimand: Estimand) -> tuple[ComponentId, ComponentId]:
+    """Return an estimand's ``(target, outcome)`` whatever its type."""
+    return estimand.target, estimand.outcome
+
+
+@dataclass(frozen=True, slots=True)
+class Intervention:
+    """What was done, what it reached, and what is being claimed from it.
+
+    ``collateral`` is derived from the programme DAG (SPEC §3.3), never declared:
+    :attr:`~sciagent.experiments.executor.ExecutionResult.collateral` is where it
+    comes from, and :mod:`sciagent.verify.causal` compares the two rather than
+    trusting this field.
+    """
+
+    target: ComponentId
+    manipulated: frozenset[ComponentId]
+    estimand: Estimand
+    collateral: frozenset[ComponentId]
+    assumptions: tuple[AssumptionCode, ...]
+    expected_direction: Direction
+    """Preregistered. Compared against the measured direction, so an intervention
+    whose result went the other way cannot be reported as confirming it."""
+
+
+# --------------------------------------------------------------------------
+# Claims (SPEC §3.3, §8)
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class Scope:
+    """Where a claim asserts it holds (SPEC §7.1 clause 3).
+
+    The three axes §7.1 names -- family, parameter range, environment version --
+    plus the metric and grammar versions §7.1 says relevance is computed at.
+    Those two live here rather than on :class:`Claim` because they are part of
+    *where* a claim holds in exactly the way the other three are: a claim made
+    under one diagnostic catalogue is not a claim about another.
+    """
+
+    families: frozenset[FamilyId]
+    parameters: FrozenDict[str, tuple[float, float]]
+    env_version: EnvVersion
+    metric_version: MetricVersion
+    grammar_version: GrammarVersion
+
+    def __post_init__(self) -> None:
+        for name in sorted(self.parameters):
+            low, high = self.parameters[name]
+            if math.isnan(low) or math.isnan(high) or not high >= low:
+                raise MalformedClaimError(
+                    f"scope declares parameter {name!r} over {low!r}..{high!r}, "
+                    f"which is not a range; a claim must say where it holds"
+                )
+
+
+@dataclass(frozen=True, slots=True)
+class EffectEstimate:
+    """A measured effect. **Framework-written** (SPEC F7).
+
+    Produced only by :func:`sciagent.verify.numerical.recompute`, from registered
+    experiment results. No system supplies one: there is no argument anywhere in
+    the framework's public surface that accepts an effect, and
+    :mod:`sciagent.verify.numerical` re-derives every field of whatever a claim
+    carries and refuses a claim whose figures are not bit-identical to it. That
+    check is acceptance test A19.
+
+    Well-formedness is checked here; *correctness* deliberately is not. A
+    reversed interval, a negative standard error and an impossible replicate
+    count are all corruptions A19 requires the **verifier** to catch, so refusing
+    them at construction would move the gate off the subsystem it is a gate on
+    and leave a corrupted claim unable to exist rather than caught. Only NaN and
+    infinity are refused, because those do not denote a measurement at all.
+    """
+
+    metric: MetricName
+    point: float
+    standard_error: float
+    low: float
+    high: float
+    level: float
+    """Nominal coverage of ``low..high``, e.g. ``0.95``."""
+
+    n_treated: int
+    n_control: int
+    direction: Direction
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("point", self.point),
+            ("standard_error", self.standard_error),
+            ("low", self.low),
+            ("high", self.high),
+            ("level", self.level),
+        ):
+            if not math.isfinite(value):
+                raise MalformedClaimError(
+                    f"effect on {self.metric} carries {name}={value!r}; a "
+                    f"non-finite figure does not denote a measured effect"
+                )
+        if not 0.0 < self.level < 1.0:
+            raise MalformedClaimError(
+                f"effect on {self.metric} declares coverage {self.level!r}; a "
+                f"nominal level lies strictly between 0 and 1"
+            )
+
+
+ClaimModality = Literal["correlational", "mechanistic", "causal", "predictive"]
+
+#: Every modality, in the canonical order used for display and enumeration.
+CLAIM_MODALITIES: tuple[ClaimModality, ...] = (
+    "correlational",
+    "mechanistic",
+    "causal",
+    "predictive",
+)
+
+ClaimStrength = Literal["suggests", "supports", "establishes", "refutes"]
+
+#: Every strength, weakest assertion first. The order is load-bearing:
+#: :mod:`sciagent.verify.statistical` reads it to decide whether the evidence
+#: reaches the strength claimed.
+CLAIM_STRENGTHS: tuple[ClaimStrength, ...] = (
+    "suggests",
+    "supports",
+    "establishes",
+    "refutes",
+)
+
+ClaimPartition = Literal["exploratory", "confirmatory"]
+
+#: SPEC §3.3's evidential axis, which is *not* the registry's data partition.
+#: See ``docs/DECISIONS.md``, item 4: a confirmatory claim can rest on DEV data.
+CLAIM_PARTITIONS: tuple[ClaimPartition, ...] = ("exploratory", "confirmatory")
+
+SubjectKind = Literal["hypothesis", "component"]
+
+Uniqueness = Literal["exclusive", "non_exclusive"]
+
+
+@dataclass(frozen=True, slots=True)
+class Claim:
+    """One typed assertion, and everything the verifier judges it on (SPEC §3.3).
+
+    ``prose`` is a rendering and is never scored (SPEC F8); whether it is
+    faithful to the rest is R6's open question and not mechanical.
+
+    Two fields SPEC §3.3 does not list. ``subject_kind`` is needed because
+    :class:`HypothesisId` and :class:`ComponentId` are both ``NewType``\\ s over
+    ``str`` and therefore indistinguishable at runtime: a verifier that must look
+    the subject up in either the hypothesis graph or the programme cannot tell
+    from the value which one to ask. ``intervention`` is where §7.2's "declared
+    blocked" mediators and "listed" assumptions live -- they are declarations the
+    claimant makes, so no experiment record could supply them, and without them
+    the causal licensing table has nothing to read.
+    """
+
+    id: ClaimId
+    subject: HypothesisId | ComponentId
+    subject_kind: SubjectKind
+    modality: ClaimModality
+    estimand: Estimand | None
+    strength: ClaimStrength
+    scope: Scope
+    evidence: tuple[ExperimentId, ...]
+    partition: ClaimPartition
+    effect: EffectEstimate | None
+    uniqueness: Uniqueness
+    prose: str
+    intervention: Intervention | None = None

@@ -289,3 +289,38 @@ class InvestigationError(ResearchSystemError):
     :class:`BudgetExhaustedError`, which is a scenario running out of allowance
     and is an ordinary end to an investigation rather than a fault.
     """
+
+
+# --------------------------------------------------------------------------
+# Verification
+# --------------------------------------------------------------------------
+
+
+class VerificationError(SciAgentError):
+    """Base for faults in the claim verifier (SPEC §6.5).
+
+    Raised only for claims the verifier cannot *adjudicate at all* because they
+    do not denote. A claim that denotes and is wrong is not an error: it gets a
+    :class:`~sciagent.verify.verdict.Verdict` recording why, because a refused
+    claim is a datum about the system that made it and must survive into the
+    record rather than escaping as an exception.
+    """
+
+
+class MalformedClaimError(VerificationError):
+    """A claim's fields do not describe a claim any evidence could bear on.
+
+    Raised for a causal claim carrying no estimand, a claim citing an experiment
+    the evidence index does not hold, and a scope whose parameter range is empty.
+    Distinct from a claim that is merely unsupported, which is a verdict.
+    """
+
+
+class EstimandError(VerificationError):
+    """An estimand does not denote an effect on the programme's DAG.
+
+    Raised for a path naming a component the programme lacks, a path whose
+    consecutive pairs are not edges, and an estimand whose target equals its
+    outcome. SPEC §7.2's licensing rules quantify over paths, so an estimand that
+    does not denote one would be licensed or refused arbitrarily.
+    """

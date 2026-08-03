@@ -90,6 +90,7 @@ class Investigation:
         "_proposed",
         "_scenario_id",
         "_seed",
+        "_targets",
         "_truth",
     )
 
@@ -118,6 +119,7 @@ class Investigation:
         self._seed = seed
         self._history: list[ExecutionResult] = []
         self._proposed: dict[HypothesisId, Defect] = {}
+        self._targets: dict[ExperimentId, tuple[HypothesisId, ...]] = {}
 
     # -- what a system may know --------------------------------------------
 
@@ -156,6 +158,11 @@ class Investigation:
         """Return the structures this system introduced, if any."""
         return FrozenDict[HypothesisId, Defect](self._proposed)
 
+    @property
+    def targets(self) -> FrozenDict[ExperimentId, tuple[HypothesisId, ...]]:
+        """Return which hypotheses each experiment was aimed at, where stated."""
+        return FrozenDict[ExperimentId, tuple[HypothesisId, ...]](self._targets)
+
     def affords(self, count: int = 1) -> bool:
         """Return whether ``count`` more experiments can be paid for."""
         return self.budget.affords(float(count))
@@ -170,13 +177,26 @@ class Investigation:
 
     # -- what a system may do ----------------------------------------------
 
-    def run(self, design: ExperimentDesign) -> ExecutionResult:
+    def run(
+        self,
+        design: ExperimentDesign,
+        *,
+        targets: Sequence[HypothesisId] = (),
+    ) -> ExecutionResult:
         """Carry out one design against the hidden truth, and record it.
 
         Guarantees the seed is derived from the scenario seed, the design id and
         the step index, so a rerun of the same system on the same scenario
         performs byte-identical executions, and two different designs at the same
         step do not share a stream.
+
+        ``targets`` names the hypotheses this experiment was aimed at. It is
+        structure, so a system may state it and SPEC F7 is untouched; it is
+        recorded here rather than in the registry because what an experiment was
+        aimed at does not determine its result, and
+        :class:`~sciagent.registry.store.ExperimentKey` covers what determines a
+        result and nothing else. SPEC §7.1 clause 1 is the only thing that reads
+        it, and a system that says nothing forfeits that clause and no other.
 
         Raises :class:`~sciagent.core.errors.InvestigationError` if the scenario
         does not offer ``design``, and
@@ -194,6 +214,8 @@ class Investigation:
         result = self._executor.run(design, self._truth, seed)
         self._engine.record(result.experiment, design.template(), result.result)
         self._history.append(result)
+        if targets:
+            self._targets[result.experiment] = tuple(targets)
         return result
 
     def propose(

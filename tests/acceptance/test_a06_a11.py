@@ -55,18 +55,24 @@ import math
 from collections.abc import Callable, Mapping, Sequence
 from functools import lru_cache
 from itertools import pairwise
-from pathlib import Path
 
 import numpy as np
 import pytest
 from scipy import optimize, stats
+from slice_tables import (
+    CLOSED_SET,
+    REPLICATES,
+    STRUCTURE_NAMES,
+    TABLE_SEED,
+    slice_table,
+)
 
 from environments.pointproc import edit_grammar, mechanism_defect
 from environments.pointproc.catalogue import metric_registry
 from environments.pointproc.components import MIXTURE_OF_POISSON_2
 from environments.pointproc.diagnostics import inter_arrival_times, mean_rate
 from environments.pointproc.mechanisms import SIZE_EXCITATION, SIZE_MIXTURE
-from environments.pointproc.outcomes import closed_set, simulator, slice_templates
+from environments.pointproc.outcomes import simulator, slice_templates
 from environments.pointproc.program import REFERENCE_RATE, reference_program
 from sciagent.core.conditions import Compare
 from sciagent.core.edits import ChangeDistributionFamily, Defect
@@ -100,60 +106,6 @@ from sciagent.registry.metrics import MetricRegistry, MetricSpec
 GRAMMAR = edit_grammar()
 METRICS: MetricRegistry = metric_registry()
 TEMPLATES = slice_templates()
-CLOSED_SET = closed_set()
-STRUCTURE_NAMES = tuple(sorted(CLOSED_SET))
-
-#: Replicates behind every cell probability the slice's engine reports. At this
-#: count the Krichevsky-Trofimov shrinkage is about 2% of the Monte Carlo noise
-#: it is measured against, so it cannot disturb A6, and a cell of probability
-#: 0.05 is resolved to about 10% relative error.
-REPLICATES = 2000
-
-#: Seed of the slice table. Fixed, so the table is a reproducible artefact.
-TABLE_SEED = Seed(20260803)
-
-#: Where a built table is kept between runs. The table costs a few minutes of
-#: simulation and is a pure function of its content address, so rebuilding it on
-#: every run would buy nothing. Gitignored: it is derived, not authored.
-CACHE = Path(__file__).resolve().parents[2] / ".cache" / "tables"
-
-
-# ==========================================================================
-# Shared fixtures: the table, the engine's graph, and the scenario benchmark
-# ==========================================================================
-
-
-@lru_cache(maxsize=1)
-def slice_table() -> EmpiricalTable:
-    """Return the slice's empirical table, building it if it is not cached.
-
-    Guarantees the returned table is the one ``TABLE_SEED`` and ``REPLICATES``
-    determine: :meth:`EmpiricalTable.load` recomputes the content address from
-    the templates offered and refuses a file that does not match, so a stale
-    cache cannot be read as a fresh one.
-    """
-    probe = EmpiricalTable(
-        templates=FrozenDict[ExperimentTemplateId, ExperimentTemplate](
-            {template.id: template for template in TEMPLATES}
-        ),
-        counts=FrozenDict[tuple[str, ExperimentTemplateId], tuple[int, ...]]({}),
-        replicates=REPLICATES,
-        seed=TABLE_SEED,
-    )
-    fingerprint = "-".join(sorted(structure_key(d) for d in CLOSED_SET.values()))
-    stem = stable_key(f"{probe.version}/{fingerprint}") % (1 << 48)
-    path = CACHE / f"slice-{stem:012x}.json"
-    if path.exists():
-        return EmpiricalTable.load(path, TEMPLATES)
-    table, _ = EmpiricalTable.build(
-        defects=[CLOSED_SET[name] for name in STRUCTURE_NAMES],
-        templates=TEMPLATES,
-        simulate=simulator(GRAMMAR),
-        replicates=REPLICATES,
-        seed=TABLE_SEED,
-    )
-    table.save(path)
-    return table
 
 
 def _prediction(name: str) -> Prediction:

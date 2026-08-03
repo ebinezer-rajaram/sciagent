@@ -256,3 +256,36 @@ class PlausibilityWriteError(HypothesisError):
 
 class UnknownHypothesisError(HypothesisError):
     """A hypothesis id was referenced that the graph does not hold."""
+
+
+# --------------------------------------------------------------------------
+# Research systems
+# --------------------------------------------------------------------------
+
+
+class ResearchSystemError(SciAgentError):
+    """Base for faults in a research system or in the diagnosis it returns.
+
+    Not named ``SystemError``: that is a builtin, and shadowing it in a module
+    every other module imports from would make ``except SystemError`` mean
+    something different depending on the imports in scope.
+    """
+
+
+class DiagnosisError(ResearchSystemError):
+    """A ``Diagnosis`` does not describe a distribution.
+
+    Raised on construction rather than tolerated, because a diagnosis is what a
+    scenario is scored on: an unnormalised one would be scored as though it were
+    a belief and would silently move every figure computed from it.
+    """
+
+
+class InvestigationError(ResearchSystemError):
+    """A system asked for something the investigation does not permit.
+
+    Covers a design outside the scenario's set and a system that returned no
+    conclusion at all. Distinct from
+    :class:`BudgetExhaustedError`, which is a scenario running out of allowance
+    and is an ordinary end to an investigation rather than a fault.
+    """

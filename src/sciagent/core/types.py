@@ -1,7 +1,8 @@
 """Core value types and identifier aliases.
 
-``Prediction`` (SPEC §3.3) arrives here with backlog item 5. ``Claim``,
-``Diagnosis``, ``Estimand`` and ``Scope`` arrive with their own later items.
+``Prediction`` (SPEC §3.3) arrives here with backlog item 5 and ``Diagnosis``
+(SPEC §3.4) with item 9. ``Claim``, ``Estimand`` and ``Scope`` arrive with their
+own later items.
 
 Everything here is immutable and hashable, so programmes and defects can be
 content-addressed by the registry later without a separate serialisation path.
@@ -9,15 +10,23 @@ content-addressed by the registry later without a separate serialisation path.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Hashable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Literal, NewType, TypeVar
+from typing import TYPE_CHECKING, Literal, NewType, TypeVar
 
 import numpy as np
 import numpy.typing as npt
 
 from sciagent.core.conditions import Condition
+from sciagent.core.errors import DiagnosisError
+
+if TYPE_CHECKING:
+    # ``Defect`` is ``frozenset[Edit]`` and ``edits`` imports this module, so a
+    # runtime import here would be circular. ``Diagnosis`` names the type only in
+    # annotations, which ``from __future__ import annotations`` leaves unevaluated.
+    from sciagent.core.edits import Defect
 
 # --------------------------------------------------------------------------
 # Identifiers
@@ -45,6 +54,9 @@ Digest = NewType("Digest", str)
 HypothesisId = NewType("HypothesisId", str)
 PredictionId = NewType("PredictionId", str)
 ExperimentId = NewType("ExperimentId", str)
+
+#: Which of SPEC §4.5's twelve slice scenarios an investigation was run on.
+ScenarioId = NewType("ScenarioId", str)
 
 #: The identity of an experiment design (SPEC §4.4), which is
 #: :attr:`sciagent.experiments.dsl.ExperimentDesign.id` -- a readable canonical
@@ -299,3 +311,77 @@ class Prediction:
     condition: Condition
     under: ExperimentTemplateId
     refutation: Condition
+
+
+# --------------------------------------------------------------------------
+# Diagnosis
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class Diagnosis:
+    """What one research system concluded about one scenario (SPEC §3.4).
+
+    A value type and nothing more: every number in it is derived by
+    :func:`sciagent.systems.base.diagnose` from a posterior engine, and no
+    system constructs one directly. That is what keeps SPEC's second invariant
+    true of the systems layer -- a baseline chooses *structure* (which
+    hypotheses to propose, which designs to run) and the framework turns the
+    consequences into numbers.
+
+    Guarantees ``distribution`` is normalised over the hypotheses it names and
+    that every mass lies in ``[0, 1]``; a diagnosis that does not describe a
+    distribution cannot be built.
+    """
+
+    scenario_id: ScenarioId
+    distribution: FrozenDict[HypothesisId, Probability]
+    abstain_mass: Probability
+    """Posterior mass not on the single leading hypothesis, ``1 - max_h p(h)``.
+
+    SPEC §3.4 names the field without defining it; this reading is recorded in
+    ``docs/DECISIONS.md``. It is how much the system declines to commit to its
+    own best answer, so §12's criterion 9 -- null and abstain mass exceeding any
+    single defect's mass on S9 and S10 -- discriminates a calibrated report of
+    insufficiency from a confident wrong one.
+    """
+
+    null_mass: Probability
+    """Posterior mass on the null hypothesis, the empty edit set."""
+
+    proposed_edits: FrozenDict[HypothesisId, Defect]
+    """Structures the system itself introduced. Empty for a closed-set system.
+
+    The one field a system authors, and legitimately: structure is what agents
+    write.
+    """
+
+    supporting: FrozenDict[HypothesisId, tuple[ExperimentId, ...]]
+    """Per hypothesis, the recorded experiments whose evidence favoured it."""
+
+    residual_candidates: tuple[HypothesisId, ...]
+    """Hypotheses surfaced as worth further work but not committed to."""
+
+    def __post_init__(self) -> None:
+        for name, mass in (
+            ("abstain_mass", self.abstain_mass),
+            ("null_mass", self.null_mass),
+        ):
+            if not 0.0 <= mass <= 1.0:
+                raise DiagnosisError(f"{name} must lie in [0, 1], got {mass!r}")
+        for node_id in sorted(self.distribution):
+            value = self.distribution[node_id]
+            if not 0.0 <= value <= 1.0:
+                raise DiagnosisError(
+                    f"hypothesis {node_id!r} carries mass {value!r}, which is not a "
+                    f"probability"
+                )
+        if self.distribution:
+            total = math.fsum(
+                self.distribution[node_id] for node_id in sorted(self.distribution)
+            )
+            if not math.isclose(total, 1.0, rel_tol=1e-9, abs_tol=1e-12):
+                raise DiagnosisError(
+                    f"a diagnosis must carry a normalised distribution, got a total "
+                    f"of {total!r} over {len(self.distribution)} hypotheses"
+                )

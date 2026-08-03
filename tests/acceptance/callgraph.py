@@ -179,7 +179,11 @@ def _python_files(root: Path) -> Iterator[Path]:
 
 
 def analyse(
-    root: Path, *, surface: Sequence[str], sealed_symbols: Sequence[str]
+    root: Path,
+    *,
+    surface: Sequence[str],
+    sealed_symbols: Sequence[str],
+    licensed: Sequence[str] = (),
 ) -> Analysis:
     """Return every call path from ``surface`` to a sealed symbol under ``root``.
 
@@ -188,11 +192,23 @@ def analyse(
     holds the restricted names, normally
     ``sciagent.registry.partitions.SEALED_SYMBOLS``.
 
+    ``licensed`` holds fully qualified function names whose *own* references to a
+    sealed symbol are not reported -- the framework's sanctioned writer, normally
+    ``sciagent.hypothesis.graph.PLAUSIBILITY_DERIVATION``. It is deliberately a
+    list of exact functions rather than a module or a pattern, so widening it is
+    a visible edit and not a wildcard that quietly grows.
+
+    A licensed function is still **traversed**: only the references it makes
+    itself are exempt, and everything it calls is checked as usual. So the
+    exemption cannot be used to hide a write one hop further down, which is the
+    difference between naming a boundary and switching the gate off.
+
     Guarantees the search is exhaustive over the definitions found under ``root``
     and terminates on recursive call cycles. Reports which surface patterns
     matched nothing, so a surface declaration that has silently stopped
     describing the code is visible rather than quietly clean.
     """
+    permitted = frozenset(licensed)
     sealed = frozenset(sealed_symbols)
     functions: list[_Function] = []
     for path in _python_files(root):
@@ -245,10 +261,11 @@ def analyse(
             if identity in seen:
                 continue
             seen.add(identity)
-            for reference in current.references:
-                paths.append(
-                    SealedPath(entry=entry_name, chain=chain, reference=reference)
-                )
+            if identity not in permitted:
+                for reference in current.references:
+                    paths.append(
+                        SealedPath(entry=entry_name, chain=chain, reference=reference)
+                    )
             for called in sorted(current.calls):
                 for callee in resolve(current, called):
                     target = f"{callee.module}.{callee.qualname}"

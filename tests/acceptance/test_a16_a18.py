@@ -2,16 +2,37 @@
 
 One test per criterion, named for it. These are the contract for backlog item 5.
 
-A17 needs the same note A14 needed. It asks for static confirmation that no
-agent-accessible path writes ``plausibility``, but SPEC §11 item 12 is the first
-item that contains an agent, so today ``AGENT_TOOL_SURFACE`` matches no module
-and the analysis over ``src`` is trivially clean. A gate that passes because it
-examined nothing is worse than no gate, so the static half is discharged by three
-assertions together: the symbol *declaration* exists, the analyser finds the
-planted write in ``fixtures/plausibility_writer.py``, and it clears
-``fixtures/clean_tool.py``. The runtime half stands on its own from day one --
-the graph derives every plausibility from the prefix code and refuses a forged
-one -- and is tested separately below.
+A17's static half went live at backlog item 9, and this note replaces the one
+that stood while it could not.
+
+It asks for static confirmation that no agent-accessible path writes
+``plausibility``. ``AGENT_TOOL_SURFACE`` was declared at item 4 naming
+``sciagent.systems``, and no module satisfied it until item 9 built the baselines
+of SPEC §5, so the analysis over ``src`` was trivially clean and the static half
+rested on the two fixtures instead. It no longer does:
+``test_a17_the_surface_declaration_matches_real_modules`` fails if the surface
+ever stops describing the tree again, so the criterion below cannot go quietly
+vacuous a second time.
+
+What item 9 exposed is that the criterion is unsatisfiable as literally stated. A
+research system must be able to introduce a hypothesis, and introducing one
+necessarily runs the plausibility derivation -- that is the framework writing the
+number, which is what SPEC's second invariant *requires*. So every correct
+systems layer has an agent-reachable path into ``_derive_plausibility``, and a
+gate forbidding the path outright forbids the design. ``PLAUSIBILITY_DERIVATION``
+names the three functions licensed to make that write, the analyser exempts their
+own references and nothing else, and two tests here hold that boundary in place:
+one checks every licensed function still needs its licence, the other checks the
+licence does not extend to what a licensed function calls.
+
+Worth recording separately: before the boundary existed, the surface's own module
+passed only because ``Investigation.propose`` shadowed
+``HypothesisGraph.propose`` under the analyser's simple-name resolution. Clean
+for the wrong reason is worse than red.
+
+The runtime half has stood on its own from day one -- the graph derives every
+plausibility from the prefix code and refuses a forged one -- and is tested
+separately below.
 """
 
 from __future__ import annotations
@@ -67,6 +88,7 @@ from sciagent.core.types import (
     RejectionCode,
 )
 from sciagent.hypothesis.graph import (
+    PLAUSIBILITY_DERIVATION,
     PLAUSIBILITY_SYMBOLS,
     HypothesisGraph,
     HypothesisNode,
@@ -447,12 +469,84 @@ class TestA17PlausibilityImmutability:
         assert "plausibility" in PLAUSIBILITY_SYMBOLS
         assert AGENT_TOOL_SURFACE, "the agent tool surface declaration is empty"
 
-    def test_a17_no_agent_path_writes_plausibility(self) -> None:
-        """The criterion itself, over the shipped source tree."""
+    def test_a17_the_surface_declaration_matches_real_modules(self) -> None:
+        """The static analysis is over something. It was not, until item 9.
+
+        ``AGENT_TOOL_SURFACE`` was declared at item 4 naming ``sciagent.systems``,
+        which no module satisfied until the baselines of SPEC §5 were built. Until
+        then the analysis over ``src`` was trivially clean, and this class's other
+        assertions were what carried A17's static half. This test fails the day
+        the surface stops describing the tree again.
+        """
         analysis = analyse(
-            SOURCE, surface=AGENT_TOOL_SURFACE, sealed_symbols=PLAUSIBILITY_SYMBOLS
+            SOURCE,
+            surface=AGENT_TOOL_SURFACE,
+            sealed_symbols=PLAUSIBILITY_SYMBOLS,
+            licensed=PLAUSIBILITY_DERIVATION,
+        )
+        assert analysis.matched_patterns, (
+            f"no module matches the agent tool surface {AGENT_TOOL_SURFACE!r}, so "
+            f"the criterion below examines nothing"
+        )
+        assert analysis.entry_points, "the surface matched modules but no functions"
+
+    def test_a17_no_agent_path_writes_plausibility(self) -> None:
+        """The criterion itself, over the shipped source tree.
+
+        ``licensed`` exempts the framework's own derivation, and only its own
+        references -- see ``PLAUSIBILITY_DERIVATION`` for why the criterion is
+        unsatisfiable without a named boundary and why it is these three
+        functions.
+        """
+        analysis = analyse(
+            SOURCE,
+            surface=AGENT_TOOL_SURFACE,
+            sealed_symbols=PLAUSIBILITY_SYMBOLS,
+            licensed=PLAUSIBILITY_DERIVATION,
         )
         assert analysis.clean, "\n".join(str(path) for path in analysis.paths)
+
+    def test_a17_every_licensed_function_still_needs_its_licence(self) -> None:
+        """A boundary that outgrows its reason is a blanket exemption.
+
+        Each named function must exist and must actually reference a plausibility
+        symbol. An entry that no longer does is dead, and dead entries are how a
+        narrow exemption turns into a wide one without anybody deciding to widen
+        it.
+        """
+        flagged = analyse(
+            SOURCE,
+            surface=("sciagent.hypothesis.graph",),
+            sealed_symbols=PLAUSIBILITY_SYMBOLS,
+        )
+        touching = {
+            f"{path.reference.module}.{path.reference.function}"
+            for path in flagged.paths
+        }
+        assert set(PLAUSIBILITY_DERIVATION) == touching, (
+            f"declared boundary {sorted(PLAUSIBILITY_DERIVATION)!r} does not match "
+            f"the functions that actually touch a plausibility symbol "
+            f"{sorted(touching)!r}"
+        )
+
+    def test_a17_the_licence_does_not_extend_one_hop_further(self) -> None:
+        """Exempting a function must not exempt what it calls.
+
+        The whole value of a named boundary is that it is a boundary. If the
+        analyser stopped traversing at a licensed function instead of merely
+        ignoring its own references, a write could be hidden by putting it in a
+        helper, and this test is what forbids that.
+        """
+        analysis = analyse(
+            FIXTURES,
+            surface=("plausibility_writer",),
+            sealed_symbols=PLAUSIBILITY_SYMBOLS,
+            licensed=("plausibility_writer.agent_scores",),
+        )
+        assert not analysis.clean, (
+            "licensing the entry point hid a write in the function it calls; the "
+            "exemption is being applied transitively"
+        )
 
     def test_a17_analyser_detects_the_negative_control(self) -> None:
         """The planted write is found, transitively, through one hop."""

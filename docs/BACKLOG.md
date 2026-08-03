@@ -140,3 +140,64 @@ and 15 are compared against, and a baseline measured under the current catalogue
 would have to be re-run. It cannot be settled by implementation alone — whether
 this counts as a demonstrated contradiction between §4.6 and §4.3, or as a
 catalogue that was simply incomplete, is a judgement about the spec.
+
+## Combine posterior-predictive evidence across experiments, instead of min-p
+
+**Idea.** Replace the posterior predictive check's multiplicity handling. It
+currently reports the *minimum* per-experiment tail probability under a Sidak
+correction for the number of experiments. Combine the per-experiment
+probabilities into a single statistic instead — Fisher's method and the
+Stouffer weighted-Z are the two obvious candidates — so that several experiments
+agreeing counts as evidence rather than as several chances to be wrong.
+
+**Rationale.** Measured under item 9, on B1, which *is* the check. B1 holds only
+the null hypothesis, so on S1–S7 its hypothesis space is inadequate by
+construction and the check ought to say so. Detection instead moves the wrong way
+with the budget:
+
+| budget | min per-experiment p | corrected p | detects? |
+|---|---|---|---|
+| 1 | 0.0134 | 0.0134 | yes |
+| 2 | 0.0133 | 0.0265 | yes |
+| 4 | 0.0133 | 0.0523 | no |
+| 8 | 0.0133 | 0.1019 | no |
+| 16 | 0.0133 | 0.1935 | no |
+
+The per-experiment signal never changes. Only the penalty grows, and it grows
+faster than the evidence it is applied to, so **a system that runs more
+experiments detects less**. At the slice's standard budget of eight, B1's
+detection rate over S1–S10 is 2/10, and the two it catches are explained rather
+than encouraging: S8 has a per-experiment probability of 0.0030, strong enough to
+survive the correction, and S10 is caught *because it is budget-starved* — two
+experiments carry a far smaller penalty than eight. The scenario with the least
+evidence is the only arrival-mechanism scenario B1 flags.
+
+This compounds with the mark-arrival cross-diagnostic entry above rather than
+duplicating it. That entry is about *which diagnostics exist* and reports a 3%
+detection rate on S11's out-of-library mechanism; this one is about *how evidence
+across experiments is combined* and depresses detection on every scenario at
+every budget above two. Fixing either alone leaves the other in place, and both
+land on SPEC §12 criterion 4 — "detects inadequacy on S11 at a rate at least
+matching B1" — which a near-zero floor makes clearable by a system that does
+nothing.
+
+Two frictions. Fisher and Stouffer both assume independence across the combined
+tests, which holds here by construction — each experiment is drawn under its own
+seed, which is what already lets the engine multiply likelihoods — but it stops
+holding the moment repeated measurements of one design are combined, and B1
+repeats designs once its rotation exhausts the design set. And the tail
+probabilities are discrete, coming from a binned outcome space, so a combined
+statistic calibrated against a continuous null will be conservative; how
+conservative is measurable and should be measured rather than assumed.
+
+**Touches.** No frozen decision in SPEC. `inference/ppc.py` is item 6's and is
+gated by A9, which passes today and would need re-measuring against whatever
+replaces min-p — A9 states a detection criterion, so the change is inside its
+remit rather than around it. `PPCResult.p_value` keeps its meaning as "the
+multiplicity-corrected probability", so no caller changes. It does not touch F6:
+detection stays a conventional, non-agentic judgement.
+
+**Sequencing.** Before item 12, and ideally before any figure quoting B1's rate
+is published. Item 9's baselines can be re-run cheaply — the gate is 10.8 seconds
+warm — so re-measuring after a change costs almost nothing, and no scenario data
+would need rebuilding.

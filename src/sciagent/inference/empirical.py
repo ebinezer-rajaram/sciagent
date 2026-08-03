@@ -663,6 +663,32 @@ class EmpiricalTableEngine:
             for node_id in self.hypotheses
         }
 
+    def ensure_structure(self, defect: Defect) -> int:
+        """Fill ``defect``'s table row if it is missing; return simulator calls.
+
+        Registers nothing and changes no belief, so it is safe to call for a
+        structure that may never become a hypothesis.
+
+        It exists because :meth:`expand` cannot be the only way to fill a row. A
+        hypothesis needs a refutable prediction before a graph will admit it, a
+        table-derived prediction needs the structure's row, and that row is what
+        ``expand`` would have filled -- so deriving the prediction and admitting
+        the hypothesis cannot both wait for the other.
+
+        Raises :class:`~sciagent.core.errors.TableError` if the row is missing
+        and this engine holds no simulator, rather than returning a row of zeros
+        that would read as "this structure never produces anything".
+        """
+        if self._table.holds(defect):
+            return 0
+        if self._simulate is None:
+            raise TableError(
+                f"structure {structure_key(defect)!r} is not in the table and this "
+                f"engine was built without a simulator, so its row cannot be filled"
+            )
+        self._table, calls = self._table.with_structure(defect, self._simulate)
+        return calls
+
     def expand(self, h: HypothesisNode) -> ExpansionCost:
         """Admit a hypothesis mid-investigation and report what it cost.
 
@@ -684,16 +710,7 @@ class EmpiricalTableEngine:
                 f"hypothesis {h.id!r} has no compiled edit set, so it has neither "
                 f"a structural prior nor anything to simulate"
             )
-        calls = 0
-        if not self._table.holds(h.program_edit):
-            if self._simulate is None:
-                raise TableError(
-                    f"hypothesis {h.id!r} is not in the table and this engine was "
-                    f"built without a simulator, so its row cannot be filled"
-                )
-            self._table, calls = self._table.with_structure(
-                h.program_edit, self._simulate
-            )
+        calls = self.ensure_structure(h.program_edit)
         self._hypotheses[h.id] = _Hypothesis(
             program_edit=h.program_edit, status=h.status
         )

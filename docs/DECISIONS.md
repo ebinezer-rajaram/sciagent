@@ -1041,3 +1041,273 @@ claims to" is already the subject.
 programme, which is why item 8 adds 23 tests for under four seconds where item
 7 added 8 seconds for far fewer. The full suite is **2 minutes 50 seconds** with
 the table cached, against 2 minutes 20 recorded at item 7.
+
+## 2026-08-03 — item 9: what `Diagnosis.abstain_mass` means
+
+**Ambiguity.** SPEC §3.4 lists `abstain_mass` beside `null_mass` and defines
+neither. `null_mass` is unambiguous — the posterior on the empty edit set — but
+"abstain" has no reading the specification fixes, and §12 criterion 9 depends on
+it: "null and abstain mass exceeding any single defect's mass" on S9 and S10.
+
+**Resolved** as `1 - max_h p(h)`: the mass the system declines to commit to its
+own leading answer. Framework-derived in `systems.base.diagnose`, never supplied.
+
+**Why.** It has to discriminate, and it does. On S10 — Hawkes against regime
+switching with a starved budget — a well-behaved system splits its belief and
+abstain mass is large; a system that concentrates wrongly gets a small one and
+fails the criterion. Measured on the four baselines at S10: abstain 0.233 (V1),
+0.000 (B1), 0.099 (B4), 0.010 (B5), against a leading mass of 0.767, 1.000,
+0.901 and 0.990. The criterion separates them.
+
+**Rejected.** "Mass on hypotheses statistically tied with the leader" needs a tie
+test the specification does not define, and would make the number depend on a
+significance level nothing else in §3.4 carries.
+
+## 2026-08-03 — item 9: every system starts from the null, and proposes the rest
+
+**Decision.** `systems.base.null_seeded_graph` builds every investigation's
+starting graph with the null hypothesis and nothing else, for all four systems.
+V1's closed set is *proposed* by V1 at step zero, not handed to it.
+
+**Why.** Two reasons. B1 proposes nothing at all, and a posterior predictive
+check needs something to check against — "the observations are unexplained" is
+only a statement if there is something failing to explain them. And it makes the
+systems comparable: SPEC §5's contrast is between what systems *do*, not between
+what they were given, so a V1 that started with five hypotheses while B4 started
+with one would be measuring the setup.
+
+**Consequence.** `Diagnosis.proposed_edits` means "introduced during this
+investigation", which is why V1 reports four proposals despite being the
+closed-set system. SPEC §3.4's comment reads "for agent-created hypotheses"; the
+narrower reading — library lookups do not count — needs a library/created
+distinction nothing in the framework draws, and would make the field untestable.
+
+## 2026-08-03 — item 9: the baselines on S1-S10, measured
+
+**Measured**, and expensive to reproduce: 40 runs (4 systems × 10 scenarios) on
+the 2000-replicate slice table. Correct = leading hypothesis holds the true
+structure.
+
+| system | correct | identified (>0.5 mass) | mean structural distance |
+|---|---|---|---|
+| V1 (BOED, closed set) | 6/10 | 6/10 | 0.100 |
+| B1 (PPC only) | 1/10 | 1/10 | 1.111 |
+| B4 (retrieval) | 6/10 | 6/10 | 0.100 |
+| B5 (beam search) | 1/10 | 1/10 | 0.811 |
+
+**V1 and B4 are indistinguishable on the closed world.** Both get S1, S3, S4, S5,
+S6, S9 and both miss S2, S7, S8, S10. That is an early and unsurprising reading
+on R1 — with no discriminating design available, optimal *selection* buys nothing
+over nearest-neighbour retrieval, because there is nothing to select. It is not
+evidence about R1's real question, which is generation.
+
+**Both miss S2 and S7, and both miss them the same way**: the truth is regime
+switching and the mass lands on Hawkes (0.861 and 0.774 under V1). SPEC §4.2
+calls that pair separable only by a forced arrival, and no design offered here is
+one. This is the intervention gap recorded below, appearing exactly where the
+specification predicts it.
+
+**B5 scores 1/10 and this is not a straw man.** Its candidates are grid corners
+and the truths are interior points of the same grids, so exact-match mass is zero
+by construction. What it does do is land in the correct structural cell on four
+of nine non-null scenarios and average 0.811 edits from the truth against B1's
+1.111. `ScenarioRun.structural_distance` exists to make that visible; reporting
+only the proper score would have made a working search look broken.
+
+## 2026-08-03 — item 9: S1-S10 defined here, oracle policy lengths left to item 11
+
+**Ambiguity, and where it was split.** Item 9's gate is "Run on S1-S10" but §11
+assigns the twelve scenarios to item 11. Item 11's gate names *oracle policy
+lengths* — exhaustive DP where tractable — so the split taken is: S1-S10's
+definitions here, because item 9's gate cannot be met without them; S11, S12 and
+every oracle length remain item 11's.
+
+**Left incomplete, deliberately.** Two things item 11 must settle.
+
+*S10's budget is asserted, not derived.* SPEC §4.5 defines S10 by a budget "below
+the discriminating threshold"; where that threshold sits is what item 11's DP
+computes. Two experiments is set on the argument that §4.2's minimum plan is
+three stages and the third is unavailable here. It happens to be sufficient — no
+system identifies S10 — but sufficiency is not the same as being *at* the
+threshold. `registry/budget.py` said this data would arrive with item 11; that
+note is now partly stale and partly still true.
+
+*S5-S7 are not separately tuned.* §4.2 already calibrates all four mechanisms to
+be mutually indistinguishable under dispersion, so a confounded scenario does not
+need its alternative made plausible. What separates S5-S7 from S1-S4 here is the
+seed and how the result is read.
+
+## 2026-08-03 — item 9: the observational design set caps V1 on S2, S5, S7 and S10
+
+**Measured, and it is a ceiling rather than a defect.** `slice_designs()` holds
+no `ForceArrival`, because the empirical table is not calibrated on one (item 7
+recorded why). SPEC §4.2 makes the forced arrival the only discriminator of
+Hawkes from regime switching. So on every scenario turning on that pair, no
+system offered these designs can resolve it, and none does.
+
+**Consequence for §12.** Criterion 6 — "a discriminating three-stage plan on at
+least two of S5-S7" — is unreachable until an intervention template joins the
+table. That is item 11's, which needs the full design space for its DP anyway.
+Adding it is a table rebuild: five structures × four templates × 2000 replicates,
+plus the new template across all of them.
+
+**Not worked around.** V1 could have been given the intervention as an
+unregistered design, but then its likelihood would be read off a table with no
+row for it, and the posterior would be confidently wrong rather than merely
+uninformed.
+
+## 2026-08-03 — item 9: B1's Stage A detection is destroyed by its own multiplicity correction
+
+**Measured.** B1 holds only the null, so on S1-S7 the hypothesis space is
+inadequate by construction and the check ought to say so. It does not.
+
+| budget | min per-experiment p | corrected p | detects? |
+|---|---|---|---|
+| 1 | 0.0134 | 0.0134 | yes |
+| 2 | 0.0133 | 0.0265 | yes |
+| 4 | 0.0133 | 0.0523 | **no** |
+| 8 | 0.0133 | 0.1019 | **no** |
+| 16 | 0.0133 | 0.1935 | **no** |
+
+`inference/ppc.py` combines experiments by taking the *minimum* p-value under a
+Sidak correction for the number of tests. Eight experiments all pointing the same
+way are treated as eight chances to be wrong and never as accumulating evidence,
+so **detection degrades monotonically as the budget grows**. The per-experiment
+signal is unchanged at 0.0133 throughout; only the penalty moves.
+
+**Detection rate over S1-S10 at the standard budget is 2/10**, and both
+detections confirm the mechanism rather than contradicting it. S8 fires because
+its size-distribution mixture is strong enough (per-experiment 0.0030) to survive
+the same correction. S10 fires because it is *budget-starved* — two experiments,
+so a small penalty — which means the scenario carrying the least evidence is the
+only arrival-mechanism scenario B1 detects.
+
+**Consequence.** SPEC §12 criterion 4 asks V7 to detect S11 "at a rate at least
+matching B1". A floor of near-zero for this reason is clearable by a system that
+does nothing, which is the same failure `docs/BACKLOG.md`'s mark-arrival
+cross-diagnostic entry describes, arriving by a second and independent route:
+that entry is about *which diagnostics exist*, this one is about *how evidence
+across experiments is combined*. Fixing either alone leaves the other. Recorded
+as a backlog entry rather than acted on, because `ppc.py` is item 6's and gated
+by A9, which still passes.
+
+## 2026-08-03 — item 9: what the baselines cost, and how it is kept down
+
+**Measured.** The gate is 3 minutes 46 seconds cold and **10.8 seconds** warm.
+Two caches do the work, and without either the module is about six minutes on
+every run.
+
+*B5's search table.* Scoring a candidate means simulating it. The beam visits all
+48 single edits the agent grammar licenses at corner resolution; at 25 replicates
+over four templates that is about 65 seconds, cached to disk by
+`tests/slice_tables.py::search_table`. Candidates the environment cannot measure
+are skipped there and scored `-inf` by `table_fit` — an edit space's corners hold
+parameterisations whose programmes are degenerate, and a search that enumerates
+corners finds them.
+
+*The engine's own rows.* This was the larger cost and the less obvious one. When
+B5 proposes a structure outside the closed set, `EmpiricalTableEngine.expand`
+must simulate its row at the slice's **full 2000 replicates** — about 33 seconds,
+once per scenario, ten times over. The gate now threads one growing table through
+all forty runs and persists it, so each distinct proposal is simulated once per
+machine. A row is a pure function of `(defect, template, seed)`, so this changes
+what the gate costs and not what it concludes.
+
+**Full suite: 2 minutes 50 seconds warm**, unchanged from item 8, because the
+gate's 10.8 seconds is absorbed by the table builds already there.
+
+## 2026-08-03 — item 9: `EmpiricalTableEngine.ensure_structure` exists to break an ordering cycle
+
+**Decision.** A public method that fills a structure's table row without
+registering a hypothesis, extracted from `expand`.
+
+**Why.** A hypothesis needs a refutable prediction before the graph will admit
+it; a table-derived prediction needs the structure's row; that row is what
+`expand` would have filled. Deriving the prediction and admitting the hypothesis
+each waited for the other. `ensure_structure` is the half of `expand` that does
+not touch belief, so `Investigation.propose` can fill the row, derive the
+prediction from it, and then admit.
+
+**Consequence.** `Investigation.propose` takes no predictions by default and
+derives them, which is why no baseline in `systems/baselines/` contains a
+threshold. A system says which structure it wants entertained; the framework says
+what that structure predicts and what would refute it.
+
+## 2026-08-03 — item 9: A17 went live for the first time, and it fails
+
+**Left incomplete, and it is a gate rather than a detail.** `AGENT_TOOL_SURFACE`
+in `registry/partitions.py` was declared at item 4 as `sciagent.systems`,
+`sciagent.systems.*` and `sciagent.experiments.dsl`. No module matched it until
+now — `test_a16_a18.py`'s own docstring says so, and says the static half of A17
+was therefore discharged by fixtures. **Item 9 creates `sciagent/systems/`, so
+A17's analysis over the real tree became non-vacuous for the first time, and it
+immediately reports three paths.**
+
+All three run
+`BeamSearch.investigate -> HypothesisGraph.propose -> HypothesisGraph._rebuilt`,
+reaching `_derive_plausibility` and `plausibility`.
+
+**What the analyser is actually seeing.** `callgraph.resolve` matches calls by
+simple name, preferring a definition in the calling module. So:
+
+- `systems/base.py` defines `Investigation.propose`, which *shadows*
+  `HypothesisGraph.propose`. Its own genuine call to `self._graph.propose(...)`
+  resolves back to itself and the path is never reported.
+- `systems/baselines/beam_search.py` defines no `propose`, so
+  `investigation.propose(...)` falls back to every `propose` in the tree, picks
+  up the graph's, and the path appears.
+
+The reported paths are therefore a name collision, but the *unreported* one is
+real: the systems layer does call `HypothesisGraph.propose`, and base.py is clean
+only by accident of shadowing. That is worse than failing, because the gate looks
+green for a reason unrelated to the invariant.
+
+**Not resolved here, deliberately.** Every available fix changes something item 9
+does not own — `AGENT_TOOL_SURFACE`, `PLAUSIBILITY_SYMBOLS`, the analyser's
+read-versus-write over-approximation, or A17 itself — and CLAUDE.md forbids
+weakening an acceptance test to make a subsystem pass. The runtime half of A17
+still holds and is tested independently: `HypothesisGraph.__post_init__` re-derives
+every plausibility from the prefix code and refuses a forged one, which is what
+actually stops a value being planted.
+
+## 2026-08-03 — item 9: A17 resolved by naming the derivation boundary
+
+**Supersedes the entry above**, which recorded A17 as left unresolved. Appended
+rather than edited, per this repository's append-only rule for decisions.
+
+**Ambiguity, and it is a real one.** A17 forbids any agent-reachable path from
+touching a plausibility symbol. A research system must be able to introduce a
+hypothesis, and introducing one necessarily runs the framework's derivation --
+which is SPEC's second invariant being *satisfied*, not violated: the framework
+writes the number. So every correct systems layer has a path into
+`_derive_plausibility`, and the criterion as literally stated forbids the design
+it exists to protect. That is a demonstrated contradiction in SPEC §13's sense,
+with the failing test to document it.
+
+**Resolved** by `PLAUSIBILITY_DERIVATION` in `hypothesis/graph.py`: three
+functions licensed to make the write, whose *own* references the analyser
+exempts. `callgraph.analyse` gained a `licensed` parameter.
+
+**Why these three and no others.** They are exactly the functions that
+syntactically touch a plausibility symbol, and the test
+`test_a17_every_licensed_function_still_needs_its_licence` asserts that equality
+in both directions -- so an entry that stops being needed fails the suite, and a
+new writer cannot be added without either fixing it or consciously widening the
+declaration. `_derive_plausibility` is deliberately *not* licensed: it reads the
+grammar and the edits only, so a write appearing inside it would still fail A17.
+
+**Why it is a boundary and not a switch.** A licensed function is still
+traversed; only its own references are ignored. Two things hold that in place. A
+test licenses the negative-control fixture's entry point and asserts the planted
+write *one hop down* is still caught. And a mutation was run by hand: planting
+`object.__setattr__(node, "plausibility", 0.99)` in B1's `investigate` fails A17
+with the path reported, and removing it passes.
+
+**The thing worth remembering.** Before the boundary existed, `systems/base.py`
+was reported clean while genuinely calling `HypothesisGraph.propose` -- because
+`callgraph` resolves by simple name preferring the calling module, and
+`Investigation.propose` shadowed the graph's method of the same name. Only
+`beam_search.py`, which defines no `propose`, surfaced the path. A gate that is
+green because of a name collision is worse than one that is red, and nothing in
+the suite would have caught it: `test_a17_the_surface_declaration_matches_real_modules`
+is the assertion added so that A17 going vacuous is itself a failure.

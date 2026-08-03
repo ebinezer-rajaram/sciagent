@@ -1,0 +1,303 @@
+"""Backlog item 9's gate: the baselines run on S1-S10 (SPEC §11).
+
+Item 9's gate is an integration one -- "Run on S1-S10" -- not an A-gate, so
+nothing here is named ``test_aN_``. What it establishes is that the four
+conventional systems of SPEC §5 complete every closed-world scenario, stay
+inside their budgets, and produce numbers the framework wrote.
+
+It deliberately asserts *properties* rather than performance. SPEC §12 says
+beating B4 or B5 is not an exit criterion but the research question, so a test
+that pinned V1 above B4 would be encoding an answer nobody has yet. The one
+place a number is asserted is where a baseline would otherwise be free to be
+useless: a system that entertains the truth must beat one that cannot.
+
+Cost
+----
+
+B5 dominates. Scoring a candidate structure means simulating it, and the beam
+visits every single edit the agent grammar licenses at corner resolution --
+about fifty. The whole suite shares **one** :class:`BeamSearch`, so those rows
+are simulated once and reused across all ten scenarios; building them per
+scenario would multiply the cost by ten for no extra information. The measured
+figures are in ``docs/DECISIONS.md``.
+"""
+
+from __future__ import annotations
+
+import math
+from functools import lru_cache
+
+import pytest
+from slice_tables import (
+    GRAMMAR,
+    METRICS,
+    gate_table,
+    save_gate_table,
+    search_table,
+)
+
+from environments.pointproc.grammar import agent_grammar
+from environments.pointproc.outcomes import (
+    closed_set,
+    executor,
+    simulator,
+    slice_designs,
+)
+from environments.pointproc.scenarios import scenario, slice_scenarios
+from sciagent.eval.campaign import ScenarioRun, run_scenario
+from sciagent.inference.empirical import EmpiricalTableEngine
+from sciagent.registry.store import ExperimentStore
+from sciagent.systems.base import ResearchSystem, null_seeded_graph
+from sciagent.systems.baselines.beam_search import BeamSearch, table_fit
+from sciagent.systems.baselines.boed_only import BOEDOnly
+from sciagent.systems.baselines.ppc_only import PPCOnly
+from sciagent.systems.baselines.retrieval import Retrieval
+
+#: How deep B5 searches. One level means single-edit structures only, which puts
+#: S8's compound truth out of its reach -- a stated limitation of this
+#: configuration, not of the algorithm, and a cost decision: a second level
+#: multiplies the structures to simulate by the beam width.
+SEARCH_LEVELS = 1
+
+SYSTEM_NAMES = ("V1", "B1", "B4", "B5")
+
+
+@lru_cache(maxsize=1)
+def _beam_search() -> BeamSearch:
+    """Return the one B5 every scenario is run with.
+
+    Its search space is the cached
+    :func:`~slice_tables.search_table`, so no scenario simulates a candidate.
+    Shared across scenarios because B5 holds no per-scenario state -- the beam
+    is rebuilt from the observations each time -- so sharing changes what it
+    costs and not what it concludes.
+    """
+    return BeamSearch(
+        agent_grammar(),
+        table_fit(search_table(), simulator(agent_grammar())),
+        width=3,
+        levels=SEARCH_LEVELS,
+    )
+
+
+def _system(name: str) -> ResearchSystem:
+    """Return the SPEC §5 system with this identifier."""
+    if name == "V1":
+        return BOEDOnly(closed_set())
+    if name == "B1":
+        return PPCOnly()
+    if name == "B4":
+        return Retrieval(closed_set())
+    if name == "B5":
+        return _beam_search()
+    raise AssertionError(f"no system {name!r}")
+
+
+@lru_cache(maxsize=1)
+def _runs() -> dict[tuple[str, str], ScenarioRun]:
+    """Run every system on every scenario once, keyed by ``(system, scenario)``.
+
+    Cached because it is the expensive thing in this module and every test below
+    reads it.
+
+    The engine table is threaded from one run to the next and saved at the end.
+    A system that proposes a structure outside the closed set makes the engine
+    simulate a row for it at the slice's full 2000 replicates, which dominates
+    everything else here; carrying the grown table forward means each distinct
+    proposal is simulated once per machine rather than once per scenario per
+    session. It changes what the gate costs and not what it concludes, since a
+    row is a pure function of ``(defect, template, seed)``.
+    """
+    table = gate_table()
+    results: dict[tuple[str, str], ScenarioRun] = {}
+    for name in SYSTEM_NAMES:
+        system = _system(name)
+        for the_scenario in slice_scenarios():
+            graph = null_seeded_graph(GRAMMAR, METRICS, table, slice_designs()[0])
+            engine = EmpiricalTableEngine(graph, table, simulate=simulator(GRAMMAR))
+            results[name, str(the_scenario.id)] = run_scenario(
+                the_scenario,
+                system,
+                executor=executor(
+                    GRAMMAR,
+                    store=ExperimentStore.in_memory(),
+                    budget=the_scenario.budget,
+                ),
+                engine=engine,
+                graph=graph,
+            )
+            table = engine.table
+    save_gate_table(table)
+    return results
+
+
+class TestTheGate:
+    """ "Run on S1-S10" (SPEC §11, item 9)."""
+
+    def test_every_system_completes_every_scenario(self) -> None:
+        runs = _runs()
+        assert set(runs) == {
+            (name, str(s.id)) for name in SYSTEM_NAMES for s in slice_scenarios()
+        }
+
+    @pytest.mark.parametrize("name", SYSTEM_NAMES)
+    def test_no_system_exceeds_its_budget(self, name: str) -> None:
+        for the_scenario in slice_scenarios():
+            run = _runs()[name, str(the_scenario.id)]
+            assert run.experiments <= the_scenario.budget.total
+
+    @pytest.mark.parametrize("name", SYSTEM_NAMES)
+    def test_every_diagnosis_is_a_distribution(self, name: str) -> None:
+        """Guaranteed by construction; asserted because it is what is scored."""
+        for the_scenario in slice_scenarios():
+            distribution = _runs()[name, str(the_scenario.id)].diagnosis.distribution
+            total = math.fsum(distribution[h] for h in sorted(distribution))
+            assert math.isclose(total, 1.0, rel_tol=1e-9)
+
+    def test_s10_starves_every_system_of_experiments(self) -> None:
+        """S10's point is that the budget, not the method, is the binding limit."""
+        for name in SYSTEM_NAMES:
+            assert _runs()[name, "S10"].experiments <= scenario("S10").budget.total
+
+
+class TestTheBaselinesAreNotStrawMen:
+    """SPEC §5 makes B4 the designated comparator.
+
+    A baseline that lost because it was built carelessly would answer R1 by
+    default, so each one's defining capability is asserted here.
+    """
+
+    def test_b4_identifies_more_single_mechanism_scenarios_than_b1(self) -> None:
+        """B1 proposes nothing, so it can only ever be right about the null."""
+        singles = ("S1", "S2", "S3", "S4")
+        b4 = sum(_runs()["B4", s].score.correct for s in singles)
+        b1 = sum(_runs()["B1", s].score.correct for s in singles)
+        assert b4 > b1, f"B4 got {b4}/4 single mechanisms, B1 got {b1}/4"
+
+    def test_b4_recovers_most_single_mechanism_scenarios(self) -> None:
+        """A retrieval baseline that could not do this would be a straw man."""
+        singles = ("S1", "S2", "S3", "S4")
+        correct = sum(_runs()["B4", s].score.correct for s in singles)
+        assert correct >= 3, f"B4 recovered only {correct}/4"
+
+    def test_v1_recovers_most_single_mechanism_scenarios(self) -> None:
+        singles = ("S1", "S2", "S3", "S4")
+        correct = sum(_runs()["V1", s].score.correct for s in singles)
+        assert correct >= 3, f"V1 recovered only {correct}/4"
+
+    def test_b5_searching_beats_not_searching(self) -> None:
+        """B5's exact-match score is zero everywhere, and that is not a failure.
+
+        Its candidates are grid *corners* and the slice's truths are interior
+        points of the same grids, so an exact-match score is zero almost by
+        construction and says nothing about the search. The question that does
+        have content is whether searching gets closer to the truth than not
+        searching: B1 never proposes, so its nearest structure is always the
+        seeded null, and that is the thing to beat.
+
+        Measured at the time of writing: B5 averages 0.811 edits from the truth
+        against B1's 1.111, and lands inside the correct structural cell -- a
+        distance strictly below one whole edit -- on four of the nine
+        non-null scenarios. The assertion is the comparison, not those figures.
+        """
+        non_null = [f"S{i}" for i in range(1, 11) if i != 9]
+        b5 = [_runs()["B5", s].structural_distance for s in non_null]
+        b1 = [_runs()["B1", s].structural_distance for s in non_null]
+        mean_b5 = math.fsum(b5) / len(b5)
+        mean_b1 = math.fsum(b1) / len(b1)
+        assert mean_b5 < mean_b1, (
+            f"B5 averaged {mean_b5:.3f} edits from the truth, no better than "
+            f"proposing nothing at {mean_b1:.3f}"
+        )
+        inside = [s for s, d in zip(non_null, b5, strict=True) if d < 1.0]
+        assert len(inside) >= 3, (
+            f"B5 found the right structural cell on only {len(inside)} of "
+            f"{len(non_null)} scenarios ({inside})"
+        )
+
+
+class TestAbstention:
+    """SPEC §12 criterion 9, on the two scenarios it names."""
+
+    @pytest.mark.parametrize("name", SYSTEM_NAMES)
+    def test_s9_puts_its_mass_on_the_null(self, name: str) -> None:
+        """The null is a hypothesis, so getting S9 right is a positive result."""
+        run = _runs()[name, "S9"]
+        assert run.diagnosis.null_mass > 0.5, (
+            f"{name} put only {run.diagnosis.null_mass:.3f} on the null in S9"
+        )
+
+    def test_s10_leaves_every_system_uncertain(self) -> None:
+        """SPEC §4.5 S10: Hawkes against regime switching, below the threshold.
+
+        No design offered here is a forced arrival, which SPEC §4.2 makes the
+        only discriminator of that pair, so no system should be able to identify
+        it. A system claiming otherwise would mean the pair is separable by
+        dispersion after all, and §4.2's calibration would be wrong.
+        """
+        for name in SYSTEM_NAMES:
+            run = _runs()[name, "S10"]
+            assert not run.score.identified, (
+                f"{name} identified S10 with mass {run.score.truth_mass:.3f}; "
+                f"the discriminating experiment is not in its design set"
+            )
+
+
+class TestDetectionIsMeasuredNotAssumed:
+    """B1's Stage A rate, which SPEC §12 criterion 4 compares an LLM against."""
+
+    def test_b1_misses_every_arrival_mechanism_despite_per_experiment_evidence(
+        self,
+    ) -> None:
+        """The finding. Signal is present in every experiment and is thrown away.
+
+        On S1-S7 the truth is one of SPEC §4.2's four arrival mechanisms and B1
+        holds only the null, so the hypothesis space is inadequate by
+        construction and the check ought to say so. Every individual experiment
+        says so -- the smallest per-experiment tail probability is about 0.013 --
+        but the check reports the *minimum* p-value under a Sidak correction for
+        eight tests, which inflates 0.013 to about 0.102 and clears it.
+
+        Eight experiments agreeing is treated purely as eight chances to be
+        wrong and never as accumulating evidence, so detection gets *worse* as
+        the budget grows. Recorded in ``docs/DECISIONS.md``, with the
+        consequence for SPEC §12 criterion 4 in ``docs/BACKLOG.md``.
+        """
+        for scenario_id in (f"S{i}" for i in range(1, 8)):
+            run = _runs()["B1", scenario_id]
+            per_experiment = run.ppc.per_experiment
+            smallest = min(per_experiment[k] for k in sorted(per_experiment))
+            assert smallest < run.ppc.alpha, (
+                f"{scenario_id}: no single experiment carries evidence against "
+                f"the null, so the miss is not the correction's doing"
+            )
+            assert not run.ppc.inadequate, (
+                f"B1 now detects {scenario_id}; the multiplicity finding recorded "
+                f"in docs/DECISIONS.md is stale and must be revisited"
+            )
+
+    def test_the_one_starved_scenario_is_the_one_it_detects(self) -> None:
+        """The cleanest demonstration that the correction, not the data, decides.
+
+        S10 carries the *least* evidence of any scenario -- two experiments
+        against everything else's eight -- and is the only arrival-mechanism
+        scenario B1 flags, because two tests are a far smaller multiplicity
+        penalty than eight. Its per-experiment evidence is the same 0.013.
+        """
+        starved, fed = _runs()["B1", "S10"], _runs()["B1", "S1"]
+        assert starved.experiments < fed.experiments
+        assert starved.ppc.inadequate and not fed.ppc.inadequate
+        assert starved.ppc.p_value < fed.ppc.p_value
+
+    def test_b1_detects_the_compound_scenario(self) -> None:
+        """S8 is detected on strength of signal rather than on a small penalty.
+
+        Its size-distribution mixture moves a diagnostic far enough that the
+        per-experiment tail probability is about 0.003, which survives the same
+        eight-test correction that 0.013 does not. B1's detection rate over
+        S1-S10 is therefore 2/10, and both are explained.
+        """
+        run = _runs()["B1", "S8"]
+        assert run.ppc.inadequate
+        per_experiment = run.ppc.per_experiment
+        assert min(per_experiment[k] for k in sorted(per_experiment)) < 0.01

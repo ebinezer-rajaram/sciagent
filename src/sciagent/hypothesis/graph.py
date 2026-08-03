@@ -70,6 +70,34 @@ PLAUSIBILITY_SYMBOLS: tuple[str, ...] = (
     "_derive_plausibility",
 )
 
+#: The functions licensed to touch those symbols: the framework's own derivation.
+#: A17's analyser exempts these three references and nothing else.
+#:
+#: Why a boundary is needed at all. SPEC's second invariant forbids an
+#: agent-reachable path from *setting* plausibility, and a research system must
+#: still be able to introduce a hypothesis -- which necessarily runs the
+#: derivation, because that is the framework writing the number. Every correct
+#: systems layer therefore has a path into ``_derive_plausibility``, so a gate
+#: that forbids the path outright cannot be satisfied by any working design. This
+#: names the one place the write is meant to happen, so every *other* path stays
+#: forbidden.
+#:
+#: Why these three, and no more. ``_rebuilt`` derives the whole vector and is the
+#: only writer; ``propose`` sets the placeholder ``_rebuilt`` immediately
+#: overwrites; ``__post_init__`` re-derives and refuses a value that disagrees,
+#: which is the runtime half of A17 and the thing that actually stops a planted
+#: number. ``_derive_plausibility`` itself is deliberately absent -- it reads the
+#: grammar and the edits and nothing else, so it needs no exemption, and leaving
+#: it out means a plausibility write appearing *inside* it would still fail A17.
+#:
+#: Exempting a function's own references does not stop the analyser walking
+#: through it, so anything these three call is still checked.
+PLAUSIBILITY_DERIVATION: tuple[str, ...] = (
+    "sciagent.hypothesis.graph.HypothesisGraph.__post_init__",
+    "sciagent.hypothesis.graph.HypothesisGraph._rebuilt",
+    "sciagent.hypothesis.graph.HypothesisGraph.propose",
+)
+
 
 @dataclass(frozen=True, slots=True)
 class HypothesisNode:

@@ -16,7 +16,14 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from slice_tables import GRAMMAR, METRICS, gate_table, save_gate_table, search_table
+from slice_tables import (
+    AGENT_GRAMMAR,
+    GRAMMAR,
+    METRICS,
+    gate_table,
+    save_gate_table,
+    search_table,
+)
 
 from environments.pointproc.grammar import agent_grammar
 from environments.pointproc.outcomes import (
@@ -78,7 +85,7 @@ def runs() -> tuple[tuple[ScenarioRun, ClaimContext], ...]:
     for name in SYSTEM_NAMES:
         system = _system(name)
         for scenario in slice_scenarios():
-            graph = null_seeded_graph(GRAMMAR, METRICS, table, slice_designs()[0])
+            graph = null_seeded_graph(AGENT_GRAMMAR, METRICS, table, slice_designs()[0])
             engine = EmpiricalTableEngine(graph, table, simulate=simulator(GRAMMAR))
             store = ExperimentStore.in_memory()
             runner = executor(GRAMMAR, store=store, budget=scenario.budget)

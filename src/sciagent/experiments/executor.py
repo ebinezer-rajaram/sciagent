@@ -223,6 +223,25 @@ class Executor:
         return self._partition
 
     @property
+    def grammar(self) -> EditGrammar:
+        """Return the grammar this executor applies defects under.
+
+        The *environment's*, which is a superset of any grammar a system reasons
+        in: it has to be, since it must license the scenario's ground truth even
+        when that truth is out of the agent's library (SPEC §4.5 S11). Read-only
+        and safe to hand out -- an :class:`~sciagent.core.edits.EditGrammar` is
+        frozen and carries no scenario's truth -- and not reachable from a
+        research system, which is handed an
+        :class:`~sciagent.systems.base.Investigation` and not an executor.
+
+        Exists so that a distance to the truth can be measured at all. A distance
+        under a grammar that cannot express one of its endpoints is undefined,
+        which is what :attr:`~sciagent.eval.campaign.ScenarioRun.structural_distance`
+        needs it for.
+        """
+        return self._grammar
+
+    @property
     def reference(self) -> GenerativeProgram:
         """Return the undefected programme every experiment is an edit of.
 

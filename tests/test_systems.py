@@ -12,7 +12,7 @@ import math
 from typing import NamedTuple
 
 import pytest
-from slice_tables import GRAMMAR, METRICS, slice_table
+from slice_tables import AGENT_GRAMMAR, GRAMMAR, METRICS, slice_table
 
 from environments.pointproc.operations import arrival_burst
 from environments.pointproc.outcomes import (
@@ -67,7 +67,7 @@ def _harness(scenario_id: str = "S1") -> _Harness:
     """Return a scenario and the three objects a run is performed against."""
     the_scenario = scenario(scenario_id)
     table = slice_table()
-    graph = null_seeded_graph(GRAMMAR, METRICS, table, slice_designs()[0])
+    graph = null_seeded_graph(AGENT_GRAMMAR, METRICS, table, slice_designs()[0])
     return _Harness(
         scenario=the_scenario,
         executor=executor(

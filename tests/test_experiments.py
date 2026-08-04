@@ -27,12 +27,16 @@ from environments.pointproc.components import ARRIVAL, OBS, SIGN, SIZE
 from environments.pointproc.grammar import edit_grammar
 from environments.pointproc.operations import arrival_burst
 from environments.pointproc.outcomes import (
+    BURST_COUNT,
+    BURST_OBSERVE,
+    BURST_SPACING,
     DATA_VERSION,
     ENV_VERSION,
     N_EVENTS,
     closed_set,
     discretisation,
     executor,
+    forced_design,
     simulator,
     slice_designs,
     slice_templates,
@@ -66,40 +70,26 @@ from sciagent.registry.store import ExperimentStore
 # Fixtures
 # --------------------------------------------------------------------------
 
-#: The burst that separates Hawkes from everything else. Twenty arrivals crowded
-#: into a fifth of a time unit, read over the twenty events that follow. The
-#: numbers are measured, not chosen by taste -- see ``docs/DECISIONS.md``.
-BURST_COUNT = 20
-BURST_SPACING = 0.01
-BURST_OBSERVE = 20
-
 
 def _space(name: str) -> OutcomeSpace:
     return OutcomeSpace(axes=(discretisation(name),))
 
 
 def _rate_space() -> OutcomeSpace:
-    """Return an outcome space over ``mean_rate``, for post-intervention reads.
+    """Return the frozen outcome space of the forced-arrival design.
 
-    Its edges are local to this test rather than in ``outcomes.py``: the slice's
-    frozen discretisations are the ones the posterior is calibrated on, and a
-    forced-arrival design is not among them until backlog item 11 declares the
-    scenarios that use it.
+    Local to this module until backlog item 11, which declared the scenarios
+    that use the design and therefore froze its edges in ``outcomes.py``. Read
+    off the design rather than restated, so a test cannot measure through a
+    discretisation the posterior is not calibrated on.
     """
-    spec = metric_registry().spec("mean_rate")
-    return OutcomeSpace(
-        axes=(
-            Discretisation(
-                metric=spec.ref,
-                interior=(0.5, 1.0, 1.5, 2.0, 3.0, 5.0),
-                low=spec.low,
-                high=spec.high,
-            ),
-        )
-    )
+    return forced_design().outcome
 
 
 def _forced_design(observe: int = BURST_OBSERVE) -> ExperimentDesign:
+    """Return the slice's forced-arrival design, optionally at another window."""
+    if observe == BURST_OBSERVE:
+        return forced_design()
     return ExperimentDesign(
         operation=ForceArrival(
             component=ARRIVAL,
@@ -126,17 +116,22 @@ class TestDesignIdentity:
     """A design's id and config are stable, readable and injective."""
 
     def test_slice_design_ids_are_unchanged_by_the_dsl(self) -> None:
-        """Introducing the DSL must not move the empirical table.
+        """The four observational ids are the ones the table was always built on.
 
         ``EmpiricalTable.version`` hashes template ids, so a design that rendered
         differently from the hand-built template it replaced would invalidate a
-        table that took minutes to build and, worse, would do it silently.
+        table that took minutes to build and, worse, would do it silently. The
+        fifth id is item 11's forced arrival, which moves the version *on
+        purpose*: it is a new design and the table has to be rebuilt to hold it.
         """
         assert [str(design.id) for design in slice_designs()] == [
             "query:count_autocorrelation_w2",
             "query:inter_arrival_dispersion",
             "query:phase_conditioned_dispersion",
             "query:size_dispersion",
+            "force[arrival@0=0.01,1=0.02,2=0.03,3=0.04,4=0.05,5=0.06,6=0.07,"
+            "7=0.08,8=0.09,9=0.1,10=0.11,11=0.12,12=0.13,13=0.14,14=0.15,"
+            "15=0.16,16=0.17,17=0.18,18=0.19,19=0.2|20]:mean_rate",
         ]
 
     def test_templates_are_the_designs(self) -> None:
@@ -475,18 +470,47 @@ class TestSimulatorSharesTheExecutionPath:
     """The engine's likelihood and the observation it scores come from one route."""
 
     def test_the_simulator_agrees_with_a_direct_execution(self) -> None:
+        """Observational designs only: a manipulated one has no direct twin.
+
+        The forced arrival clamps a prefix of the run and reads the events after
+        it, which is precisely what the compiler exists to do, so reproducing it
+        here would mean restating the compiler and testing it against itself.
+        :meth:`test_the_forced_design_is_not_a_plain_execution` covers that side.
+        """
         grammar = edit_grammar()
         registry = metric_registry()
         simulate = simulator()
+        observational = [
+            design.template()
+            for design in slice_designs()
+            if isinstance(design.operation, QueryDiagnostic)
+        ]
+        assert len(observational) == len(slice_templates()) - 1
         for name, defect in sorted(closed_set().items()):
             program = grammar.apply(reference_program(), defect)
-            for template in slice_templates():
+            for template in observational:
                 log = program.execute(Seed(21), template.n_events)
                 direct = tuple(
                     registry.spec(str(metric.name)).compute(log)
                     for metric in template.outcome.metrics
                 )
                 assert simulate(defect, template, Seed(21)) == direct, name
+
+    def test_the_forced_design_is_not_a_plain_execution(self) -> None:
+        """The manipulation reaches the measurement, on the engine's own path.
+
+        Under Hawkes the post-burst rate is many times the run's average rate,
+        which is the whole content of SPEC §4.2's stage 3. If the simulator ever
+        returned the unmanipulated value here, every likelihood the engine
+        computed for the intervention would be the likelihood of an experiment
+        nobody performed.
+        """
+        template = forced_design().template()
+        defect = closed_set()["hawkes"]
+        program = edit_grammar().apply(reference_program(), defect)
+        log = program.execute(Seed(21), template.n_events)
+        unmanipulated = metric_registry().spec("mean_rate").compute(log)
+        assert simulator()(defect, template, Seed(21))[0] > 4.0 * unmanipulated
 
     def test_the_simulator_registers_nothing(self, store: ExperimentStore) -> None:
         """Table-building executions are the engine's arithmetic, not experiments."""

@@ -51,6 +51,7 @@ MIXTURE_OF_EXPONENTIAL_2 = FamilyId("mixture_of_exponential_2")
 
 IID_BERNOULLI = FamilyId("iid_bernoulli")
 IDENTITY = FamilyId("identity")
+IDENTITY_PERIODIC_CENSORED = FamilyId("identity_periodic_censored")
 
 TWO_STATE_MARKOV = LatentSpecId("two_state_markov")
 
@@ -330,6 +331,31 @@ def observation_identity(context: DrawContext) -> float:
     return size * (2.0 * sign - 1.0)
 
 
+def observation_periodic_censored(context: DrawContext) -> float:
+    """Signed mark size, under an observation window that opens and closes.
+
+    Scenario S12's nuisance. The *value* is the identity family's: an event whose
+    record is lost still happened, and its mark is still drawn, so nothing about
+    the generative process changes. What changes is which events reach a
+    measurement, and that is not a property of a draw at all -- it is a property
+    of the record. This environment's one place for that is the restriction an
+    :class:`~sciagent.experiments.executor.OperationCompiler` returns, so this
+    family *declares* the observation process, in ``period`` and ``duty``, and
+    :func:`environments.pointproc.operations.compiler` realises it.
+
+    Writing a sentinel here instead was rejected: it would put a number into the
+    log that every metric would have to know not to read, and a metric is a pure
+    function of a log by specification (SPEC §3.2).
+    """
+    for name in ("period", "duty"):
+        if name not in context.component.parameters:
+            raise ExecutionError(
+                f"{IDENTITY_PERIODIC_CENSORED} requires parameter {name!r}; a "
+                f"censoring window that is not declared cannot be applied"
+            )
+    return observation_identity(context)
+
+
 # --------------------------------------------------------------------------
 # Latent initialisers
 # --------------------------------------------------------------------------
@@ -349,7 +375,12 @@ def init_two_state_markov(parameters: Parameters, rng: np.random.Generator) -> f
 # The library
 # --------------------------------------------------------------------------
 
-LIBRARY_VERSION = "1.0.0"
+#: Bumped to 1.1.0 at backlog item 11, which added
+#: :data:`IDENTITY_PERIODIC_CENSORED` for scenario S12. The version enters
+#: ``ENV_VERSION`` and therefore every registered experiment's content address:
+#: a library that can execute a programme the previous one could not is a
+#: different library, whether or not any existing programme's behaviour moved.
+LIBRARY_VERSION = "1.1.0"
 
 LIBRARY = FamilyLibrary(
     name="pointproc",
@@ -366,6 +397,7 @@ LIBRARY = FamilyLibrary(
             MIXTURE_OF_EXPONENTIAL_2: size_mixture_of_exponential_2,
             IID_BERNOULLI: sign_iid_bernoulli,
             IDENTITY: observation_identity,
+            IDENTITY_PERIODIC_CENSORED: observation_periodic_censored,
         }
     ),
     latent_inits=FrozenDict({TWO_STATE_MARKOV: init_two_state_markov}),

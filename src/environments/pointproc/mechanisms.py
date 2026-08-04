@@ -27,13 +27,16 @@ from collections.abc import Sequence
 
 from environments.pointproc.components import (
     ARRIVAL,
+    IDENTITY_PERIODIC_CENSORED,
     MIXTURE_OF_EXPONENTIAL_2,
     MIXTURE_OF_POISSON_2,
+    OBS,
     POISSON_PERIODIC,
     SIZE,
     TWO_STATE_MARKOV,
 )
 from environments.pointproc.grammar import (
+    CENSORING_GRIDS,
     EXPONENTIAL_KERNEL,
     EXPONENTIAL_MIXTURE_GRIDS,
     HAWKES_GRIDS,
@@ -174,6 +177,39 @@ SIZE_MIXTURE: Edit = ChangeDistributionFamily(
         mean_high=5.70784988166157,
         weight_high=0.12666666666666665,
     ),
+)
+
+
+#: Scenario S12's nuisance: an observation process that records events only
+#: during the first ``duty`` of each ``period``-long cycle. Not a defect anyone
+#: is asked to find -- S12's truth is regime switching alone -- and licensed by
+#: ``edit_grammar`` and not by ``agent_grammar`` for that reason.
+#:
+#: Calibrated by ``scripts/calibrate_censoring.py`` for the two things SPEC §4.5
+#: asks of it at once. Snapped to the grid at period 6.681, duty 0.599: an
+#: observed stretch of 4.00 followed by a censored one of 2.68.
+#:
+#: *The garden path.* Under regime switching the censored record reads as
+#: **seasonality** on the two arrival-dispersion diagnostics -- count
+#: autocorrelation 0.193 against seasonality's 0.199 and regime switching's own
+#: 0.433; inter-arrival dispersion 3.40 against 3.42 -- and the power spectrum
+#: carries a peak at 0.150, the censoring frequency, sharp to a standard
+#: deviation of 0.001 where regime switching alone has no peak at all
+#: (frequency 0.017, sd 0.018). An investigator reading either would propose a
+#: period of 6.68.
+#:
+#: *The recovery.* The period is deliberately not
+#: ``catalogue.CANDIDATE_PERIOD`` (11.559) nor a low harmonic of it, so
+#: conditioning on the phase a seasonality hypothesis proposes does *not* remove
+#: the dispersion: phase-conditioned dispersion stays at 2.44 where genuine
+#: seasonality falls to 1.07. Seasonality is therefore refutable, and the forced
+#: arrival still reads 0.55 -- far below Hawkes's 8.6 -- so the route back to the
+#: truth survives the nuisance. A censoring period equal to the candidate period
+#: would have made S12 a trap with no exit rather than a garden path.
+OBSERVATION_CENSORING: Edit = ChangeDistributionFamily(
+    target=OBS,
+    family=IDENTITY_PERIODIC_CENSORED,
+    parameters=on_grid(CENSORING_GRIDS, period=7.0, duty=0.6),
 )
 
 

@@ -242,10 +242,14 @@ class TestA2EditSoundness:
         assert checked > 0
 
     def test_a2_structural_coverage_is_exhaustive(self) -> None:
-        """Every structural cell of the ground-truth grammar is reachable."""
+        """Every structural cell of the ground-truth grammar is reachable.
+
+        Seven cells since backlog item 11: the six of SPEC §4.2 and S11, plus
+        scenario S12's censoring observation process on ``obs``.
+        """
         grammar = edit_grammar()
         structures = list(grammar.structures())
-        assert len(structures) == 6
+        assert len(structures) == 7
         by_type = {edit_type.__name__ for edit_type, _, _ in structures}
         assert by_type == {
             "AddDependency",
@@ -259,10 +263,12 @@ class TestA2EditSoundness:
         grammar = edit_grammar()
         total = grammar.edit_space_size()
         sampled = sum(1 for _ in grammar.enumerate_edits(self.MAX_PER_STRUCTURE))
-        # Five three-parameter cells and one four-parameter cell.
-        assert total == 5 * GRID_SIZE**3 + GRID_SIZE**4
-        # Thinned to 4 points per grid for three parameters, 3 points for four.
-        assert sampled == 5 * 4**3 + 3**4 == 401
+        # Five three-parameter cells, one four-parameter cell, and the
+        # two-parameter censoring window of scenario S12.
+        assert total == 5 * GRID_SIZE**3 + GRID_SIZE**4 + GRID_SIZE**2
+        # Thinned to 4 points per grid for three parameters, 3 for four, and 9
+        # for two -- the largest k with k**p at most MAX_PER_STRUCTURE.
+        assert sampled == 5 * 4**3 + 3**4 + 9**2 == 482
         assert sampled < total
 
     def test_a2_off_grid_parameters_are_rejected(self) -> None:
@@ -558,11 +564,20 @@ class TestA4PrefixCode:
                 counted += 1
 
         # The whole space, counted independently: the null defect, every single
-        # edit, and every (arrival, size) pair. Two targets, so nothing larger.
-        on_arrival = sum(1 for edit in edits if edit.target == ARRIVAL)
-        on_size = sum(1 for edit in edits if edit.target == SIZE)
-        assert max_size == 2
-        assert counted == 1 + len(edits) + on_arrival * on_size == 441
+        # edit, every pair of edits on distinct targets, and every such triple.
+        # Three targets since backlog item 11 licensed scenario S12's censoring
+        # observation process on ``obs``, so nothing larger than a triple.
+        per_target = {
+            target: sum(1 for edit in edits if edit.target == target)
+            for target in (ARRIVAL, SIZE, OBS)
+        }
+        pairs = sum(
+            per_target[left] * per_target[right]
+            for left, right in combinations((ARRIVAL, SIZE, OBS), 2)
+        )
+        triples = per_target[ARRIVAL] * per_target[SIZE] * per_target[OBS]
+        assert max_size == 3
+        assert counted == 1 + len(edits) + pairs + triples == 2205
         assert total <= 1.0 + 1e-12, f"Kraft violated over defects: sum = {total}"
 
     def test_a4_length_prefix_is_complete(self) -> None:

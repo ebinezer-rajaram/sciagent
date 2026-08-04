@@ -1,4 +1,4 @@
-"""Backlog item 9's gate: the baselines run on S1-S10 (SPEC §11).
+"""Backlog item 9's gate: the baselines run on the slice (SPEC §11).
 
 Item 9's gate is an integration one -- "Run on S1-S10" -- not an A-gate, so
 nothing here is named ``test_aN_``. What it establishes is that the four
@@ -29,6 +29,7 @@ from functools import lru_cache
 
 import pytest
 from slice_tables import (
+    AGENT_GRAMMAR,
     GRAMMAR,
     METRICS,
     gate_table,
@@ -113,7 +114,7 @@ def _runs() -> dict[tuple[str, str], ScenarioRun]:
     for name in SYSTEM_NAMES:
         system = _system(name)
         for the_scenario in slice_scenarios():
-            graph = null_seeded_graph(GRAMMAR, METRICS, table, slice_designs()[0])
+            graph = null_seeded_graph(AGENT_GRAMMAR, METRICS, table, slice_designs()[0])
             engine = EmpiricalTableEngine(graph, table, simulate=simulator(GRAMMAR))
             results[name, str(the_scenario.id)] = run_scenario(
                 the_scenario,
@@ -132,7 +133,13 @@ def _runs() -> dict[tuple[str, str], ScenarioRun]:
 
 
 class TestTheGate:
-    """ "Run on S1-S10" (SPEC §11, item 9)."""
+    """ "Run on S1-S10" (SPEC §11, item 9), and on S11 and S12 since item 11.
+
+    Item 9's gate names the ten closed-world scenarios. The two that arrived with
+    item 11 are run here as well rather than in a second place: they are the same
+    four systems on the same table, and SPEC §12 criterion 4 needs B1's detection
+    rate on S11 to be a measured floor rather than an assumption.
+    """
 
     def test_every_system_completes_every_scenario(self) -> None:
         runs = _runs()
@@ -195,10 +202,11 @@ class TestTheBaselinesAreNotStrawMen:
         searching: B1 never proposes, so its nearest structure is always the
         seeded null, and that is the thing to beat.
 
-        Measured at the time of writing: B5 averages 0.811 edits from the truth
-        against B1's 1.111, and lands inside the correct structural cell -- a
-        distance strictly below one whole edit -- on four of the nine
-        non-null scenarios. The assertion is the comparison, not those figures.
+        Measured at item 11, over the ten closed-world scenarios item 9's gate
+        names: B5 averages 0.775 edits from the truth against B1's 1.111. The
+        assertion is the comparison, not those figures. S11 and S12 are excluded
+        because a distance to a truth outside the search space measures the
+        grammar rather than the search.
         """
         non_null = [f"S{i}" for i in range(1, 11) if i != 9]
         b5 = [_runs()["B5", s].structural_distance for s in non_null]
@@ -230,10 +238,12 @@ class TestAbstention:
     def test_s10_leaves_every_system_uncertain(self) -> None:
         """SPEC §4.5 S10: Hawkes against regime switching, below the threshold.
 
-        No design offered here is a forced arrival, which SPEC §4.2 makes the
-        only discriminator of that pair, so no system should be able to identify
-        it. A system claiming otherwise would mean the pair is separable by
-        dispersion after all, and §4.2's calibration would be wrong.
+        The reason moved at item 11 and the assertion did not. It used to hold
+        because no design offered was a forced arrival; the intervention is in
+        the design set now, and what makes S10 non-identifiable is its budget of
+        two against an optimal policy's 3.008 (``tests/test_oracle.py``). A system
+        identifying it would mean the budget is not below the threshold after
+        all, and the scenario would have stopped being the one §4.5 describes.
         """
         for name in SYSTEM_NAMES:
             run = _runs()[name, "S10"]
@@ -294,8 +304,8 @@ class TestDetectionIsMeasuredNotAssumed:
 
         Its size-distribution mixture moves a diagnostic far enough that the
         per-experiment tail probability is about 0.003, which survives the same
-        eight-test correction that 0.013 does not. B1's detection rate over
-        S1-S10 is therefore 2/10, and both are explained.
+        multiplicity correction that 0.013 does not. B1 detects S8 and S10 and
+        nothing else, and both are explained.
         """
         run = _runs()["B1", "S8"]
         assert run.ppc.inadequate

@@ -1,12 +1,22 @@
 """The point-process edit grammar: ground truth and the agent's subset.
 
-Two grammars are declared. They differ in exactly one entry:
-``edit_grammar`` licenses lagged dependencies from ``size`` to ``arrival``;
-``agent_grammar`` licenses self-loops only. That single difference is what makes
-scenario S11 out-of-library, by the mechanical definition of SPEC §3.2 rather
-than by anyone's judgement::
+Two grammars are declared. They differ in two entries, one per scenario that
+turns on the difference, and in nothing else::
 
-    AddDependency(size -> arrival) in edit_grammar() \\ agent_grammar()
+    AddDependency(size -> arrival)            in edit_grammar() \\ agent_grammar()
+    ChangeDistributionFamily(obs, censored)   in edit_grammar() \\ agent_grammar()
+
+The first is scenario S11's mechanism: ``edit_grammar`` licenses lagged
+dependencies from ``size`` to ``arrival`` and ``agent_grammar`` licenses
+self-loops only, which is what makes S11 out-of-library by the mechanical
+definition of SPEC §3.2 rather than by anyone's judgement.
+
+The second is scenario S12's *nuisance*, an observation process that censors a
+window of every cycle. It sits on the same side of the line for a different
+reason: it is not a defect anyone is being asked to find, and a system that could
+propose it would be a system that could explain S12's garden path away instead of
+recovering from it. Keeping it out of ``agent_grammar`` is what makes that
+structural rather than a matter of the agent's restraint.
 
 Every parameter is quantised onto a grid of ``GRID_SIZE`` points, so each
 parameter costs exactly ``log2(GRID_SIZE)`` bits under the prefix code and the
@@ -14,6 +24,12 @@ edit space is finite and enumerable (acceptance test A4). Ranges are wide enough
 to contain plainly implausible values as well as plausible ones: narrowing a
 range to the region where the answer lies would be exactly the kind of tuning
 SPEC §0 forbids.
+
+The code is grammar-relative, so adding the ``obs`` option lengthens every
+``ChangeDistributionFamily`` edit under ``edit_grammar`` by the bit it now costs
+to say which of three components is meant. Nothing an agent is scored on is
+computed under this grammar -- a hypothesis graph carries ``agent_grammar`` --
+and ``docs/DECISIONS.md`` records the shift.
 """
 
 from __future__ import annotations
@@ -21,8 +37,10 @@ from __future__ import annotations
 from environments.pointproc.components import (
     ARRIVAL,
     HAWKES_EXPONENTIAL,
+    IDENTITY_PERIODIC_CENSORED,
     MIXTURE_OF_EXPONENTIAL_2,
     MIXTURE_OF_POISSON_2,
+    OBS,
     POISSON_MODULATED_2STATE,
     POISSON_PERIODIC,
     SIZE,
@@ -58,7 +76,15 @@ GRID_SIZE = 64
 
 EXPONENTIAL_KERNEL = KernelId("exponential")
 
-GRAMMAR_VERSION = GrammarVersion("pointproc/1.0.0")
+#: Bumped to 1.1.0 at backlog item 11, which licensed scenario S12's censoring
+#: observation process. It enters ``ENV_VERSION`` and every registered
+#: experiment's content address, and it changes the code length of every
+#: ``ChangeDistributionFamily`` edit under this grammar, so a result addressed
+#: under 1.0.0 was computed under a different prior and must not be read as
+#: though it were this one.
+GRAMMAR_VERSION = GrammarVersion("pointproc/1.1.0")
+
+#: Unchanged: nothing an agent may express has moved.
 AGENT_GRAMMAR_VERSION = GrammarVersion("pointproc-agent/1.0.0")
 
 # --------------------------------------------------------------------------
@@ -107,6 +133,16 @@ EXPONENTIAL_MIXTURE_GRIDS = (
     ParameterGrid("weight_high", 0.02, 0.98, GRID_SIZE, "linear"),
 )
 
+#: Scenario S12's censoring window. ``period`` shares the periodic mechanism's
+#: range deliberately -- a censoring cycle and a seasonal cycle are the same kind
+#: of quantity, and the scenario's whole content is that one can be mistaken for
+#: the other. ``duty`` is the fraction of each cycle during which events are
+#: recorded, on the same linear range as every other fraction in this grammar.
+CENSORING_GRIDS = (
+    ParameterGrid("period", 0.2, 200.0, GRID_SIZE, "log"),
+    ParameterGrid("duty", 0.02, 0.98, GRID_SIZE, "linear"),
+)
+
 # --------------------------------------------------------------------------
 # Option tables
 # --------------------------------------------------------------------------
@@ -115,6 +151,16 @@ _FAMILIES = FrozenDict[ComponentId, tuple[FamilyOption, ...]](
     {
         ARRIVAL: (FamilyOption(MIXTURE_OF_POISSON_2, POISSON_MIXTURE_GRIDS),),
         SIZE: (FamilyOption(MIXTURE_OF_EXPONENTIAL_2, EXPONENTIAL_MIXTURE_GRIDS),),
+    }
+)
+
+#: The ground-truth family table: the agent's, plus the censoring observation
+#: process of scenario S12. See this module's docstring for why it is on this
+#: side of the line.
+_GROUND_FAMILIES = FrozenDict[ComponentId, tuple[FamilyOption, ...]](
+    {
+        **_FAMILIES,
+        OBS: (FamilyOption(IDENTITY_PERIODIC_CENSORED, CENSORING_GRIDS),),
     }
 )
 
@@ -157,13 +203,15 @@ _ALL_TYPES = frozenset(
 def edit_grammar() -> EditGrammar:
     """Return the ground-truth grammar: every mechanism the environment can hold.
 
-    Guarantees a superset of :func:`agent_grammar`, differing only by the
-    ``size -> arrival`` dependency option.
+    Guarantees a superset of :func:`agent_grammar`, differing by the
+    ``size -> arrival`` dependency option (scenario S11's mechanism) and the
+    censoring observation process on ``obs`` (scenario S12's nuisance), and by
+    nothing else.
     """
     return EditGrammar(
         version=GRAMMAR_VERSION,
         allowed=_ALL_TYPES,
-        families=_FAMILIES,
+        families=_GROUND_FAMILIES,
         parameterisations=_PARAMETERISATIONS,
         latent_specs=_LATENTS,
         dependencies=FrozenDict[ComponentId, tuple[DependencyOption, ...]](

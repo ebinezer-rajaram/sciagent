@@ -95,7 +95,14 @@ class ScenarioRun:
     neither belongs in its content address."""
 
     structural_distance: float
-    """Grammar distance from the truth to the nearest structure entertained.
+    """Distance from the truth to the nearest structure entertained, in edits.
+
+    Measured under the *environment's* grammar rather than the system's. It has
+    to be: on SPEC §4.5's S11 the truth is out of the agent's library by
+    construction, and a distance under a grammar that cannot express one of its
+    endpoints is undefined. The two agree wherever both can express what is being
+    compared, since the ground metric is over grid indices and the grids are the
+    same objects in both.
 
     Reported alongside the closed-world score because the two can disagree
     sharply, and reporting only the first would misrepresent a system. B5
@@ -136,11 +143,18 @@ def run_scenario(
     :class:`~sciagent.core.errors.InvestigationError` rather than being scored,
     which is SPEC's second invariant enforced by assertion rather than by
     comment.
+
+    Experiments are run against :attr:`~sciagent.eval.scenarios.Scenario.executed`
+    and the result is scored against
+    :attr:`~sciagent.eval.scenarios.Scenario.truth`. The two differ only where a
+    scenario carries a nuisance, and where it does, that difference is the
+    scenario: S12's censoring shapes every measurement and is not what anyone is
+    asked to find.
     """
     investigation = Investigation(
         scenario_id=scenario.id,
         designs=scenario.designs,
-        truth=scenario.truth,
+        truth=scenario.executed,
         executor=executor,
         engine=engine,
         graph=graph,
@@ -173,7 +187,7 @@ def run_scenario(
         ),
         structural_distance=min(
             (
-                investigation.graph.grammar.distance(edits[node_id], scenario.truth)
+                executor.grammar.distance(edits[node_id], scenario.truth)
                 for node_id in sorted(edits)
             ),
             default=math.inf,

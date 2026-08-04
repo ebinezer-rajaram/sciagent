@@ -8,9 +8,20 @@ rather than a convention, so a baseline cannot read the answer by accident and a
 future LLM system cannot read it on purpose.
 
 SPEC §11 assigns the twelve slice scenarios to item 11. What lives here is the
-*type*; item 9 adds S1-S10 as instances under ``environments/pointproc`` because
-item 9's gate is to run baselines on them. Oracle policy lengths, S11 and S12
-remain item 11's, which is what that item's gate actually names.
+*type*; the instances live under ``environments/pointproc``, since a scenario is
+made of an environment's edits and this package may not import one.
+
+Truth and nuisance
+------------------
+
+:attr:`Scenario.truth` is what the investigation is *about*. :attr:`nuisance` is
+everything else the environment was built with: it is executed, so it shapes
+every measurement, and it is never scored. Scenario S12 is why the distinction
+exists -- SPEC §4.5 gives its ground truth as regime switching "plus an
+observation-level censoring nuisance", and §12 criterion 7 asks a system to
+"recover the correct diagnosis" there, which is the regime switching and not the
+censoring. Folding the nuisance into the truth would have made S12 a
+decomposition task, which is what S8 already is.
 """
 
 from __future__ import annotations
@@ -62,9 +73,9 @@ class Scenario:
     a system offered this scenario has something to run and cannot be handed two
     designs that address the same template under different objects.
 
-    ``truth`` is what the environment was actually built with. It is used to
-    execute experiments -- every design runs *against* the defect -- and to score
-    the result afterwards. A system never sees it; see :meth:`brief`.
+    ``truth`` is the structure the investigation is about: experiments run
+    against it and the result is scored against it. A system never sees it; see
+    :meth:`brief`.
     """
 
     id: ScenarioId
@@ -73,10 +84,29 @@ class Scenario:
     designs: tuple[ExperimentDesign, ...]
     budget: Budget
     seed: Seed
+    nuisance: Defect = frozenset()
+    """Structure the environment also carries, and that nothing is scored on.
+
+    Executed with the truth -- see :attr:`executed` -- so it shapes every
+    measurement a system takes, and absent from every score, so a system is
+    neither credited for naming it nor penalised for not. SPEC §4.5's S12 is the
+    case: a censoring observation process that makes the data look periodic, over
+    a truth that is not.
+    """
+
     rationale: str = ""
     """What the scenario is for, in SPEC §4.5's terms. Documentation, not data."""
 
     def __post_init__(self) -> None:
+        overlap = {edit.target for edit in self.truth} & {
+            edit.target for edit in self.nuisance
+        }
+        if overlap:
+            raise MalformedDesignError(
+                f"scenario {self.id!r} has a truth and a nuisance on the same "
+                f"component(s) {sorted(overlap)!r}; the two would compile to one "
+                f"ambiguous edit and the scenario would not be executable"
+            )
         if not self.designs:
             raise MalformedDesignError(
                 f"scenario {self.id!r} offers no design, so nothing can be "
@@ -95,6 +125,16 @@ class Scenario:
     def is_null(self) -> bool:
         """Return whether the truth is the empty edit set (SPEC §4.5 S9)."""
         return not self.truth
+
+    @property
+    def executed(self) -> Defect:
+        """Return the defect the environment actually runs: truth and nuisance.
+
+        What every experiment is performed against, and therefore what every
+        measurement is a measurement of. Distinct from :attr:`truth`, which is
+        what the result is scored against -- see this module's docstring.
+        """
+        return self.truth | self.nuisance
 
     def design(self, template_id: str) -> ExperimentDesign:
         """Return the offered design with this template id, or raise.

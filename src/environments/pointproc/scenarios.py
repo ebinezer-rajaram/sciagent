@@ -1,20 +1,9 @@
-"""The slice's investigation tasks, S1-S10 (SPEC §4.5).
+"""The slice's investigation tasks, S1-S12 (SPEC §4.5).
 
-What is here and what is not
-----------------------------
-
-SPEC §11 assigns the twelve scenarios to item 11, whose gate is *oracle policy
-lengths* -- exhaustive dynamic programming where tractable, a planning-baseline
-lower bound otherwise. Item 9's gate is to run B1, B4 and B5 on S1-S10, which
-needs the scenarios to exist but needs nothing about the oracle. So S1-S10 are
-defined here and **S11, S12 and every oracle policy length remain item 11's**.
-Two consequences are worth stating rather than discovering later.
-
-*S10's budget is asserted, not derived.* SPEC §4.5 defines S10 as
-"budget below the discriminating threshold". Where that threshold sits is
-exactly what item 11's dynamic programming computes. The budget here is set
-below what the three-stage plan of SPEC §4.2 needs, on the argument given at
-:data:`NON_IDENTIFIABLE_BUDGET`, and item 11 should confirm or move it.
+S1-S10 arrived with backlog item 9, whose gate was to run the conventional
+baselines on them. S11, S12 and the design space they need arrived with item 11,
+whose gate is oracle policy lengths -- and a policy length over a design space
+holding no discriminating experiment would have measured nothing.
 
 *S5-S7's confounding is inherited, not separately tuned.* SPEC §4.2 calibrates
 all four mechanisms to be mutually indistinguishable under dispersion
@@ -22,17 +11,26 @@ diagnostics, so a scenario does not have to make its alternative plausible --
 it already is. What distinguishes S5-S7 from S1-S4 is the budget and how the
 result is read, not a second calibration.
 
-The intervention gap
---------------------
+*S10's budget is derived, not asserted.* SPEC §4.5 defines S10 by a budget
+"below the discriminating threshold"; where the threshold sits is what
+:mod:`sciagent.eval.oracle` computes, and ``tests/test_oracle.py`` is where the
+budget is held below it.
 
-:func:`~environments.pointproc.outcomes.slice_designs` is observational: it
-holds no ``ForceArrival``, because the empirical table is not calibrated on one.
-SPEC §4.2 makes a forced arrival the *only* thing separating Hawkes from regime
-switching, so on S5 and S10 no system offered these designs can do better than
-split its belief between the two. That is a real ceiling and it is why S10 is
-non-identifiable here for a reason stronger than its budget. Adding the
-intervention template belongs with item 11, which needs the full design space
-for its dynamic programming anyway.
+The two that carry the weight
+-----------------------------
+
+**S11** is out-of-library by the mechanical definition of SPEC §3.2: its truth is
+licensed by ``edit_grammar`` and not by ``agent_grammar``, so no system whose
+hypothesis graph carries the agent's grammar can propose it, whatever it
+believes. Detecting the inadequacy and extending the space is the task.
+
+**S12** is a garden path. Its *truth* is regime switching; its *nuisance* is an
+observation process that censors part of every cycle, which makes the first
+diagnostics read as seasonality -- see
+:data:`~environments.pointproc.mechanisms.OBSERVATION_CENSORING` for the measured
+signature, and for the two things it was calibrated not to destroy: seasonality
+must stay refutable, and the intervention must stay readable. The nuisance is
+executed and never scored (:attr:`~sciagent.eval.scenarios.Scenario.nuisance`).
 """
 
 from __future__ import annotations
@@ -40,7 +38,9 @@ from __future__ import annotations
 from functools import lru_cache
 
 from environments.pointproc.mechanisms import (
+    OBSERVATION_CENSORING,
     SEASONALITY,
+    SIZE_EXCITATION,
     SIZE_MIXTURE,
     defect,
     mechanism_defect,
@@ -58,18 +58,18 @@ __all__ = [
     "slice_scenarios",
 ]
 
-#: Experiments a scenario is normally allowed. Twice the four observational
-#: designs, so every design can be run and one repeat spent on whichever the
-#: system thinks is worth repeating -- enough for a policy to express itself,
-#: and little enough that spending it badly costs something.
+#: Experiments a scenario is normally allowed. Comfortably above the three
+#: stages SPEC §4.2's minimum discriminating plan needs, so that a system has
+#: room to spend an experiment badly and recover, and low enough that spending
+#: several badly costs the investigation.
 STANDARD_BUDGET = 8.0
 
-#: Experiments S10 is allowed. SPEC §4.2's minimum discriminating plan is three
-#: stages, and the third is an intervention that these designs do not contain;
-#: two experiments cannot complete even the first two stages against a pair
-#: calibrated to be indistinguishable under dispersion. Item 11's dynamic
-#: programming should confirm this is genuinely below the threshold rather than
-#: merely small.
+#: Experiments S10 is allowed. SPEC §4.5 defines the scenario by a budget below
+#: the discriminating threshold, and the threshold is
+#: :func:`sciagent.eval.oracle.oracle_policy_length` -- what an optimal policy
+#: needs on the same world with the same designs. ``tests/test_oracle.py`` holds
+#: this number strictly below that one, so the scenario is non-identifiable by
+#: measurement rather than by assertion.
 NON_IDENTIFIABLE_BUDGET = 2.0
 
 #: Seed of each scenario, fixed so a scenario is a reproducible artefact. Drawn
@@ -86,6 +86,8 @@ _SEEDS: dict[str, int] = {
     "S8": 20260908,
     "S9": 20260909,
     "S10": 20260910,
+    "S11": 20260911,
+    "S12": 20260912,
 }
 
 #: ``(class, truth, budget, rationale)`` per scenario, in SPEC §4.5's order.
@@ -106,7 +108,18 @@ _DEFINITIONS: tuple[tuple[str, ScenarioClass, str, float, str], ...] = (
         NON_IDENTIFIABLE_BUDGET,
         "calibrated insufficiency",
     ),
+    (
+        "S11",
+        "out_of_library",
+        "_size_excitation",
+        STANDARD_BUDGET,
+        "stage A detection, stage B extension",
+    ),
+    ("S12", "garden_path", "regime_switching", STANDARD_BUDGET, "plan revision"),
 )
+
+#: The nuisance each scenario carries, where it carries one. Only S12 does.
+_NUISANCES: dict[str, Defect] = {"S12": defect(OBSERVATION_CENSORING)}
 
 
 def _truth(name: str) -> Defect:
@@ -118,16 +131,20 @@ def _truth(name: str) -> Defect:
         # on two different components, which is what makes decomposition -- and
         # not discrimination -- the capability under test.
         return defect(SEASONALITY, SIZE_MIXTURE)
+    if name == "_size_excitation":
+        # SPEC §4.5 S11: rate excited by prior mark sizes. In edit_grammar and
+        # not in agent_grammar, which is what makes it out-of-library.
+        return defect(SIZE_EXCITATION)
     return mechanism_defect(name)
 
 
 @lru_cache(maxsize=1)
 def slice_scenarios() -> tuple[Scenario, ...]:
-    """Return S1-S10, in specification order.
+    """Return S1-S12, in specification order.
 
-    Guarantees a fixed set of ids, truths, budgets and seeds, so a scenario is a
-    reproducible artefact and two runs of one system on one scenario perform
-    byte-identical executions.
+    Guarantees a fixed set of ids, truths, nuisances, budgets and seeds, so a
+    scenario is a reproducible artefact and two runs of one system on one
+    scenario perform byte-identical executions.
     """
     designs = slice_designs()
     return tuple(
@@ -138,6 +155,7 @@ def slice_scenarios() -> tuple[Scenario, ...]:
             designs=designs,
             budget=Budget(total=budget),
             seed=Seed(_SEEDS[name]),
+            nuisance=_NUISANCES.get(name, frozenset()),
             rationale=rationale,
         )
         for name, scenario_class, truth, budget, rationale in _DEFINITIONS

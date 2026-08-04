@@ -1440,3 +1440,372 @@ closing it properly needs the agent that could abuse it — item 12.
 (9.3 s of it the A23 slice runs) and `tests/test_verify.py` in **1.3 s**. The
 full suite is **3 minutes 3 seconds** with the tables cached, against 2 minutes
 50 recorded at item 8; item 10 adds 86 tests for about 11 seconds.
+
+## 2026-08-04 — item 11: what an "oracle policy length" is
+
+**Ambiguity.** SPEC §11 gives item 11 the gate "oracle policy lengths —
+exhaustive DP where tractable, planning-baseline lower bound otherwise" and
+defines neither the quantity nor the threshold a policy is aiming at.
+
+**Resolved** as the minimum over adaptive policies of `E[T]`, where `T` is the
+first experiment after which the posterior mass on the true structure exceeds
+**0.5** — `ClosedWorldScore.identified`'s threshold, so the oracle and the
+systems it judges are scored on one criterion and "the oracle needed 3, B4
+needed 6" is a comparison rather than two unrelated numbers.
+
+**Two distributions, deliberately.** An outcome is drawn from the row of the
+defect the scenario *executes* (truth and nuisance together); the belief is
+updated from what the hypotheses predict. On a well-specified scenario these are
+the same distribution. On S12 they are not, and that is the scenario; on S11 the
+truth is not in the hypothesis set at all, so the mass on it is zero forever and
+the reported reach probability is zero. That is not a failure of the computation
+— it is the finding that no policy over the agent's closed set identifies S11.
+
+**Exhaustive to horizon 3.** The belief tree branches by designs times outcome
+cells, about sixty children per node on the slice: 2×10⁵ nodes at three and
+1.5×10⁷ at four. A path unresolved at the horizon is charged one further
+experiment, the least any continuation could cost, so `expected_steps` is exact
+when every path resolves and a **lower bound** otherwise.
+
+**Measured**, on the calibrated 2000-replicate table, five designs, the closed
+set entertained, agent-grammar prior:
+
+| id | E[T] | reach | greedy | greedy finishes | floor | prior mass on truth | optimal opening |
+|---|---|---|---|---|---|---|---|
+| S1 | 3.008 | 0.992 | 3.151 | 1.000 | 2.13 | 2.4e-7 | phase-conditioned |
+| S2 | ≥4.000 | 0.000 | 5.637 | 1.000 | 2.70 | 3.7e-9 | **forced arrival** |
+| S3 | 3.027 | 0.973 | 3.137 | 1.000 | 2.08 | 2.4e-7 | autocorrelation |
+| S4 | 3.017 | 0.983 | 3.526 | 1.000 | 2.19 | 1.2e-7 | phase-conditioned |
+| S5 | 3.008 | 0.992 | 3.178 | 1.000 | 2.13 | 2.4e-7 | phase-conditioned |
+| S6 | 3.027 | 0.973 | 3.141 | 1.000 | 2.08 | 2.4e-7 | autocorrelation |
+| S7 | ≥4.000 | 0.000 | 5.618 | 1.000 | 2.70 | 3.7e-9 | **forced arrival** |
+| S8 | ≥4.000 | 0.000 | — | 0.000 | inf | 0 | — |
+| S9 | 0.000 | 1.000 | 0.000 | 1.000 | 0.00 | 1.0 | none |
+| S10 | 3.008 | 0.992 | 3.158 | 1.000 | 2.13 | 2.4e-7 | phase-conditioned |
+| S11 | ≥4.000 | 0.000 | — | 0.000 | inf | 0 | — |
+| S12 | ≥4.000 | 0.000 | 8.025 | **0.334** | 2.70 | 3.7e-9 | forced arrival |
+
+**Three things to read off it.**
+
+*S10's budget of 2 is genuinely below the threshold.* The optimum is at least
+3.008, so the scenario is non-identifiable by measurement rather than by the
+assertion item 9 left behind. The number that makes it so is not the missing
+intervention any more — that arrived here — but the budget, which is what SPEC
+§4.5 says S10 is about.
+
+*S8 and S11 are unreachable, not merely hard.* Neither truth is in the closed
+set, so no policy over it ever crosses the threshold. S11 is designed that way;
+S8's compound is a second case of the same thing and worth naming, since item 9
+recorded V1 and B4 "missing" S8 without saying it was impossible for them.
+
+*The parsimony prior sets the floor everywhere.* The prior puts 2.4e-7 on Hawkes
+and 3.7e-9 on regime switching against 1.0 on the null, so every non-null
+scenario needs three experiments before anything else is true of it. SPEC §0
+fixes that prior deliberately; it means a system taking three experiments on S1
+is at the optimum and not slow.
+
+**Closes off.** `Scenario.nuisance` is executed and never scored, so an oracle
+length is a property of `(truth, executed world, designs, prior)` and not of the
+seed. S1 and S5, S2 and S7, S3 and S6 therefore have identical lengths, which
+`tests/test_oracle.py` asserts rather than assumes.
+
+## 2026-08-04 — item 11: the first evidence bound was not a bound
+
+**Tried and abandoned.** A floor of `log2(0.5 / prior mass on truth) / log2(cells
+of the widest design)`, on the argument that no experiment carries more bits than
+its outcome space holds.
+
+**Why it is wrong.** That bounds *mutual information*, which is the expected
+reduction in entropy. It says nothing about the odds on one hypothesis, which a
+single outcome moves by `log2(p_truth(cell) / p_rival(cell))` — unbounded when
+one hypothesis nearly excludes a cell another frequents, which is exactly what a
+discriminating design is built to arrange.
+
+**Caught by measurement, not by inspection.** It returned 6.91 experiments for S2
+where greedy achieved 5.64. A lower bound above an achieved value is not a bound,
+and `tests/test_oracle.py::test_the_floor_never_exceeds_what_greedy_achieves`
+exists so that any future version has to survive the same comparison.
+
+**Replaced** by the prior odds against each rival divided by the largest
+log-likelihood ratio any cell of any design affords against that rival, maximised
+over rivals. Holding more than half the mass requires out-weighing every rival,
+so a bound derived from a necessary condition is valid; it assumes every
+experiment returns the single most discriminating cell available, which no world
+obliges, so it is weak. It is 2.1–2.7 experiments across the slice against
+optimum values of 3.0–4.0.
+
+**Closes off.** A bound that was quietly too large would have flattered every
+system measured against it, in the direction that makes an agent look closer to
+optimal than it is.
+
+## 2026-08-04 — item 11: the intervention joined the calibrated design set
+
+**Decision.** `slice_designs()` is five designs, not four: the four
+observational ones unchanged plus `force[arrival@...|20]:mean_rate`, a burst of
+twenty arrivals at spacing 0.01 read over the twenty recorded events that
+follow. Item 9 recorded the cost of its absence — V1 and B4 both missed S2, S7
+and S10 — and left it here because item 11's dynamic programming needs a design
+space containing a discriminating experiment before a policy length over it
+means anything.
+
+**Measured**, `scripts/pilot_forced_edges.py`, 300 replicates per structure:
+post-burst `mean_rate` quantiles.
+
+| structure | 1% | 10% | 50% | 90% | 99% |
+|---|---|---|---|---|---|
+| hawkes | 1.138 | 3.986 | 9.098 | 16.866 | 27.552 |
+| null | 0.611 | 0.769 | 0.997 | 1.330 | 1.840 |
+| poisson_mixture | 0.503 | 0.675 | 1.030 | 1.881 | 3.626 |
+| regime_switching | 0.263 | 0.429 | 0.895 | 2.225 | 4.033 |
+| seasonality | 0.599 | 0.827 | 0.907 | 1.583 | 1.765 |
+| size_excitation (S11) | 0.729 | 2.676 | 6.382 | 12.764 | 20.541 |
+
+AUC of Hawkes against the others: 0.984–0.992, and against S11's size excitation
+**0.674** — the two excited mechanisms are not separated by this design either,
+which is what makes S11 hard rather than merely absent.
+
+**Edges frozen** at `(0.6, 0.9, 1.2, 1.6, 2.2, 3.2, 5.0, 8.0, 12.0, 18.0)`, on
+the same principle as the other four: fine where the unexcited structures sit
+(0.5–2, where a response has to be told from its absence), coarse above 3 where
+only Hawkes lives. Every one of the eleven cells is occupied by some structure at
+300 replicates, so none costs the posterior predictive check its rule-of-three
+floor for nothing. Regime switching's distinctive low tail — 0.287 of its mass
+below 0.6, against 0.007 for the null — is what the first edge is for.
+
+**What it bought**, measured against a re-run of the oracle over the four
+observational designs alone, on S7:
+
+| design set | optimum | greedy finishes | greedy length | floor |
+|---|---|---|---|---|
+| five, with the intervention | ≥4.000 | 1.000 | 5.618 | 2.70 |
+| four, observational only | ≥4.000 | **0.276** | 10.99 | 5.83 |
+
+**What it cost.** The table's content address covers the templates, so adding one
+invalidates every cached row: the cold build is now **4 minutes 36 seconds** for
+the closed set (five structures × 2000 replicates × five templates), against 2
+minutes 50 at item 6, plus about 90 seconds for each of the three worlds no
+closed-set row covers (S8's compound, S11's mechanism, S12's censored regime).
+B5's search table is 64 seconds more than before. The item 9 gate is **8 minutes
+22 seconds cold** and the numbers below it are all re-measured.
+
+## 2026-08-04 — item 11: the empirical table's address does not cover the compiler
+
+**Found by breaking it.** Changing what a `ForceArrival` is read over — from the
+next `observe` *indices* of the run to the first `observe` *recorded* events
+after the burst — changes every forced-arrival row. Nothing noticed:
+`EmpiricalTable.version` hashes the templates, their discretisations, the
+replicate count and the seed, and a template says what is measured, not what is
+done. The cached rows stayed readable and became silently wrong.
+
+**Resolved** by `OPERATIONS_VERSION` in `environments/pointproc/operations.py`,
+carried into `ENV_VERSION` alongside the grammar and family-library versions, and
+by mixing `ENV_VERSION` into the test cache keys (`tests/slice_tables.py`), where
+the environment is in scope and the table is not. A change to what an operation
+means is now a cache miss.
+
+**Why not in the framework.** `EmpiricalTable` is domain-independent and is handed
+a `simulate` callable; it cannot know that the callable's meaning moved. The
+registry *is* addressed correctly — `ExperimentKey` carries `env_version` — so
+this was a hole in the cache alone, and the fix belongs at the layer that knows
+which environment it is caching.
+
+**Closes off.** Any future change to `operations.py`'s semantics must bump
+`OPERATIONS_VERSION`. Nothing enforces that automatically; a content hash over
+the module would, and is left undone deliberately — it would make every cache
+key move on a comment edit, and the version string is the same promise the
+grammar and library already make.
+
+## 2026-08-04 — item 11: S12's censoring is realised at the record, not in the draw
+
+**Ambiguity.** SPEC §4.5 gives S12 "an observation-level censoring nuisance" and
+§3.1 gives no way to express one: a `GenerativeProgram` draws a value per
+component per event, every drawn value must be finite, and a metric is a pure
+function of an event log. There is no "not recorded".
+
+**Resolved** by splitting declaration from realisation. The family
+`identity_periodic_censored` on `obs` *declares* the observation process in two
+parameters, `period` and `duty`, and draws exactly what the identity family
+draws — a censored event still happened. The environment's compiler *realises*
+it, as a restriction of the log composed before the operation's own, because
+`CompiledOperation.restrict` is the one place in this architecture where a run
+becomes a record.
+
+**Why not a sentinel value.** Writing a marker into `obs` would put a number into
+the log that every metric would have to know not to read, which contradicts SPEC
+§3.2's "a metric is a function of an event log and nothing else". Nothing else
+was available: an `AddDependency(arrival → obs)` would have made the censoring
+depend on the *previous* arrival's time, since `apply` makes dependency edges
+lagged.
+
+**Consequence for `ForceArrival`.** Its window was "the next `observe` indices of
+the run", which under censoring can select events that were never recorded — in
+one candidate window it left a single event and the table build died. It is now
+"the first `observe` recorded events whose time exceeds the last forced one",
+which is identical on an uncensored run and is what the operation means anyway:
+an investigator reads the events that reach them.
+
+**The nuisance is executed and never scored.** `Scenario.nuisance` is a second
+defect applied with the truth (`Scenario.executed`) and absent from every score,
+so S12's correct diagnosis is regime switching alone — SPEC §12 criterion 7.
+Folding it into the truth would have made S12 a decomposition task, which S8
+already is. It is licensed by `edit_grammar` and not by `agent_grammar`, so no
+system can propose it: a system that could explain the censoring away would not
+be recovering from a garden path.
+
+**Calibrated** at period 6.681, duty 0.599 — an observed stretch of 4.00
+followed by a censored one of 2.68 — by `scripts/calibrate_censoring.py`. Both
+halves of §4.5's description are constraints, and both are measured.
+
+*The garden path.* Under regime switching the censored record reads as
+seasonality on the two arrival-dispersion diagnostics: count autocorrelation
+0.193 against seasonality's 0.199 and the truth's own 0.433, inter-arrival
+dispersion 3.40 against 3.42. The power spectrum carries a peak at 0.150 — the
+censoring frequency — sharp to a standard deviation of 0.001, where regime
+switching alone has no peak at all (0.017, sd 0.018).
+
+*The path can be left.* The period is deliberately not `CANDIDATE_PERIOD`
+(11.559) nor a low harmonic of it, so conditioning on the phase a seasonality
+hypothesis proposes does not remove the dispersion: 2.44 against genuine
+seasonality's 1.07.
+
+**What the belief actually sees**, per design, as world-weighted mean
+log-likelihood in bits (differences between hypotheses are what matter; the
+common constant is dropped):
+
+| design | hawkes | null | mixture | **regime** | seasonality |
+|---|---|---|---|---|---|
+| count_autocorrelation_w2 | -8.61 | -8.85 | -8.05 | **-11.33** | **-2.33** |
+| inter_arrival_dispersion | -2.98 | -11.96 | -3.71 | **-2.98** | -4.24 |
+| phase_conditioned_dispersion | -3.03 | -11.96 | -6.43 | **-3.42** | -11.96 |
+| size_dispersion | -2.73 | -2.72 | -2.72 | **-2.74** | -2.73 |
+| force → mean_rate | -7.99 | -5.33 | -3.19 | **-2.27** | -4.45 |
+| **sum** | -25.34 | -40.83 | -24.11 | **-22.74** | -25.70 |
+
+The autocorrelation pays **nine bits an experiment for the wrong answer** and the
+truth is last there; the phase conditioning and the intervention pay it back.
+Summed over the design set the truth leads by 1.37 bits over the runner-up, so a
+belief fed every design converges on it — S12 is a garden path and not a trap.
+
+**And it costs greedy.** One-step-greedy spends most of its budget on the
+highest-gain design, which here is the one carrying the spurious signal: it
+identifies the truth on **33.4%** of rollouts within twelve experiments, taking
+8.03 when it does, against 100% and 5.64 on S2 — the same truth without the
+nuisance. V1 recovers it on the single realisation the gate runs, at 0.996 mass.
+
+**Closes off.** The censoring is visible in the control channel too: the world's
+modal `size_dispersion` cell is 0 where every hypothesis's is 2, because dropping
+two events in five shortens the sample the mark statistics are estimated from.
+The posterior predictive check therefore fires on S12 for V1 and B4, which is
+correct — the model *is* misspecified there — but it means S12 contributes to
+Stage A detection rates as well as to Stage B, and a report that treats detection
+as an S11-only measurement will be wrong about it.
+
+## 2026-08-04 — item 11: every hypothesis graph moved to the agent grammar
+
+**Decision.** The suite builds hypothesis graphs on `agent_grammar()` and keeps
+executing on `edit_grammar()`. Until now both were the environment's.
+
+**Why it had to change.** `HypothesisGraph.propose` validates a structure against
+its own grammar, so a graph carrying the ground-truth grammar would let a system
+propose S11's `size → arrival` mechanism — the one structure SPEC §4.5 defines
+S11 by *not* having. Out-of-library was true on paper and false in the harness.
+
+**Consequence, and it is not small.** A hypothesis's prior is
+`2**-code_length` under the graph's grammar, and the code is grammar-relative:
+the agent grammar's Hawkes cell holds one dependency construct where the ground
+truth's holds two, so every prior in the suite moved. That is the honest
+direction — a system is charged for the structures it can express, not for the
+ones the environment can — but it means item 9's posteriors are not comparable
+across this change, and they were re-measured rather than adjusted.
+
+**Also.** `ScenarioRun.structural_distance` was computed under the graph's
+grammar and raised on S11, since a distance whose endpoint the grammar cannot
+express is undefined. It now uses `Executor.grammar`, the environment's, which
+licenses the truth by construction. The two agree wherever both can express what
+is being compared: the ground metric is over grid indices and the grids are the
+same objects in both grammars.
+
+## 2026-08-04 — item 11: the baselines on S1-S12, re-measured
+
+**Measured**, and it supersedes the item 9 table above: 48 runs (4 systems × 12
+scenarios) on the five-design 2000-replicate table, hypothesis graphs on the
+agent grammar. Correct = leading hypothesis holds the true structure; identified
+= that and more than half the mass.
+
+| system | correct | identified | mean structural distance | PPC fires on |
+|---|---|---|---|---|
+| V1 (BOED, closed set) | 9/12 | 9/12 | 0.167 | S12 |
+| B1 (PPC only) | 1/12 | 1/12 | 1.000 | S8, S10 |
+| B4 (retrieval) | 6/12 | 6/12 | 0.167 | S8, S12 |
+| B5 (beam search) | 1/12 | 1/12 | 0.775 | S7, S10 |
+
+**V1 and B4 have come apart, and the intervention is why.** Item 9 recorded them
+as indistinguishable at 6/10 — "with no discriminating design available, optimal
+selection buys nothing over nearest-neighbour retrieval, because there is nothing
+to select". There is now something to select: V1 gets S2, S7 and S12, all three
+of which turn on the forced arrival, and B4 gets none of them, because retrieval
+keyed on a residual signature has no way to *choose* an experiment. That is a
+first real reading on R1 in the direction the architecture predicts, and it is
+about selection, not generation.
+
+**V1 recovers S12 and B4 does not.** V1 ends at 0.996 on regime switching; B4
+leads with 0.646 on the wrong structure and puts zero mass on the truth. The
+garden path is left by choosing the experiments that leave it, which is the
+capability S12 exists to test.
+
+**Nobody gets S8 or S11**, and the oracle says nobody could: neither truth is in
+the closed set, so this is a floor for item 12 rather than a failure of these
+four. Every system still puts full mass on the null in S9 and none identifies
+S10 — SPEC §12 criterion 9 holds, now for the budget reason rather than for want
+of a discriminating design.
+
+**B5 is unchanged at 1/12** and its mean distance improved from 0.811 to 0.775.
+Its candidates are grid corners and the truths are interior points, so an
+exact-match score of zero is by construction; the distance is the number that
+says whether searching helped.
+
+## 2026-08-04 — item 11: what is left open
+
+**Left incomplete, deliberately. Four things.**
+
+*The dynamic programme stops at three experiments.* Six of the twelve scenarios
+resolve inside it and six do not, so half the table is a lower bound rather than
+a value. Horizon four is 1.5×10⁷ belief nodes; the memo keyed on the rounded
+belief helps — Bayes updates commute, so the distinct beliefs at depth three are
+34,000 of the 2×10⁵ visited — but not by the two orders of magnitude needed.
+Anything that wants exact lengths for S2, S7 and S12 needs a better search, not
+a bigger machine: branch-and-bound against the evidence floor is the obvious
+route and is not implemented.
+
+*The greedy bound is a rollout, not a computation.* 2000 seeded rollouts to a
+limit of twelve experiments. It is reproducible and it brackets the optimum from
+above where it finishes every time, but its Monte Carlo error is not reported,
+and on S12 where it finishes a third of the time the conditional mean is the
+only thing available.
+
+*S11 has no Stage B measurement.* The oracle says no policy over the closed set
+identifies it, which is the scenario's premise, not its content. What the
+scenario is actually for — proposing an appropriate missing mechanism — needs a
+system that can propose, and that is item 12. The floor it will be measured
+against is B1's detection rate, which remains near zero for the reasons item 9
+recorded.
+
+*The intervention is one design, not a family.* `ForceArrival` carries a burst
+count, a spacing and an observation window, and exactly one point in that space
+is in the calibrated set. Item 7 measured the window (10 events gives a higher
+AUC and a worse operating point; 20 was chosen); nothing has measured the burst
+count or the spacing, and a BOED that could choose between two windows would be
+choosing something SPEC §4.4 says an experiment chooses.
+
+**Measured, on cost.** The full suite is **6 minutes 23 seconds** warm, against
+3 minutes 3 seconds at item 10. Item 11 adds 69 tests; almost none of the
+increase is theirs. It is the five-design table: every cached row was
+invalidated, the closed set rebuilds in 4m36s cold, and three further worlds
+cost about 90 seconds each. Warm, `tests/test_oracle.py` is **97 seconds** — 12
+dynamic programmes at about 4 seconds and 13 rollout sets at about 3 — and the
+item 9 gate is 8m22s cold, unchanged warm.
+
+**Also.** `Executor.grammar` was added, read-only, so that a distance to a truth
+outside the agent's grammar is computable. It is not reachable from a research
+system: an `Investigation` exposes `budget`, `designs`, `history`, `posterior`
+and `ppc`, and never the executor.

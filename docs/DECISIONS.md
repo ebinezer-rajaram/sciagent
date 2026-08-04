@@ -2346,3 +2346,68 @@ negative control was refused; it failed because the control was tolerated. The
 positive control -- a conforming payload still decodes, to exactly the three
 fields `ProposalDraft` declares -- was added at the same time, since a decoder
 that refused everything would satisfy every negative test in that class.
+
+## 2026-08-04 — infrastructure: the personal deny rules do not survive the move into the repository
+
+**Decision.** The repository now carries the working defaults that used to live
+only in `~/.claude/` (8dd0690), but deliberately *not* the permission rules.
+Those remain uncommitted, and the version sitting in the working tree is
+known-wrong rather than merely unfinished.
+
+**Tried and abandoned.** Copying the twenty `deny` entries from
+`~/.claude/settings.json` verbatim into `.claude/settings.json`. Checked against
+`code.claude.com/docs/en/permissions.md` rather than assumed, three of the four
+classes do not do what they read as doing:
+
+- `Bash(curl*|*sh)` and `Bash(iwr*|*iex)` match nothing at all. `|` is a
+  recognised command separator and "a rule must match each subcommand
+  independently", so no subcommand ever contains the literal `|` the pattern
+  requires. `iwr`/`iex` are additionally PowerShell, which has its own
+  `PowerShell(...)` rule namespace that a `Bash(...)` rule is never consulted
+  for — and PowerShell is this machine's primary shell.
+- `Read(**/.ssh/**)`, `Read(**/.aws/**)` and the two `~/.claude/*` entries are
+  anchored at the project root when they live in project settings, and "a rule
+  only matches files under its anchor". They cannot reach the home-directory
+  files they name. A `~/` prefix is what reaches outside.
+- A `Read` deny covers `Edit` but not `Write`, so six paths were read-denied and
+  still writable.
+
+**Why it is not simply corrected.** The auto-mode classifier refuses edits to
+`.claude/settings.json`, which is the right refusal — that file governs the
+editing agent's own permissions. **This waits on the local machine**: on return
+it gets solved directly, by approving the edit or applying it by hand. Until
+then the tree holds a deny list that reads protective and partly is not, which
+is worse than holding none, so it must not be committed as it stands.
+
+**Closes off.** Nothing in 8dd0690 depends on it; that commit stands alone. But
+an unattended cloud session runs with no deny list whatsoever, which is the
+reason the attempt was made and the reason it is worth finishing.
+
+## 2026-08-04 — infrastructure: what a cloud session cannot yet be trusted with
+
+**Decision.** No cloud-produced registry entry is to be trusted until
+`determinism_child.py` has been run on both platforms and its output diffed.
+
+**Why.** Invariant 3 demands byte-identical output, and the registry is
+content-addressed over (env version, config, data version, metric version, seed)
+with no platform term in the tuple. Local runs are Windows; cloud runs are
+Ubuntu 24.04 on x86-64. If BLAS resolution differs between them, two entries can
+share a content address while holding different numbers, and nothing in the
+system is positioned to report it.
+
+**The obvious instrument is the wrong one.** A1 and A15 each rebuild their
+expected value inside a single process and compare against it, so they pass on
+any platform — which is exactly the failure they would be reached for. What
+emits comparable evidence is `tests/acceptance/determinism_child.py`, which
+writes `name sha256` lines to stdout under
+`test_a1_byte_identical_across_processes`.
+
+**Measured, on cold start.** From a fresh clone with an empty `uv` cache:
+`uv sync` 19.4s, then `uv run python scripts/status.py` a further 10.9s — about
+30s before the SessionStart hook prints, on a developer desktop with warm
+network. A cloud VM is 4 vCPU behind a proxied PyPI, so the hook's 60s timeout
+was not safe. 180s is written but uncommitted, for the reason in the preceding
+entry.
+
+**Closes off.** Work in the cloud on anything that writes no registry entry is
+unaffected. Anything that does write one waits on this check.

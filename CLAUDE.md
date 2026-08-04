@@ -54,6 +54,43 @@ Violating any of these is a bug regardless of tests passing.
   derives gate coverage from it. A test not named this way is invisible to the
   status report.
 
+## Working defaults
+
+General habits, not project facts. They live in the repository rather than in a
+personal config file because cloud sessions clone the repo and see nothing from
+`~/.claude/` — see **Cloud sessions** below.
+
+- Show evidence, not assertions. When you say something works, include the
+  command you ran and its output.
+- Fix root causes. Never suppress an error to make a check pass: no bare
+  `except`, no `# type: ignore`, no `# noqa`, no skipped tests.
+- If a task will touch more than three files, plan first and get the plan
+  approved before editing anything.
+- If you are more than 50% unsure what was meant, ask one specific question
+  rather than guessing and building the wrong thing.
+- Prefer editing an existing file over creating a new one.
+- Never commit unless asked, and never push without asking. Invoking `/ship`
+  is that asking.
+- Platform depends on the surface, so check rather than assume — `uname -s`
+  settles it. Local sessions run on Windows through Git Bash: prefer forward
+  slashes and do not assume GNU coreutils flags exist. Cloud sessions run
+  Ubuntu 24.04, where neither caution applies.
+- You decide when to delegate to subagents; do not ask each time. Delegate for
+  coverage: wide sweeps, locating call sites, enumerating across many files,
+  and independently verifying a claim you have already made. Do it yourself for
+  comprehension: how a module works, whether an invariant holds. The test is
+  whether the result could be checked with a grep — if checking it means
+  redoing the work, do not delegate. Say what you delegated and what came back.
+- For the verification case specifically, use the `evidence-checker` subagent.
+  It has not seen your reasoning, which is the whole point: you are the worst
+  judge of a claim you just made.
+- Choose a subagent model only when the fit is obvious: haiku or sonnet for
+  mechanical enumeration and pattern matching. Otherwise omit the model and
+  inherit the session. Never pin opus explicitly.
+
+When compacting, preserve the list of modified files, the commands used to
+verify the work, and any decisions the user pushed back on.
+
 ## Working style
 
 - **Ask before assuming.** If the spec is ambiguous, ask rather than picking.
@@ -81,3 +118,38 @@ gate coverage are in context at the top of every session. Do not re-run it to
 orient; do run `--run` when you need gates verified by execution rather than by
 their tests merely existing. Read `docs/DECISIONS.md` for what the repository
 cannot tell you.
+
+## Cloud sessions
+
+This repository is set up to be worked on from Claude Code on the web, so that
+it can be driven from a phone with no local machine running. `CLAUDE_CODE_REMOTE`
+is `"true"` in a cloud session and unset locally; that is the signal to branch
+on, not a guess from the platform.
+
+Python and `uv` are on the cloud image, and the default **Trusted** network
+level reaches PyPI. The project's own pinned `pytest`, `mypy` and `ruff` are
+`[dependency-groups] dev` entries resolved from `uv.lock`, so the first `uv run`
+installs them; nothing needs configuring beyond that.
+
+Three differences from a local session actually change behaviour:
+
+- **Work happens on the session's own branch, never `main`.** The GitHub proxy
+  accepts a push only for the branch the session is already on, so a commit
+  made on `main` cannot be pushed. `/ship` handles this; do not work around it.
+- **The VM is 4 vCPU / 16 GB / 30 GB.** The suite is 618 passed, 6 skipped, in
+  6m30s–7m45s on a developer desktop, so expect longer, and expect a cold first
+  session to spend roughly half a minute installing dependencies before the
+  status hook prints.
+- **Cross-platform determinism is unverified.** Invariant 3 demands byte-identical
+  output, and the registry content-addresses over (env version, config, data
+  version, metric version, seed) with no platform term. Local runs are Windows;
+  cloud runs are Ubuntu on x86-64. If BLAS resolution differs, two registry
+  entries could share an address while holding different numbers.
+
+  Do not try to settle this with A1 and A15 as a whole: both are self-referential
+  within one process — they rebuild the expected value in-process and compare
+  against it, so they pass on any platform. What yields comparable evidence is
+  `tests/acceptance/determinism_child.py`, which writes `name sha256` lines to
+  stdout (see `test_a1_byte_identical_across_processes`). Run it on both
+  platforms and diff the output **before** trusting any cloud-produced registry
+  entry.

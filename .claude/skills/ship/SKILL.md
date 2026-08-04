@@ -87,31 +87,66 @@ git log --oneline -5   # match the established phrasing
 Format: `<Verb> <what> (backlog item N)` — e.g. `Add the claim verifier and its
 five gates (backlog item 10)`.
 
-Commit to `main`. This repository works directly on `main`; do not create a
-branch unless asked. Show the message and the staged file list before running
-the commit.
+Where to commit depends on the surface. Check it rather than assuming:
+
+```sh
+echo "${CLAUDE_CODE_REMOTE:-false}"   # "true" only in a cloud session
+```
+
+**Local session** — commit to `main`. This repository works directly on `main`;
+do not create a branch unless asked.
+
+**Cloud session** — commit to the branch the session is already on. Do not
+switch to `main`, and do not create a second branch. The GitHub proxy accepts a
+push only for the session's current working branch, so a commit made on `main`
+is unpushable and has to be unwound.
+
+Show the message and the staged file list before running the commit.
 
 ## 4. Push
 
 `git push` publishes **every** commit on the branch, not just yours. Check
-first:
+first. A cloud session's branch may have no upstream yet, and `@{u}` fails
+outright when it doesn't, so resolve a base explicitly before comparing:
 
 ```sh
-git log --oneline @{u}..HEAD
+if git rev-parse --verify --quiet @{u} >/dev/null; then
+  base=@{u}
+elif git rev-parse --verify --quiet origin/main >/dev/null; then
+  base=origin/main
+else
+  echo "no upstream and no origin/main - resolve the base before pushing" >&2
+  exit 1
+fi
+git log --oneline "$base"..HEAD
 ```
+
+Do not collapse this into `A && B || C`. That form runs the fallback when the
+*comparison* fails, not only when the upstream is missing, and then presents an
+`origin/main` result as though it were the upstream one. An empty result must
+mean "nothing unpushed", never "the check itself failed" — the empty case is
+what authorises the push, so a silent failure here fails in the dangerous
+direction.
 
 If that lists a commit you did not write, another session committed. Stop and
 report it — pushing would publish their work under your action, and that is
 the user's call.
 
-Otherwise:
+Otherwise push, using the form that matches the branch's state:
 
 ```sh
-git push
+git push                   # upstream already set
+git push -u origin HEAD    # first push of a cloud session branch
 ```
 
-The permission layer prompts here — that prompt is the user's confirmation, so
-do not add a second one of your own.
+Locally the permission layer prompts here — that prompt is the user's
+confirmation, so do not add a second one of your own. Cloud sessions offer no
+Manual permission mode, so no prompt appears; invoking `/ship` was the
+authorisation.
+
+**Cloud session only** — pushing does not land the work on `main`. Open a pull
+request from the session branch, and give its URL in the report. Do not merge
+it yourself unless asked.
 
 ## 5. Report
 

@@ -60,21 +60,24 @@ Violating any of these is a bug regardless of tests passing.
   Ambiguity in the spec is a real finding worth surfacing.
 - **Tests first for anything with an acceptance criterion.** Write the A-test,
   watch it fail, then implement.
-- Run `uv run pytest` and `uv run mypy --strict sciagent` before saying done.
-- Commit at each working state with a message naming the backlog item.
+- Run `uv run pytest` and `uv run mypy` before saying done. `mypy` takes no
+  arguments: `pyproject.toml` sets `strict` and the file set, so naming a path
+  checks less than the configured one.
 - If something in the spec seems wrong, say so. Do not silently work around it.
 - **Append to `docs/DECISIONS.md` the moment a decision is made**, not at the
-  end of a session. Sessions end by context exhaustion or a closed laptop, and
-  neither offers a chance to write things down. Four things go in it: a spec
-  ambiguity and how it was resolved, an approach tried and abandoned, a measured
-  number that is expensive to reproduce, and work left deliberately incomplete.
-  Nothing else — if `scripts/status.py`, the diff or `git log` already shows it,
-  it does not belong there. Append only; never edit an existing entry. New ideas
-  that would touch a frozen decision go to `docs/BACKLOG.md` per SPEC §13.
+  end of a session — sessions end by context exhaustion or a closed laptop.
+  Use `/decide`, which carries the format and the four-category filter.
 
-## Current position
+## Skills
 
-Run `uv run python scripts/status.py` — it derives the §11 cursor and A-gate
-coverage from the repository. Add `--run` to verify gates by execution rather
-than by their tests merely existing. Do not maintain a hand-written status here;
-it would drift. Read `docs/DECISIONS.md` for what the repository cannot tell you.
+- `/next` (or `/next 12`) — drive one SPEC §11 backlog item: resolve the
+  cursor, A-test first, watch it fail, implement, verify.
+- `/decide` — append to `docs/DECISIONS.md`.
+- `/gate A9` — run one acceptance criterion and report the real outcome.
+- `/ship` — verify, review independently, commit and push.
+
+The SessionStart hook already prints `scripts/status.py`, so the §11 cursor and
+gate coverage are in context at the top of every session. Do not re-run it to
+orient; do run `--run` when you need gates verified by execution rather than by
+their tests merely existing. Read `docs/DECISIONS.md` for what the repository
+cannot tell you.

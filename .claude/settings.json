@@ -1,15 +1,16 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "permissions": {
     "allow": [
-      "Bash(uv run pytest *)",
-      "Bash(uv run mypy *)",
-      "Bash(uv run ruff *)",
-      "Bash(uv run python scripts/status.py *)",
-      "Bash(git status *)",
-      "Bash(git diff *)",
-      "Bash(git log *)",
-      "Bash(git show *)",
-      "Bash(git check-ignore *)"
+      "Bash(uv run pytest*)",
+      "Bash(uv run mypy*)",
+      "Bash(uv run ruff*)",
+      "Bash(uv run python scripts/status.py*)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git show*)",
+      "Bash(git check-ignore*)"
     ]
   },
   "hooks": {
@@ -26,12 +27,25 @@
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/ruff-after-edit.sh\"",
+            "timeout": 30,
+            "statusMessage": "Formatting"
+          }
+        ]
+      }
+    ],
     "PreCompact": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'Before this context is lost: append anything not derivable from the repository to docs/DECISIONS.md - spec ambiguities and how they were resolved, approaches tried and abandoned, measured numbers, and work left deliberately incomplete. Append only; do not edit existing entries.'",
+            "command": "echo 'Before this context is lost: append anything not derivable from the repository to docs/DECISIONS.md via /decide - spec ambiguities and how they were resolved, approaches tried and abandoned, measured numbers, and work left deliberately incomplete. Append only; do not edit existing entries.'",
             "timeout": 10
           }
         ]

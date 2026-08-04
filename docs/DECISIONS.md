@@ -1809,3 +1809,540 @@ item 9 gate is 8m22s cold, unchanged warm.
 outside the agent's grammar is computable. It is not reachable from a research
 system: an `Investigation` exposes `budget`, `designs`, `history`, `posterior`
 and `ppc`, and never the executor.
+
+## 2026-08-04 — item 12 prerequisite: the check combines evidence by harmonic mean
+
+**Decision.** `inference/ppc.py` combines per-experiment tail probabilities by
+the **harmonic mean p-value scaled by `1 + ln(n)`**, replacing the minimum
+p-value under a Sidak correction. This closes the `docs/BACKLOG.md` entry
+"Combine posterior-predictive evidence across experiments, instead of min-p",
+which item 9 opened and sequenced before item 12.
+
+**Why the old rule had to go.** Under min-p, evidence and penalty grow together
+and the penalty wins. B1's per-experiment probability against an inadequate
+hypothesis space is 0.0133 whatever the budget; the Sidak correction takes the
+combined value from 0.0133 at one experiment to 0.1928 at sixteen, so **a system
+that ran more experiments detected less**. The harmonic mean grows
+logarithmically instead:
+
+| budget | 1 | 2 | 4 | 8 | 16 |
+|---|---|---|---|---|---|
+| Sidak on min-p | 0.0133 | 0.0264 | 0.0521 | 0.1016 | 0.1928 |
+| harmonic mean | 0.0133 | 0.0225 | 0.0317 | 0.0410 | 0.0502 |
+
+Some growth is correct — `n` tests genuinely offer `n` chances — so the target
+was never a flat penalty. What was wrong was growth fast enough to cross alpha
+by the fourth experiment.
+
+**Tried and abandoned: Fisher's method**, which the backlog entry named as the
+first candidate. It pays two degrees of freedom per experiment whether or not
+that experiment carried evidence, and on this slice the evidence is
+*concentrated*: against `SIZE_MIXTURE` the median per-experiment p-value is
+0.6678 while the median smallest is 0.0030, and four of the five slice templates
+are uninformative about a defect in the mark component. Measured over A9's arms,
+Fisher's realised size was **0.130** — above A9's `2 alpha` bound — and its power
+against `SIZE_MIXTURE` collapsed from 1.000 to **0.070**. Both arms moved the
+wrong way at once, which is what identified the diagnosis: min-p was not merely
+penalising evidence, it was also *concentrating* it, and any replacement has to
+keep the second property while fixing the first.
+
+**Tried and abandoned: the Cauchy combination (ACAT).** For `n` identical
+p-values it returns the p-value unchanged at every `n`, so it applies no
+multiplicity penalty whatever — the opposite failure. It also cannot represent
+the `p = 1` atom that a discrete tail regularly produces: `tan(-pi/2)` diverges
+and one such experiment drives the combined value to 1 on its own.
+
+**Measured**, over A9's arms at alpha 0.05 (100 scenarios per arm):
+
+| combiner | realised size | power, `SIZE_MIXTURE` | power, `SIZE_EXCITATION` |
+|---|---|---|---|
+| Sidak on min-p | 0.050 | 1.000 | 0.060 |
+| Fisher | **0.130** | 0.070 | 0.070 |
+| Cauchy (ACAT) | 0.030 | 0.000 | 0.040 |
+| harmonic x max(1, ln n) | 0.040 | 1.000 | 0.050 |
+| **harmonic x (1 + ln n)** | **0.010** | **1.000** | **0.000** |
+
+**Why `1 + ln(n)` and not `ln(n)`.** The factor has to be exactly 1 at `n = 1`,
+where there is nothing to correct. Beyond that the two were separated by
+measurement, over the full 200-scenario benchmark rather than A9's 100 so the
+binomial standard error is 0.015 rather than 0.022:
+
+| experiments combined | 1 | 2 | 3 | 4 | 5 |
+|---|---|---|---|---|---|
+| Sidak on min-p | 0.045 | 0.025 | 0.070 | 0.070 | 0.045 |
+| harmonic x max(1, ln n) | 0.045 | 0.025 | **0.100** | 0.070 | 0.030 |
+| harmonic x (1 + ln n) | 0.045 | 0.005 | 0.040 | 0.025 | 0.010 |
+
+`max(1, ln n)` lands exactly on A9's `2 alpha` bound at three experiments, with
+no margin. Item 6 rejected the unfloored predictive for precisely this reason —
+"inside A9's 2x bound but with no margin, and a 100-scenario gate against that
+bound would be flaky" — and the same call is made here.
+
+**Closes off.** The cost is the `SIZE_EXCITATION` row falling from 0.060 to
+0.000. Neither figure is detection: alpha is 0.05, so min-p's 0.060 was the
+nominal floor and nothing more. S11's mechanism remains invisible to the check,
+for the reason item 6 recorded — every slice template is a statistic of the
+arrival stream alone, and the mechanism is calibrated to hide there. **That is
+the other backlog entry, and this change does not touch it.** The two compound
+rather than substitute, exactly as both entries said.
+
+**Also.** `sidak` is gone from the module rather than left unused; the scaled
+harmonic mean is `harmonic_mean_combined`, and it takes the whole vector rather
+than a minimum and a count, so no caller can combine the wrong number of tests.
+`PPCResult.p_value` keeps its meaning as "the multiplicity-corrected
+probability", so nothing downstream changed.
+
+## 2026-08-04 — item 12 prerequisite: B1's Stage A rate, re-measured
+
+**Measured**, and it supersedes the 2/10 figure item 9 recorded. B1 on S1-S12
+under the harmonic-mean combiner, alpha 0.05:
+
+| id | class | experiments | smallest per-experiment p | combined | detects |
+|---|---|---|---|---|---|
+| S1 | single | 8 | 0.0075 | 0.0432 | **yes** |
+| S2 | single | 8 | 0.0133 | 0.0563 | no |
+| S3 | single | 8 | 0.0133 | 0.0797 | no |
+| S4 | single | 8 | 0.0133 | 0.0825 | no |
+| S5 | confounded | 8 | 0.0075 | 0.0430 | **yes** |
+| S6 | confounded | 8 | 0.0133 | 0.0798 | no |
+| S7 | confounded | 8 | 0.0097 | 0.0454 | **yes** |
+| S8 | compound | 8 | 0.0030 | 0.0361 | **yes** |
+| S9 | null | 8 | 0.1034 | 1.0000 | no |
+| S10 | non-identifiable | 2 | 0.0133 | 0.0226 | **yes** |
+| S11 | out-of-library | 8 | 0.0075 | 0.0431 | **yes** |
+| S12 | garden path | 8 | 0.0133 | 0.0490 | **yes** |
+
+**7/12, against 2/12 before.** S9 is the true negative and stays negative at
+exactly 1.0000 — B1 holds the null and the null is S9's truth, so the one run in
+the slice whose hypothesis space provably contains the answer is not flagged.
+The four still missed are the ones where a single experiment of eight carries
+the evidence and the other seven are uninformative, which pulls the harmonic
+mean up; that is the combiner behaving as designed rather than a residue.
+
+**Nothing about the posterior moved**, which is the check that this touched
+Stage A only: V1 9/12 correct, B1 1/12, B4 6/12, B5 1/12, mean structural
+distances 0.167 / 1.000 / 0.167 / 0.775 — identical to the item 11 table.
+
+**The consequence for SPEC §12 criterion 4 is the opposite of the old one, and
+it is worse.** The criterion is "detects inadequacy on S11 at a rate at least
+matching B1". Before, B1's rate was near zero and any inert system cleared it.
+Now B1 detects S11 — but *not because it can see S11's mechanism*. B1 holds only
+the null, so it fires on anything that is not the null: S1, S5, S7, S8, S10, S11
+and S12 alike. Its S11 detection is a statement about holding a trivially
+inadequate space, not about out-of-library sensitivity.
+
+V7 holds the closed set, and A9 measures the check's power against
+`SIZE_EXCITATION` **with the closed set entertained** at **0.000**. Hawkes covers
+S11's mechanism on every arrival-only statistic, so no system holding an adequate
+closed set can match a system holding only the null. **Criterion 4 has gone from
+trivially clearable to unpassable**, and the root cause is the same in both
+regimes: SPEC §4.3's catalogue contains no statistic of the joint behaviour of
+marks and arrivals.
+
+**Left for the user, deliberately.** That is the third `docs/BACKLOG.md` entry,
+and it touches SPEC §4.3, which is frozen. What this measurement adds is the
+demonstrated contradiction SPEC §13 requires: §4.6 requirement 1 asks that S11
+Stage A be detectable via the PPC, §4.2 calibrates S11's mechanism to be
+indistinguishable from Hawkes under every arrival statistic, and §4.3 offers no
+other kind. Both cannot hold. The decision is not taken here because it bumps
+`MetricRegistry.version`, moves the content address of every registered
+experiment, and re-measures every number in this file.
+
+**Closes off.** Any future reading of criterion 4 must say which hypothesis
+space the comparison was made under. A detection rate is a property of
+(check, hypothesis space, catalogue), and comparing two systems holding
+different spaces on it — which is exactly what §12 criterion 4 asks for —
+measures the spaces at least as much as the systems.
+
+**Measured, on cost.** Full suite **518 passed, 6 skipped in 6m16s** warm,
+against 6m23s at item 11. The combiner is arithmetic on values the check already
+computed, so it costs nothing.
+
+## 2026-08-04 — item 12 prerequisite: a prediction per offered design
+
+**Decision.** `systems.base.table_predictions` derives one prediction per design
+the scenario offers, replacing `table_prediction`'s single prediction under the
+scenario's *first* design. `null_seeded_graph` takes the design space rather than
+one member of it. This closes the `docs/BACKLOG.md` entry "A prediction per
+offered design, not one per hypothesis", which item 10 opened and sequenced
+before item 12.
+
+**Why.** A hypothesis is a statement about the whole design space, and attaching
+its falsifiability to one arbitrary member of that space was the actual error.
+It also quietly weakened A16 in practice: a hypothesis was refutable, but
+possibly only by an experiment nobody would run.
+
+**Measured**, like-for-like — the old rule restored by monkeypatch and re-run on
+the same twelve scenarios, so the claim population is identical at 2288 and the
+comparison is not confounded by item 11 having grown the scenario set from ten:
+
+| | accept | refer | reject | adjudicated |
+|---|---|---|---|---|
+| one prediction, first design | 477 (20.8%) | 220 (9.6%) | 1591 (69.5%) | **90.385%** |
+| one per offered design | 743 (32.5%) | 0 | 1545 (67.5%) | **100.000%** |
+
+A23's threshold is 90%. The old figure clears it by four tenths of a percentage
+point on twelve scenarios, against the 90.546% item 10 recorded on ten — so the
+margin was *narrowing*, not holding.
+
+**The referral set had moved, which is the stronger evidence.** Item 10 measured
+all 180 referrals as V1 on S5, S6 and S10. On the five-design set the same rule
+puts all 220 on V1 at S5, S9 and S10. Same cause — BOED does not select the first
+design — different scenarios, because which design is selected first depends on
+the design set, and item 11 added one. A gate whose margin depends on that is a
+gate that was going to fail eventually for a reason unrelated to the verifier.
+
+**Not only referrals moved.** Accepts rose by 266 while rejects fell by 46, so
+about a fifth of the change is claims that were *rejected* under the old rule and
+are accepted under this one. That is expected rather than alarming: the
+statistical channel grades a claim carrying no effect by evaluating its subject's
+predictions against the cited experiments, and a hypothesis that previously
+offered only a prediction about an unrun design now offers one about an
+experiment that happened. The claim is being judged on evidence that bears on it
+instead of on evidence that does not.
+
+**Closes off.** Every proposal now costs `n` validations and `n` table reads
+rather than one. That is cheap, but it is inside the loop B5's beam runs, and the
+full suite is unchanged at 6m16s so nothing needs doing about it today. A design
+whose template measures several diagnostics at once is **skipped**, since
+`Prediction` names one diagnostic by specification; all five slice templates are
+one-dimensional, so the skip path is unexercised on this slice and is covered by
+a raise if it ever removes every design.
+
+**Re-measure at item 12 against real agent claims**, which is what A23 actually
+names. Both figures above stand in for that, as item 10's did.
+
+## 2026-08-04 — item 12: determinism forces record and replay, it does not merely suggest it
+
+**Decision.** Every model call goes through a content-addressed transcript store
+(`systems/llm/transcripts.py`). Evaluation runs in `REPLAY`, where a missing
+address raises `TranscriptMissError`; `RECORD` is a separate, deliberate act that
+produces an artefact to be committed.
+
+**Why it is forced rather than convenient.** SPEC §1's third invariant is
+bit-exact determinism. The usual way to approach that for a model call is
+`temperature=0`, and it is **unavailable**: `claude-opus-5` rejects
+`temperature`, `top_p` and `top_k` outright — a request carrying any of them is
+refused with a 400. There is therefore no setting, not even a degenerate one,
+that makes two calls with one prompt return one answer.
+
+So a recorded response is not a cache of the reproducible thing. It **is** the
+reproducible thing, and the model call is the process that produces it — exactly
+as `EmpiricalTable` is the artefact and simulation is the process. The two are
+built the same way on purpose: content-addressed, refused when the address
+disagrees, never silently refreshed.
+
+**The asymmetry between the modes is the guarantee.** A store that filled a miss
+by calling out would make a run's result depend on when it happened and on who
+had credentials in their environment. `REPLAY` raising is what stops an
+evaluation run quietly becoming a live one.
+
+**What the address covers**: provider id, model id, system prompt, rendered
+brief, tool schema, and the index of the call within the investigation. The last
+matters because a system may ask twice with an identical brief — after an
+experiment that moved nothing — and those are two events that may legitimately
+get different answers. It deliberately does *not* cover the scenario id or the
+seed: those reach it through the brief, and two scenarios presenting an
+identical brief are the same question as far as the model is concerned.
+
+**Closes off.** `ADDRESS_VERSION` is mixed into every address, so a change to
+*what* is hashed invalidates the corpus rather than silently matching against a
+differently-computed key — the promise `OPERATIONS_VERSION` already makes for the
+table cache. And because a brief renders a `Defect`, which is a `frozenset` with
+process-dependent iteration order, `render_brief` renders it in canonical order;
+`tests/transcript_child.py` is the cross-process arm that fails if that ever
+stops, since an in-process loop cannot see it. The failure it prevents is a
+corpus that replays on the machine that recorded it and misses everywhere else.
+
+**Also.** No refusal fallback. The ordinary advice for this model family is to
+opt into server-side `fallbacks`; it is wrong here, because a transcript's
+address covers the model id, so a response served by a substitute would be stored
+under an address naming a model that did not produce it. A provenance chain that
+quietly lies about which model answered is worse for this framework than a run
+that stops, so a refusal raises `ProviderError` and nothing is recorded.
+
+## 2026-08-04 — item 12: the model chooses a cell and an index, never a value
+
+**Decision.** A proposal is a choice of *structural cell* from a menu derived
+from the grammar, plus, per parameter, an **index** into that parameter's
+quantisation grid. Not a value.
+
+**Why this and not free-form structure.** The grammar already enumerates every
+licensed cell through `EditGrammar.structures()`, so a menu is derived rather
+than authored, it is exactly as expressive as the grammar and no more, and — the
+part that matters — an out-of-library structure is unproposable **because the
+menu has no entry for it**, not because a validator caught it afterwards.
+Measured on the slice: the agent grammar yields a 5-entry menu and none of its
+entries is a dependency sourced from `size`, so SPEC §4.5's S11 mechanism cannot
+be expressed. The environment grammar's menu does contain one. S11 is out of
+library by SPEC §3.2's mechanical definition, in the harness and not only on
+paper, and `tests/test_llm.py` asserts both halves.
+
+**Why an index and not a value.** Three consequences that would each otherwise
+need a guard. A decoded proposal is on-grid by construction, so it can never trip
+`OffGridParameterError` and the prefix code is always defined on it. The model
+has no way to express a magnitude at all, so no prompt wording can coax a
+plausibility, a probability or a score out of it. And the JSON schema handed to
+the provider contains **no `number` type anywhere** — a mechanically checkable
+statement rather than a convention, asserted directly.
+
+SPEC F7 at this boundary is therefore a property of the wire format rather than
+of the prompt or of the model's compliance. The grids are still *shown*, because
+a proposal made blind to what the indices mean would be a lottery rather than a
+hypothesis; reading a value and choosing its index is a different act from
+writing one.
+
+**Closes off.** `core/edits.py`'s `_build` became public as `build_edit`, because
+decoding a cell into an edit is now done outside that module and instantiating
+the dataclasses directly would put a second copy of the option-kind-to-edit-type
+mapping into the codebase — where `FamilyOption` resolving to either
+`ChangeDistributionFamily` or `ReparameteriseComponent` is exactly the detail
+that would drift.
+
+**Also.** `isinstance(True, int)` is true in Python, so a payload of booleans
+would decode to grid indices 0 and 1 and look well-formed. `draft_from_payload`
+refuses booleans explicitly and there is a test for it.
+
+## 2026-08-04 — item 12: V7 exists, and SPEC §9's primary contrast cannot be run
+
+**Measured**, V7 on all twelve scenarios, closed set entertained, scripted
+provider, five-design 2000-replicate table. The `fires` column is the *final*
+check; `calls` is how many times the proposal layer was actually asked, which is
+gated by the check taken at the half-budget point.
+
+| id | class | final PPC p | fires | correct | proposal calls |
+|---|---|---|---|---|---|
+| S1 | single | 0.8509 | no | yes | 0 |
+| S2 | single | 1.0000 | no | yes | 0 |
+| S3 | single | 1.0000 | no | yes | 0 |
+| S4 | single | 1.0000 | no | yes | 0 |
+| S5 | confounded | 1.0000 | no | yes | 0 |
+| S6 | confounded | 1.0000 | no | yes | 0 |
+| S7 | confounded | 1.0000 | no | yes | 0 |
+| S8 | compound | 1.0000 | no | no | 0 |
+| S9 | null | 1.0000 | no | yes | 0 |
+| S10 | non-identifiable | 0.2629 | no | no | **2** |
+| S11 | **out-of-library** | **0.5273** | **no** | no | **0** |
+| S12 | garden path | 0.1011 | no | yes | **2** |
+
+**S11 is the finding.** Its combined p-value is 0.5273 against an alpha of 0.05
+— not marginal, an order of magnitude away. V7 entertains the closed set, Hawkes
+covers S11's mechanism on every arrival-only statistic, and A9 already measured
+the check's power against `SIZE_EXCITATION` **with the closed set entertained**
+at 0.000. So Stage A never fires on the one scenario the whole architecture
+exists for, and **Stage B never runs**.
+
+SPEC §9's preregistered primary contrast is "On S11 Stage B, conditional on
+inadequacy detection, does V7 exceed B4 on D3?" It conditions on an event that
+occurs zero times in twelve. The contrast is not weak; it is **undefined**.
+
+**This is not fixable by restructuring the loop.** Checking after every
+experiment rather than at the half-budget point would give more chances at a test
+with no power; A9's 0.000 is a property of the diagnostic catalogue and the
+calibration, not of when the check is taken. SPEC §4.2 calibrates S11's mechanism
+to the same operating point as the four it hides among, and every statistic in
+§4.3 is of the arrival stream alone.
+
+**Where the proposals did happen is instructive.** S10 and S12 called the layer
+twice each. On S10 the budget is two, so the pre-proposal phase is one
+experiment and the combined p-value is just that experiment's — no multiplicity,
+so the check is at its most sensitive. On S12 the censoring genuinely misfits
+the closed set. Neither is S11.
+
+**V7 is otherwise V1**, correct on 9/12 with an identical profile, which is the
+architecture behaving as designed: on a scenario whose truth is in the library
+the check passes, no proposal is made, and the two systems are the same system.
+That is what makes the contrast clean when it *can* be run.
+
+**Left for the user, and it is the same decision as before.** Either §4.3 gains a
+mark-arrival cross-diagnostic — the `docs/BACKLOG.md` entry — or §9's contrast is
+re-specified. Both touch frozen documents, and the two measurements now bracket
+the problem from opposite sides: B1 detects S11 for a reason that is not about
+S11, and V7 does not detect it at all.
+
+**A third option exists and is worse.** V7 could propose unconditionally rather
+than on detection. That would produce Stage B data on S11, at the cost of
+reporting extension quality on runs where inadequacy was never detected — which
+is precisely what SPEC F6 exists to forbid ("never reported combined"). Recorded
+so that it is rejected deliberately rather than discovered later as a shortcut.
+
+## 2026-08-04 — item 12: D1-D6, and the measurement that shows why §8 forbids collapsing them
+
+**Decision.** `eval/scoring.py` gains `dimension_vector`, SPEC §8's six
+dimensions, alongside the closed-world proper score item 9 built. D3 is one minus
+the mean **Jensen-Shannon divergence**, in bits, between the candidate's and the
+truth's outcome distributions over a held-out battery.
+
+**Why Jensen-Shannon and not Kullback-Leibler.** Symmetric, so "how far is the
+candidate from the truth" does not depend on which is named first — and neither
+ordering is privileged when two proposed explanations are compared. And bounded
+in `[0, 1]`, which is what lets divergences over several designs be averaged into
+a number that means something; an unbounded divergence would let one design where
+the candidate assigns near-zero to a frequent outcome dominate the battery.
+
+**Measured on S11, and it is R7 in one table.** Every closed-set structure scored
+against S11's out-of-library truth, held-out battery of the mark-size diagnostic
+and the forced-arrival intervention:
+
+| candidate | D1 distance | D2 held-out | **D3 similarity** | D6 bits |
+|---|---|---|---|---|
+| hawkes | 1.50 | -2.082 | **0.960** | 24.0 |
+| null | **1.00** | -5.798 | 0.617 | 1.0 |
+| poisson_mixture | 1.50 | -5.645 | 0.677 | 24.6 |
+| regime_switching | 1.50 | -5.775 | 0.698 | 29.0 |
+| seasonality | 1.50 | -5.734 | 0.629 | 23.0 |
+| *the truth itself* | 0.00 | -1.958 | 1.000 | 24.0 |
+
+**Read the Hawkes row against the null row.** On D1, Hawkes is 1.50 from the
+truth and the *null* is 1.00 — so a system that proposed Hawkes on S11 scores
+worse structurally than one that proposed nothing at all, and exactly the same as
+one that proposed seasonality. On D3 it is 0.960 against a best rival of 0.698,
+and the truth itself scores 1.000.
+
+That is SPEC §0's "on structural recovery" correction and research question R7,
+demonstrated rather than argued: S11's mechanism is a Hawkes process whose marks
+gate the excitation, so a plain Hawkes reproduces its response to a forced
+arrival almost exactly while being, by the edit metric, no closer than anything
+else. A scalarisation of the six would have to decide how many edits of D1 a
+tenth of D3 is worth, which is the open question — hence `DimensionVector` has
+six fields, no `total`, and a test asserting there is no `total` to read.
+
+**Two smaller readings.** D2 is the candidate's log2 predictive at the *truth's
+modal cell*, so it asks "would this have predicted what usually happens" — a
+different question from D3's "does it respond to intervention the same way", and
+the Hawkes row shows they can be answered differently. D4 sums only *positive*
+likelihood improvements, because §8 asks about "previously poorly-explained"
+results: an experiment the entertained set already explains is not one the
+candidate was meant to rescue, so failing to beat it costs nothing.
+
+**Closes off.** An empty battery gives D2 and D3 as `nan`, not `0` — a question
+that was not asked must not read as a measurement of zero. D5 does give `0.0` on
+an empty design set, and that asymmetry is deliberate: there, nothing was
+enabled, which is an answer. `dimension_vector` returns the grown table so a
+caller can score many candidates against one battery without re-simulating; each
+new structure costs a 2000-replicate row otherwise.
+
+**`grammar` must be the environment's, not the agent's.** On an out-of-library
+scenario the truth is by construction outside the agent's grammar, so a distance
+or a code length computed under the agent's would raise on exactly the scenario
+the vector exists for — the same reason `ScenarioRun.structural_distance` uses
+`Executor.grammar`, recorded at item 11.
+
+## 2026-08-04 — item 12: A17 went non-vacuous over a second package, and what it caught
+
+**Decision.** `AGENT_TOOL_SURFACE` now names `sciagent.systems.llm` and
+`sciagent.systems.llm.*`. Item 4's entry said in as many words that item 12 must
+extend it or "A17 keeps passing while checking nothing real", and this is that.
+
+**What it caught, immediately.** One path:
+`sciagent.systems.llm.scripted.numeric_provider` — a helper I had shipped inside
+the package to build a payload carrying a `plausibility`, as A17's negative
+control. The analyser matches string constants, read `"plausibility"`, and
+reported the module as an agent-reachable path mentioning a sealed symbol.
+
+**Resolved by deleting it from the package**, not by licensing it. A helper whose
+only purpose is to construct the thing an invariant forbids has no business being
+importable by the systems that invariant constrains; the control now lives in
+`tests/test_llm.py` as `smuggling_payload`, beside the two assertions it exists
+for. The analyser was right and the code was wrong, which is the outcome a static
+gate is for.
+
+**Item 6's predicted bite did not happen, and the reason is worth recording.**
+That entry warned: "when item 12 adds an agent that can ask for a posterior, any
+path from the agent tool surface to `EmpiricalTableEngine.posterior` reaches a
+function that reads `HypothesisNode.plausibility`, and A17 will flag it."
+It does not, because **`inference/empirical.py` contains no reference to
+`plausibility` at all**. The engine never uses the normalised prior; it uses
+`log_prior`, which is `-code_length * ln 2` off the grammar, and normalises at
+the end — which is the same item 6 entry's "the prior is deliberately
+unnormalised", read forward. The two halves of that entry were inconsistent with
+each other and the second one is right.
+
+So no new licence was added to `PLAUSIBILITY_DERIVATION`, which still names
+exactly the three functions item 9 named, and
+`test_a17_every_licensed_function_still_needs_its_licence` still holds in both
+directions.
+
+**Closes off.** A17's analysis now covers two packages. The next item that adds a
+module under `sciagent/systems/` inherits the surface automatically through the
+`*` patterns; one that adds an agent-reachable package *outside* it must extend
+the declaration again, and nothing will tell it to except this note and item 4's.
+
+## 2026-08-04 — item 12: what is left open
+
+**Left incomplete, deliberately. Six things.**
+
+*There is no recorded transcript corpus.* No Anthropic credential is resolvable
+in this environment — `ANTHROPIC_API_KEY` unset, no `ant` CLI — so no live call
+was made and nothing was recorded. Every V7 figure above is against a **scripted
+provider**, and none of it is a measurement of what a model proposes. The
+machinery is built and gated so that recording is the only remaining step: a
+corpus recorded under `RECORD` replays under `REPLAY` with `misses == 0`, which
+`tests/test_hybrid.py` asserts end to end on S12.
+
+*SPEC §12's capability criteria 4, 5 and 6 are not measured.* Criterion 4 is
+undefined for the reason recorded above — Stage A never fires on S11, so Stage B
+never runs. Criterion 5 asks V7 to exceed "B6-equivalent random structured
+generation" on D3 with a non-overlapping 95% interval, and no B6 exists: SPEC §5
+defers it to the full benchmark. It is now cheap to build — a provider drawing
+uniformly from the structural menu is a few lines against `ScriptedProvider` —
+and it should be, since D3 now exists to compare on. Criterion 6, a
+discriminating three-stage plan on two of S5–S7, needs the plan *read off* a run
+rather than the diagnosis, which nothing yet does.
+
+*Criterion 8 is not measured either.* "Zero graph contradictions and zero zombie
+hypotheses across all runs" — A18 makes a duplicate an error and `Hybrid._admit`
+skips one rather than re-proposing, so the mechanism is there, but no run
+aggregates `verify/contradiction.py` over the population. That is a reporting
+pass, not new machinery.
+
+*D2's "held out" is honoured by the caller, not checked.* `dimension_vector`
+cannot see what an investigation ran — it takes a battery and a truth — so a
+caller passing a design the system already used would be measuring fit and
+calling it prediction. Documented at the call site; not enforceable there.
+
+*V7's two constants are asserted, not measured.* `max_proposals = 2` and the
+half-budget split before the check are taken from B4 and B5 so the three are
+comparable, which is a reason to pick them and not evidence that they are right.
+Nothing has measured whether a system that proposes once, or checks after every
+experiment, does better.
+
+*A23 still stands at 100% over generated claims, not agent claims.* Item 10 said
+it must be re-measured "against real agent claims, which is what A23 actually
+names", and this item was to have done it. It cannot, for the first reason above.
+The 100.000% figure is over `claims_from_run`'s cross-product, as item 10's
+90.546% was.
+
+**Measured, on cost.** The full suite is **618 passed, 6 skipped in 6m50s**. Item 12 adds 93 tests:
+`tests/test_llm.py` (50), `tests/test_hybrid.py` (23) and `tests/test_scoring.py`
+(20). Almost all of the added wall-clock is table rows, not tests — a structure
+V7 proposes or a candidate D2/D3 scores has no row in the calibrated table and
+filling one is 2000 replicates. Both modules thread a growing table and persist
+it, as the item 9 gate does, so the cost is once per machine rather than once per
+session.
+
+## 2026-08-04 — item 12: the decoder was more permissive than its own schema
+
+**Found by its own negative control.** `draft_from_payload` read the keys it knew
+and ignored the rest, so a payload carrying `plausibility` decoded cleanly — the
+value was dropped, since `ProposalDraft` has no field for it, but nothing was
+*refused*. Meanwhile `tool_schema` declares `additionalProperties: false` at
+every level. The two ends of the boundary published different contracts, and the
+looser one was the one that ran.
+
+**Resolved** by refusing an unknown key, at both levels, against
+`_PAYLOAD_KEYS` and `_EDIT_KEYS` declared beside the schema that generates them.
+
+**Why it is worth failing on rather than tolerating.** The value could never
+reach a score either way — that part was already true and is still asserted. But
+"the number was refused" and "the number was silently dropped" are different
+things to be able to say afterwards, and only the first is evidence about what
+the model tried. A17's whole shape is that a violation should be *visible*, and a
+decoder that quietly discards the one field the invariant is named for gives up
+the only place that attempt was observable.
+
+**The test that caught it was written for something else.** It asserted the
+negative control was refused; it failed because the control was tolerated. The
+positive control -- a conforming payload still decodes, to exactly the three
+fields `ProposalDraft` declares -- was added at the same time, since a decoder
+that refused everything would satisfy every negative test in that class.

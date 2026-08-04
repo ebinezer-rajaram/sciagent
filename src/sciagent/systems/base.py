@@ -58,6 +58,7 @@ __all__ = [
     "entertain",
     "null_seeded_graph",
     "table_prediction",
+    "table_predictions",
 ]
 
 #: The empty edit set: "nothing is wrong". A hypothesis and not an absence of
@@ -235,11 +236,11 @@ class Investigation:
 
         With ``predictions`` left at ``None`` -- which is what every baseline
         does -- the structure's table row is filled and
-        :func:`table_prediction` derives the prediction from it. A system
-        therefore says only *which* structure it wants to entertain, and the
-        threshold that would refute it is the framework's. Supplying predictions
-        explicitly is for a system that has a reason to claim something narrower;
-        they are validated by the graph either way.
+        :func:`table_predictions` derives one prediction per design the scenario
+        offers. A system therefore says only *which* structure it wants to
+        entertain, and the thresholds that would refute it are the framework's.
+        Supplying predictions explicitly is for a system that has a reason to
+        claim something narrower; they are validated by the graph either way.
 
         ``proposed_at`` is set to the most recent experiment, so SPEC F9's rule
         -- lateness costs nothing in likelihood but forfeits a confirmatory claim
@@ -247,11 +248,11 @@ class Investigation:
         """
         if predictions is None:
             self._engine.ensure_structure(program_edit)
-            predictions = [
-                table_prediction(
-                    self._engine.table, node_id, program_edit, self._designs[0]
+            predictions = list(
+                table_predictions(
+                    self._engine.table, node_id, program_edit, self._designs
                 )
-            ]
+            )
         proposed_at: ExperimentId | None = (
             self._history[-1].experiment if self._history else None
         )
@@ -420,9 +421,9 @@ def entertain(investigation: Investigation, library: Mapping[str, Defect]) -> No
     duplicate an error, and the null is present from the start in every
     investigation.
 
-    Each proposal carries the prediction :func:`table_prediction` derives for it
-    under the scenario's first design, so a system introduces structure without
-    authoring the threshold that would refute it.
+    Each proposal carries the predictions :func:`table_predictions` derives for
+    it, one per design the scenario offers, so a system introduces structure
+    without authoring any threshold that would refute it.
     """
     for name in sorted(library):
         defect = library[name]
@@ -440,7 +441,7 @@ def null_seeded_graph(
     grammar: EditGrammar,
     metrics: MetricRegistry,
     table: EmpiricalTable,
-    design: ExperimentDesign,
+    designs: Sequence[ExperimentDesign],
 ) -> HypothesisGraph:
     """Return a graph holding the null hypothesis and nothing else.
 
@@ -453,14 +454,66 @@ def null_seeded_graph(
     That it is the same starting point for all four systems is what makes their
     results comparable -- SPEC §5's comparison is between what systems *do*, not
     between what they were handed.
+
+    ``designs`` is the whole design space rather than one member of it, for the
+    reason :func:`table_predictions` gives.
     """
     node_id = HypothesisId("null")
     return HypothesisGraph.empty(grammar, metrics).propose(
         node_id,
         program_edit=NULL_DEFECT,
-        predictions=[table_prediction(table, node_id, NULL_DEFECT, design)],
+        predictions=list(table_predictions(table, node_id, NULL_DEFECT, designs)),
         rationale="the null: nothing is wrong (SPEC §4.5 S9)",
     )
+
+
+def table_predictions(
+    table: EmpiricalTable,
+    node_id: HypothesisId,
+    program_edit: Defect,
+    designs: Sequence[ExperimentDesign],
+) -> tuple[Prediction, ...]:
+    """Return what a structure predicts about every design that can carry one.
+
+    A hypothesis is a statement about the whole design space, so attaching its
+    falsifiability to one arbitrary member of that space was the actual error.
+    Deriving one prediction per design is what makes SPEC §6.4 A16's guarantee
+    hold in practice as well as on paper: a hypothesis was refutable before this,
+    but only by an experiment nobody might run.
+
+    Measured consequence, under A23. The verifier grades a claim carrying no
+    effect by evaluating its subject's predictions against the cited experiments,
+    and a prediction made under a design the system never ran bears on nothing,
+    so the claim is *referred* -- correctly, since the verifier cannot decide it
+    mechanically. All 180 of A23's referrals were that, all of them V1 on S5, S6
+    and S10, which are the three scenarios where BOED does not select the first
+    design. See ``docs/DECISIONS.md`` for the re-measured figure.
+
+    A design whose template measures several diagnostics at once is **skipped**,
+    not fatal: a :class:`~sciagent.core.types.Prediction` names one diagnostic
+    by specification, so a joint cell has no representation as one, and
+    :func:`_cell_condition` raises rather than quietly predicting a single axis
+    of several. Skipping keeps such a design usable as an *experiment* while
+    declining to invent a prediction for it.
+
+    Raises :class:`~sciagent.core.errors.InvestigationError` if no design can
+    carry a prediction at all, since a hypothesis with none is unfalsifiable and
+    the graph would refuse it anyway -- better to say why here than to fail two
+    frames later on an empty sequence.
+    """
+    derived = [
+        table_prediction(table, node_id, program_edit, design)
+        for design in designs
+        if design.template().outcome.dimension == 1
+    ]
+    if not derived:
+        raise InvestigationError(
+            f"no design offered to hypothesis {node_id!r} measures a single "
+            f"diagnostic, so no prediction can be derived and the hypothesis "
+            f"would be unfalsifiable; designs were "
+            f"{sorted(str(d.id) for d in designs)!r}"
+        )
+    return tuple(derived)
 
 
 def table_prediction(

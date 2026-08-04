@@ -141,7 +141,57 @@ would have to be re-run. It cannot be settled by implementation alone — whethe
 this counts as a demonstrated contradiction between §4.6 and §4.3, or as a
 catalogue that was simply incomplete, is a judgement about the spec.
 
-## Combine posterior-predictive evidence across experiments, instead of min-p
+---
+
+**Re-measured 2026-08-04, at item 12. The problem has inverted, and it is now
+worse.** The other two entries above are closed, and neither helped here.
+
+Combining evidence across experiments lifted B1's detection over S1-S12 from 2/12
+to 7/12, and B1 now *does* fire on S11. That does not rescue criterion 4, because
+B1 holds only the null and therefore fires on anything that is not the null --
+S1, S5, S7, S8, S10, S11 and S12 alike. Its S11 detection is a statement about
+holding a trivially inadequate space, not about out-of-library sensitivity.
+
+Meanwhile V7, which holds the closed set, was built at item 12 and measured:
+**its combined p-value on S11 is 0.5273 against an alpha of 0.05**, and A9 puts
+the check's power against `SIZE_EXCITATION` with the closed set entertained at
+**0.000**. Hawkes covers S11's mechanism on every arrival-only statistic.
+
+So criterion 4 has gone from "clearable by a system that does nothing" to
+**unpassable by any system holding an adequate-looking closed set**, and SPEC §9's
+preregistered primary contrast -- "On S11 Stage B, conditional on inadequacy
+detection" -- conditions on an event that occurred **zero times in twelve**. The
+contrast is not weak; it is undefined.
+
+This is the demonstrated contradiction SPEC §13 requires. §4.6 requirement 1 asks
+that S11 Stage A be detectable via the PPC; §4.2 calibrates S11's mechanism to be
+indistinguishable from Hawkes under every arrival statistic; §4.3 offers no other
+kind of statistic. All three cannot hold. The failing measurement is in
+`docs/DECISIONS.md` under "V7 exists, and SPEC §9's primary contrast cannot be
+run", and `tests/test_hybrid.py` exercises the path.
+
+**It cannot be fixed by restructuring V7.** Checking after every experiment
+rather than at the half-budget point gives more chances at a test with no power.
+0.000 is a property of the catalogue and the calibration, not of when the check
+is taken.
+
+**The decision is between two frozen documents** and is not taken here: either
+§4.3 gains this diagnostic, or §9's contrast is re-specified. A third option --
+having V7 propose unconditionally -- is rejected, because it would report
+extension quality on runs where inadequacy was never detected, which is precisely
+what F6 forbids.
+
+## DONE (2026-08-04, item 12 prerequisite) — Combine posterior-predictive
+## evidence across experiments, instead of min-p
+
+**Closed.** Implemented as the harmonic mean p-value scaled by `1 + ln(n)`,
+not Fisher: Fisher was measured and *failed*, taking the realised size to
+0.130 and power against a detectable defect from 1.000 to 0.070, because the
+evidence on this slice is concentrated in one experiment of five. B1's
+detection over S1-S12 went from 2/12 to 7/12 and no longer degrades with
+budget. Numbers and the rejected alternatives are in `docs/DECISIONS.md`.
+The original entry follows, unedited.
+
 
 **Idea.** Replace the posterior predictive check's multiplicity handling. It
 currently reports the *minimum* per-experiment tail probability under a Sidak
@@ -202,7 +252,13 @@ is published. Item 9's baselines can be re-run cheaply — the gate is 10.8 seco
 warm — so re-measuring after a change costs almost nothing, and no scenario data
 would need rebuilding.
 
-## A prediction per offered design, not one per hypothesis
+## DONE (2026-08-04, item 12 prerequisite) — A prediction per offered design
+
+**Closed.** `systems.base.table_predictions` derives one per design. A23's
+coverage went from 90.385% to 100.000% on an identical 2288-claim population;
+all 220 referrals were the predicted cause and all of them disappeared. The
+original entry follows, unedited.
+
 
 **Idea.** When a system proposes a hypothesis without supplying predictions,
 `systems.base.table_prediction` derives exactly one, under the scenario's *first*

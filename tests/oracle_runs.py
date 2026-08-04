@@ -62,7 +62,7 @@ def _entertained(
     to be proposed into, and its executor never leaves the store empty-handed
     because it is never asked to.
     """
-    graph = null_seeded_graph(AGENT_GRAMMAR, METRICS, table, slice_designs()[0])
+    graph = null_seeded_graph(AGENT_GRAMMAR, METRICS, table, slice_designs())
     engine = EmpiricalTableEngine(graph, table, simulate=simulator(GRAMMAR))
     investigation = Investigation(
         scenario_id=scenario.id,

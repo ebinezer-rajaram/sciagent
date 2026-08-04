@@ -79,6 +79,8 @@ SEALED: frozenset[DataPartition] = frozenset(
 AGENT_TOOL_SURFACE: tuple[str, ...] = (
     "sciagent.systems",
     "sciagent.systems.*",
+    "sciagent.systems.llm",
+    "sciagent.systems.llm.*",
     "sciagent.experiments.dsl",
 )
 

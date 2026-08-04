@@ -1,0 +1,179 @@
+"""The Anthropic-backed provider.
+
+The only module in the framework that talks to a network, and it is deliberately
+thin: it renders a request, constrains the response to a schema, and hands back
+the payload. Everything that has to be reproducible -- addressing, replay,
+decoding, grammar validation -- is
+:class:`~sciagent.systems.llm.provider.ProposalLayer`'s, which is why a recorded
+transcript can be replayed with this module never imported.
+
+Three choices are worth stating, because each is the opposite of the usual
+default and each follows from what this framework is for.
+
+**Structured output, not tool use.** The response is constrained by
+``output_config.format`` with the schema
+:func:`~sciagent.systems.llm.encoding.tool_schema` builds. One structured object
+is wanted, not an agentic loop, and the JSON-schema path makes the "no numbers"
+guarantee a property of the wire format: the schema contains no ``number``
+anywhere, so a conforming response cannot carry one.
+
+**No sampling parameters.** ``temperature``, ``top_p`` and ``top_k`` are not
+sent, because the models targeted here reject them outright. This is the fact
+that forces the transcript store to exist: there is no setting that makes two
+calls with one prompt agree, so a recorded response is the reproducible artefact
+rather than a cache of one. See
+:mod:`sciagent.systems.llm.transcripts`.
+
+**No refusal fallback.** A model refusal raises
+:class:`~sciagent.core.errors.ProviderError` and nothing is recorded. Falling
+back to another model would be the ordinary advice and is wrong here: a
+transcript's address covers the model id, so a response served by a substitute
+would be stored under an address naming a model that did not produce it. A
+provenance chain that quietly lies about which model answered is worse for this
+framework than a run that stops.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any
+
+from sciagent.core.errors import ProviderError
+
+if TYPE_CHECKING:  # pragma: no cover - import cost, not behaviour
+    from anthropic import Anthropic
+
+__all__ = ["DEFAULT_MODEL", "AnthropicProvider"]
+
+#: The model proposals are recorded against. Named here rather than passed at
+#: every call site so that a recorded corpus has one model behind it and a change
+#: is a single reviewable edit that invalidates every address.
+DEFAULT_MODEL = "claude-opus-5"
+
+#: Output allowance. Thinking is on by default on this model family and counts
+#: against the same ceiling, so this is sized for the reasoning rather than for
+#: the payload, which is a few hundred bytes of JSON.
+DEFAULT_MAX_TOKENS = 16000
+
+
+class AnthropicProvider:
+    """A provider backed by the Anthropic Messages API.
+
+    The client is constructed lazily, on the first completion, so that a provider
+    can be built, inspected and have its identity hashed into an address in an
+    environment with no credentials at all. That is what lets the address of a
+    call be computed -- and a replay satisfied -- without the ability to make one.
+    """
+
+    __slots__ = ("_client", "_effort", "_max_tokens", "_model")
+
+    def __init__(
+        self,
+        *,
+        model: str = DEFAULT_MODEL,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        effort: str = "high",
+        client: Anthropic | None = None,
+    ) -> None:
+        self._model = model
+        self._max_tokens = max_tokens
+        self._effort = effort
+        self._client = client
+
+    @property
+    def id(self) -> str:
+        """Return the backend identifier, which is part of every address."""
+        return "anthropic"
+
+    @property
+    def model(self) -> str:
+        """Return the model identifier, which is part of every address."""
+        return self._model
+
+    def complete(
+        self, system: str, brief: str, schema: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        """Return a payload conforming to ``schema``.
+
+        Raises :class:`~sciagent.core.errors.ProviderError` for a refusal, a
+        truncated response, or a body that is not the JSON object the schema
+        demands. Each is reported with what actually came back, because a
+        provider failure during a recording run is the thing being debugged and
+        a bare "no proposal" would not be enough to debug it.
+        """
+        response = self._messages().create(
+            model=self._model,
+            max_tokens=self._max_tokens,
+            system=system,
+            output_config={
+                "effort": self._effort,
+                "format": {"type": "json_schema", "schema": dict(schema)},
+            },
+            messages=[{"role": "user", "content": brief}],
+        )
+        if response.stop_reason == "refusal":
+            details = getattr(response, "stop_details", None)
+            raise ProviderError(
+                f"{self._model} declined to answer "
+                f"(category {getattr(details, 'category', None)!r}). Nothing is "
+                f"recorded: a refusal is an outcome of the investigation, not a "
+                f"call to be retried on a different model"
+            )
+        if response.stop_reason == "max_tokens":
+            raise ProviderError(
+                f"{self._model} hit the {self._max_tokens}-token ceiling before "
+                f"finishing; thinking counts against the same allowance, so raise "
+                f"max_tokens rather than lowering effort"
+            )
+        return _payload_of(response, self._model)
+
+    def _messages(self) -> Any:
+        """Return the Messages resource, constructing the client on first use."""
+        if self._client is None:
+            try:
+                from anthropic import Anthropic
+            except ImportError as error:  # pragma: no cover - dependency present
+                raise ProviderError(
+                    "the anthropic SDK is not installed, so no call can be made; "
+                    "replaying a recorded transcript does not need it"
+                ) from error
+            self._client = Anthropic()
+        return self._client.messages
+
+
+def _payload_of(response: Any, model: str) -> Mapping[str, Any]:
+    """Return the JSON object a structured-output response carries.
+
+    ``output_config.format`` guarantees the first text block is valid JSON
+    matching the schema, so this is a read rather than a parse of free prose.
+    It still checks, because a guarantee that is never asserted is a guarantee
+    nobody notices the loss of.
+    """
+    text = next(
+        (
+            block.text
+            for block in response.content
+            if getattr(block, "type", "") == "text"
+        ),
+        None,
+    )
+    if text is None:
+        kinds = [getattr(block, "type", "?") for block in response.content]
+        raise ProviderError(
+            f"{model} returned no text block to read a proposal from; the "
+            f"response carried {kinds!r}"
+        )
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise ProviderError(
+            f"{model} returned a text block that is not JSON, though "
+            f"output_config.format was set: {text[:200]!r}"
+        ) from error
+    if not isinstance(payload, dict):
+        raise ProviderError(
+            f"{model} returned a JSON {type(payload).__name__} where the schema "
+            f"declares an object"
+        )
+    return payload

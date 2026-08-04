@@ -47,13 +47,58 @@ bounded but not exact: a conservative detector understates how much inadequacy i
 present, and understating is the direction that refuses to credit the framework
 with a detection it did not earn.
 
-Multiplicity
-------------
+Combining experiments
+---------------------
 
-An investigation checks several experiments at once, so the smallest p-value is
-not itself a p-value. It is corrected by Sidak, ``1 - (1 - p_min) ** n``, which
-is exact for independent tests -- and the tests *are* independent under the null,
-because each experiment is an execution under its own seed.
+An investigation checks several experiments at once, so the per-experiment tail
+probabilities have to become one number. They are combined by the **harmonic
+mean p-value**, ``n / sum(1 / p_i)``, scaled by ``1 + ln(n)``.
+
+This replaces a Sidak correction on the smallest p-value, which was measured to
+fail in the direction that matters. Under min-p, evidence and penalty grow
+together and the penalty wins: B1's per-experiment probability against an
+inadequate hypothesis space is 0.0133 whatever the budget, while the correction
+takes the combined value from 0.0133 at one experiment to 0.1928 at sixteen.
+**A system that ran more experiments detected less.** The harmonic mean grows
+logarithmically instead -- 0.0133, 0.0225, 0.0317, 0.0410, 0.0502 at budgets
+1, 2, 4, 8, 16 -- so agreement accumulates. Some growth is correct, since ``n``
+tests genuinely offer ``n`` chances; what was wrong was growth fast enough to
+cross alpha by the fourth experiment.
+
+Why not the two obvious alternatives, both measured rather than argued:
+
+* *Fisher's method* (``-2 sum ln p`` on ``2n`` degrees of freedom) pays two
+  degrees of freedom per experiment whether or not it carried evidence. On this
+  slice the evidence is concentrated: against a defect in the mark component the
+  median per-experiment p-value is 0.67 while the median *smallest* is 0.0030.
+  Fisher's realised size came out at 0.130 -- above A9's bound -- and its power
+  against that defect collapsed from 1.000 to 0.070.
+* *The Cauchy combination* returns the single p-value unchanged for any number
+  of identical inputs, so it applies no multiplicity penalty at all, and it
+  cannot represent the ``p = 1`` atom a discrete tail regularly produces.
+
+The scale factor is ``1 + ln(n)`` rather than ``ln(n)``: it must be 1 at ``n =
+1``, where there is nothing to correct, and the ``ln(n)`` form leaves the
+realised size at 0.100 for three experiments -- exactly A9's ``2 alpha`` bound,
+with no margin. Item 6 made the same call for the same reason when it floored
+the predictive. The calibration is approximate; the realised size is what A9
+measures, at most 0.045 over 200 correctly-specified scenarios at every number
+of experiments from one to five. Numbers in ``docs/DECISIONS.md``.
+
+Two assumptions do not hold exactly, and both fail in the safe direction:
+
+* *Non-uniform.* The per-experiment values are conservative for the three
+  reasons above -- discreteness, the rule-of-three floor, the posterior having
+  been fitted to the data it is checked against -- so the combined value comes
+  out too large. A conservative detector understates how much inadequacy is
+  present, which is the direction that refuses to credit the framework with a
+  detection it did not earn.
+* *Non-independent.* Each experiment is an execution under its own seed, so the
+  *observations* are independent. The predictive they are judged against is a
+  function of the posterior, which was fitted to all of them, so the *tests* are
+  not -- except where the belief is a single hypothesis, as in B1, where
+  independence is exact. A9's false-positive arm measures the realistic case:
+  the full closed set over correctly-specified scenarios.
 """
 
 from __future__ import annotations
@@ -97,23 +142,32 @@ def tail_probability(predictive: Sequence[float], cell: int) -> float:
     )
 
 
-def sidak(p_min: float, n_tests: int) -> float:
-    """Return the Sidak-corrected p-value for the smallest of ``n_tests``.
+def harmonic_mean_combined(p_values: Sequence[float]) -> float:
+    """Return the p-values combined by the scaled harmonic mean.
 
-    Exact when the tests are independent, which they are here: each experiment is
-    a separate execution under its own seed.
+    ``(1 + ln n) * n / sum(1 / p_i)``. Guarantees a result in ``(0, 1]``, and
+    that combining a single p-value returns it unchanged -- the scale factor is
+    exactly 1 at ``n = 1``, so the correction is an identity where there is
+    nothing to correct.
+
+    The harmonic mean is dominated by its smallest term, so evidence concentrated
+    in one experiment is preserved rather than diluted; adding further small
+    terms pulls it lower still, so evidence spread across several experiments
+    accumulates. This module's docstring records what that replaced, what else
+    was measured, and where the scale factor comes from.
+
+    Reciprocals are summed with :func:`math.fsum` over sorted values, so the
+    result does not depend on the order the caller supplied them in -- which is
+    what lets two systems that ran the same experiments report the same verdict.
     """
-    if n_tests < 1:
-        raise InferenceError(f"n_tests must be at least 1, got {n_tests}")
-    if not 0.0 < p_min <= 1.0:
-        raise InferenceError(f"p_min must lie in (0, 1], got {p_min}")
-    if p_min == 1.0:
-        # A discrete tail can be exactly 1 -- an observation in the single most
-        # likely cell of a two-cell space reaches every cell. ``log1p(-1)`` is a
-        # domain error rather than the -inf the limit would want, so the case is
-        # answered directly.
-        return 1.0
-    return -math.expm1(n_tests * math.log1p(-p_min))
+    if not p_values:
+        raise InferenceError("combining needs at least one p-value")
+    for value in p_values:
+        if not 0.0 < value <= 1.0:
+            raise InferenceError(f"a p-value must lie in (0, 1], got {value!r}")
+    count = len(p_values)
+    harmonic = count / math.fsum(1.0 / value for value in sorted(p_values))
+    return min(1.0, (1.0 + math.log(count)) * harmonic)
 
 
 def posterior_predictive_check(
@@ -124,10 +178,10 @@ def posterior_predictive_check(
     """Return the check's verdict over a set of experiments.
 
     Each entry is ``(experiment id, posterior predictive distribution over
-    cells, observed cell)``. Guarantees the reported ``p_value`` accounts for the
-    number of experiments checked, and that ``inadequate`` is exactly
-    ``p_value < alpha`` -- there is no second criterion and no threshold anywhere
-    else.
+    cells, observed cell)``. Guarantees the reported ``p_value`` combines every
+    experiment checked -- by :func:`harmonic_mean_combined`, so agreement
+    accumulates -- and that ``inadequate`` is exactly ``p_value < alpha``: there
+    is no second criterion and no threshold anywhere else.
 
     With no experiments the verdict is ``p_value = 1`` and not inadequate: no
     evidence of inadequacy is not evidence of adequacy, and this function reports
@@ -148,8 +202,9 @@ def posterior_predictive_check(
     }
     if len(per_experiment) != len(experiments):
         raise InferenceError("an experiment id was offered to the check twice")
-    smallest = min(per_experiment[key] for key in sorted(per_experiment))
-    combined = sidak(smallest, len(per_experiment))
+    combined = harmonic_mean_combined(
+        [per_experiment[key] for key in sorted(per_experiment)]
+    )
     return PPCResult(
         alpha=alpha,
         p_value=combined,

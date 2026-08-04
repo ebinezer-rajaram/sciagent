@@ -114,7 +114,7 @@ def _runs() -> dict[tuple[str, str], ScenarioRun]:
     for name in SYSTEM_NAMES:
         system = _system(name)
         for the_scenario in slice_scenarios():
-            graph = null_seeded_graph(AGENT_GRAMMAR, METRICS, table, slice_designs()[0])
+            graph = null_seeded_graph(AGENT_GRAMMAR, METRICS, table, slice_designs())
             engine = EmpiricalTableEngine(graph, table, simulate=simulator(GRAMMAR))
             results[name, str(the_scenario.id)] = run_scenario(
                 the_scenario,
@@ -256,56 +256,81 @@ class TestAbstention:
 class TestDetectionIsMeasuredNotAssumed:
     """B1's Stage A rate, which SPEC §12 criterion 4 compares an LLM against."""
 
-    def test_b1_misses_every_arrival_mechanism_despite_per_experiment_evidence(
-        self,
-    ) -> None:
-        """The finding. Signal is present in every experiment and is thrown away.
+    def test_b1_detects_arrival_mechanisms_on_a_full_budget(self) -> None:
+        """Evidence spread across experiments now accumulates instead of cancelling.
 
         On S1-S7 the truth is one of SPEC §4.2's four arrival mechanisms and B1
         holds only the null, so the hypothesis space is inadequate by
-        construction and the check ought to say so. Every individual experiment
-        says so -- the smallest per-experiment tail probability is about 0.013 --
-        but the check reports the *minimum* p-value under a Sidak correction for
-        eight tests, which inflates 0.013 to about 0.102 and clears it.
+        construction and the check ought to say so. Under the Sidak correction on
+        the smallest p-value it did not: eight experiments agreeing were treated
+        as eight chances to be wrong, 0.013 was inflated to about 0.102, and
+        detection got *worse* as the budget grew. ``docs/DECISIONS.md`` records
+        the replacement and the measurements that chose it.
 
-        Eight experiments agreeing is treated purely as eight chances to be
-        wrong and never as accumulating evidence, so detection gets *worse* as
-        the budget grows. Recorded in ``docs/DECISIONS.md``, with the
-        consequence for SPEC §12 criterion 4 in ``docs/BACKLOG.md``.
+        What is asserted here is the property, not the roster: at least one
+        eight-experiment arrival-mechanism scenario is detected. The roster
+        itself moves with the calibration and is reported rather than pinned.
         """
-        for scenario_id in (f"S{i}" for i in range(1, 8)):
-            run = _runs()["B1", scenario_id]
-            per_experiment = run.ppc.per_experiment
-            smallest = min(per_experiment[k] for k in sorted(per_experiment))
-            assert smallest < run.ppc.alpha, (
-                f"{scenario_id}: no single experiment carries evidence against "
-                f"the null, so the miss is not the correction's doing"
-            )
-            assert not run.ppc.inadequate, (
-                f"B1 now detects {scenario_id}; the multiplicity finding recorded "
-                f"in docs/DECISIONS.md is stale and must be revisited"
-            )
+        fed = [
+            _runs()["B1", f"S{i}"]
+            for i in range(1, 8)
+            if _runs()["B1", f"S{i}"].experiments > 2
+        ]
+        assert fed, "no arrival-mechanism scenario ran on a full budget"
+        detected = [run for run in fed if run.ppc.inadequate]
+        assert detected, (
+            "B1 detects no arrival mechanism on a full budget, so evidence "
+            "across experiments is being discarded again; see the harmonic-mean "
+            "entry in docs/DECISIONS.md"
+        )
 
-    def test_the_one_starved_scenario_is_the_one_it_detects(self) -> None:
-        """The cleanest demonstration that the correction, not the data, decides.
+    def test_detection_no_longer_requires_a_starved_budget(self) -> None:
+        """The pathology inverted: a fed scenario is no longer strictly worse off.
 
         S10 carries the *least* evidence of any scenario -- two experiments
-        against everything else's eight -- and is the only arrival-mechanism
-        scenario B1 flags, because two tests are a far smaller multiplicity
-        penalty than eight. Its per-experiment evidence is the same 0.013.
+        against everything else's eight -- and under the old correction it was
+        the only arrival-mechanism scenario B1 flagged, purely because two tests
+        carried a smaller penalty than eight. Its per-experiment evidence is the
+        same 0.013 as the scenarios that were missed.
+
+        Both are detected now, which is the finding. The starved scenario still
+        reports the smaller combined value, and that is correct rather than a
+        residue: two tests genuinely offer fewer chances to be wrong than eight.
+        What had to go was a penalty steep enough to clear alpha by the fourth
+        experiment.
         """
         starved, fed = _runs()["B1", "S10"], _runs()["B1", "S1"]
         assert starved.experiments < fed.experiments
-        assert starved.ppc.inadequate and not fed.ppc.inadequate
-        assert starved.ppc.p_value < fed.ppc.p_value
+        assert starved.ppc.inadequate, "the starved scenario stopped being detected"
+        assert fed.ppc.inadequate, (
+            f"only the starved scenario is detected ({starved.ppc.p_value:.4f} "
+            f"against {fed.ppc.p_value:.4f}); the multiplicity penalty is once "
+            f"again deciding rather than the data"
+        )
+
+    def test_the_adequate_hypothesis_space_is_not_flagged(self) -> None:
+        """S9's truth is the null, which B1 holds, so nothing is inadequate.
+
+        The true-negative control for the two tests above. A combiner that
+        accumulates evidence more eagerly buys detection at the price of firing
+        on a space that explains the data perfectly well, and this is what would
+        catch that -- B1 on S9 is the one run in the slice where the hypothesis
+        space provably contains the truth.
+        """
+        run = _runs()["B1", "S9"]
+        assert not run.ppc.inadequate, (
+            f"B1 flagged S9 as inadequate at p={run.ppc.p_value:.4f}, but it "
+            f"holds the null and the null is the truth"
+        )
 
     def test_b1_detects_the_compound_scenario(self) -> None:
-        """S8 is detected on strength of signal rather than on a small penalty.
+        """S8 is detected on strength of signal, and always was.
 
         Its size-distribution mixture moves a diagnostic far enough that the
-        per-experiment tail probability is about 0.003, which survives the same
-        multiplicity correction that 0.013 does not. B1 detects S8 and S10 and
-        nothing else, and both are explained.
+        per-experiment tail probability is about 0.003, which survived even the
+        Sidak correction that 0.013 did not. It is the one scenario whose
+        detection does not depend on how experiments are combined, which is why
+        it is kept as a control on the two tests above.
         """
         run = _runs()["B1", "S8"]
         assert run.ppc.inadequate

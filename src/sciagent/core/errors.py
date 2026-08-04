@@ -291,6 +291,48 @@ class InvestigationError(ResearchSystemError):
     """
 
 
+class ProposalError(ResearchSystemError):
+    """Base for faults in the LLM proposal layer (SPEC §11 item 12)."""
+
+
+class MalformedProposalError(ProposalError):
+    """A proposal draft does not denote a structure the grammar licenses.
+
+    Raised for a menu index outside the declared structural menu, a parameter
+    count that does not match the option's grids, a grid index outside its grid,
+    and an empty edit set. Every one of these is a *decoding* failure rather than
+    a scientific judgement: the draft never became a defect, so there is nothing
+    to entertain and nothing to score.
+
+    Distinct from
+    :class:`~sciagent.core.errors.EditNotInGrammarError`, which is a well-formed
+    structure outside the licensed space -- that is SPEC §3.2's out-of-library
+    condition and a finding, not a fault.
+    """
+
+
+class TranscriptMissError(ProposalError):
+    """A replay-only transcript store holds no response for a content address.
+
+    Bit-exact determinism (SPEC §1 invariant 3) is what makes this an error and
+    not a cache miss to be filled. A model call cannot be reproduced -- the
+    sampling parameters that would pin it are rejected by the models in question
+    -- so a recorded response *is* the reproducible artefact. Silently calling
+    out on a miss would make the run depend on when it happened.
+    """
+
+
+class ProviderError(ProposalError):
+    """A model provider could not produce a draft at all.
+
+    A refusal, a transport failure, or a response carrying no tool call.
+    Deliberately distinct from :class:`MalformedProposalError`: this one says
+    nothing was proposed, which is a legitimate thing for a research system to
+    have happen and for the harness to record, whereas a malformed draft means
+    something was proposed and did not denote.
+    """
+
+
 # --------------------------------------------------------------------------
 # Verification
 # --------------------------------------------------------------------------

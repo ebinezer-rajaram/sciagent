@@ -85,7 +85,7 @@ def runs() -> tuple[tuple[ScenarioRun, ClaimContext], ...]:
     for name in SYSTEM_NAMES:
         system = _system(name)
         for scenario in slice_scenarios():
-            graph = null_seeded_graph(AGENT_GRAMMAR, METRICS, table, slice_designs()[0])
+            graph = null_seeded_graph(AGENT_GRAMMAR, METRICS, table, slice_designs())
             engine = EmpiricalTableEngine(graph, table, simulate=simulator(GRAMMAR))
             store = ExperimentStore.in_memory()
             runner = executor(GRAMMAR, store=store, budget=scenario.budget)

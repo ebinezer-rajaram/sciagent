@@ -627,7 +627,7 @@ class EditGrammar:
         for edit_type, target, option in self.structures():
             grids = _grids_of(option)
             for combination in _parameter_combinations(grids, max_per_structure):
-                yield _build(edit_type, target, option, combination)
+                yield build_edit(edit_type, target, option, combination)
 
     # -- metric ------------------------------------------------------------
 
@@ -717,12 +717,23 @@ def _option_id(option: Option) -> str:
             return f"{option.source}|{option.kernel}"
 
 
-def _build(
+def build_edit(
     edit_type: type[Edit],
     target: ComponentId,
     option: Option,
     parameters: Parameters,
 ) -> Edit:
+    """Return the edit a structural cell and a parameter assignment denote.
+
+    The inverse of reading an edit's ``(type, target, option)`` back off it, and
+    the only supported way to construct an edit from a grammar cell. Public
+    because a proposal layer decodes a *choice* of cell into an edit, and doing
+    that by instantiating the dataclasses directly would put a second copy of
+    the mapping from option kind to edit type into the codebase -- where
+    :class:`FamilyOption` resolving to either ``ChangeDistributionFamily`` or
+    ``ReparameteriseComponent`` depending on the requested type is exactly the
+    kind of detail that would drift.
+    """
     match option:
         case FamilyOption() if edit_type is ChangeDistributionFamily:
             return ChangeDistributionFamily(target, option.family, parameters)

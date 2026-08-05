@@ -27,6 +27,7 @@ says nothing else separates.
 from __future__ import annotations
 
 import math
+from itertools import permutations
 
 import pytest
 from oracle_runs import oracle_lengths, without_intervention
@@ -41,7 +42,7 @@ from environments.pointproc.mechanisms import (
 from environments.pointproc.outcomes import forced_design, slice_templates
 from environments.pointproc.scenarios import scenario, slice_scenarios
 from sciagent.core.types import ExperimentTemplateId
-from sciagent.eval.oracle import OraclePolicyLength
+from sciagent.eval.oracle import OraclePolicyLength, _choice_key
 
 #: Scenarios by class, as SPEC §4.5's table groups them.
 SINGLE = ("S1", "S2", "S3", "S4")
@@ -57,9 +58,15 @@ def _length(scenario_id: str) -> OraclePolicyLength:
     return oracle_lengths()[scenario_id]
 
 
-def _world_row(template: ExperimentTemplateId) -> tuple[float, ...]:
-    """Return what S12's censored world returns on one design."""
-    return gate_table().probabilities(scenario("S12").executed, template)
+def _world_row(
+    template: ExperimentTemplateId, scenario_id: str = "S12"
+) -> tuple[float, ...]:
+    """Return what a scenario's executed world returns on one design.
+
+    Defaults to S12 because the censored world is what most of the callers here
+    are asking about; the regime pair passes its own id.
+    """
+    return gate_table().probabilities(scenario(scenario_id).executed, template)
 
 
 def _row(name: str, template: ExperimentTemplateId) -> tuple[float, ...]:
@@ -188,16 +195,37 @@ class TestWhatTheScenariosNeed:
 class TestTheInterventionEarnsItsPlace:
     """What the fifth design buys, on the pair nothing else separates."""
 
-    def test_the_regime_scenarios_open_with_the_intervention(self) -> None:
-        """SPEC §4.2 stage 3, chosen by the policy rather than prescribed.
+    def test_the_intervention_alone_separates_the_regime_pair(self) -> None:
+        """SPEC §4.2 stage 3, measured on the pair it was added for.
 
         Hawkes and regime switching are calibrated to be indistinguishable under
         every dispersion diagnostic, so on a scenario whose truth is one of them
-        an optimal policy has one experiment worth running first. That it picks
-        that one is the design space working.
+        the intervention is the only design that tells them apart. Stated as the
+        margin it earns per experiment, which is what "separates" means for a
+        belief: the four queries buy under a bit, the forced arrival buys
+        several, and the gap is a multiple rather than a nose.
+
+        This replaced an assertion that the optimal policy *opens* with the
+        forced arrival, which does not follow and is not true -- see
+        :class:`TestASaturatedSearchHasNoOpinion` and ``docs/DECISIONS.md``.
+        Beating Hawkes is not the binding constraint at the prior: the truth has
+        to outrun all four rivals to cross the identification threshold, and the
+        phase-conditioned query does that better while separating this pair
+        worse.
         """
         for scenario_id in ("S2", "S7"):
-            assert _length(scenario_id).first_design == forced_design().id
+            margins = {
+                str(template.id): _evidence(
+                    "regime_switching", template.id, scenario_id
+                )
+                - _evidence("hawkes", template.id, scenario_id)
+                for template in slice_templates()
+            }
+            forced = margins.pop(str(forced_design().id))
+            sharpest_query = max(margins.values())
+            assert forced > 1.0
+            assert sharpest_query < 1.0
+            assert forced > 4.0 * sharpest_query
 
     def test_the_observational_designs_alone_are_worse(self) -> None:
         """Item 9's ceiling, measured from the other side.
@@ -214,8 +242,113 @@ class TestTheInterventionEarnsItsPlace:
         assert without.greedy_completion < with_it.greedy_completion
 
 
-def _evidence(name: str, template: ExperimentTemplateId) -> float:
-    """Return the bits per experiment ``name`` earns under S12's censored world.
+#: Scenarios no policy resolves within :data:`DEFAULT_HORIZON`. Five of twelve,
+#: which is why the opening design has to say so rather than name a design.
+SATURATED = ("S2", "S7", "S8", "S11", "S12")
+
+
+class TestASaturatedSearchHasNoOpinion:
+    """What the dynamic programme reports when the horizon was not enough.
+
+    Every branch of these five bottoms out at the horizon and is charged the
+    ``horizon + 1`` floor, so every design scores exactly alike and the search
+    has no preference to state. Reporting one anyway was a bug in two layers:
+    the value comparison resolved a five-way tie on a difference of one unit in
+    the last place, and :attr:`OraclePolicyLength.first_design` documented
+    ``None`` for an unreachable truth without ever returning it.
+    """
+
+    @pytest.mark.parametrize("scenario_id", SATURATED)
+    def test_a_horizon_that_never_resolves_names_no_opening(
+        self, scenario_id: str
+    ) -> None:
+        """``first_design`` is a policy's choice or it is nothing.
+
+        Its docstring promises ``None`` where the truth is unreachable, and
+        :attr:`~OraclePolicyLength.identifiable` is what "unreachable" means
+        here. A design named under a saturated search is not the optimum's
+        opening -- there is no optimum -- and reading it as one is how the
+        intervention came to look preferred on S2 and S7.
+        """
+        length = _length(scenario_id)
+        assert length.reach_probability == 0.0
+        assert not length.identifiable
+        assert length.first_design is None
+
+    @pytest.mark.parametrize(
+        "scenario_id", [s for s in (str(x.id) for x in slice_scenarios())]
+    )
+    def test_an_opening_is_named_exactly_when_the_search_resolved(
+        self, scenario_id: str
+    ) -> None:
+        """The converse, so the fix cannot silence a design that was earned.
+
+        S9 is the third case the docstring names: identified before any
+        experiment, so no opening either, and it is the one scenario where
+        ``identifiable`` is true and ``first_design`` is still ``None``.
+        """
+        length = _length(scenario_id)
+        if scenario_id == "S9":
+            assert length.certain
+            assert length.first_design is None
+        elif length.identifiable:
+            assert length.first_design is not None
+        else:
+            assert length.first_design is None
+
+
+class TestTheChoiceOfDesignIsPlatformIndependent:
+    """Invariant 3, at the one comparison that decides which design is named."""
+
+    #: The two designs of the S2 tie, in the order their ids sort.
+    EARLIER = ExperimentTemplateId("force[arrival@0=0.01|20]:mean_rate")
+    LATER = ExperimentTemplateId("query:phase_conditioned_dispersion")
+
+    def test_a_last_place_difference_is_a_tie_the_id_breaks(self) -> None:
+        """The exact comparison that flipped between Windows and Linux.
+
+        Five saturated designs all score ``horizon + 1``, but one summed a
+        single unit in the last place low, which the raw float comparison read
+        as a strict win. Rounding first makes it the tie it is, so the id
+        decides and both platforms name the same design.
+        """
+        noisy = math.nextafter(4.0, 0.0)
+        assert noisy < 4.0
+        assert _choice_key(4.0, self.EARLIER) < _choice_key(noisy, self.LATER)
+        assert _choice_key(noisy, self.EARLIER) < _choice_key(4.0, self.LATER)
+
+    def test_a_real_margin_still_decides(self) -> None:
+        """The rounding must not swallow a difference that means something.
+
+        At the first horizon where the search resolves S2 the designs are about
+        five hundredths apart, which is eight orders of magnitude above the
+        tolerance, so nothing that follows from evidence is being tied here.
+        """
+        assert _choice_key(3.95, self.LATER) < _choice_key(4.0, self.EARLIER)
+
+    def test_the_order_designs_are_offered_in_cannot_matter(self) -> None:
+        """Rounding buys transitivity, which a tolerance would not.
+
+        A near-equality test is not transitive, so with one the winner of three
+        candidates could depend on which was compared first -- a dict ordering
+        away from breaking the determinism invariant a second time.
+        """
+        candidates = [
+            (4.0, self.EARLIER),
+            (math.nextafter(4.0, 0.0), self.LATER),
+            (4.0, ExperimentTemplateId("query:size_dispersion")),
+        ]
+        winners = {
+            min(permuted, key=lambda pair: _choice_key(*pair))[1]
+            for permuted in permutations(candidates)
+        }
+        assert winners == {self.EARLIER}
+
+
+def _evidence(
+    name: str, template: ExperimentTemplateId, scenario_id: str = "S12"
+) -> float:
+    """Return the bits per experiment ``name`` earns under a scenario's world.
 
     The world-weighted mean log-likelihood: what a belief actually accumulates
     per repetition of that design, and therefore what it converges on. A constant
@@ -225,7 +358,7 @@ def _evidence(name: str, template: ExperimentTemplateId) -> float:
     return math.fsum(
         weight * math.log2(probability)
         for weight, probability in zip(
-            _world_row(template), _row(name, template), strict=True
+            _world_row(template, scenario_id), _row(name, template), strict=True
         )
     )
 

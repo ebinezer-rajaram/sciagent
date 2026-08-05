@@ -2411,3 +2411,56 @@ entry.
 
 **Closes off.** Work in the cloud on anything that writes no registry entry is
 unaffected. Anything that does write one waits on this check.
+
+## 2026-08-05 — item 11: the oracle named an opening design it had not chosen
+
+**The measured numbers, because horizon 4 is expensive.** At `DEFAULT_HORIZON = 3`
+the dynamic programme resolves no path on S2, S7, S8, S11 or S12 — five of the
+twelve — so every design scores the `horizon + 1` floor and the search has no
+preference. Run at horizon 4, S2 and S7 separate properly:
+
+```
+4.563441675303293   query:phase_conditioned_dispersion   <- optimal opening
+4.612708193191079   query:count_autocorrelation_w2
+4.638117321572723   force[arrival@...|20]:mean_rate      <- the intervention, 3rd
+4.656071553542731   query:inter_arrival_dispersion
+4.999999999999999   query:size_dispersion
+```
+
+**An assertion was true for the wrong reason, and abandoned.**
+`test_the_regime_scenarios_open_with_the_intervention` claimed the optimal policy
+opens S2/S7 with the forced arrival. It does not, at the first horizon where the
+question is answerable. The premise it rested on is sound — on S2's world the
+intervention separates Hawkes from regime switching by 4.4033 bits against at
+most 0.4909 for any query — but the conclusion does not follow: Hawkes is not the
+binding rival at the prior, and the truth must outrun all four to cross the
+threshold. The phase-conditioned query separates *this pair* worse (0.4909) and
+the *best rival* better (0.4909 against the intervention's 0.3466), so it opens.
+Replaced by an assertion of the pairwise margin, which is what SPEC §4.2 actually
+claims for the fifth design.
+
+**Spec ambiguity: what "unreachable" means for `first_design`.** Its docstring
+promised `None` for an unreachable truth without saying whether that meant
+out-of-library (S8, S11: `truth_mass_prior == 0`) or unresolved within the
+horizon. Settled as the latter, matching `identifiable`'s own definition, so all
+five saturated scenarios now report `None`. The narrower reading would have left
+S2, S7 and S12 naming a design the search never preferred.
+
+**Ties are broken on a rounded key, not a tolerance.** A near-equality test is
+not transitive, so the winner among three near-tied designs could depend on the
+order they were offered in — the determinism invariant broken a second time, one
+dict ordering away. Rounding to `VALUE_PLACES = 9` keeps the comparison a total
+order. Nine places sits eight orders of magnitude below the smallest real margin
+(0.049 above) and eight above float rounding noise.
+
+**Left incomplete: the cross-platform claim is inferred, not verified.** The
+failure appeared only on Ubuntu; `CLAUDE.md` records the suite green on Windows
+at this commit, and downstream of the table the arithmetic is plain Python floats
+in fixed order, hence IEEE-deterministic. So the *rows* must differ between the
+platforms, and `environments/pointproc/diagnostics.py` computes metrics with
+`np.dot` (lines 126, 129, 379, 382) against an OpenBLAS built `DYNAMIC_ARCH` —
+one replicate of 2000 crossing one bin edge is enough. This has not been
+demonstrated: it wants `tests/acceptance/determinism_child.py` run on both
+platforms and diffed. The fixes above make the *choice of design* robust to such
+a difference; they do not make the table identical, and the registry still
+content-addresses with no platform term.

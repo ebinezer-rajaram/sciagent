@@ -148,6 +148,14 @@ DEFAULT_SEED = Seed(0)
 #: few thousand draws resolve a mean length of a few steps to a hundredth.
 GREEDY_ROLLOUTS = 2000
 
+#: Decimal places the dynamic programme's values are compared to. Two designs
+#: agreeing to here are a tie, and a tie is broken by template id so the choice
+#: is the same in every process. Nine places sits eight orders of magnitude
+#: below the smallest margin evidence produces on the slice and eight above the
+#: rounding of a float sum, so it separates what the world says from what the
+#: order a metric happened to be summed in says.
+VALUE_PLACES = 9
+
 
 @dataclass(frozen=True, slots=True)
 class OraclePolicyLength:
@@ -204,8 +212,13 @@ class OraclePolicyLength:
     """Mass the prior put on the true structure, before any experiment."""
 
     first_design: ExperimentTemplateId | None
-    """The design the optimal policy opens with. ``None`` if the truth is
-    already identified before any experiment, or unreachable."""
+    """The design the optimal policy opens with.
+
+    ``None`` if the truth is already identified before any experiment, or not
+    reachable within the horizon -- which is to say whenever
+    :attr:`identifiable` is ``False``. A saturated search scores every design at
+    the ``horizon + 1`` floor and so has no preference to report; naming one
+    anyway would be reporting the id sort as though it were the evidence."""
 
     @property
     def identifiable(self) -> bool:
@@ -233,6 +246,19 @@ def _belief_key(belief: Mapping[HypothesisId, Probability]) -> tuple[int, ...]:
     to far more places than the value is reported to.
     """
     return tuple(round(float(belief[key]) * 1_000_000) for key in sorted(belief))
+
+
+def _choice_key(value: float, template: ExperimentTemplateId) -> tuple[float, str]:
+    """Return the order the dynamic programme picks a design by.
+
+    Guarantees a total order that is a pure function of its arguments and
+    independent of the order candidates are offered in. Rounding before
+    comparing is what buys both: near-ties collapse to exact ties so the
+    template id settles them, and unlike a tolerance the relation stays
+    transitive, so no chain of pairwise comparisons can turn on which candidate
+    was seen first.
+    """
+    return (round(value, VALUE_PLACES), str(template))
 
 
 def _mass_on(
@@ -352,10 +378,11 @@ def oracle_policy_length(
                 reached += probability * sub_reached
             candidate = (1.0 + steps, reached, template)
             # Fewer experiments first; ties by the template id, so the choice is
-            # the same in every process (the determinism invariant).
-            if best is None or (candidate[0], str(candidate[2])) < (
-                best[0],
-                str(best[2]),
+            # the same in every process (the determinism invariant). Compared
+            # through _choice_key rather than on the raw floats, which read a
+            # difference of one unit in the last place as a strict win.
+            if best is None or _choice_key(candidate[0], candidate[2]) < _choice_key(
+                best[0], best[2]
             ):
                 best = candidate
         assert best is not None  # ordered is non-empty, checked above
@@ -384,7 +411,11 @@ def oracle_policy_length(
         greedy_completion=completion,
         evidence_bound=evidence_bound(ordered, prior, predict, truth=truth),
         truth_mass_prior=prior_mass,
-        first_design=opening,
+        # A search that resolved no path has no optimum, so it has no opening to
+        # name: every design scored the horizon's floor and the one returned is
+        # whichever sorted first, not one the evidence preferred. What the field
+        # has documented all along; it simply never returned it.
+        first_design=opening if reached > 0.0 else None,
     )
 
 

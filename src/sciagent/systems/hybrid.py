@@ -101,7 +101,7 @@ class Hybrid:
     grammar, so an unlicensed structure has no name a model could use.
     """
 
-    __slots__ = ("_layer", "_library", "_max_proposals")
+    __slots__ = ("_attempts", "_layer", "_library", "_max_proposals")
 
     def __init__(
         self,
@@ -110,32 +110,73 @@ class Hybrid:
         *,
         max_proposals: int = 2,
     ) -> None:
+        if max_proposals < 0:
+            raise MalformedProposalError(
+                f"a system cannot make {max_proposals} proposals; pass 0 for a V7 "
+                f"that never extends its hypothesis space"
+            )
         self._library = dict(library)
         self._layer = layer
-        self._max_proposals = max(0, max_proposals)
+        self._max_proposals = max_proposals
+        self._attempts: tuple[ProposalAttempt, ...] = ()
 
     @property
     def name(self) -> str:
         """Return SPEC §5's identifier."""
         return "V7"
 
+    @property
+    def attempts(self) -> tuple[ProposalAttempt, ...]:
+        """Return every proposal requested in the last :meth:`investigate`.
+
+        The record of what the model was asked and what became of it, in the
+        order it happened. Empty before the first run, and empty after a run
+        whose posterior predictive check never fired -- which is the honest
+        report that no proposal was made, distinct from proposals that were made
+        and refused.
+
+        A :class:`~sciagent.core.types.Diagnosis` cannot carry this: SPEC §3.4
+        has no field for it, and the two failure outcomes admit no hypothesis, so
+        there is nothing about them a distribution could say. SPEC §12 criterion
+        11's autonomy fraction is computed over runs, and this is what it reads.
+        """
+        return self._attempts
+
     def investigate(self, investigation: Investigation) -> Diagnosis:
-        """Entertain, observe, extend if the check says to, then spend the rest."""
+        """Entertain, observe, extend if the check says to, then spend the rest.
+
+        Records the proposal attempts on the system, where :attr:`attempts`
+        publishes them; a run that asked five times and used one did something
+        different from one that asked once, and the diagnosis alone cannot say so.
+        """
+        # Cleared first, so a run that raises before the extension phase leaves
+        # no attempts rather than the previous run's.
+        self._attempts = ()
         entertain(investigation, self._library)
         total = int(investigation.budget.remaining)
         self._select(investigation, (total + 1) // 2)
 
-        attempts: list[ProposalAttempt] = []
         if investigation.ppc().inadequate:
-            attempts = self._extend(investigation)
+            self._attempts = tuple(self._extend(investigation))
 
         self._select(investigation, int(investigation.budget.remaining))
-        return investigation.conclude(
-            residual_candidates=tuple(
-                attempt.node_id
-                for attempt in attempts
-                if attempt.node_id is not None and attempt.outcome == "duplicate"
-            )
+        return investigation.conclude(residual_candidates=self._residual_candidates())
+
+    def _residual_candidates(self) -> tuple[HypothesisId, ...]:
+        """Return the hypotheses this run surfaced without committing to.
+
+        The structures the model proposed that the graph already held. They are
+        entertained, so the posterior already prices them; what makes them
+        *residual* is that the model pointed at one while the check said the
+        entertained set explains nothing -- it is asking for a second look at a
+        hypothesis the evidence has not settled, which is what SPEC §3.4's field
+        is for. An admitted proposal is not residual: it is in the distribution
+        on its own account. A refused or malformed one names no hypothesis at all.
+        """
+        return tuple(
+            attempt.node_id
+            for attempt in self._attempts
+            if attempt.node_id is not None and attempt.outcome == "duplicate"
         )
 
     # -- internals ---------------------------------------------------------
@@ -229,9 +270,18 @@ def library_of(
     """Return the named subset of a library, in the order given.
 
     A convenience for building a V7 whose closed set differs from V1's, which
-    the ablations of SPEC §11 item 13 will want. Raises ``KeyError`` on an
-    unknown name rather than silently returning a smaller library, since a
-    system entertaining fewer structures than it was configured with would be
-    scored as though the omission were a choice.
+    the ablations of SPEC §11 item 13 will want. Raises
+    :class:`~sciagent.core.errors.MalformedProposalError` on an unknown name
+    rather than silently returning a smaller library, since a system
+    entertaining fewer structures than it was configured with would be scored as
+    though the omission were a choice.
     """
+    missing = [name for name in names if name not in library]
+    if missing:
+        raise MalformedProposalError(
+            f"library has no structure(s) {missing!r}; it holds "
+            f"{sorted(library)!r}. A system configured with a structure that "
+            f"does not exist would be scored as though not entertaining it were "
+            f"a choice"
+        )
     return {name: library[name] for name in names}

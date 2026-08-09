@@ -18,15 +18,21 @@ and acceptance test A12 checks all three:
    ad-hoc SQL for reads, and translates a refused mutation into a typed error
    rather than passing the sqlite exception through.
 2. **Connection.** An authorizer allowlist admits ``SELECT``, ``READ``,
-   ``INSERT``, ``FUNCTION`` and transaction control, and denies everything else,
-   including ``PRAGMA`` -- ``PRAGMA writable_schema`` would otherwise be a route
-   to the schema itself.
+   ``FUNCTION`` and transaction control, and denies everything else, including
+   ``PRAGMA`` -- ``PRAGMA writable_schema`` would otherwise be a route to the
+   schema itself. ``INSERT`` is admitted only for the duration of
+   :meth:`ExperimentStore.append`, since an authorizer is per connection and a
+   blanket grant would make ``query`` a write path.
 3. **Schema.** Every table carries aborting ``BEFORE UPDATE`` and ``BEFORE
    DELETE`` triggers, so a connection opened by any other tool is still refused.
 
 ``PRAGMA recursive_triggers`` is on. Without it SQLite's ``REPLACE`` conflict
 resolution deletes the conflicting row *without* firing delete triggers, which
 would leave a supported SQL statement able to overwrite a registered result.
+
+The connection also disables sqlite3's prepared-statement cache; see
+:func:`_connect` for why that is a correctness requirement and not a tuning
+choice.
 
 What is not stored
 ------------------
@@ -42,7 +48,7 @@ import hashlib
 import json
 import sqlite3
 import struct
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
@@ -96,14 +102,20 @@ CREATE TABLE IF NOT EXISTS {_TABLE} (
 
 _ABORT_MESSAGE: Final = "the registry is append-only"
 
-#: sqlite authorizer actions the store permits. An allowlist rather than a
-#: denylist: a future sqlite action that this code has never heard of should be
-#: refused, not admitted by omission.
+#: sqlite authorizer actions the store permits unconditionally. An allowlist
+#: rather than a denylist: a future sqlite action that this code has never heard
+#: of should be refused, not admitted by omission.
+#:
+#: ``SQLITE_INSERT`` is deliberately absent. It is the one action the store needs
+#: but must not offer on every path: an authorizer is per *connection*, so
+#: admitting it outright would let :meth:`ExperimentStore.query` -- which exists
+#: to read -- write a row that never passed :meth:`ExperimentStore.append`'s
+#: checks. It is granted only for the duration of an append, by
+#: :attr:`ExperimentStore._appending`.
 _PERMITTED_ACTIONS: Final[frozenset[int]] = frozenset(
     {
         sqlite3.SQLITE_SELECT,
         sqlite3.SQLITE_READ,
-        sqlite3.SQLITE_INSERT,
         sqlite3.SQLITE_FUNCTION,
         sqlite3.SQLITE_TRANSACTION,
     }
@@ -233,9 +245,37 @@ class ExperimentRecord:
 # --------------------------------------------------------------------------
 
 
-def _authorizer(action: int, *_: object) -> int:
-    """Return SQLite's verdict for one action. Allowlist; default deny."""
-    return sqlite3.SQLITE_OK if action in _PERMITTED_ACTIONS else sqlite3.SQLITE_DENY
+def _authorizer(appending: Callable[[], bool]) -> Callable[..., int]:
+    """Return the connection's authorizer. Allowlist; default deny.
+
+    ``INSERT`` is admitted only while ``appending()`` is true, which is only
+    inside :meth:`ExperimentStore.append`. Every other statement reaching the
+    connection -- including one through :meth:`ExperimentStore.query` -- is
+    refused, so the store's own validation cannot be routed around.
+    """
+
+    def authorize(action: int, *_: object) -> int:
+        if action == sqlite3.SQLITE_INSERT:
+            return sqlite3.SQLITE_OK if appending() else sqlite3.SQLITE_DENY
+        return (
+            sqlite3.SQLITE_OK if action in _PERMITTED_ACTIONS else sqlite3.SQLITE_DENY
+        )
+
+    return authorize
+
+
+def _connect(target: Path | str) -> sqlite3.Connection:
+    """Return a connection whose every statement reaches the authorizer.
+
+    ``cached_statements=0`` is load-bearing, not a tuning knob. Python's sqlite3
+    caches prepared statements by SQL text, and a cache hit **skips the
+    authorizer**, which runs at prepare time. With the cache on, re-issuing the
+    exact text of :meth:`ExperimentStore.append`'s own ``INSERT`` through
+    :meth:`ExperimentStore.query` is authorised by the prepare that happened
+    during an earlier append -- measured, not feared. Disabling the cache is what
+    makes the write-scoped grant in :func:`_authorizer` actually hold.
+    """
+    return sqlite3.connect(target, cached_statements=0)
 
 
 def _is_append_only_refusal(error: sqlite3.Error) -> bool:
@@ -251,11 +291,14 @@ class ExperimentStore:
     require an explicit :class:`SealedAccess` token.
     """
 
-    __slots__ = ("_connection", "_path")
+    __slots__ = ("_appending", "_connection", "_path")
 
     def __init__(self, connection: sqlite3.Connection, path: Path | None) -> None:
         self._connection = connection
         self._path = path
+        self._appending = False
+        """True only inside :meth:`append`. The authorizer reads it to decide
+        whether an ``INSERT`` is the store's own or somebody else's."""
 
     # -- construction ------------------------------------------------------
 
@@ -263,7 +306,7 @@ class ExperimentStore:
     def open(cls, path: Path) -> ExperimentStore:
         """Open (creating if absent) the registry stored at ``path``."""
         path.parent.mkdir(parents=True, exist_ok=True)
-        return cls._prepare(sqlite3.connect(path), path)
+        return cls._prepare(_connect(path), path)
 
     @classmethod
     def in_memory(cls) -> ExperimentStore:
@@ -272,7 +315,7 @@ class ExperimentStore:
         For tests of registry behaviour itself. Anything whose results are to be
         cited must use :meth:`open`.
         """
-        return cls._prepare(sqlite3.connect(":memory:"), None)
+        return cls._prepare(_connect(":memory:"), None)
 
     @classmethod
     def _prepare(
@@ -286,8 +329,9 @@ class ExperimentStore:
         for statement in _append_only_triggers(_TABLE):
             connection.execute(statement)
         connection.commit()
-        connection.set_authorizer(_authorizer)
-        return cls(connection, path)
+        store = cls(connection, path)
+        connection.set_authorizer(_authorizer(lambda: store._appending))
+        return store
 
     def __enter__(self) -> ExperimentStore:
         return self
@@ -351,22 +395,28 @@ class ExperimentStore:
                 )
             return existing
 
-        cursor = self._execute(
-            f"INSERT INTO {_TABLE} (digest, partition, env_version, config, "
-            f"data_version, metric_version, seed, result, result_digest) "
-            f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                str(digest),
-                partition.value,
-                str(key.env_version),
-                _dump_config(key.config),
-                str(key.data_version),
-                str(key.metric_version),
-                int(key.seed),
-                _dump_result(values),
-                str(result_digest),
-            ),
-        )
+        # The only window in which the authorizer admits an INSERT. Reset in a
+        # `finally` so a failed insert does not leave the connection writable.
+        self._appending = True
+        try:
+            cursor = self._execute(
+                f"INSERT INTO {_TABLE} (digest, partition, env_version, config, "
+                f"data_version, metric_version, seed, result, result_digest) "
+                f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    str(digest),
+                    partition.value,
+                    str(key.env_version),
+                    _dump_config(key.config),
+                    str(key.data_version),
+                    str(key.metric_version),
+                    int(key.seed),
+                    _dump_result(values),
+                    str(result_digest),
+                ),
+            )
+        finally:
+            self._appending = False
         self._connection.commit()
         sequence = cursor.lastrowid
         if sequence is None:  # pragma: no cover - sqlite always assigns one
@@ -431,8 +481,11 @@ class ExperimentStore:
     ) -> tuple[tuple[Any, ...], ...]:
         """Run a read-only SQL statement and return its rows.
 
-        For inspection and for the relevance queries of SPEC §7.1. Any statement
-        that would modify registered data raises
+        For inspection and for the relevance queries of SPEC §7.1. Read-only is
+        enforced, not requested: the connection's authorizer admits ``INSERT``
+        only while :meth:`append` is running, and refuses every other write
+        action outright, so a statement reaching here can read and nothing else.
+        Anything that would add to or modify registered data raises
         :class:`AppendOnlyViolationError`; this is the supported way to discover
         that, rather than a raw sqlite exception escaping the abstraction.
         """

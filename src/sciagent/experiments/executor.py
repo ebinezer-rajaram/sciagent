@@ -44,11 +44,16 @@ takes and never what it returns.
 from __future__ import annotations
 
 import math
+from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 from sciagent.core.edits import Defect, EditGrammar
-from sciagent.core.errors import RegistryError, UnknownOperationError
+from sciagent.core.errors import (
+    MalformedDesignError,
+    RegistryError,
+    UnknownOperationError,
+)
 from sciagent.core.program import GenerativeProgram
 from sciagent.core.types import (
     ComponentId,
@@ -296,7 +301,23 @@ class Executor:
         :class:`~sciagent.core.errors.UnknownOperationError` for an operation the
         executor has no path for.
         """
-        compiled = self._compiled_operation(design, defect)
+        return self._measure_compiled(
+            self._compiled_operation(design, defect), design, defect, seed
+        )
+
+    def _measure_compiled(
+        self,
+        compiled: CompiledOperation,
+        design: ExperimentDesign,
+        defect: Defect,
+        seed: Seed,
+    ) -> DiagnosticVector:
+        """Execute an already-compiled operation and measure the result.
+
+        Split out so :meth:`run`, which needs the compiled form anyway for the
+        manipulated and held-fixed sets, does not compile the same operation a
+        second time through :meth:`measure`.
+        """
         key = (defect, design.operation, int(seed), design.n_events)
         log = self._log_cache.get(key)
         if log is None:
@@ -341,7 +362,7 @@ class Executor:
             )
         charged = self._budget.charge(self._cost)  # raises if unaffordable
         compiled = self._compiled_operation(design, defect)
-        result = self.measure(design, defect, seed)
+        result = self._measure_compiled(compiled, design, defect, seed)
         manipulated = compiled.manipulated
         collateral = self._collateral(compiled.program, manipulated)
         held_fixed = self._held_fixed(compiled, design.n_events)
@@ -377,7 +398,23 @@ class Executor:
         measured and not what is done, so the mapping from template id back to
         design is supplied here. A template the executor was not given is a
         framework fault and raises.
+
+        So is a *repeated* id. :attr:`~sciagent.experiments.dsl.ExperimentDesign
+        .id` omits ``n_events``, so two designs differing only in run length
+        share one, and indexing them by id would keep whichever came last and
+        simulate every likelihood at the wrong run length -- silently, since both
+        designs remain runnable. Refused here, as
+        :meth:`~sciagent.inference.empirical.EmpiricalTable.build` and
+        :func:`~sciagent.experiments.boed.rank` already refuse it.
         """
+        counts = Counter(design.id for design in designs)
+        repeated = sorted(str(name) for name, seen in counts.items() if seen > 1)
+        if repeated:
+            raise MalformedDesignError(
+                f"the design set names the template(s) {repeated!r} more than "
+                f"once; a template id omits n_events, so two run lengths of one "
+                f"operation collide here and only the last would be simulated"
+            )
         by_id: dict[ExperimentTemplateId, ExperimentDesign] = {
             design.id: design for design in designs
         }

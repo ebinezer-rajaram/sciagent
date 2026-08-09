@@ -410,16 +410,27 @@ class ExperimentDesign:
     """One repeatable experimental design: an act, an outcome space, a run length.
 
     Guarantees a stable :attr:`id` and a stable :meth:`config`, both pure
-    functions of the three fields, so a design carries the same identity in every
-    process and every run.
+    functions of the fields they are built from, so a design carries the same
+    identity in every process and every run.
+
+    :meth:`config` covers all three fields and is injective. :attr:`id` covers
+    the operation and the metrics only, and is therefore **not** -- see its own
+    docstring for why ``n_events`` is deliberately absent, and what enforces the
+    distinction where it matters.
     """
 
     operation: Operation
     outcome: OutcomeSpace
     n_events: int
-    """Events per execution. Part of the design: a diagnostic's sampling
-    distribution depends on how much data it saw, so two run lengths are two
-    designs (and therefore two templates)."""
+    """Events per execution. Part of the design, and part of :meth:`config`: a
+    diagnostic's sampling distribution depends on how much data it saw, so two
+    run lengths are two designs and two registry rows.
+
+    They are **not** two :attr:`id`\\ s. Offering two such designs to one
+    investigation is refused rather than silently collapsed -- by
+    :meth:`~sciagent.inference.empirical.EmpiricalTable.build`, by
+    :func:`~sciagent.experiments.boed.rank`, and by
+    :meth:`~sciagent.experiments.executor.Executor.simulator`."""
 
     _id: ExperimentTemplateId = field(init=False, repr=False, compare=False)
 
@@ -449,6 +460,18 @@ class ExperimentDesign:
         since backlog item 6 -- so introducing the DSL leaves
         :attr:`~sciagent.inference.empirical.EmpiricalTable.version` unchanged
         and a built table still loads.
+
+        **Not injective over designs**, and deliberately so: ``n_events`` is
+        absent, so two designs differing only in run length render alike. Putting
+        it in would be the tidier rule and costs more than it is worth -- every
+        id would change, hence every table version and every registry content
+        address, retiring every stored table and every registered row to fix a
+        collision no caller can reach by accident. What the id has to be is
+        *unambiguous within one investigation*, and that is enforced where such a
+        set is assembled: :meth:`~sciagent.inference.empirical.EmpiricalTable
+        .build`, :func:`~sciagent.experiments.boed.rank` and
+        :meth:`~sciagent.experiments.executor.Executor.simulator` each refuse a
+        repeated id rather than keeping whichever design came last.
         """
         return self._id
 

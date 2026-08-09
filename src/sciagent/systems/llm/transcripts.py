@@ -44,7 +44,7 @@ answer twice and hide that fact.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -222,7 +222,7 @@ class TranscriptStore:
     def resolve(
         self,
         address: str,
-        call: object,
+        call: Callable[[], Mapping[str, Any]],
         *,
         provider: str,
         model: str,
@@ -242,11 +242,6 @@ class TranscriptStore:
                 f"no recorded response at {address} and the store is in "
                 f"{self._mode!r} mode, so it will not call out. Record the "
                 f"transcript deliberately, or run against a store that holds it"
-            )
-        if not callable(call):
-            raise ProposalError(
-                f"resolving {address} needs a callable to produce the response, "
-                f"got {type(call).__name__}"
             )
         payload = call()
         if not isinstance(payload, Mapping):

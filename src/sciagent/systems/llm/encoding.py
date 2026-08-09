@@ -291,14 +291,23 @@ def tool_schema(menu: Sequence[MenuEntry]) -> dict[str, Any]:
 
     Strict by construction: ``additionalProperties`` is false everywhere and
     every field is required, so a conforming payload decodes without a second
-    validation pass. The only numeric fields are ``integer`` and both are bounded
-    -- ``structure`` by the menu's length and each parameter by its grid's size.
+    validation pass.
 
     Guarantees the schema contains **no** ``"number"`` type anywhere. That is the
     mechanically checkable form of SPEC's second invariant at this boundary: a
     model constrained by this schema has no channel through which a real value
     could reach the framework, so "agents do not write numbers" is a property of
     the wire format rather than of the prompt.
+
+    What the schema does *not* bound is a parameter index from above. ``structure``
+    carries a ``maximum``, because one menu length covers every entry; a parameter
+    index cannot, because its bound is the grid's size and that varies by
+    structure, which is not expressible in a schema written before the structure
+    is chosen. The wire format therefore constrains a parameter to a non-negative
+    **integer**, which is the whole of what this boundary claims, and
+    :func:`_parameters` refuses an index past the end of its grid at decode.
+    Nothing off-grid can reach the prefix code either way; the difference is only
+    whether the provider or the decoder catches it.
     """
     largest = max((entry.arity for entry in menu), default=0)
     return {
@@ -568,6 +577,15 @@ def draft_from_payload(payload: Mapping[str, Any]) -> ProposalDraft:
     :class:`ProposalDraft` has no field for it, but "the number was refused" and
     "the number was dropped on the floor" are different things to be able to say
     afterwards.
+
+    **A missing key is refused too**, for the symmetric reason. ``name``,
+    ``rationale``, ``edits`` and an edit's ``parameters`` are all in
+    :func:`tool_schema`'s ``required`` lists, and defaulting them here would make
+    the decoder more permissive than the published contract in the one direction
+    the paragraph above refuses to be permissive in. A parameterless structure
+    still sends ``parameters: []``; an absent key is a provider that did not
+    conform, and the arity check in :func:`_parameters` would report it as the
+    wrong number of parameters rather than as the missing field it is.
     """
     unknown = sorted(set(payload) - _PAYLOAD_KEYS)
     if unknown:
@@ -575,6 +593,13 @@ def draft_from_payload(payload: Mapping[str, Any]) -> ProposalDraft:
             f"a proposal payload carries {unknown!r}, which the schema does not "
             f"declare; it declares {sorted(_PAYLOAD_KEYS)!r} and nothing else. "
             f"Nothing outside that set can become part of a proposal"
+        )
+    absent = sorted(_PAYLOAD_KEYS - set(payload))
+    if absent:
+        raise MalformedProposalError(
+            f"a proposal payload omits {absent!r}, which the schema requires; it "
+            f"requires {sorted(_PAYLOAD_KEYS)!r} and a payload missing one of "
+            f"them did not conform to the schema it was given"
         )
     edits = payload.get("edits")
     if not isinstance(edits, list):
@@ -594,8 +619,14 @@ def draft_from_payload(payload: Mapping[str, Any]) -> ProposalDraft:
                 f"edit {position} carries {extra!r}, which the schema does not "
                 f"declare; an edit is a structure index and its grid indices"
             )
+        lacking = sorted(_EDIT_KEYS - set(item))
+        if lacking:
+            raise MalformedProposalError(
+                f"edit {position} omits {lacking!r}, which the schema requires; a "
+                f"structure taking no parameter still names an empty list"
+            )
         structure = item.get("structure")
-        parameters = item.get("parameters", [])
+        parameters = item.get("parameters")
         if not isinstance(structure, int) or isinstance(structure, bool):
             raise MalformedProposalError(
                 f"edit {position} names structure {structure!r}, which is not an "
@@ -610,8 +641,8 @@ def draft_from_payload(payload: Mapping[str, Any]) -> ProposalDraft:
                 f"all integers; the parameter channel is an index and never a value"
             )
         drafted.append(EditDraft(structure=structure, parameters=tuple(parameters)))
-    name = payload.get("name", "proposal")
-    rationale = payload.get("rationale", "")
+    name = payload["name"]
+    rationale = payload["rationale"]
     if not isinstance(name, str) or not isinstance(rationale, str):
         raise MalformedProposalError(
             f"a proposal's name and rationale must be strings, got "

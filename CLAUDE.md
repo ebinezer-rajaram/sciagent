@@ -136,10 +136,15 @@ Three differences from a local session actually change behaviour:
 - **Work happens on the session's own branch, never `main`.** The GitHub proxy
   accepts a push only for the branch the session is already on, so a commit
   made on `main` cannot be pushed. `/ship` handles this; do not work around it.
-- **The VM is 4 vCPU / 16 GB / 30 GB.** The suite is 618 passed, 6 skipped, in
-  6m30s–7m45s on a developer desktop, so expect longer, and expect a cold first
-  session to spend roughly half a minute installing dependencies before the
-  status hook prints.
+- **The VM is 4 vCPU / 16 GB / 30 GB.** The suite runs in about 8 minutes here
+  with the machine to itself, close to the 6m30s–7m45s a developer desktop takes,
+  and a cold first session spends roughly half a minute installing dependencies
+  before the status hook prints. Four vCPUs is the thing to plan around: a suite
+  run measured at **30m37s** while a subagent was working in the same container,
+  a fourfold slowdown from contention alone. Do not start a long run and a
+  subagent together and then read the timing as the suite's. Do not use the test
+  count as a health check either — it moves with every backlog item — read the
+  tail of the pytest output instead.
 - **Cross-platform determinism is unverified.** Invariant 3 demands byte-identical
   output, and the registry content-addresses over (env version, config, data
   version, metric version, seed) with no platform term. Local runs are Windows;

@@ -300,3 +300,38 @@ would be compared against.
 **Sequencing.** Before item 12. A23 is re-measured against real agent claims
 there, and doing this first means that measurement is not confounded by an
 artefact of where predictions were attached.
+
+---
+
+## Relevance clause 3 fires on every pair, so A20 is not testing what it reads as
+
+**Idea.** Either narrow SPEC §7.1 clause 3's environment-version axis, or make
+A20's constructed cases vary scope so the other clauses are the ones deciding.
+Not a code fix as it stands — the current behaviour is what §7.1 says.
+
+**Rationale.** `scopes_overlap` returns true as soon as two scopes share an
+`env_version` (`verify/relevance.py`), which is clause 3's first axis and exactly
+what the specification asks for. But an investigation runs in one environment at
+one version, so `EvidenceIndex.from_history` stamps every record with the single
+`executor.scope()`, and `claims_from_run` gives every claim that same scope.
+Clause 3 therefore fires for every (claim, record) pair on every real slice run,
+which makes `uncited_relevant` equal to "every experiment not cited" and means
+A20's 100-case guarantee is currently carried by one clause that cannot fail
+rather than by the relevance relation as a whole.
+
+This is not wrong and nothing is mis-adjudicated: an experiment from the same
+environment version *is* relevant under §7.1, and evidence completeness is
+correctly conservative. What it costs is discriminating power in the gate — A20
+would still pass if clauses 1, 2, 4, 5 and 6 were all broken, and it is the only
+place they are measured together. Item 10 already noted that no SPEC §5 baseline
+declares `targets`, so clauses 1 and 6 never fire on slice runs either; between
+the two, A20 is exercising clause 3 and a little of 2 and 5.
+
+**Touches.** SPEC §7.1 clause 3, if the axis is narrowed — that is a frozen
+decision and would need a demonstrated contradiction, which this is not. The
+version that touches nothing frozen is the second: leave the relation alone and
+give A20 cases whose scopes genuinely differ, so each clause is measured on its
+own. Prefer that one.
+
+**Sequencing.** Before item 15's matrix, since A20's figure is reported there,
+and cheap either way — it is test data, not framework code.

@@ -219,6 +219,24 @@ class TestA12AppendOnly:
                 "(sequence, digest, partition, env_version, config, data_version, "
                 "metric_version, seed, result, result_digest) "
                 "VALUES ({n}, 'forged', 'dev', 'v', '{{}}', 'v', 'v', 0, '[]', 'x')",
+                # A bare INSERT adds a row rather than replacing one, so it is
+                # not caught by the delete trigger that stops INSERT OR REPLACE.
+                # It has to be refused by the authorizer instead, and it was not:
+                # the allowlist admitted INSERT outright because append() needs
+                # it, which made query() -- documented read-only -- able to
+                # register a row that never passed append()'s checks, carrying a
+                # digest unrelated to its own content.
+                "INSERT INTO experiments "
+                "(digest, partition, env_version, config, data_version, "
+                "metric_version, seed, result, result_digest) "
+                "VALUES ('forged', 'dev', 'v', '{{}}', 'v', 'v', {n}, '[9.0]', 'x')",
+                # The same write hidden behind a leading SELECT, which is what a
+                # prefix check on the statement text would wave through.
+                "WITH source AS (SELECT 1) INSERT INTO experiments "
+                "(digest, partition, env_version, config, data_version, "
+                "metric_version, seed, result, result_digest) "
+                "SELECT 'forged', 'dev', 'v', '{{}}', 'v', 'v', {n}, '[9.0]', 'x' "
+                "FROM source",
             )
         ),
         n=st.integers(min_value=1, max_value=4),

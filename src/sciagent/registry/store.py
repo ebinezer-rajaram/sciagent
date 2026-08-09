@@ -298,7 +298,15 @@ class ExperimentStore:
         self._path = path
         self._appending = False
         """True only inside :meth:`append`. The authorizer reads it to decide
-        whether an ``INSERT`` is the store's own or somebody else's."""
+        whether an ``INSERT`` is the store's own or somebody else's.
+
+        A plain flag, so the grant is open for the whole of an append rather
+        than for one statement. Nothing can use it: sqlite3 connects with
+        ``check_same_thread=True``, so a second thread reaching this connection
+        is refused before the authorizer is consulted at all, and within one
+        thread an append is synchronous and yields to no other caller. A store
+        that ever wanted cross-thread use would have to make this per-statement
+        first."""
 
     # -- construction ------------------------------------------------------
 

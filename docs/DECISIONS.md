@@ -2464,3 +2464,109 @@ demonstrated: it wants `tests/acceptance/determinism_child.py` run on both
 platforms and diffed. The fixes above make the *choice of design* robust to such
 a difference; they do not make the table identical, and the registry still
 content-addresses with no platform term.
+
+---
+
+## 2026-08-09 — review: the registry's read path could write
+
+**Decision.** `ExperimentStore`'s sqlite authorizer no longer admits `INSERT`
+outright. It is granted only while `append` is running, via `_appending`, and the
+connection is opened with `cached_statements=0`.
+
+**Why.** An authorizer is per *connection*, not per caller, and `append` needs
+`INSERT`, so the allowlist admitted it for every statement on that connection —
+including `query`, which is documented "read-only". A hand-written `INSERT` was
+therefore accepted, registering a row that skipped every check `append` makes:
+the non-finite guard, the conflict check, and content addressing itself. The row
+landed in the agent-reachable pool with a `digest` column unrelated to its own
+content. Reproduced before the fix, refused after.
+
+A12 was never violated — `UPDATE`, `DELETE`, `DROP`, and `INSERT OR REPLACE` are
+all genuinely refused, as the entry above records. What happened is narrower and
+worth naming: the fuzz corpus listed `INSERT OR REPLACE` and never a bare
+`INSERT`. `INSERT OR REPLACE` is caught by the *delete trigger*, not by the
+authorizer, so the corpus was testing the schema layer twice and the connection
+layer not at all for the one action the allowlist opened.
+
+**Measured, and the reason the first fix was wrong.** Scoping the grant to
+`append` is not sufficient on its own. Python's sqlite3 caches prepared
+statements by SQL text and **a cache hit skips the authorizer**, which runs at
+prepare time — so after one successful append, re-issuing the exact text of
+`append`'s own `INSERT` through `query` was authorised by the *earlier* prepare
+and went through. Demonstrated directly before `cached_statements=0` was added.
+That flag is a correctness requirement here, not a tuning knob, and removing it
+silently reopens the hole for one specific statement.
+
+**Closes off.** The A12 corpus now carries a bare `INSERT` and a
+`WITH … INSERT` — the latter because it is what a prefix check on the statement
+text would wave through, and it documents why the fix is an authorizer and not a
+string check.
+
+## 2026-08-09 — review: `ExperimentDesign.id` is not injective, deliberately
+
+**Decision.** `id` continues to omit `n_events`, so two designs differing only in
+run length render alike. The docstrings now say so, and
+`Executor.simulator` refuses a repeated id as `EmpiricalTable.build` and
+`boed.rank` already did.
+
+**Why.** The tidier rule — put `n_events` in the id — is correct and costs more
+than the defect. Every id would change, hence every `EmpiricalTable.version` and
+every registry content address, retiring every stored table and every registered
+row to close a collision no caller reaches by accident. What the id actually has
+to be is unambiguous *within one design set*, and that is now enforced at all
+three places such a set is assembled. `config()` covers all three fields and
+stays injective, so the registry address was never at risk.
+
+**Closes off.** The class docstring claimed `id` and `config` were both "pure
+functions of the three fields". Only `config` is. Anything that comes to depend
+on `id` distinguishing run lengths must change the id and accept the migration.
+
+## 2026-08-09 — review: V7's proposal record was write-only
+
+**Decision.** `Hybrid` keeps its `ProposalAttempt`s and publishes them as
+`attempts`.
+
+**Why.** The type existed, carried a docstring about SPEC §12 criterion 11's
+autonomy fraction, and was discarded at the end of `investigate` — no slot, no
+accessor, no reader anywhere in the repository including the tests. So a run
+could not report how many times the model was asked, or distinguish a refusal
+from a malformed draft. A `Diagnosis` cannot carry this: SPEC §3.4 has no field
+for it, and the two failure outcomes admit no hypothesis, so there is nothing a
+distribution could say about them.
+
+**Closes off.** `residual_candidates` still reports duplicate proposals only, and
+the reading is now written down rather than implied: an admitted proposal is in
+the distribution on its own account, a refused one names no hypothesis, and a
+duplicate is the model asking for a second look at a hypothesis the evidence has
+not settled. Item 14's agency metrics read `attempts`, not the diagnosis.
+
+## 2026-08-09 — review: what the determinism invariant was not checking
+
+**Decision.** `test_no_unseeded_randomness` now covers `scripts/` and `tests/` as
+well as `src/`, rejects `default_rng()` called with no seed, and detects the
+stdlib `random` module by import rather than by substring.
+
+**Why.** Three gaps, none of them live — every call site in the repository was
+already correct, which is why this is a guard change and not a bug fix.
+`scripts/` was unscanned and is where `calibrate_mechanisms.py` and
+`calibrate_censoring.py` produce the frozen literals in `mechanisms.py`, so
+unseeded randomness there would make a calibration nobody could reproduce without
+anything noticing. `default_rng` sat in the allowlist unconditionally, but
+`default_rng()` with no argument draws from the operating system — it is the one
+member of that list that can be either, and only the call site can tell.
+The substring check for `import random` matched the module name in a comment and
+missed `from random import randint`; it also would have failed on the assertion's
+own source once `tests/` came into scope.
+
+**Closes off.** The suite grew by ~55 parametrised cases. Nothing was found, so
+this buys future coverage rather than fixing present breakage.
+
+**Addendum, same day.** The first version of the `default_rng` check matched only
+`ast.Attribute` call targets, so `from numpy.random import default_rng` followed
+by a bare `default_rng()` passed it — found by an independent check, not by the
+author. The guard was a test of import style rather than of behaviour. It now
+resolves a call's final identifier however it was reached, and a companion check
+refuses `from numpy.random import <dist>`, `from numpy import random` and
+`import numpy.random`, which the attribute walk never visits either. Nothing in
+the tree used any of those forms; the point is that the invariant is now about
+what a module can reach rather than how it spells it.

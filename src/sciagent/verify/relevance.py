@@ -68,6 +68,7 @@ __all__ = [
     "clauses",
     "scopes_overlap",
     "survey",
+    "version_mismatched",
 ]
 
 #: SPEC §7.1 clause 1's "within 2 edges".

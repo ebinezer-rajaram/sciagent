@@ -418,17 +418,17 @@ def _enabled_value(
     was enabled rather than a missing measurement. That is the opposite of D2 and
     D3's ``nan`` on an empty battery, where the question was never asked.
     """
-    usable = [
-        design
-        for design in designs
-        if table.holds(candidate)
-        and all(
-            table.holds(entertained[node_id])
-            for node_id in sorted(entertained)
-            if node_id in posterior
-        )
-    ]
-    if not usable:
+    # A guard on the belief, not a filter on the designs: every design is usable
+    # or none is, since what it turns on is whether the table holds a row for the
+    # candidate and for each hypothesis the belief prices. Written as a filter
+    # once, which read as though it varied per design and re-derived the same
+    # answer for each one.
+    scorable = table.holds(candidate) and all(
+        table.holds(entertained[node_id])
+        for node_id in sorted(entertained)
+        if node_id in posterior
+    )
+    if not scorable or not designs:
         return 0.0
     admitted = HypothesisId("__candidate__")
     structures: dict[HypothesisId, Defect] = {
@@ -456,5 +456,5 @@ def _enabled_value(
         )
 
     return max(
-        expected_information_gain(design.id, belief, predict).bits for design in usable
+        expected_information_gain(design.id, belief, predict).bits for design in designs
     )

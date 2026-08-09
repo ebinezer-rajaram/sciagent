@@ -24,7 +24,7 @@ from typing import Protocol, runtime_checkable
 
 from sciagent.core.conditions import Between, Condition, Not
 from sciagent.core.edits import Defect, EditGrammar
-from sciagent.core.errors import InvestigationError
+from sciagent.core.errors import InvestigationError, NoLiveHypothesisError
 from sciagent.core.types import (
     Diagnosis,
     ExperimentId,
@@ -362,7 +362,22 @@ def diagnose(
     Guarantees the result is a pure function of the engine's state and the two
     structural arguments, so two systems that did the same things report the
     same numbers.
+
+    Raises :class:`~sciagent.core.errors.NoLiveHypothesisError` if every
+    hypothesis has been rejected. The engine reports that as a posterior of all
+    zeros, which is the truthful answer to "how is the mass distributed" and not
+    a distribution; without this the condition would surface two frames later as
+    a :class:`~sciagent.core.types.Diagnosis` that fails to normalise, which
+    names the symptom rather than the cause.
     """
+    if engine.hypotheses and not engine.live:
+        raise NoLiveHypothesisError(
+            f"every one of the {len(engine.hypotheses)} hypotheses on scenario "
+            f"{scenario_id!r} has been rejected, so there is no distribution to "
+            f"report; a system that has ruled out its whole hypothesis space has "
+            f"detected inadequacy, which is what the posterior predictive check "
+            f"is for"
+        )
     posterior = engine.posterior()
     null_mass = math.fsum(
         posterior[h] for h in sorted(posterior) if not engine.program_edit(h)

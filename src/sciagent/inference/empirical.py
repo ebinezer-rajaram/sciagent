@@ -56,6 +56,7 @@ from pathlib import Path
 
 from sciagent.core.edits import Defect, EditGrammar, canonical, sort_key
 from sciagent.core.errors import (
+    DuplicateExperimentError,
     DuplicateHypothesisError,
     InferenceError,
     TableError,
@@ -551,7 +552,7 @@ class EmpiricalTableEngine:
         registry's content address had failed to determine the outcome.
         """
         if e in self._index:
-            raise DuplicateHypothesisError(
+            raise DuplicateExperimentError(
                 f"experiment {e!r} is already recorded with result "
                 f"{self._index[e].result!r}"
             )

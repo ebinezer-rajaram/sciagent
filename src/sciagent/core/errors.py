@@ -218,6 +218,26 @@ class UnknownExperimentError(InferenceError):
     """An experiment id was referenced that the engine has not recorded."""
 
 
+class DuplicateExperimentError(InferenceError):
+    """One experiment id was recorded twice.
+
+    An experiment id is a registry content address, so a second result under it
+    would mean the address had failed to determine the outcome. Distinct from
+    :class:`DuplicateHypothesisError`, which is about structure: these are two
+    different faults and were once reported as one.
+    """
+
+
+class NoLiveHypothesisError(InferenceError):
+    """Every hypothesis has been rejected, so no posterior is defined.
+
+    Not a malformed distribution but an empty hypothesis space: there is nothing
+    left for mass to be distributed over. Raised where the condition arises so
+    that it is not met three frames later as a distribution that fails to
+    normalise.
+    """
+
+
 # --------------------------------------------------------------------------
 # Hypotheses
 # --------------------------------------------------------------------------

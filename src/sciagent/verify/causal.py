@@ -106,8 +106,8 @@ def _paths(
     stack: list[tuple[ComponentId, ...]] = [(source,)]
     while stack:
         path = stack.pop()
-        for _, target in sorted(program.edges):
-            if _ != path[-1] or target in path:
+        for parent, target in sorted(program.edges):
+            if parent != path[-1] or target in path:
                 continue
             extended = (*path, target)
             if target == sink:
@@ -216,7 +216,9 @@ def licensed_by(
                         f"so the claimed path does not exist"
                     )
             off_path = program.descendants(target) - set(estimand.path)
-            loose = off_path & record.manipulated - record.held_fixed
+            # Parenthesised: `-` binds tighter than `&`, so the unbracketed form
+            # meant this and read as though it meant `(off_path & manipulated)`.
+            loose = off_path & (record.manipulated - record.held_fixed)
             if loose:
                 return (
                     f"the off-path descendant(s) {sorted(loose)!r} were manipulated "
@@ -277,6 +279,22 @@ def license(
         )
 
     assumptions = frozenset(claim.intervention.assumptions)
+    if not records:
+        return Licence(
+            claimed=claim.estimand,
+            licensed=None,
+            findings=(
+                Finding(
+                    check=CheckClass.CAUSAL,
+                    outcome=Outcome.REJECT,
+                    message=(
+                        f"claim {claim.id!r} is causal and cites no experiment; an "
+                        f"estimand is licensed by something that was done, and "
+                        f"nothing was"
+                    ),
+                ),
+            ),
+        )
     refusals: list[str] = []
     for candidate in ladder(claim.estimand):
         reasons = [

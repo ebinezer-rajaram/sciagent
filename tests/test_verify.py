@@ -107,7 +107,7 @@ class TestVerdictArithmetic:
         assert worst((Outcome.REFER, Outcome.REJECT)) is Outcome.REJECT
 
     def test_a_verdict_cannot_be_gentler_than_its_findings(self) -> None:
-        with pytest.raises(AssertionError, match="findings imply"):
+        with pytest.raises(MalformedClaimError, match="findings imply"):
             Verdict(
                 claim=claim().id,
                 outcome=Outcome.ACCEPT,

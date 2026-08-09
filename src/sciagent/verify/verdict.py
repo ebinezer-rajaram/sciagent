@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Final
 
+from sciagent.core.errors import MalformedClaimError
 from sciagent.core.program import GenerativeProgram
 from sciagent.core.types import (
     Claim,
@@ -157,7 +158,7 @@ class Verdict:
     def __post_init__(self) -> None:
         implied = worst(finding.outcome for finding in self.findings)
         if self.outcome is not implied:
-            raise AssertionError(
+            raise MalformedClaimError(
                 f"verdict on {self.claim!r} reports {self.outcome.value!r} but its "
                 f"findings imply {implied.value!r}"
             )

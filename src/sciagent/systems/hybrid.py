@@ -101,7 +101,7 @@ class Hybrid:
     grammar, so an unlicensed structure has no name a model could use.
     """
 
-    __slots__ = ("_attempts", "_layer", "_library", "_max_proposals")
+    __slots__ = ("_attempts", "_layer", "_library", "_max_proposals", "_name")
 
     def __init__(
         self,
@@ -109,21 +109,37 @@ class Hybrid:
         layer: ProposalLayer,
         *,
         max_proposals: int = 2,
+        name: str = "V7",
     ) -> None:
         if max_proposals < 0:
             raise MalformedProposalError(
                 f"a system cannot make {max_proposals} proposals; pass 0 for a V7 "
                 f"that never extends its hypothesis space"
             )
+        if not name.strip():
+            raise MalformedProposalError(
+                "a system needs a SPEC §5 identifier; an unnamed one would be "
+                "scored under an empty label and could not be told apart from "
+                "another arm of the same ablation"
+            )
         self._library = dict(library)
         self._layer = layer
         self._max_proposals = max_proposals
+        self._name = name.strip()
         self._attempts: tuple[ProposalAttempt, ...] = ()
 
     @property
     def name(self) -> str:
-        """Return SPEC §5's identifier."""
-        return "V7"
+        """Return SPEC §5's identifier.
+
+        ``"V7"`` unless the caller said otherwise. SPEC §11 item 13's ablation
+        arms are this same architecture with a different memory representation
+        in the brief, so they are this class under the names ``"V3"`` and
+        ``"V4"`` -- see :func:`sciagent.systems.ablation.memory_ablation`. A
+        separate class per arm would have made "they differ only in memory" a
+        claim to audit rather than a fact about how they are built.
+        """
+        return self._name
 
     @property
     def attempts(self) -> tuple[ProposalAttempt, ...]:

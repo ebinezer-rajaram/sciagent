@@ -2570,3 +2570,119 @@ refuses `from numpy.random import <dist>`, `from numpy import random` and
 `import numpy.random`, which the attribute walk never visits either. Nothing in
 the tree used any of those forms; the point is that the invariant is now about
 what a module can reach rather than how it spells it.
+
+## 2026-08-11 — item 13: "at equal information" is a representation swap, not a nesting
+
+**Decision.** SPEC §11 item 13's two arms *swap* memory representations rather
+than nesting them. V3 (`Memory.RAW`) is shown the per-step readings and the
+entertained structures unannotated; V4 (`Memory.GRAPH`) is shown those same
+structures annotated with their posterior mass, and no readings. Neither brief's
+content is a superset of the other's. The sections that are not memory — the
+structural menu, the designs, SPEC F5's conventional Stage A verdict and the
+budget — are in both arms unchanged.
+
+**Why.** R2 (§2) says the comparison is *at equal information*, and the obvious
+alternative — V4 as V3 plus the graph — fails that on its face: V4 would strictly
+dominate, and the measured delta would answer "does a graph help on top of a
+history" rather than "does a graph beat a history". §5 line 282 names the pair
+"raw history **versus** hypothesis graph", which is the swap and not the sum.
+The cost of the swap is that V4 cannot see a reading it might have reasoned from
+directly; that is the ablation, not a defect in it. The user was asked and chose
+the swap over the additive reading before any code was written.
+
+The arms are `Hybrid` twice under two names rather than two classes, so "they
+differ only in memory" is a fact about construction rather than a claim to audit:
+`memory_ablation` shares library, grammar, store, budget and prompt by passing
+the same objects to both. Its `provider` argument is a **factory** for the same
+reason — a `ScriptedProvider` consumes its script, so one shared instance would
+have had V4 answering the second scripted proposal while V3 answered the first,
+and the ablation would have been measuring what the backend said back.
+
+**Closes off.** `Memory.BOTH` is the default and renders exactly the six sections
+item 12 recorded its corpus against, so V7's transcripts and its twelve-scenario
+table stay valid; the raw arm's extra section is unreachable from `BOTH`. The
+three memories address disjointly, so no arm can replay another's answer.
+
+## 2026-08-11 — item 13: R2 is measurable on S12 alone, and not yet with a scripted provider
+
+**Measured**, both arms on SPEC §9's ablation cell, closed set entertained,
+scripted provider, shared calibrated table. `asked` is how many times the
+proposal layer was reached — i.e. how many times the arm's brief was rendered.
+
+| id | arm | asked | experiments | final PPC p | correct |
+|---|---|---|---|---|---|
+| S8 | V3 | **0** | 8 | 1.0000 | no |
+| S8 | V4 | **0** | 8 | 1.0000 | no |
+| S11 | V3 | **0** | 8 | 0.5299 | no |
+| S11 | V4 | **0** | 8 | 0.5299 | no |
+| S12 | V3 | **2** | 8 | 0.1009 | yes |
+| S12 | V4 | **2** | 8 | 0.1009 | yes |
+
+**Two of §9's three scenarios never reach the proposal layer at all.** SPEC F6
+makes extension conditional on Stage A detection, the gate stays shut on S8 and
+S11, and where it stays shut neither arm's brief is rendered and V3 and V4 are
+the same system running the same trajectory. R2's delta is therefore *undefined*
+on S8 and S11 — not small, undefined. This is the same finding item 12 recorded
+for V7 from the other side, and for the same reason: A9 measured the check's
+power against `SIZE_EXCITATION` at 0.000 with the closed set entertained, so S11
+is invisible to Stage A by a property of the diagnostic catalogue.
+
+**On S12 the delta is currently zero by construction, which is not an R2 result.**
+Both arms were asked twice, both admitted both proposals, and the two runs are
+identical — because `ScriptedProvider` returns fixed payloads *regardless of the
+brief*. The briefs did differ: the arms' transcript addresses are disjoint. What
+this establishes is that the apparatus discriminates and is deterministic, not
+that structured memory is worth nothing.
+
+**Left deliberately incomplete.** Answering R2 needs a provider that reads the
+brief, over a recorded corpus, on S12 — the only cell where the question is even
+askable. §9 asks for twenty seeds across three scenarios; one of the three
+survives. Whether that is enough to preregister a contrast on is the user's call
+and touches §9, so it is not decided here.
+
+**One trap worth naming, because it cost a red test.**
+`ScenarioRun.ppc` is the check taken *after* the whole budget is spent; the gate
+that opens a proposal is the check taken at the half-budget point. They disagree
+on S12 — final p 0.1009 with the final check not firing, and two proposal calls
+all the same. Anything asking "did the arms have a chance to diverge" must read
+the attempt count, never the run's final PPC.
+
+## 2026-08-11 — item 13: V7's brief is byte-identical to 9a2992a, checked across worktrees
+
+**Measured.** The default rendering of `render_brief` — no `memory` argument —
+is byte-identical before and after the ablation. Eight investigation states
+(S1, S8, S9, S11, S12 at two designs run with two structures entertained, plus
+S12 with nothing run, S12 with four entertained and four designs, and S8 with
+one design) were rendered under a detached worktree at `HEAD` (9a2992a) and
+under the change, by the same probe script under two `PYTHONPATH`s. The JSON
+dumps diff clean. Digest over the whole set:
+
+```
+sha256 386150e902cd80afbb15bf96259c825c9b1787940f7ebce9c5ababdd75f63fb8
+S1 464e431b…  S8 b103eaad…  S9 a1e54990…  S11 48b311c0…  S12 d2c3944f…
+```
+
+**Why it is written down rather than left to a test.** `TestTheDefaultPathIsUntouched`
+cannot establish this and no longer claims to. Every assertion available to a
+unit test here is within one process and one version, so a rewrite of
+`Memory.BOTH`'s own rendering would satisfy all of them; comparing the default
+against `Memory.BOTH` is a tautology with respect to the previous commit. The
+cross-worktree diff is the only thing that settles it, it costs a worktree and a
+probe script, and it is exactly the kind of expensive check a later session
+should not have to redo to know the corpus still resolves.
+
+**Closes off.** Item 12's recorded transcripts and its twelve-scenario table
+remain valid across this change. The check is against 9a2992a specifically; a
+future change to the six default sections invalidates it and needs the same
+measurement again, not a reassurance. The class docstring says so and points
+here.
+
+**Found by an independent check, not by the author.** So was the reason the
+first version of `test_raw_carries_no_posterior` passed: it searched the brief
+for `"posterior "` and succeeded only because `## Posterior predictive check`
+capitalises the P. That heading is SPEC F5's conventional Stage A verdict and is
+in *every* arm by design, so the test would have gone green on a genuine leak of
+posterior mass into V3 and red on a harmless lower-casing of a heading. It now
+searches for `" -- posterior "`, the exact annotation `_hypotheses_section`
+writes, and a companion test asserts the check section is present in all three
+arms so that "no posterior" can never be read as "no check".

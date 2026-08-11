@@ -52,6 +52,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
 from sciagent.core.edits import (
@@ -76,6 +77,7 @@ from sciagent.systems.base import Investigation
 
 __all__ = [
     "EditDraft",
+    "Memory",
     "MenuEntry",
     "ProposalDraft",
     "decode",
@@ -376,11 +378,43 @@ class _Section:
     lines: tuple[str, ...] = field(default_factory=tuple)
 
 
+class Memory(Enum):
+    """How the run so far is represented to the model. SPEC §11 item 13's axis.
+
+    R2 asks whether a hypothesis graph beats a raw history **at equal
+    information**, so the two ablation arms *swap* representations rather than
+    nesting them: each carries the same entertained structures, and they differ
+    in whether those structures come annotated with the posterior or accompanied
+    by the readings the posterior was derived from. Neither is a superset of the
+    other, which is what makes a measured delta attributable to representation
+    rather than to content.
+
+    The sections that are not memory -- the structural menu, the designs, SPEC
+    F5's conventional Stage A verdict and the budget -- are in every arm. They
+    are the action space and the framework's own report, not a record of what
+    happened, and withholding either would ablate something R2 is not asking
+    about.
+    """
+
+    RAW = "raw"
+    """SPEC §5's V3: the per-step readings, and the entertained structures
+    unannotated."""
+
+    GRAPH = "graph"
+    """SPEC §5's V4: the entertained structures with their posterior mass, and no
+    readings."""
+
+    BOTH = "both"
+    """V7's brief, and the default. Byte-identical to the rendering item 12
+    recorded its transcript corpus against -- see :func:`render_brief`."""
+
+
 def render_brief(
     investigation: Investigation,
     menu: Sequence[MenuEntry],
     *,
     max_grid_values: int = 8,
+    memory: Memory = Memory.BOTH,
 ) -> str:
     """Return the brief a model is shown for this investigation.
 
@@ -394,20 +428,32 @@ def render_brief(
     looks, because the brief is hashed into a transcript's content address, so an
     unstable rendering would be an unreproducible run.
 
+    Guarantees also that ``Memory.BOTH`` -- the default -- renders exactly the
+    six sections it rendered at item 12, in that order. Every recorded transcript
+    is addressed by a hash over this string, so a default that gained a section
+    would not fail loudly; it would stop resolving the corpus and silently
+    re-derive against different text. ``Memory.RAW``'s extra section is
+    unreachable from ``BOTH`` for that reason.
+
     ``max_grid_values`` abbreviates a long grid to its first few points, its last
     point and its size. The slice's grids have 64 points, and listing all of them
     for every cell would crowd out the observations without telling a model
     anything it needs: what it must know is the range, the direction and how many
     indices there are.
     """
-    sections = (
+    sections: list[_Section] = [
         _menu_section(menu, max_grid_values),
         _designs_section(investigation),
-        _observations_section(investigation),
-        _hypotheses_section(investigation),
-        _check_section(investigation),
-        _budget_section(investigation),
-    )
+    ]
+    if memory in (Memory.RAW, Memory.BOTH):
+        sections.append(_observations_section(investigation))
+    if memory is Memory.RAW:
+        sections.append(_structures_section(investigation))
+    if memory in (Memory.GRAPH, Memory.BOTH):
+        sections.append(_hypotheses_section(investigation))
+    sections.append(_check_section(investigation))
+    sections.append(_budget_section(investigation))
+
     blocks = []
     for section in sections:
         body = "\n".join(section.lines) if section.lines else "(none)"
@@ -486,6 +532,31 @@ def _hypotheses_section(investigation: Investigation) -> _Section:
             f"- {node_id}: {rendered} -- posterior {float(posterior[node_id]):.4f}"
         )
     return _Section("Hypotheses already entertained", tuple(lines))
+
+
+def _structures_section(investigation: Investigation) -> _Section:
+    """Render the structures entertained, without what the framework makes of them.
+
+    :func:`_hypotheses_section` minus the posterior column, and deliberately
+    built from the same key set in the same order. That is the equal-information
+    half of SPEC §11 item 13: V3 is told *which* explanations are on the table,
+    because a proposal made blind to that would re-propose what is already
+    entertained, and it is not told which of them the evidence favours, because
+    that summary is the thing V4 has and V3 does not.
+
+    Reachable only from :attr:`Memory.RAW`. ``Memory.BOTH`` must not acquire a
+    seventh section -- see :func:`render_brief`.
+    """
+    posterior = investigation.posterior()
+    graph = investigation.graph
+    lines = []
+    for node_id in sorted(posterior):
+        structure = graph.node(node_id).program_edit
+        rendered = (
+            _render_defect(structure) if structure else "the null (nothing wrong)"
+        )
+        lines.append(f"- {node_id}: {rendered}")
+    return _Section("Structures already entertained", tuple(lines))
 
 
 def _render_defect(defect: Defect) -> str:

@@ -24,6 +24,7 @@ from typing import Any, Protocol, runtime_checkable
 from sciagent.core.edits import Defect, EditGrammar
 from sciagent.systems.base import Investigation
 from sciagent.systems.llm.encoding import (
+    Memory,
     MenuEntry,
     ProposalDraft,
     decode,
@@ -105,7 +106,15 @@ class ProposalLayer:
     one answer for both would make the second call's result depend on the first.
     """
 
-    __slots__ = ("_calls", "_grammar", "_menu", "_provider", "_store", "_system")
+    __slots__ = (
+        "_calls",
+        "_grammar",
+        "_memory",
+        "_menu",
+        "_provider",
+        "_store",
+        "_system",
+    )
 
     def __init__(
         self,
@@ -114,18 +123,31 @@ class ProposalLayer:
         store: TranscriptStore,
         *,
         system_prompt: str = "",
+        memory: Memory = Memory.BOTH,
     ) -> None:
         self._provider = provider
         self._grammar = grammar
         self._menu = structural_menu(grammar)
         self._store = store
         self._system = system_prompt or DEFAULT_SYSTEM_PROMPT
+        self._memory = memory
         self._calls = 0
 
     @property
     def menu(self) -> tuple[MenuEntry, ...]:
         """Return the structural menu proposals are drawn from."""
         return self._menu
+
+    @property
+    def memory(self) -> Memory:
+        """Return how the run so far is represented in this layer's briefs.
+
+        SPEC §11 item 13's ablation axis. It reaches the transcript address
+        through the brief, so two layers that differ only in it address
+        differently and cannot resolve each other's recorded calls -- which is
+        what keeps a V3 corpus and a V4 corpus from contaminating one another.
+        """
+        return self._memory
 
     @property
     def store(self) -> TranscriptStore:
@@ -147,7 +169,7 @@ class ProposalLayer:
         a system that wants to carry on without a proposal should decide that
         itself rather than have the layer decide it silently.
         """
-        brief = render_brief(investigation, self._menu)
+        brief = render_brief(investigation, self._menu, memory=self._memory)
         schema = tool_schema(self._menu)
         address = call_address(
             provider=self._provider.id,

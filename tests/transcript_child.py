@@ -32,6 +32,7 @@ from sciagent.inference.empirical import EmpiricalTableEngine
 from sciagent.registry.store import ExperimentStore
 from sciagent.systems.base import Investigation, entertain, null_seeded_graph
 from sciagent.systems.llm import (
+    Memory,
     call_address,
     render_brief,
     structural_menu,
@@ -45,10 +46,16 @@ SCENARIOS = ("S1", "S9", "S12")
 
 
 def addresses() -> dict[str, str]:
-    """Return one address per scenario, after two experiments and two proposals.
+    """Return one address per scenario and memory, after two experiments.
 
     Two library structures are entertained before the brief is rendered, so the
     hypotheses section holds more than the null and its ordering is exercised.
+
+    Every :class:`~sciagent.systems.llm.encoding.Memory` is rendered, not only
+    the default. SPEC §11 item 13's raw arm renders the entertained structures
+    through a second code path, and a ``Defect`` is a ``frozenset`` -- so if that
+    path ever stops going through ``canonical``, a V3 corpus would replay only on
+    the machine that recorded it. This is the arm that would notice.
     """
     menu = structural_menu(AGENT_GRAMMAR)
     schema = tool_schema(menu)
@@ -78,14 +85,15 @@ def addresses() -> dict[str, str]:
         )
         for design in the_scenario.designs[:2]:
             investigation.run(design)
-        out[name] = call_address(
-            provider="child",
-            model="child/1",
-            system="system",
-            brief=render_brief(investigation, menu),
-            schema=schema,
-            index=0,
-        )
+        for memory in Memory:
+            out[f"{name}/{memory.value}"] = call_address(
+                provider="child",
+                model="child/1",
+                system="system",
+                brief=render_brief(investigation, menu, memory=memory),
+                schema=schema,
+                index=0,
+            )
     return out
 
 

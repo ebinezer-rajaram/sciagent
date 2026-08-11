@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from sciagent.systems.llm.encoding import (
     EditDraft,
+    Memory,
     MenuEntry,
     ProposalDraft,
     decode,
@@ -51,6 +52,7 @@ __all__ = [
     "RECORD",
     "REPLAY",
     "EditDraft",
+    "Memory",
     "MenuEntry",
     "Proposal",
     "ProposalDraft",

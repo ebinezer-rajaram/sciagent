@@ -2686,3 +2686,81 @@ posterior mass into V3 and red on a harmless lower-casing of a heading. It now
 searches for `" -- posterior "`, the exact annotation `_hypotheses_section`
 writes, and a companion test asserts the check section is present in all three
 arms so that "no posterior" can never be read as "no check".
+
+## 2026-08-13 — item 14: the approval-tier boundary is lateness, not proposal count
+
+**Ambiguity.** SPEC F10 requires "two approval tiers" and §12 criterion 11 an
+autonomy fraction per investigation. Neither says where the boundary falls, and
+§11's row for item 14 is three words. The metric is meaningless until someone
+picks, so this is the pick.
+
+**Decision.** Tier 1 is running one of the designs the scenario offers. Tier 2
+is introducing a hypothesis whose graph node carries a non-null `proposed_at` --
+one introduced after evidence was in hand. `autonomy_fraction` is tier 1 over
+the two. Structures introduced before any experiment are reported separately as
+`entertained` and kept out of the fraction.
+
+**Why not the obvious reading.** "A proposal is a tier-2 act" was the first
+choice and is wrong. `entertain` routes every library structure through
+`Investigation.propose`, so V1's `proposed` holds its whole library and only
+B1's is empty. Counting proposals reports V1 -- the system *defined* as never
+extending its hypothesis space -- as less autonomous than B1 for doing the one
+thing V1 does, and makes the fraction depend on how large a library the harness
+handed out. Excluding the opening set also removes the perverse incentive: a
+system could otherwise raise its own autonomy by entertaining more of its
+library.
+
+**Why not the rationale string.** `entertain` writes `library structure '...'`
+as its rationale, so a prefix check on that string separates the opening set
+from an extension in one line. It was rejected: rationale is prose the *system*
+authors, so a system could raise its own autonomy fraction by writing a
+different one. `proposed_at` is set by `Investigation.propose` from the
+investigation's own history and is unreachable from a system. SPEC's second
+invariant is the framework writing the numbers, and a number derived from
+agent-authored prose is the agent writing it through one level of indirection.
+
+**Why lateness is the right thing and not merely a safe one.** F9 already
+singles out the late hypothesis: it takes no evidential penalty in likelihood
+but cannot support a confirmatory claim without a prospectively registered
+discriminating experiment. That is the framework's existing statement that such
+a hypothesis needs something further before it counts, which is what an approval
+tier is. The boundary reuses a distinction the spec already draws rather than
+inventing a second one beside it.
+
+**Closes off.** Anything measuring per-decision autonomy at finer grain than
+"experiment versus late structure" needs a new datum on the run; the two
+mutating operations on `Investigation` are all there is to tier today. A system
+that proposes from the prior alone with zero experiments would have its
+admissions counted as the opening set, and `agency_metrics` raises rather than
+reporting it -- no SPEC §5 system does this, since every one spends half its
+budget first.
+
+## 2026-08-13 — item 14: "no proposal layer" and "layer never asked" are different runs
+
+**Decision.** `ScenarioRun.attempts` is `tuple[ProposalAttempt, ...] | None`.
+`None` means the system holds no proposal layer; an empty tuple means it holds
+one that was never consulted. `AgencyMetrics.proposals` is `None` in the first
+case and a record reading zero in the second.
+
+**Approach abandoned.** The first implementation typed it as a plain tuple and
+derived the record with `proposal_record(run.attempts) if run.attempts else
+None`. That collapses the two: V7 on a scenario whose posterior predictive check
+never opens F6's gate produces an empty tuple, and the metric reported it
+identically to B4, which has no model to ask at all. The distinction is the one
+the proposal record exists to make -- a run that asked five times and used one
+differs from one that asked once, and both differ from a system with nothing to
+ask -- so a representation that cannot hold it defeats the object. An empty
+tuple cannot carry a capability *and* a count.
+
+**Why it was not caught by a test first.** Both tests written at the time read
+`proposals is None` on systems that genuinely have no layer, so both passed. The
+missing case had no run behind it: V7 appears in the slice metrics only through
+S12, where the gate does fire. `test_a_layer_that_was_never_asked_still_has_a_record`
+now runs V7 on S1 end to end rather than constructing the case, because the part
+that has to get this right is the harness's capture in `run_scenario` and not
+the metric's arithmetic.
+
+**Closes off.** `run_scenario` decides the capability by `isinstance(system,
+Proposing)` -- structural, so any system exposing `attempts` is picked up and no
+system is named. A future system holding a layer must expose the attribute even
+on runs where it asks nothing, or it will be reported as having no layer.

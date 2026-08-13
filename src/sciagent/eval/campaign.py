@@ -34,6 +34,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from typing import Protocol, runtime_checkable
 
 from sciagent.core.edits import Defect
 from sciagent.core.errors import InvestigationError
@@ -56,10 +57,31 @@ from sciagent.hypothesis.graph import HypothesisGraph
 from sciagent.inference.empirical import EmpiricalTableEngine
 from sciagent.inference.interface import PPCResult
 from sciagent.systems.base import Investigation, ResearchSystem, diagnose
+from sciagent.systems.hybrid import ProposalAttempt
 from sciagent.verify.numerical import recompute
 from sciagent.verify.relevance import EvidenceIndex
 
-__all__ = ["ScenarioRun", "claims_from_run", "run_scenario"]
+__all__ = ["Proposing", "ScenarioRun", "claims_from_run", "run_scenario"]
+
+
+@runtime_checkable
+class Proposing(Protocol):
+    """A system that keeps a record of asking a proposal layer.
+
+    Structural rather than nominal, deliberately. The harness has to capture the
+    record at the moment a run ends -- a system object outlives its run, and item
+    13's ablation reuses one -- but it must not thereby depend on which class
+    holds it, so any system exposing ``attempts`` is read and no system is named.
+
+    :class:`~sciagent.systems.hybrid.ProposalAttempt` is imported for its type
+    and not for its class: it is the vocabulary the record is written in, which
+    every system with a proposal layer shares.
+    """
+
+    @property
+    def attempts(self) -> tuple[ProposalAttempt, ...]:
+        """Return the proposals requested in the system's last run."""
+        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,7 +100,34 @@ class ScenarioRun:
     """How many experiments were actually run, which may be under the budget."""
 
     proposed: Mapping[HypothesisId, Defect]
-    """Structures the system introduced. Empty for V1 and B1 by construction."""
+    """Structures the system introduced, library included.
+
+    Empty only for B1, which proposes nothing at all. Every other system routes
+    the structures it entertains through
+    :meth:`~sciagent.systems.base.Investigation.propose` -- that is what
+    :func:`~sciagent.systems.base.entertain` does -- so V1's holds its whole
+    library. Which of these were *extensions* rather than the space the
+    investigation opened with is
+    :func:`~sciagent.eval.agency.agency_metrics`'s question, and it reads the
+    graph's ``proposed_at`` rather than this mapping to answer it.
+    """
+
+    attempts: tuple[ProposalAttempt, ...] | None
+    """Every proposal the system requested during this run, in order.
+
+    ``None`` for a system that holds no proposal layer, and an *empty tuple* for
+    a system that holds one it never consulted -- a run whose posterior
+    predictive check never opened SPEC F6's gate. The two are different facts
+    about a run and an empty tuple cannot carry both, which is why this is
+    optional rather than merely possibly-empty: B4 introduces structure without
+    ever having a model to ask, and reporting that as "asked zero times" would
+    put a layer in the report that the system does not have.
+
+    Captured here rather than read off the system afterwards because a system
+    object outlives its run: :attr:`~sciagent.systems.hybrid.Hybrid.attempts`
+    holds whichever scenario ran last, and item 13's ablation reuses one arm
+    across three scenarios.
+    """
 
     graph: HypothesisGraph
     """The hypothesis graph the run ended with, proposals included.
@@ -179,6 +228,7 @@ def run_scenario(
         ppc=engine.ppc(),
         experiments=len(investigation.history),
         proposed=investigation.proposed,
+        attempts=_attempts_of(system),
         graph=investigation.graph,
         evidence=EvidenceIndex.from_history(
             investigation.history,
@@ -193,6 +243,37 @@ def run_scenario(
             default=math.inf,
         ),
     )
+
+
+def _attempts_of(system: ResearchSystem) -> tuple[ProposalAttempt, ...] | None:
+    """Return a system's proposal record, or ``None`` if it holds no layer.
+
+    Guarantees the captured record is readable: :class:`Proposing` is a
+    ``runtime_checkable`` protocol, so ``isinstance`` establishes that
+    ``attempts`` *exists* and nothing about what it holds. A system whose
+    ``attempts`` is ``None`` or is not a tuple of
+    :class:`~sciagent.systems.hybrid.ProposalAttempt` would otherwise be filed as
+    holding no proposal layer, or would fail later inside
+    :func:`~sciagent.eval.agency.proposal_record` as a bare ``AttributeError``
+    with the run already scored.
+
+    Raises :class:`~sciagent.core.errors.InvestigationError` in that case, since
+    a system that advertises a record it cannot produce is a fault in the system
+    and not a run to report an agency figure for.
+    """
+    if not isinstance(system, Proposing):
+        return None
+    attempts = system.attempts
+    if not isinstance(attempts, tuple) or not all(
+        isinstance(attempt, ProposalAttempt) for attempt in attempts
+    ):
+        raise InvestigationError(
+            f"system {system.name!r} exposes 'attempts' but it holds "
+            f"{attempts!r}, not a tuple of ProposalAttempt; a system that "
+            f"advertises a proposal record must produce one, since an "
+            f"unreadable record is not the same as holding no proposal layer"
+        )
+    return attempts
 
 
 def engine_edits(engine: EmpiricalTableEngine) -> Mapping[HypothesisId, Defect]:

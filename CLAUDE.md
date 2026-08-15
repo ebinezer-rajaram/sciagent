@@ -46,7 +46,11 @@ Violating any of these is a bug regardless of tests passing.
 - `numpy`, `scipy`; `numba` only if profiling justifies it. `anthropic` reaches
   the network from one module and never during a replay
 - Strict typing: `mypy` clean — it takes no arguments, since `pyproject.toml`
-  sets `strict` and the file set. `from __future__ import annotations`
+  sets `strict` and the file set. `from __future__ import annotations`.
+  **`mypy` is the gate; `pyright` is advisory.** The pyright LSP plugin supplies
+  inline diagnostics and agreed with `mypy` exactly when both were run over
+  `registry/` and `verify/` — 15 files, zero findings each. If they ever
+  disagree, `mypy` decides; never edit code to satisfy a pyright-only complaint.
 - `@dataclass(frozen=True)` for all value types. No mutable global state
 
 ## Conventions
@@ -82,6 +86,17 @@ personal config file because cloud sessions clone the repo and see nothing from
   settles it. Local sessions run on Windows through Git Bash: prefer forward
   slashes and do not assume GNU coreutils flags exist. Cloud sessions run
   Ubuntu 24.04, where neither caution applies.
+- **Do not prefix shell commands with `cd <project dir> &&`.** The working
+  directory is already set. Measured across 50 transcripts, 1,141 of 1,402
+  commands carried this prefix and none needed it.
+- **The suite is ~7 minutes; background it rather than blocking.** One test,
+  `test_the_floor_never_exceeds_what_greedy_achieves[S1]`, is 147s of that, and
+  the slowest 25 are about 6 minutes of it. Never run a subagent alongside it —
+  contention alone took one run from 6m30s to 30m37s. `mypy` is 1.9s and needs
+  no such care. Before repeating the suite, ask
+  `bash .claude/hooks/suite-freshness.sh check`: it reports whether a full run
+  already passed on a byte-identical tree, and `/next` and `/ship` between them
+  used to run it three times per item.
 - You decide when to delegate to subagents; do not ask each time. Delegate for
   coverage: wide sweeps, locating call sites, enumerating across many files,
   and independently verifying a claim you have already made. Do it yourself for
@@ -119,12 +134,23 @@ verify the work, and any decisions the user pushed back on.
 - `/decide` — append to `docs/DECISIONS.md`.
 - `/gate A9` — run one acceptance criterion and report the real outcome.
 - `/ship` — verify, review independently, commit and push.
+- `/recall <topic>` — find what was already decided, without reading 190KB.
+- `/handoff` — write a note so a session ending badly does not strand its work.
+  Prefer `claude --resume`; this is the fallback when resuming is impossible.
+- `/platform-check` — localise the measured Windows/Ubuntu divergence.
+- `/matrix` — drive item 15, the first experiment matrix.
 
-The SessionStart hook already prints `scripts/status.py`, so the §11 cursor and
-gate coverage are in context at the top of every session. Do not re-run it to
-orient; do run `--run` when you need gates verified by execution rather than by
-their tests merely existing. Read `docs/DECISIONS.md` for what the repository
-cannot tell you.
+The SessionStart hook prints `scripts/status.py`, but only in full when the
+backlog or the gates have actually moved; otherwise it prints three lines, and
+the statusline carries branch, dirty count, cursor and gate coverage
+continuously at no cost in context. Do not re-run the script to orient. Do run
+`--run` when you need gates verified by execution rather than by their tests
+merely existing.
+
+**Do not read `docs/DECISIONS.md` end to end.** It is ~190KB across ~90 entries
+and grows every session; reading it whole costs about 50k tokens. Use `/recall`,
+which greps headers and reads only what matches. The file still holds what the
+repository cannot tell you — that has not changed, only how to get at it.
 
 ## Cloud sessions
 

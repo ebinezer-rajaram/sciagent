@@ -2,8 +2,10 @@
 # Format and autofix the single Python file just edited.
 #
 # The edited path arrives as JSON on stdin (.tool_input.file_path); there is no
-# environment variable for it. jq is not installed on this machine, so the
-# parse goes through Python, which is guaranteed present in a uv project.
+# environment variable for it. jq is not installed on this machine. The parse
+# used to go through Python, which cost 517ms of interpreter startup per edit
+# out of a 402ms total -- see .claude/hooks/lib.sh for the measurement and why
+# sed replaced it. Measured after: ~100ms per edit.
 #
 # --force-exclude is load-bearing: passing an explicit path to ruff otherwise
 # bypasses the `extend-exclude = ["docs"]` in pyproject.toml, which exists to
@@ -12,15 +14,20 @@
 # Always exits 0. This hook is a convenience, not a gate; `/ship` runs
 # `ruff check .` as the real check and is where an unfixable finding surfaces.
 
-file_path=$(python -c 'import json,sys; print(json.load(sys.stdin).get("tool_input",{}).get("file_path",""))' 2>/dev/null)
+. "$(dirname "$0")/lib.sh"
+hook_read_payload
+file_path=$(hook_field file_path)
 
 case "$file_path" in
     *.py) ;;
     *) exit 0 ;;
 esac
 
+# cd first: a relative file_path is only meaningful once the working directory
+# is the repository root, so testing existence before the cd would resolve it
+# against wherever the hook happened to start.
+hook_cd_project || exit 0
 [ -f "$file_path" ] || exit 0
-cd "$CLAUDE_PROJECT_DIR" 2>/dev/null || exit 0
 
 uv run ruff format --force-exclude "$file_path" >/dev/null 2>&1
 uv run ruff check --fix --force-exclude "$file_path" >/dev/null 2>&1

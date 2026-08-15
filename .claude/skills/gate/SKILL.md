@@ -1,6 +1,7 @@
 ---
 name: gate
 description: Run one acceptance criterion's tests by execution and report the real outcome. Invoke as /gate A9.
+allowed-tools: Bash, Read, Grep
 ---
 
 # Run one acceptance gate

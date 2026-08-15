@@ -1,6 +1,7 @@
 ---
 name: decide
 description: Append an entry to docs/DECISIONS.md in the required format, applying the four-category filter. Invoke as /decide the moment a decision is made, not at the end of a session.
+allowed-tools: Read, Edit, Grep, Bash
 ---
 
 # Record a decision

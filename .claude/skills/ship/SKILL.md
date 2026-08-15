@@ -31,11 +31,33 @@ If your scope turns out to be empty, say so and stop. There is nothing to ship.
 
 ## 1. Verify, for real
 
+`mypy` (1.9s) and `ruff` are cheap — always run them:
+
 ```sh
-uv run pytest
 uv run mypy
 uv run ruff check .
 ```
+
+The suite is not cheap: ~7 minutes, of which one test is 147s. `/next` has
+usually just run it on this exact tree, so ask before repeating it:
+
+```sh
+bash .claude/hooks/suite-freshness.sh check && echo FRESH || echo STALE
+```
+
+- **STALE** — run `uv run pytest`, backgrounded, and never alongside a
+  subagent (CLAUDE.md records 30m37s from contention). Then
+  `bash .claude/hooks/suite-freshness.sh record`.
+- **FRESH** — the full suite already passed on a byte-identical tree. Say so
+  explicitly, and say when: *"suite not re-run; freshness check reports the
+  identical tree already green."* Never write "tests pass" on the strength of
+  a cached verdict — report the cache as a cache.
+
+The check hashes every `.py` under `src`, `tests` and `scripts` plus
+`pyproject.toml` and `uv.lock`, by content rather than mtime, and fails toward
+STALE on any doubt. It deliberately ignores `docs/`, because `/decide` runs
+between the two suite invocations by design and a DECISIONS entry cannot change
+a test result.
 
 Paste the actual output. If anything is red, **stop here** and report it. Do
 not commit a red tree and do not describe a failure as a summary.
@@ -61,8 +83,14 @@ also delegate to the `invariant-auditor` subagent — the six invariants are
 violated by construction more often than by syntax, and `tests/test_invariants.py`
 only reaches invariants 1 and 3 statically.
 
-Fix what the review finds, then re-run step 1. Do not carry a known finding
-into a commit.
+Fix what the review finds, then re-run step 1 — but only what the fixes could
+have broken. If the review changed **no** file, the freshness check still
+reports FRESH and there is nothing to re-run; saying "re-verified" after a
+no-op review is a claim with no work behind it. If it changed a file, the check
+reports STALE on its own, because the tree hash moved. Let it decide rather
+than deciding by habit.
+
+Do not carry a known finding into a commit.
 
 ## 3. Commit
 

@@ -7,14 +7,21 @@ description: Drive one SPEC §11 backlog item end to end — resolve the cursor,
 
 ## 1. Resolve the item
 
-If the user named a number, use it. Otherwise:
+If the user named a number, use it. Otherwise use what the SessionStart hook
+already printed — **do not re-run `scripts/status.py` to orient**, per CLAUDE.md.
+The statusline carries the cursor continuously, and the hook prints the full
+report whenever the backlog or gates have moved.
 
-1. `uv run python scripts/status.py`
-2. If it prints `cursor: item N — title`, that is the item.
-3. If it prints `cursor: every gate-tracked backlog item is satisfied`, the
-   remaining items carry no A-gate and the script cannot order them. Take the
-   untracked numbers it lists, then `git log --oneline --grep='backlog item'`,
-   and pick the lowest-numbered item with no commit naming it.
+1. Read the cursor from the session-start output or the statusline.
+2. If it names `item N — title`, that is the item.
+3. If it reads `every gate-tracked backlog item is satisfied` — which it has
+   since item 14 landed — the remaining items carry no A-gate and the script
+   cannot order them. Take the untracked numbers it lists, then
+   `git log --oneline --grep='backlog item'`, and pick the lowest-numbered item
+   with no commit naming it. This is now the normal path, not the exception.
+
+Only re-run `scripts/status.py` if you need `--run`, which verifies gates by
+execution rather than by their tests merely existing.
 
 State the item number and title before touching anything.
 
@@ -38,9 +45,28 @@ Tests first, for anything with an acceptance criterion:
    exists is testing nothing. If it passes, say so and fix the test, not the
    report.
 3. Implement.
-4. `uv run pytest` and `uv run mypy`. Paste the real output, not a summary.
-   (`mypy` needs no arguments — `pyproject.toml` sets `strict` and the file
-   set. Naming a path checks *less* than the configured set.)
+4. Verify. Paste the real output, not a summary.
+
+   ```sh
+   uv run mypy                    # 1.9s, and needs no arguments: pyproject.toml
+                                  # sets strict and the file set, so naming a
+                                  # path checks *less* than the configured one
+   uv run pytest                  # ~7 min - background it, see below
+   ```
+
+   **Background the suite.** It is measured at ~7 minutes and one test
+   (`test_the_floor_never_exceeds_what_greedy_achieves[S1]`) is 147s of that.
+   Run it with `run_in_background` and read the diff or draft the `/decide`
+   entry while it runs, rather than blocking. Two rules:
+
+   - **Never start a subagent while it runs.** A suite run measured at 30m37s
+     against 6m30s from container contention alone is recorded in CLAUDE.md.
+   - When it comes back green, record it so `/ship` need not repeat it:
+
+     ```sh
+     bash .claude/hooks/suite-freshness.sh record
+     ```
+
 5. If a gate is still red, **stop**. SPEC §6 is the contract; do not proceed
    past a gate.
 

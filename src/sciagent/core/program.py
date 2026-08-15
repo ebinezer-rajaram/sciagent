@@ -125,13 +125,25 @@ class Component:
 # --------------------------------------------------------------------------
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class DrawContext:
     """Everything a family kernel may condition on when drawing one value.
 
     A kernel is a pure function of this context plus the generators' internal
     state. It may mutate ``latent_state`` (its own entry only) and must not
     mutate anything else.
+
+    Not ``frozen``, which is a deliberate exception to this project's rule that
+    value types are frozen -- see ``docs/DECISIONS.md``. A ``DrawContext`` is not
+    a value type: it is constructed at exactly one site
+    (:meth:`GenerativeProgram.execute`), passed to one kernel, and discarded.
+    Nothing hashes it, compares it or stores it. A frozen dataclass routes every
+    field
+    through ``object.__setattr__``, which costs 1176ns against 275ns here --
+    measured -- and one context is built per component per event, so the guard
+    was about a fifth of simulation time. ``slots=True`` stays, so a kernel still
+    cannot invent an attribute; what is given up is the error on rebinding an
+    existing one, which no kernel in the repository does.
     """
 
     index: int
@@ -458,39 +470,77 @@ class GenerativeProgram:
             key: np.zeros(n_events, dtype=np.float64) for key in latent_keys
         }
 
-        lagged_parents = {c: self.parents(c, lagged=True) for c in order}
-        instant_parents = {c: self.parents(c, lagged=False) for c in order}
+        # Everything a draw needs that does not vary with the event index is
+        # resolved once, per component, here. The loop below runs
+        # n_events * len(order) times -- half a million draws on a slice table
+        # row -- so a lookup left inside it is paid that many times: resolving
+        # the kernel, the component and the clamp schedule per draw was about a
+        # tenth of simulation time, and none of the three can change during a
+        # run. Ordering is unaffected: `order` still drives the sequence.
+        plan = tuple(
+            (
+                component_id,
+                self.components[component_id],
+                self.library.kernel(self.components[component_id].family),
+                rngs[component_id],
+                latent_rngs[component_id],
+                self.parents(component_id, lagged=False),
+                self.parents(component_id, lagged=True),
+                schedules.get(component_id) if schedules else None,
+                values[component_id],
+            )
+            for component_id in order
+        )
+        traced = tuple((key, traces[key]) for key in latent_keys)
 
         for index in range(n_events):
             current: dict[ComponentId, float] = {}
-            for component_id in order:
-                component = self.components[component_id]
-                forced = schedules.get(component_id) if schedules else None
+            for (
+                component_id,
+                component,
+                kernel,
+                rng,
+                component_latent_rngs,
+                instant_parents,
+                lagged_parents,
+                forced,
+                own_values,
+            ) in plan:
                 if forced is not None and index in forced:
                     drawn = forced[index]
                 else:
                     context = DrawContext(
                         index=index,
                         component=component,
-                        rng=rngs[component_id],
-                        latent_rngs=latent_rngs[component_id],
+                        rng=rng,
+                        latent_rngs=component_latent_rngs,
                         latent_state=latent_state,
-                        parents={p: current[p] for p in instant_parents[component_id]},
-                        history={
-                            p: values[p][:index] for p in lagged_parents[component_id]
-                        },
-                        self_history=values[component_id][:index],
+                        parents=(
+                            {p: current[p] for p in instant_parents}
+                            if instant_parents
+                            else {}
+                        ),
+                        history=(
+                            {p: values[p][:index] for p in lagged_parents}
+                            if lagged_parents
+                            else {}
+                        ),
+                        self_history=own_values[:index],
                     )
-                    drawn = self.library.kernel(component.family)(context)
-                if not np.isfinite(drawn):
+                    drawn = kernel(context)
+                # math.isfinite, not np.isfinite: the argument is a Python float
+                # and the ufunc costs 1023ns against 27ns for the same predicate
+                # -- measured -- which on one draw per component per event was
+                # about a fifth of simulation time. The condition is identical.
+                if not math.isfinite(drawn):
                     raise ExecutionError(
                         f"component {component_id!r} (family {component.family!r}) "
                         f"drew a non-finite value {drawn!r} at event {index}"
                     )
                 current[component_id] = drawn
-                values[component_id][index] = drawn
-            for key in latent_keys:
-                traces[key][index] = latent_state[key]
+                own_values[index] = drawn
+            for key, trace in traced:
+                trace[index] = latent_state[key]
 
         return EventLog(
             n_events=n_events,

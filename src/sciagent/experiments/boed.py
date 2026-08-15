@@ -401,9 +401,15 @@ def update(
                 f"be strictly positive"
             )
         logs[hypothesis] = math.log(weight) + math.log(probability)
-    ceiling = max(logs[key] for key in sorted(logs))
-    shifted = {key: math.exp(logs[key] - ceiling) for key in sorted(logs)}
-    total = math.fsum(shifted[key] for key in sorted(shifted))
+    # One sort, not four. `logs` and `shifted` share a key set, so the three
+    # passes below were re-sorting the same list; `posterior` is sorted once for
+    # the result. The arithmetic is untouched -- the same values are exponentiated
+    # and folded in the same sorted order -- and this is on the update every
+    # planning search calls once per node per outcome cell.
+    live_order = sorted(logs)
+    ceiling = max(logs[key] for key in live_order)
+    shifted = {key: math.exp(logs[key] - ceiling) for key in live_order}
+    total = math.fsum(shifted[key] for key in live_order)
     return FrozenDict[HypothesisId, Probability](
         {key: Probability(shifted.get(key, 0.0) / total) for key in sorted(posterior)}
     )

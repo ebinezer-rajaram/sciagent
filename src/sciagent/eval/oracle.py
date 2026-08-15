@@ -97,6 +97,7 @@ import numpy as np
 from sciagent.core.errors import InferenceError, MalformedDesignError
 from sciagent.core.types import (
     ExperimentTemplateId,
+    Floats,
     HypothesisId,
     Probability,
     ScenarioId,
@@ -236,7 +237,9 @@ class OraclePolicyLength:
         return not self.identifiable or self.expected_steps > budget
 
 
-def _belief_key(belief: Mapping[HypothesisId, Probability]) -> tuple[int, ...]:
+def _belief_key(
+    belief: Mapping[HypothesisId, Probability], order: Sequence[HypothesisId]
+) -> tuple[int, ...]:
     """Return a coarse, order-independent key for memoising a belief.
 
     Rounded to a part in a million, which merges beliefs no further experiment
@@ -244,8 +247,13 @@ def _belief_key(belief: Mapping[HypothesisId, Probability]) -> tuple[int, ...]:
     beliefs that collide here differ by less than the Monte Carlo error of the
     table the beliefs came from, and their optimal continuations are identical
     to far more places than the value is reported to.
+
+    ``order`` is the hypothesis order to read ``belief`` in, and is required
+    rather than derived so that a search sorts its key set once instead of once
+    per visited node. The name still holds: any fixed order gives a key that
+    distinguishes the same beliefs, and a Bayes update never changes the key set.
     """
-    return tuple(round(float(belief[key]) * 1_000_000) for key in sorted(belief))
+    return tuple(round(float(belief[key]) * 1_000_000) for key in order)
 
 
 def _choice_key(
@@ -278,8 +286,13 @@ def _choice_key(
 def _mass_on(
     belief: Mapping[HypothesisId, Probability], truth: Sequence[HypothesisId]
 ) -> float:
-    """Return the belief's total mass on the hypotheses holding the truth."""
-    return math.fsum(float(belief[node_id]) for node_id in sorted(truth))
+    """Return the belief's total mass on the hypotheses holding the truth.
+
+    ``truth`` is summed in the order given. :func:`math.fsum` is exactly rounded,
+    so the value is the same whatever that order is; passing an order already
+    sorted simply saves a search from re-sorting it at every node.
+    """
+    return math.fsum(float(belief[node_id]) for node_id in truth)
 
 
 def _outcome_distribution(
@@ -359,6 +372,30 @@ def oracle_policy_length(
         tuple[tuple[int, ...], int], tuple[float, float, ExperimentTemplateId]
     ] = {}
 
+    # Hoisted out of `value`, which is the search's inner loop and is entered
+    # once per reachable belief per depth: the two key orders were re-sorting a
+    # key set fixed before the search began, and the outcome distributions were
+    # re-running their fsum and normalisation check per template per node.
+    #
+    # The distributions are memoised rather than precomputed, and that is not a
+    # style choice. `_outcome_distribution` *validates* `world`, so building all
+    # of them up front would make a search that never reaches a design fail on
+    # it -- and a prior that already identifies the truth reaches none of them,
+    # returning zero without consulting `world` at all. Eager construction
+    # silently tightened that precondition from "covers the designs the search
+    # reaches" to "covers and normalises every design offered".
+    truth_order = tuple(sorted(truth))
+    belief_order = tuple(sorted(prior))
+    distributions: dict[ExperimentTemplateId, tuple[float, ...]] = {}
+
+    def cells_of(template: ExperimentTemplateId) -> tuple[float, ...]:
+        """Return ``template``'s outcome distribution, validating it once."""
+        cells = distributions.get(template)
+        if cells is None:
+            cells = _outcome_distribution(template, world)
+            distributions[template] = cells
+        return cells
+
     def value(
         belief: Mapping[HypothesisId, Probability], depth: int
     ) -> tuple[float, float, ExperimentTemplateId | None]:
@@ -369,18 +406,18 @@ def oracle_policy_length(
         value returned for such a path is ``horizon + 1`` in total and is a
         lower bound rather than an estimate.
         """
-        if _mass_on(belief, truth) > IDENTIFIED:
+        if _mass_on(belief, truth_order) > IDENTIFIED:
             return 0.0, 1.0, None
         if depth == horizon:
             return 1.0, 0.0, None
-        key = (_belief_key(belief), depth)
+        key = (_belief_key(belief, belief_order), depth)
         cached = memo.get(key)
         if cached is not None:
             return cached[0], cached[1], cached[2]
 
         best: tuple[float, float, ExperimentTemplateId] | None = None
         for template in ordered:
-            cells = _outcome_distribution(template, world)
+            cells = cells_of(template)
             steps = 0.0
             reached = 0.0
             for cell, probability in enumerate(cells):
@@ -520,18 +557,33 @@ def greedy_expected_steps(
     """
     generator = np.random.default_rng(int(seed))
     lengths: list[int] = []
+    # As in `oracle_policy_length`: the truth order is fixed for the whole
+    # rollout set, and a design's outcome distribution is fixed with it. Both are
+    # built once rather than once per step of every rollout, and the
+    # distributions are kept as numpy arrays because `generator.choice` needs one
+    # and was converting the same tuple on every draw.
+    #
+    # Memoised on first use, not precomputed, for the reason given in
+    # `oracle_policy_length`: `_outcome_distribution` validates `world`, and a
+    # prior that already identifies the truth selects no design at all. Building
+    # every distribution up front would make this raise where it used to return.
+    truth_order = tuple(sorted(truth))
+    cell_arrays: dict[ExperimentTemplateId, Floats] = {}
     for _ in range(rollouts):
         belief: Mapping[HypothesisId, Probability] = prior
         for step in range(1, limit + 1):
-            if _mass_on(belief, truth) > IDENTIFIED:
+            if _mass_on(belief, truth_order) > IDENTIFIED:
                 lengths.append(step - 1)
                 break
             template = select(templates, belief, predict).template
-            cells = _outcome_distribution(template, world)
-            cell = int(generator.choice(len(cells), p=np.asarray(cells)))
+            cells = cell_arrays.get(template)
+            if cells is None:
+                cells = np.asarray(_outcome_distribution(template, world))
+                cell_arrays[template] = cells
+            cell = int(generator.choice(len(cells), p=cells))
             belief = update(belief, template, cell, predict)
         else:
-            if _mass_on(belief, truth) > IDENTIFIED:
+            if _mass_on(belief, truth_order) > IDENTIFIED:
                 lengths.append(limit)
     if not lengths:
         return None, 0.0

@@ -261,12 +261,29 @@ def sort_key(edit: Edit) -> tuple[str, str, str, tuple[tuple[str, float], ...]]:
 
     Total and process-independent, so a ``Defect`` (an unordered set) has one
     canonical encoding and one canonical application order.
+
+    Parameter values are normalised by ``float(value) + 0.0``, which is what
+    makes this key agree with ``Defect`` equality. Two defects are equal when
+    their parameters compare equal, but the callers that *render* this key --
+    ``structure_key`` and ``defect_key``, which address table rows and registry
+    fields -- render through ``repr``. Equality and ``repr`` disagree in exactly
+    two places: ``1 == 1.0`` across the numeric tower, and ``-0.0 == 0.0`` across
+    signed zeros. Without normalisation two equal defects could be addressed by
+    two different strings, and a memoised renderer keyed on equality would return
+    whichever was rendered first -- making a content address depend on call order,
+    which the determinism invariant forbids.
+
+    The normalisation is currently a no-op and is here to stay that way: every
+    parameter reaching an edit comes from ``ParameterGrid.values``, which builds
+    each value with ``float(...)``. Measured over all 23 grids in both grammars,
+    1472 values, plus the closed set's own 13: no non-float, no signed zero. This
+    enforces that rather than trusting it.
     """
     return (
         type(edit).__name__,
         _target_key(edit),
         _option_key(edit),
-        tuple(edit.parameters.items()),
+        tuple((name, float(value) + 0.0) for name, value in edit.parameters.items()),
     )
 
 

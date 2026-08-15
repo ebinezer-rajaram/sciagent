@@ -3386,3 +3386,121 @@ corpus exists. Worth deciding before item 15 records, not after.
 **Closes off.** Do not re-add `CLAUDE_CODE_SIMPLE`; `tests/test_llm.py` asserts
 `options.env == {}` for that reason, since re-adding it would break every live
 recording while the offline tests stayed green.
+
+## 2026-08-16 — performance: where the simulation time actually was, and the one convention it cost
+
+**Decision.** An optimisation pass over the event loop, the two defect-key
+renderings and the oracle's search, taken only where the change is an
+equivalence transformation. `DrawContext` is no longer `frozen`, which is a
+deliberate exception to this project's rule that value types are frozen.
+
+**Why the exception.** A `DrawContext` is constructed at exactly one site,
+passed to one kernel and discarded; nothing hashes it, compares it or stores it.
+It is an execution context, not a value. `frozen=True` routes all eight fields
+through `object.__setattr__`, and one context is built per component per event.
+`slots=True` stays, so a kernel still cannot invent an attribute; what is given
+up is the error on rebinding an existing one, which no kernel does. If that
+trade ever looks wrong, the measurement below is what to re-examine, not the
+convention.
+
+**Measured, per draw, and this is the part worth keeping.** These cost a
+morning to isolate and are invisible in a profile that attributes ufunc time to
+its caller:
+
+| call | ns/op |
+|---|---|
+| `np.isfinite(x)` on a Python float | **1023.5** |
+| `math.isfinite(x)` | **27.4** |
+| frozen+slots dataclass, 8 fields | **1175.6** |
+| plain slots dataclass, 8 fields | **275.3** |
+| `FrozenDict.__getitem__` | 47.7 |
+| `dict.__getitem__` | 19.9 |
+
+`np.isfinite` on a *scalar* is the surprise: a ufunc dispatch costs forty times
+the `math` predicate for the identical condition. At one guard per draw it was
+about a fifth of simulation time on its own. The rule this leaves behind is
+narrow and worth keeping: **inside a per-draw or per-event loop, reach for
+`math`, not for a numpy ufunc on a scalar.** Nothing here argues against numpy
+on arrays, which is where the elementwise half of `core/reductions.py` still
+belongs.
+
+**Measured, on the suite, warm and on identical cache addresses.** The eight
+slowest tests went from 359.8s to 214.8s. The two largest movements:
+`test_the_floor_never_exceeds_what_greedy_achieves[S1]` 162.22s → 95.11s, and
+`test_the_table_is_reproducible_across_builds` 51.33s → 26.90s. No new file
+appeared in `.cache/tables/`, which is the useful check: the content addresses
+did not move, so the tables hold the same numbers.
+
+**Tried and abandoned: a `NamedTuple` `DrawContext`.** It reached 2.25x against
+1.47x for the hoisting alone, bit-exact over 300 triples. Rejected because a
+`NamedTuple` field named `index` shadows `tuple.index`, which pyright flags and
+which would leave a value type whose most-read attribute collides with a method
+of its own base. Dropping `frozen=` from the dataclass buys effectively the same
+construction cost with none of that.
+
+**Tried and abandoned: committing golden digests as a regression test.** It was
+the intended verification for this pass and it contradicts the entry of
+2026-08-15 on the cross-platform instrument, which states that A1 "deliberately
+asserts no *value*, because the cross-platform claim is settled by diffing two
+runs and not by a constant checked into a test". A digest constant captured on
+Windows would also make the *unresolved* event-loop-versus-metric-layer question
+fail as if it were a regression, in exactly the cloud sessions this repository
+is meant to be driven from. Evidence for this pass is instead the before/after
+diff of `tests/acceptance/determinism_child.py`: all 36 lines identical, both
+layers.
+
+**The caches opened an invariant-3 hole, and closing it fixed an older one.**
+Found by the `invariant-auditor` on the finished diff, not by writing it.
+`structure_key` and `defect_key` gained `@lru_cache`, which identifies arguments
+by `__eq__`; both *render* their key through `repr`. Those disagree in exactly
+two places — `1 == 1.0` across the numeric tower and `-0.0 == 0.0` across signed
+zeros. Before the caches, two equal-but-differently-rendered defects produced two
+different table addresses: wrong, but deterministic. With them, the second is a
+cache hit and gets the first's string, so which address a structure lands under
+becomes a function of call order. That is the thing invariant 3 exists to forbid,
+and it reaches a content-addressed table.
+
+Fixed at the root rather than by dropping the caches: `sort_key` now normalises
+each parameter with `float(value) + 0.0`, so equal defects cannot render
+differently and the older latent bug is closed with the new one. **Measured
+before making it: across all 23 grids in both grammars, 1472 values, plus the
+closed set's own 13 — no non-float, no signed zero.** The normalisation is
+therefore a no-op on every value the grammar can currently produce, which is why
+no table address moved, and it is in the code to keep it that way rather than to
+change anything today. `ParameterGrid.values` is what makes it true, building
+every value through `float(...)`; `parameters(**values: float)` does not check at
+runtime, and mypy's numeric tower admits an `int` silently.
+
+**Left deliberately incomplete, with the number attached.** Parallelising the
+replicate loop in `EmpiricalTable.with_structure` was prototyped and measured at
+**3.52x on 10 workers at 1000 replicates**, with counts identical to the serial
+build — each replicate is a pure function of `(defect, template, seed)` and a
+tally is an integer count, so a fixed reduction order cannot change a row. It
+was **not** taken, because it is a change to the execution model on the path
+invariant 3 protects and wants its own gate rather than inheriting confidence
+from this pass. Two things constrain the design if it is picked up: chunk by
+replicate and not by template, or the executor's one-slot log cache is destroyed
+(measured: it saves 60% of executions, 100 `simulate` calls to 40 `execute`
+calls); and Windows spawn costs about 1.4s of worker startup, so it is a loss
+below a few hundred replicates. On the 4 vCPU cloud VM the win is much smaller
+than 3.52x, and it would make every timing in this file incomparable — see the
+contention measurement in `CLAUDE.md`.
+
+**Also left open: nothing now guards the RNG stream against a future refactor.**
+A1 checks self-consistency across processes and repeats, which a refactor that
+moved the stream would still satisfy. That gap is the reason goldens were
+proposed at all, and it is still there.
+
+**Closes off.** The executor's one-slot log cache was examined and is already
+optimal on the slice's design set — the four `QueryDiagnostic` templates share an
+operation and hit it, and the remaining misses are genuine seed changes. Do not
+re-open it looking for a win.
+
+**One caveat on the green, and it is the hazard already recorded.** Both suite
+runs above shared a working tree with another session, which landed 973d79a
+("a second live backend") after the second run finished. That is the situation
+described on 2026-08-15 under "one working tree, two sessions, and a false
+green". The **per-test** durations are comparable — every test compared lives in
+`test_oracle.py`, `test_a06_a11.py` or `test_baselines_slice.py`, none of which
+that work touches — but the suite wall-clock is not, and the green predates the
+merge. Re-run before shipping rather than trusting it.

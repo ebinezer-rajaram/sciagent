@@ -52,6 +52,7 @@ import json
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 from sciagent.core.edits import Defect, EditGrammar, canonical, sort_key
@@ -97,6 +98,7 @@ _SEED_MODULUS = 1 << 63
 _RULE_OF_THREE = 3.0
 
 
+@lru_cache(maxsize=4096)
 def structure_key(defect: Defect) -> str:
     """Return a stable textual identity for an edit set.
 
@@ -106,6 +108,22 @@ def structure_key(defect: Defect) -> str:
     not depend on the order the edits were assembled in, on ``PYTHONHASHSEED``,
     or on the process -- a table row addressed by it means the same thing in
     every run.
+
+    Memoised. It earns its place because :meth:`EmpiricalTable.row` calls it on
+    every likelihood lookup, and a planning search calls that once per hypothesis
+    per node -- recanonicalising and re-rendering an edit set that has not
+    changed. The bound is generous next to the grammar's edit space and keeps a
+    long-running process from accumulating without limit.
+
+    The precondition is sharper than "a ``Defect`` is immutable", and is met by
+    construction rather than by assumption. :func:`functools.lru_cache` identifies
+    arguments by ``__eq__`` and ``__hash__``, while the key below is rendered from
+    ``repr``; the two agree only while no two *equal* parameter mappings render
+    differently, and both ``1 == 1.0`` and ``-0.0 == 0.0`` are true of values
+    whose ``repr`` differs. :func:`~sciagent.core.edits.sort_key` normalises the
+    values this key is built from for exactly that reason -- see its docstring.
+    Were that normalisation removed, this cache would return whichever rendering
+    was computed first and a table row's address would depend on call order.
     """
     parts = []
     for edit in canonical(defect):

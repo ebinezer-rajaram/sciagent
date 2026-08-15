@@ -58,6 +58,7 @@ import hashlib
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Final
 
 from sciagent.core.edits import Defect, canonical, sort_key
@@ -287,6 +288,7 @@ OPERATION_TYPES: Final[tuple[type, ...]] = (
 # --------------------------------------------------------------------------
 
 
+@lru_cache(maxsize=4096)
 def defect_key(defect: Defect) -> str:
     """Return a canonical string for a defect.
 
@@ -297,6 +299,14 @@ def defect_key(defect: Defect) -> str:
     defect -- the null hypothesis, which is a hypothesis and not an absence of
     one -- renders as ``"null"`` rather than as an empty string, so a defect
     field is never blank in a content address.
+
+    Memoised on the same argument as
+    :func:`~sciagent.inference.empirical.structure_key`, for the same reason --
+    it is called once per candidate per comparison on a path that revisits the
+    same handful of edit sets all run -- and sound for the same reason: the cache
+    identifies a ``Defect`` by ``__eq__`` while the key is rendered by ``repr``,
+    and :func:`~sciagent.core.edits.sort_key` normalises the values it renders so
+    that equal defects cannot render differently.
     """
     if not defect:
         return "null"

@@ -3292,3 +3292,97 @@ a file another session was holding, which is why it is not made here.
 caller asserts it. Closing that would mean the script owning the run, which
 forfeits backgrounding — the thing that makes 6m30s tolerable. Left open
 deliberately, and made moot by the worktree fix rather than solved separately.
+
+## 2026-08-15 — a second live backend, billed to a subscription
+
+**Decision.** `sciagent/systems/llm/agent_sdk_provider.py` reaches the same model
+through the Claude Agent SDK, which authenticates a spawned Claude Code process
+with a subscription token instead of API credits. It is a **sibling** of
+`AnthropicProvider`, not a replacement: the id is part of every call address, so
+the two cannot resolve each other's calls and the choice is made *before*
+recording. Most of the reasoning is in the module docstring, which is the right
+place for it; what follows is only what the repository cannot tell you.
+
+**Why now rather than later.** No transcript corpus exists yet. The provider id
+is in the address, so this choice is free today and costs a full re-record of
+item 15's matrix once one is on disk. That asymmetry, not the credit saving, is
+what made it worth doing before the matrix rather than after.
+
+**The external fact the whole thing rests on, with its date.** Anthropic
+announced on 2026-05-14 that Agent SDK and `claude -p` usage would leave the
+Pro/Max subscription pools on **2026-06-15** for a separate monthly credit
+(\$100 at Max 5x, \$200 at Max 20x) billed at API rates. It was **paused on the
+day it was due to take effect**; programmatic usage still draws on subscription
+limits, there is no credit to claim, and Anthropic said it is reworking the plan
+and will give advance notice. This is not derivable from the repo, it is
+expensive to re-research, and it decides whether this backend is viable at all.
+If it returns, the fallback is `AnthropicProvider`, which is why that module was
+kept working rather than migrated.
+
+**Work left deliberately incomplete, and what it waits on.** Three things, in
+descending order of how much they would hurt:
+
+1. **The hermetic option set is unproven against a real session.** Every offline
+   test injects a stand-in for `query`, so what is asserted is the request that
+   *would* be sent. The specific unknown is whether the CLI accepts
+   `--setting-sources=` — the SDK emits that empty form for `setting_sources=[]`,
+   and nothing offline can say the CLI reads it as "none" rather than as one
+   unnamed source. Waiting on one live call.
+2. **Subscription rate limits across a recording run are unmeasured.** Item 15 is
+   ~1120 proposals; Max has 5-hour and weekly caps. Whether a matrix fits, or
+   needs to be spread over days, is a pilot measurement nobody has taken.
+3. **The Claude Code binary version is not in the call address.** It is part of
+   what produced the artefact and not part of its identity. A corpus recorded
+   through this backend is reproducible given a *comparable* binary, not any
+   binary — a real gap, recorded rather than hidden, and not closable without
+   changing `ADDRESS_VERSION` and every address with it.
+
+**Closes off.** Nothing about the Messages API path, which is untouched and still
+the default anywhere a script names a provider explicitly. It does *not* settle
+which backend item 15 records against — that needs (1) and (2) answered first.
+
+## 2026-08-15 — the Agent SDK backend, measured against live sessions
+
+Closes open item (1) of the entry above. Item (2) — subscription rate caps across
+a recording run — is still unmeasured, and item (3) has changed shape.
+
+**The hermetic option set works, and here are the numbers.** A live session under
+`setting_sources=[]`, `tools=[]`, `skills=None` and a bare-string `system_prompt`
+reports `tools == ["StructuredOutput"]` — every built-in tool off — no project
+skills, no project agents, no MCP servers, no plugins, and `apiKeySource: "none"`
+confirming subscription auth. The load-bearing figure is the **593-token total
+prompt**: Claude Code's own system prompt plus the sixteen bundled skill
+descriptions the manifest still lists would be thousands of tokens, so the
+manifest lists what the *session* knows about, not what reaches the model. A full
+proposal costs roughly **$0.008–0.05**; a trivial turn measured $0.0078.
+
+**An approach that looked right, passed a probe, and was wrong.**
+`env={"CLAUDE_CODE_SIMPLE": "1"}` — what `--bare` sets — was added to close the
+one residual, and reverted. Setting it *does* drop `memory_paths` from the
+manifest while `apiKeySource` stays `"none"`, so an init-only probe says the two
+halves of bare mode are separable. They are not: with it set, **every turn fails**
+— `is_error=True` under a `success` subtype, no output, `total_cost_usd == 0`,
+meaning no model call was made — while a control turn without it succeeds. The
+probe was too cheap to be honest, because it broke out of the stream before the
+model ran and so never exercised authentication. **A manifest that looks right is
+not a turn that works**; any future probe of this backend must complete a turn.
+
+**The residual it was meant to fix does not leak, and that is measured too.**
+`memory_paths.auto` stays resolved under `setting_sources=[]`, pointing at the
+per-project auto-memory directory — which is exactly where a Claude Code session
+is told to write memories, so it reads as a contamination path that would arm
+itself later. A canary file planted there, with a session asked to report any such
+token back, came back `"none"`. Resolved in the manifest, not read into the
+prompt. Re-run that canary before trusting this if the CLI's memory behaviour ever
+changes.
+
+**Item (3) has changed shape: the binary version is now observable.** The init
+event carries `claude_code_version` (`2.1.233` for these measurements). The gap is
+no longer that it cannot be seen — it is that `call_address` does not cover it and
+`Transcript` has no field to hold it. Closing it properly means changing
+`ADDRESS_VERSION` and invalidating every address, which is cheap only while no
+corpus exists. Worth deciding before item 15 records, not after.
+
+**Closes off.** Do not re-add `CLAUDE_CODE_SIMPLE`; `tests/test_llm.py` asserts
+`options.env == {}` for that reason, since re-adding it would break every live
+recording while the offline tests stayed green.

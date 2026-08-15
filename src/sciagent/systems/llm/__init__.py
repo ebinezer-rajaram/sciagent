@@ -17,9 +17,16 @@ The modules, in dependency order:
   ``ProposalLayer`` that holds all the reproducible machinery.
 * :mod:`~sciagent.systems.llm.scripted` -- a deterministic backend, for tests and
   for A17's negative control.
-* :mod:`~sciagent.systems.llm.anthropic_provider` -- the live backend. Not
-  imported here: a replay must not need the SDK, or an environment without it
-  could not reproduce a recorded run.
+* :mod:`~sciagent.systems.llm.anthropic_provider` -- a live backend, over the
+  Messages API and billed to API credits.
+* :mod:`~sciagent.systems.llm.agent_sdk_provider` -- a live backend, over the
+  Claude Agent SDK and billed to a Claude subscription.
+
+Neither live backend is imported here. A replay must not need an SDK, or an
+environment without one could not reproduce a recorded run. They are siblings and
+not alternatives to be swapped mid-corpus: a provider's ``id`` is part of every
+call address, so the choice between them is made before recording and a corpus
+belongs to the backend that produced it.
 
 The whole package is inside ``AGENT_TOOL_SURFACE``, so A14 and A17 analyse every
 path through it.

@@ -19,6 +19,7 @@ dev = [
     "hypothesis>=6.112",
     "mypy>=1.11",
     "ruff>=0.6",
+    "claude-agent-sdk>=0.2.139",
 ]
 
 [build-system]

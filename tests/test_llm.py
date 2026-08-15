@@ -772,3 +772,389 @@ class TestTheAnthropicProvider:
 
     def test_the_sdk_is_a_declared_dependency(self) -> None:
         assert _sdk_available(), "anthropic is declared in pyproject but not installed"
+
+
+@lru_cache(maxsize=1)
+def _agent_sdk_available() -> bool:
+    try:
+        import claude_agent_sdk  # noqa: F401
+    except ImportError:  # pragma: no cover - dependency is declared
+        return False
+    return True
+
+
+#: A payload that decodes against ``AGENT_GRAMMAR``: structure 0 there is an
+#: ``AddDependency`` taking three parameters, so an empty grid tuple would be
+#: refused by the decoder before any of this backend's behaviour was reached.
+AGENT_SDK_PROPOSAL = fixed_payload(0, (1, 2, 3))
+
+
+def _clear_contaminants(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unset every variable the provider refuses to run alongside.
+
+    Without this the suite would pass or fail according to what the developer
+    happened to have exported -- an ``ANTHROPIC_BASE_URL`` on one machine and not
+    another is exactly the contamination the provider exists to refuse.
+    """
+    from sciagent.systems.llm.agent_sdk_provider import CONTAMINATING_VARIABLES
+
+    for name, _ in CONTAMINATING_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+
+
+def _model_usage(cost: float = 0.01, canonical: str | None = None) -> Any:
+    """Return one per-model usage entry, in the SDK's camelCase wire shape."""
+    entry: dict[str, Any] = {
+        "inputTokens": 100,
+        "outputTokens": 10,
+        "cacheReadInputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "webSearchRequests": 0,
+        "costUSD": cost,
+        "contextWindow": 1_000_000,
+        "maxOutputTokens": 128_000,
+    }
+    if canonical is not None:
+        entry["canonicalModel"] = canonical
+    return entry
+
+
+def _result(**overrides: Any) -> Any:
+    """Return a successful ``ResultMessage``, with fields optionally changed."""
+    from claude_agent_sdk import ResultMessage
+
+    fields: dict[str, Any] = {
+        "subtype": "success",
+        "duration_ms": 1,
+        "duration_api_ms": 1,
+        "is_error": False,
+        "num_turns": 1,
+        "session_id": "test-session",
+        "structured_output": AGENT_SDK_PROPOSAL,
+        "model_usage": {"claude-opus-5": _model_usage()},
+    }
+    fields.update(overrides)
+    return ResultMessage(**fields)
+
+
+def _stub_runner(result: Any, captured: dict[str, Any] | None = None) -> Any:
+    """Return a stand-in for ``claude_agent_sdk.query`` that yields ``result``.
+
+    Records what it was called with, so a test can assert on the request that
+    *would* have been sent without a process being spawned to send it.
+    """
+
+    async def runner(*, prompt: str, options: Any) -> Any:
+        if captured is not None:
+            captured["prompt"] = prompt
+            captured["options"] = options
+        yield result
+
+    return runner
+
+
+class TestTheAgentSdkProvider:
+    """The subscription-authenticated backend, exercised without a subscription.
+
+    Everything here injects a stand-in for ``query``, so no process is spawned,
+    no credential is read and no quota is spent. What cannot be asserted offline
+    -- that a real session accepts this option set -- is a live check, not a test.
+    """
+
+    def test_it_can_be_constructed_and_addressed_without_credentials(self) -> None:
+        """Same lazy-construction property the Messages API backend has.
+
+        The SDK is imported on the first call rather than at ``__init__``, so an
+        address can be computed, and a transcript replayed, where the SDK and the
+        credential are both absent.
+        """
+        from sciagent.systems.llm.agent_sdk_provider import AgentSdkProvider
+
+        provider = AgentSdkProvider()
+        assert provider.id == "claude-agent-sdk"
+        assert provider.model == "claude-opus-5"
+        assert _address(provider=provider.id, model=provider.model).startswith("call/")
+
+    def test_the_two_backends_address_one_request_differently(self) -> None:
+        """The corpus-separation property, asserted rather than assumed.
+
+        Same model, same brief, same schema: the only difference is which door
+        the call went through, and that is enough to make the addresses disagree.
+        A corpus recorded through one backend therefore cannot resolve a call
+        recorded through the other, which is what stops the two being mixed in
+        a single recorded run without anyone noticing.
+        """
+        from sciagent.systems.llm.agent_sdk_provider import AgentSdkProvider
+        from sciagent.systems.llm.anthropic_provider import AnthropicProvider
+
+        messages_api = AnthropicProvider()
+        agent_sdk = AgentSdkProvider()
+        assert messages_api.model == agent_sdk.model
+        assert _address(provider=messages_api.id, model=messages_api.model) != _address(
+            provider=agent_sdk.id, model=agent_sdk.model
+        )
+
+    def test_the_request_it_builds_carries_no_ambient_context(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The hermeticity guarantee, which is this backend's whole difficulty.
+
+        Claude Code reads ``~/.claude``, the project's ``.claude/``, ``CLAUDE.md``
+        and its skills by default. Any of them would be an input to the model
+        that the brief does not mention and the address therefore does not cover,
+        which would make a recorded corpus replay only on the machine that
+        recorded it. ``--bare`` cannot be used, because bare mode never reads the
+        OAuth credential this backend authenticates with, so the guarantee is
+        assembled field by field -- and this is the test that says so.
+        """
+        from sciagent.systems.llm.agent_sdk_provider import AgentSdkProvider
+
+        _clear_contaminants(monkeypatch)
+        captured: dict[str, Any] = {}
+        provider = AgentSdkProvider(runner=_stub_runner(_result(), captured))
+
+        provider.complete("SYSTEM", "BRIEF", SCHEMA)
+
+        options = captured["options"]
+        assert captured["prompt"] == "BRIEF"
+        # A bare string replaces Claude Code's prompt; a preset dict would
+        # prepend it and the brief would stop being the whole input.
+        assert options.system_prompt == "SYSTEM"
+        assert options.setting_sources == []
+        assert options.tools == []
+        # What the SDK documents for "no skills". Inert in practice -- no
+        # --skills flag is emitted for either value -- so this pins the stated
+        # intent, not the guarantee. The guarantee is tools=[] plus the replaced
+        # system prompt, measured live at a 593-token total prompt.
+        assert options.skills == []
+        # Guards a dead end rather than a feature. CLAUDE_CODE_SIMPLE=1 is what
+        # --bare sets, and setting it drops memory_paths from the session
+        # manifest while apiKeySource stays "none" -- so it looks like bare
+        # mode's context-skipping without bare mode's API-key requirement. It is
+        # not: every turn then fails with no model call at all. Re-adding it
+        # would break every live recording while the offline tests stayed green.
+        assert options.env == {}
+        assert options.mcp_servers == {}
+        assert options.strict_mcp_config is True
+        assert options.max_turns == 1
+        assert options.model == "claude-opus-5"
+        assert options.output_format == {"type": "json_schema", "schema": dict(SCHEMA)}
+
+    @pytest.mark.parametrize(
+        "variable",
+        [
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_BASE_URL",
+            "CLAUDE_CODE_USE_BEDROCK",
+            "CLAUDE_CODE_USE_VERTEX",
+            "CLAUDE_CODE_SIMPLE",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+        ],
+    )
+    def test_an_inherited_variable_that_would_change_the_run_refuses(
+        self, monkeypatch: pytest.MonkeyPatch, variable: str
+    ) -> None:
+        """The option set covers what is sent; it cannot cover what is inherited.
+
+        The SDK builds the child's environment as ``{**os.environ,
+        **options.env}``, and a merge adds but never removes, so none of these
+        can be unset from here -- only noticed. Each either redirects the account
+        (billing the wrong one while appearing to succeed, the failure this
+        backend was chosen to avoid) or changes the artefact itself under an
+        address that does not cover it.
+        """
+        from sciagent.systems.llm.agent_sdk_provider import AgentSdkProvider
+
+        _clear_contaminants(monkeypatch)
+        monkeypatch.setenv(variable, "1")
+        provider = AgentSdkProvider(runner=_stub_runner(_result()))
+        with pytest.raises(ProviderError, match=variable):
+            provider.complete("s", "b", SCHEMA)
+
+    def test_a_turn_served_by_another_provider_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Bedrock or Vertex serving the turn is a different account entirely.
+
+        Belt and braces with the environment check: that one runs before the
+        call and this one reads the evidence the response itself carries.
+        """
+        from sciagent.systems.llm.agent_sdk_provider import AgentSdkProvider
+
+        _clear_contaminants(monkeypatch)
+        usage = _model_usage()
+        usage["provider"] = "bedrock"
+        provider = AgentSdkProvider(
+            runner=_stub_runner(_result(model_usage={"claude-opus-5": usage}))
+        )
+        with pytest.raises(ProviderError, match="bedrock"):
+            provider.complete("s", "b", SCHEMA)
+
+    def test_an_alias_whose_canonical_id_differs_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The raw usage key only echoes what the caller asked for.
+
+        A provider pinned to ``"opus"`` must not be satisfied by usage keyed
+        ``"opus"`` that priced as a different model: the key is the string the
+        CLI was invoked with, and the canonical id is what actually served the
+        turn. Accepting either would let the echo vouch for the substitution.
+        """
+        from sciagent.systems.llm.agent_sdk_provider import AgentSdkProvider
+
+        _clear_contaminants(monkeypatch)
+        provider = AgentSdkProvider(
+            model="opus",
+            runner=_stub_runner(
+                _result(model_usage={"opus": _model_usage(canonical="claude-sonnet-5")})
+            ),
+        )
+        with pytest.raises(ProviderError, match="claude-sonnet-5"):
+            provider.complete("s", "b", SCHEMA)
+
+    def test_the_api_key_refusal_can_be_overridden_deliberately(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The refusal is a guard against an accident, not a prohibition."""
+        from sciagent.systems.llm.agent_sdk_provider import AgentSdkProvider
+
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-whatever")
+        provider = AgentSdkProvider(
+            require_subscription=False, runner=_stub_runner(_result())
+        )
+        assert provider.complete("s", "b", SCHEMA) == AGENT_SDK_PROPOSAL
+
+    def test_a_response_served_by_another_model_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An address names a model, so a substitute's answer is not recordable.
+
+        The same reasoning as the Messages API backend's refusal to fall back to
+        another model, applied to a backend that has more ways to serve one.
+        """
+        from sciagent.systems.llm.agent_sdk_provider import AgentSdkProvider
+
+        _clear_contaminants(monkeypatch)
+        provider = AgentSdkProvider(
+            runner=_stub_runner(
+                _result(model_usage={"claude-sonnet-5": _model_usage()})
+            )
+        )
+        with pytest.raises(ProviderError, match="not by 'claude-opus-5'"):
+            provider.complete("s", "b", SCHEMA)
+
+    def test_an_alias_that_resolved_to_the_pinned_model_is_accepted(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The canonical id counts as evidence, not only the raw key.
+
+        The CLI keys usage by the model string it was invoked with and reports
+        what pricing resolved that to. Demanding the raw key alone would refuse a
+        run that in fact reached the right model.
+        """
+        from sciagent.systems.llm.agent_sdk_provider import AgentSdkProvider
+
+        _clear_contaminants(monkeypatch)
+        provider = AgentSdkProvider(
+            runner=_stub_runner(
+                _result(model_usage={"opus": _model_usage(canonical="claude-opus-5")})
+            )
+        )
+        assert provider.complete("s", "b", SCHEMA) == AGENT_SDK_PROPOSAL
+
+    def test_a_response_with_no_per_model_usage_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Absence of evidence is refused too, deliberately.
+
+        A result carrying no per-model usage does not say the right model
+        answered. Recording it would put an unverified claim in the provenance
+        chain, which is worse than a run that stops.
+        """
+        from sciagent.systems.llm.agent_sdk_provider import AgentSdkProvider
+
+        _clear_contaminants(monkeypatch)
+        provider = AgentSdkProvider(runner=_stub_runner(_result(model_usage=None)))
+        with pytest.raises(ProviderError, match="no per-model usage"):
+            provider.complete("s", "b", SCHEMA)
+
+    @pytest.mark.parametrize(
+        ("overrides", "expected"),
+        [
+            ({"stop_reason": "refusal"}, "declined to answer"),
+            ({"stop_reason": "max_tokens"}, "output ceiling"),
+            (
+                {"subtype": "error_during_execution", "is_error": True},
+                "ended as 'error_during_execution'",
+            ),
+            ({"structured_output": None}, "no structured output"),
+            ({"structured_output": [1, 2]}, "list where the schema"),
+        ],
+    )
+    def test_an_unusable_session_raises_rather_than_returning_a_payload(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        overrides: dict[str, Any],
+        expected: str,
+    ) -> None:
+        """Every way a session can fail to carry a proposal is an error here.
+
+        A provider that returned something plausible on a failed session would
+        put it in the corpus, where nothing downstream could tell it apart from
+        an answer.
+        """
+        from sciagent.systems.llm.agent_sdk_provider import AgentSdkProvider
+
+        _clear_contaminants(monkeypatch)
+        provider = AgentSdkProvider(runner=_stub_runner(_result(**overrides)))
+        with pytest.raises(ProviderError, match=expected):
+            provider.complete("s", "b", SCHEMA)
+
+    def test_a_session_that_yields_no_result_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A stream that ends without a result message records nothing."""
+        from sciagent.systems.llm.agent_sdk_provider import AgentSdkProvider
+
+        _clear_contaminants(monkeypatch)
+
+        async def empty(*, prompt: str, options: Any) -> Any:
+            return
+            yield  # pragma: no cover - makes this an async generator
+
+        provider = AgentSdkProvider(runner=empty)
+        with pytest.raises(ProviderError, match="without a result message"):
+            provider.complete("s", "b", SCHEMA)
+
+    def test_the_layer_records_a_proposal_through_this_backend(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """End to end: the payload decodes and lands under this backend's address.
+
+        The layer is the thing that has to be indifferent to which backend it
+        holds, so this asserts the same path the scripted and Messages API
+        backends travel, with the transcript attributed to this one.
+        """
+        from sciagent.systems.llm.agent_sdk_provider import AgentSdkProvider
+
+        _clear_contaminants(monkeypatch)
+        provider = AgentSdkProvider(runner=_stub_runner(_result()))
+        store = TranscriptStore(mode=RECORD)
+        layer = ProposalLayer(provider, AGENT_GRAMMAR, store)
+
+        proposal = layer.propose(_investigation("S1"))
+
+        assert proposal.program_edit == decode(
+            AGENT_GRAMMAR, MENU, draft_from_payload(AGENT_SDK_PROPOSAL)
+        )
+        assert store.misses == 1
+        (transcript,) = tuple(store)
+        assert transcript.provider == "claude-agent-sdk"
+        assert transcript.model == "claude-opus-5"
+        assert transcript.address == proposal.address
+
+    def test_the_sdk_is_a_declared_dependency(self) -> None:
+        assert _agent_sdk_available(), (
+            "claude-agent-sdk is declared in pyproject's dev group but not installed"
+        )

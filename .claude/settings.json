@@ -11,6 +11,46 @@
       "Bash(git log*)",
       "Bash(git show*)",
       "Bash(git check-ignore*)"
+    ],
+    "deny": [
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Read(**/*.pem)",
+      "Read(**/*.pfx)",
+      "Read(**/*.key)",
+      "Read(**/id_rsa*)",
+      "Read(**/secrets/**)",
+      "Read(**/credentials*)",
+      "Read(**/.ssh/**)",
+      "Read(**/.aws/**)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.config/gh/**)",
+      "Read(~/.claude/config.json)",
+      "Read(~/.claude/.credentials.json)",
+      "Edit(**/.env)",
+      "Edit(**/.env.*)",
+      "Edit(**/.git/config)",
+      "Edit(**/.ssh/**)",
+      "Edit(~/.ssh/**)",
+      "Edit(~/.claude/settings.json)",
+      "Bash(curl *)",
+      "Bash(wget *)",
+      "Bash(git push --force*)",
+      "Bash(git push -f *)",
+      "Bash(git reset --hard*)",
+      "Bash(rm -rf /*)",
+      "Bash(rm -rf ~*)",
+      "PowerShell(Invoke-WebRequest*)",
+      "PowerShell(iwr*)",
+      "PowerShell(Invoke-Expression*)",
+      "PowerShell(iex*)",
+      "PowerShell(curl*)",
+      "PowerShell(wget*)",
+      "PowerShell(git push --force*)",
+      "PowerShell(git push -f *)",
+      "PowerShell(git reset --hard*)",
+      "PowerShell(Remove-Item*-Recurse*-Force*)"
     ]
   },
   "hooks": {
@@ -21,7 +61,7 @@
           {
             "type": "command",
             "command": "uv run python scripts/status.py",
-            "timeout": 60,
+            "timeout": 180,
             "statusMessage": "Reading build status"
           }
         ]

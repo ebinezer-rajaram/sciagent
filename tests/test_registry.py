@@ -9,6 +9,11 @@ overstate what that criterion checks.
 
 from __future__ import annotations
 
+import gc
+import sqlite3
+import threading
+import weakref
+
 import pytest
 
 from environments.pointproc.catalogue import METRIC_VERSION, metric_registry
@@ -16,11 +21,13 @@ from sciagent.core.errors import (
     BudgetError,
     BudgetExhaustedError,
     DuplicateMetricError,
+    RegistryError,
     UnknownMetricError,
 )
 from sciagent.core.types import MetricName
 from sciagent.registry.budget import Budget
 from sciagent.registry.metrics import MetricRef, MetricRegistry, MetricSpec
+from sciagent.registry.store import ExperimentStore
 
 
 class TestBudget:
@@ -107,3 +114,77 @@ class TestMetricRegistry:
 
     def test_an_empty_registry_has_its_own_version(self) -> None:
         assert MetricRegistry().version != metric_registry().version
+
+
+class TestTheConnectionIsReleasedByRefcountingAlone:
+    """The authorizer must not keep the store, and the store not the handle.
+
+    The authorizer closure is installed on the connection and has to read the
+    append grant. Capturing the *store* to do that made
+    ``connection -> closure -> store -> connection`` a cycle, so the sqlite
+    handle outlived its last reference and waited on the cyclic collector.
+    Nothing was wrong with the append-only guarantee; what suffered was release
+    timing, and on Windows a still-open handle is what makes a temporary
+    directory refuse to go away. :class:`~sciagent.registry.store._AppendGrant`
+    exists to break that edge.
+    """
+
+    def test_the_authorizer_does_not_keep_the_store_alive(self) -> None:
+        """A dropped store is freed with the cyclic collector switched off.
+
+        Disabling the collector is the whole test: with it on, a cycle is
+        collected eventually and the assertion passes either way, which is
+        exactly the reassurance that let the cycle in. Refcounting frees an
+        object only when nothing references it, so this can only pass if the
+        closure on the connection does not reach the store.
+        """
+        gc.disable()
+        try:
+            store = ExperimentStore.in_memory()
+            reference = weakref.ref(store)
+            assert reference() is not None
+            del store
+            assert reference() is None, (
+                "the store survived its last reference with the cyclic "
+                "collector off, so something on the connection still reaches it"
+            )
+        finally:
+            gc.enable()
+
+    def test_the_grant_reaches_neither_the_store_nor_the_connection(self) -> None:
+        """The object the closure captures is a leaf, which is why this works."""
+        store = ExperimentStore.in_memory()
+        reachable = gc.get_referents(store._grant)
+        assert not any(isinstance(item, ExperimentStore) for item in reachable)
+        assert not any(isinstance(item, sqlite3.Connection) for item in reachable)
+        store.close()
+
+    def test_the_connection_refuses_a_second_thread(self) -> None:
+        """``check_same_thread`` is what lets the grant be a plain flag.
+
+        The grant is open for the whole of an append rather than for one
+        statement, and the argument that nothing can use that window is that no
+        other thread can reach the connection at all. That argument was only ever
+        written in a docstring; this is it as a check. A future
+        ``check_same_thread=False`` for a worker pool would widen the append
+        window to anything a second thread could issue, and would fail here
+        rather than silently.
+        """
+        store = ExperimentStore.in_memory()
+        refusals: list[RegistryError] = []
+
+        def read() -> None:
+            try:
+                store.count()
+            except RegistryError as error:
+                refusals.append(error)
+
+        thread = threading.Thread(target=read)
+        thread.start()
+        thread.join()
+        store.close()
+        assert refusals, "a second thread reached the connection and read from it"
+        assert "same thread" in str(refusals[0]), (
+            f"refused, but not for the reason the grant's safety rests on: "
+            f"{refusals[0]}"
+        )

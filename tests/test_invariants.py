@@ -73,8 +73,41 @@ def test_sciagent_core_performs_no_io() -> None:
 SEEDED_CONSTRUCTORS = frozenset({"Generator", "PCG64", "SeedSequence", "default_rng"})
 
 
+def _numpy_aliases(tree: ast.AST) -> set[str]:
+    """Return every local name an ``import numpy`` statement binds the package to.
+
+    ``import numpy`` binds ``numpy``; ``import numpy as np`` binds ``np``; and
+    ``import numpy as onp`` binds ``onp``. All three reach the same package, so
+    all three have to be resolved before an attribute walk can say anything
+    about what a module touches.
+    """
+    aliases: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            aliases.update(
+                alias.asname or alias.name
+                for alias in node.names
+                if alias.name == "numpy"
+            )
+    return aliases
+
+
 def _numpy_random_uses(tree: ast.AST) -> list[ast.Attribute]:
-    """Return every ``np.random.<attr>`` reference in a parsed module."""
+    """Return every ``<numpy>.random.<attr>`` reference in a parsed module.
+
+    The base is resolved through :func:`_numpy_aliases` rather than matched
+    against the identifier ``np``. Pinning it to ``np`` made this a check on the
+    house style: ``import numpy as onp`` followed by ``onp.random.normal(...)``
+    reaches the global generator and was invisible, and so was the plain
+    ``import numpy`` / ``numpy.random.normal(...)`` -- neither is caught by
+    :func:`_numpy_random_imports` either, which looks for ``numpy.random`` and
+    ``from numpy import random`` and never sees a bare ``import numpy``.
+
+    Resolving the alias is also what keeps this from degenerating into a
+    substring check: an unrelated ``mypkg.random.normal`` is not numpy's and is
+    not returned.
+    """
+    aliases = _numpy_aliases(tree)
     found: list[ast.Attribute] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Attribute):
@@ -84,7 +117,7 @@ def _numpy_random_uses(tree: ast.AST) -> list[ast.Attribute]:
             isinstance(value, ast.Attribute)
             and value.attr == "random"
             and isinstance(value.value, ast.Name)
-            and value.value.id == "np"
+            and value.value.id in aliases
         ):
             found.append(node)
     return found
@@ -199,3 +232,112 @@ def test_no_unseeded_randomness(path: Path) -> None:
         if module == "random" or module.startswith("random.")
     }
     assert not stdlib_random, f"{path} imports the stdlib random module"
+
+
+class TestTheRandomnessGuardItself:
+    """Controls for :func:`test_no_unseeded_randomness`, over source strings.
+
+    The guard scans every file under :data:`RANDOMNESS_ROOTS`, so a fixture
+    written to disk to prove it fires would be a file the guard then fails on --
+    the suite would go red to demonstrate that it can. The offending code
+    therefore lives in string literals here: ``ast.parse`` of *this* module sees
+    a ``Constant`` where the guard's own scan looks for an ``Attribute``, so
+    these cases are invisible to the check they exercise.
+
+    A guard nobody has watched fail is a guard nobody knows the reach of. The
+    repository has been clean at every commit, which means every one of these
+    passes for free and none of them was ever earned by a real defect.
+    """
+
+    def test_the_dotted_form_is_caught(self) -> None:
+        """The form the guard was written for."""
+        tree = ast.parse("import numpy as np\nnp.random.normal(3)\n")
+        assert [node.attr for node in _numpy_random_uses(tree)] == ["normal"]
+
+    def test_an_aliased_numpy_import_is_caught(self) -> None:
+        """``import numpy as onp`` reaches the same global generator.
+
+        The guard resolved a use by the base identifier being literally ``np``,
+        so any other alias was invisible: not to the attribute walk, which did
+        not match, and not to :func:`_numpy_random_imports`, which looks for
+        ``numpy.random`` and ``from numpy import random`` and never sees a plain
+        ``import numpy``. The invariant is about what a module can reach, so the
+        alias a module happens to choose cannot be what decides it.
+        """
+        tree = ast.parse("import numpy as onp\nonp.random.normal(3)\n")
+        assert [node.attr for node in _numpy_random_uses(tree)] == ["normal"]
+
+    def test_the_unaliased_package_is_caught(self) -> None:
+        """``import numpy`` then ``numpy.random.normal`` is the same reach."""
+        tree = ast.parse("import numpy\nnumpy.random.normal(3)\n")
+        assert [node.attr for node in _numpy_random_uses(tree)] == ["normal"]
+
+    def test_a_seeded_constructor_under_an_alias_is_permitted(self) -> None:
+        """Widening the guard must not refuse the form the codebase uses.
+
+        Every offender the walk returns is checked against
+        :data:`SEEDED_CONSTRUCTORS` rather than rejected on sight, so the
+        constructors stay legal under any alias.
+        """
+        tree = ast.parse("import numpy as onp\nonp.random.default_rng(7)\n")
+        found = [node.attr for node in _numpy_random_uses(tree)]
+        assert found == ["default_rng"]
+        assert all(attr in SEEDED_CONSTRUCTORS for attr in found)
+
+    def test_an_unrelated_module_named_random_is_not_caught(self) -> None:
+        """The alias must be bound to numpy, not merely spelled like it.
+
+        A local ``mypkg.random`` is not numpy's, and a guard that fired on the
+        attribute name alone would be a substring check with extra steps -- the
+        exact failure the stdlib-``random`` clause below was rewritten to avoid.
+        """
+        tree = ast.parse("import mypkg\nmypkg.random.normal(3)\n")
+        assert _numpy_random_uses(tree) == []
+
+    def test_a_bare_numpy_import_is_not_itself_an_offence(self) -> None:
+        """Importing numpy is not reaching its global generator."""
+        tree = ast.parse("import numpy as onp\nonp.array([1, 2])\n")
+        assert _numpy_random_uses(tree) == []
+        assert _numpy_random_imports(tree) == []
+
+
+def _text_writes_without_newline(tree: ast.AST) -> list[int]:
+    r"""Return the lines calling ``write_text`` without pinning ``newline``.
+
+    ``Path.write_text`` opens in text mode with ``newline=None``, which
+    translates every ``\n`` to ``os.linesep`` on write. On Windows that is
+    ``\r\n``, so the same artefact written here and on the Ubuntu half of this
+    project differs byte for byte while parsing identically -- which is the
+    shape of failure the third invariant exists to forbid, and one no round-trip
+    test can see, because reading translates it back.
+    """
+    return [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "write_text"
+        and not any(keyword.arg == "newline" for keyword in node.keywords)
+    ]
+
+
+@pytest.mark.parametrize(
+    "path", sorted(SOURCE.rglob("*.py")), ids=lambda p: str(p.name)
+)
+def test_artefacts_are_written_with_pinned_newlines(path: Path) -> None:
+    """CLAUDE.md invariant 3, at the point where output leaves the process.
+
+    Every artefact this project persists -- the empirical table, the transcript
+    corpus -- is a file another machine is meant to reproduce or to diff. A
+    writer that lets the platform pick its line ending makes those files differ
+    between the Windows and Ubuntu halves of this project for a reason that has
+    nothing to do with the numbers inside them.
+
+    Checked over ``src`` only. A test writing a scratch file is not producing an
+    artefact anybody compares.
+    """
+    offenders = _text_writes_without_newline(_parse(path))
+    assert not offenders, (
+        f"{path}: write_text at line(s) {offenders} does not pin newline=; on "
+        f"Windows it emits CRLF and the artefact stops being byte-comparable"
+    )

@@ -111,7 +111,7 @@ _ABORT_MESSAGE: Final = "the registry is append-only"
 #: admitting it outright would let :meth:`ExperimentStore.query` -- which exists
 #: to read -- write a row that never passed :meth:`ExperimentStore.append`'s
 #: checks. It is granted only for the duration of an append, by
-#: :attr:`ExperimentStore._appending`.
+#: :class:`_AppendGrant`.
 _PERMITTED_ACTIONS: Final[frozenset[int]] = frozenset(
     {
         sqlite3.SQLITE_SELECT,
@@ -245,10 +245,26 @@ class ExperimentRecord:
 # --------------------------------------------------------------------------
 
 
-def _authorizer(appending: Callable[[], bool]) -> Callable[..., int]:
+@dataclass(slots=True)
+class _AppendGrant:
+    """Whether the store's own ``INSERT`` is authorised at this instant.
+
+    A separate object rather than a flag on the store, because the authorizer
+    closure has to read it and the connection holds the closure. Capturing the
+    *store* would make ``connection -> closure -> store -> connection`` a
+    reference cycle, so releasing the sqlite handle would wait on the cyclic
+    collector; on Windows that is long enough for a temporary-directory teardown
+    to fail on a file still open. This object references neither the store nor
+    the connection, so refcounting alone still frees both.
+    """
+
+    open: bool = False
+
+
+def _authorizer(grant: _AppendGrant) -> Callable[..., int]:
     """Return the connection's authorizer. Allowlist; default deny.
 
-    ``INSERT`` is admitted only while ``appending()`` is true, which is only
+    ``INSERT`` is admitted only while ``grant.open`` is true, which is only
     inside :meth:`ExperimentStore.append`. Every other statement reaching the
     connection -- including one through :meth:`ExperimentStore.query` -- is
     refused, so the store's own validation cannot be routed around.
@@ -256,7 +272,7 @@ def _authorizer(appending: Callable[[], bool]) -> Callable[..., int]:
 
     def authorize(action: int, *_: object) -> int:
         if action == sqlite3.SQLITE_INSERT:
-            return sqlite3.SQLITE_OK if appending() else sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK if grant.open else sqlite3.SQLITE_DENY
         return (
             sqlite3.SQLITE_OK if action in _PERMITTED_ACTIONS else sqlite3.SQLITE_DENY
         )
@@ -274,8 +290,16 @@ def _connect(target: Path | str) -> sqlite3.Connection:
     :meth:`ExperimentStore.query` is authorised by the prepare that happened
     during an earlier append -- measured, not feared. Disabling the cache is what
     makes the write-scoped grant in :func:`_authorizer` actually hold.
+
+    ``check_same_thread=True`` is passed explicitly although it is the default,
+    because it is the whole of the argument that :class:`_AppendGrant` may be a
+    plain flag rather than a per-statement grant: a second thread reaching this
+    connection is refused before the authorizer is consulted at all. Leaving it
+    to the default meant that argument lived only in a docstring, and CLAUDE.md's
+    second invariant asks for the assertion instead. Turning it off silently
+    widens the append window to anything another thread can issue.
     """
-    return sqlite3.connect(target, cached_statements=0)
+    return sqlite3.connect(target, cached_statements=0, check_same_thread=True)
 
 
 def _is_append_only_refusal(error: sqlite3.Error) -> bool:
@@ -291,21 +315,34 @@ class ExperimentStore:
     require an explicit :class:`SealedAccess` token.
     """
 
-    __slots__ = ("_appending", "_connection", "_path")
+    __slots__ = ("__weakref__", "_connection", "_grant", "_path")
+    """``__weakref__`` is here so the release property can be *tested* rather
+    than argued: see ``test_the_authorizer_does_not_keep_the_store_alive``,
+    which disables the cyclic collector and checks a dropped store is freed by
+    refcounting alone. Without the slot that test cannot be written."""
 
     def __init__(self, connection: sqlite3.Connection, path: Path | None) -> None:
+        """Wrap a prepared connection. Use :meth:`open` or :meth:`in_memory`.
+
+        **Not the way to build a store.** This installs no schema, no triggers
+        and no authorizer; those are :meth:`_prepare`'s, and a store built
+        directly from a raw :func:`sqlite3.connect` would carry none of the three
+        layers A12 checks. Both classmethods below go through ``_prepare``, and
+        nothing in the repository calls this constructor -- it is public only
+        because the classmethods have to reach it.
+        """
         self._connection = connection
         self._path = path
-        self._appending = False
-        """True only inside :meth:`append`. The authorizer reads it to decide
+        self._grant = _AppendGrant()
+        """Open only inside :meth:`append`. The authorizer reads it to decide
         whether an ``INSERT`` is the store's own or somebody else's.
 
         A plain flag, so the grant is open for the whole of an append rather
-        than for one statement. Nothing can use it: sqlite3 connects with
-        ``check_same_thread=True``, so a second thread reaching this connection
-        is refused before the authorizer is consulted at all, and within one
-        thread an append is synchronous and yields to no other caller. A store
-        that ever wanted cross-thread use would have to make this per-statement
+        than for one statement. Nothing can use it: the connection is opened
+        with ``check_same_thread=True``, so a second thread reaching it is
+        refused before the authorizer is consulted at all, and within one thread
+        an append is synchronous and yields to no other caller. A store that
+        ever wanted cross-thread use would have to make this per-statement
         first."""
 
     # -- construction ------------------------------------------------------
@@ -338,7 +375,7 @@ class ExperimentStore:
             connection.execute(statement)
         connection.commit()
         store = cls(connection, path)
-        connection.set_authorizer(_authorizer(lambda: store._appending))
+        connection.set_authorizer(_authorizer(store._grant))
         return store
 
     def __enter__(self) -> ExperimentStore:
@@ -405,7 +442,7 @@ class ExperimentStore:
 
         # The only window in which the authorizer admits an INSERT. Reset in a
         # `finally` so a failed insert does not leave the connection writable.
-        self._appending = True
+        self._grant.open = True
         try:
             cursor = self._execute(
                 f"INSERT INTO {_TABLE} (digest, partition, env_version, config, "
@@ -424,7 +461,7 @@ class ExperimentStore:
                 ),
             )
         finally:
-            self._appending = False
+            self._grant.open = False
         self._connection.commit()
         sequence = cursor.lastrowid
         if sequence is None:  # pragma: no cover - sqlite always assigns one

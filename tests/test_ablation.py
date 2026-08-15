@@ -53,7 +53,7 @@ from environments.pointproc.outcomes import (
     slice_designs,
 )
 from environments.pointproc.scenarios import scenario
-from sciagent.core.errors import MalformedProposalError
+from sciagent.core.errors import SystemConfigurationError
 from sciagent.eval.campaign import ScenarioRun, run_scenario
 from sciagent.inference.empirical import EmpiricalTable, EmpiricalTableEngine
 from sciagent.registry.store import ExperimentStore
@@ -453,8 +453,13 @@ class TestTheAblationPair:
             assert presupposition not in ABLATION_SYSTEM_PROMPT, presupposition
 
     def test_a_system_cannot_be_built_without_a_name(self) -> None:
-        """An unnamed arm would be scored under an empty label."""
-        with pytest.raises(MalformedProposalError):
+        """An unnamed arm would be scored under an empty label.
+
+        A :class:`SystemConfigurationError` rather than a
+        ``MalformedProposalError``: nothing has been proposed at the point this
+        raises, and there is no model in the picture at all.
+        """
+        with pytest.raises(SystemConfigurationError):
             Hybrid(
                 closed_set(),
                 ProposalLayer(

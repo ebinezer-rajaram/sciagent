@@ -30,16 +30,23 @@ Violating any of these is a bug regardless of tests passing.
    seed).
 5. **Acceptance tests are the contract.** A1-A24 in `docs/SPEC.md` §6. A
    subsystem is not done until its tests pass. Do not proceed past a gate.
-6. **No LLM code until backlog item 12.** Items 2-11 are pure conventional
-   machinery. This is deliberate: the evaluation apparatus must be validated
-   before the agent exists.
+6. **No LLM code until backlog item 12.** ~~Live~~ **Discharged at a380a21.**
+   Items 2-11 are pure conventional machinery, and they were built before the
+   agent existed, which is what this invariant was for: agent performance can
+   never be confounded with framework immaturity. It is kept here rather than
+   deleted because the *reason* still governs — anything that would move
+   evaluation apparatus after the agent that is scored by it reopens the
+   confound. `systems/llm/`, `systems/hybrid.py` and `systems/ablation.py` are
+   in bounds; a new gate written after the system it grades is not.
 
 ## Stack
 
 - Python 3.12+, `uv` for dependencies (`uv add`, `uv run`)
 - `pytest` + `hypothesis` for property-based testing
-- `numpy`, `scipy`; `numba` only if profiling justifies it
-- Strict typing: `mypy --strict` clean. `from __future__ import annotations`
+- `numpy`, `scipy`; `numba` only if profiling justifies it. `anthropic` reaches
+  the network from one module and never during a replay
+- Strict typing: `mypy` clean — it takes no arguments, since `pyproject.toml`
+  sets `strict` and the file set. `from __future__ import annotations`
 - `@dataclass(frozen=True)` for all value types. No mutable global state
 
 ## Conventions

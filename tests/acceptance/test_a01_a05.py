@@ -115,6 +115,45 @@ class TestA1Determinism:
                 f"{reference_output}\nvs\n{output}"
             )
 
+    def test_a1_the_child_digests_the_metric_layer_too(self) -> None:
+        """The cross-platform instrument must reach below the event log.
+
+        ``docs/DECISIONS.md`` nominates ``determinism_child.py`` as the thing to
+        run on Windows and on Ubuntu and diff before trusting a cloud-produced
+        artefact, and separately records the suspected cause of a platform split
+        as ``np.dot`` inside ``diagnostics.py`` under a ``DYNAMIC_ARCH``
+        OpenBLAS. That call is downstream of the log, so a child that digested
+        only ``execute`` would diff clean on both platforms while saying nothing
+        about the layer the registry content-addresses over.
+
+        This asserts the second layer exists. It is not an assertion about any
+        particular value -- the cross-platform claim is settled by diffing two
+        runs, not by a number written down here -- but a refactor that dropped
+        the metric lines would silently return the instrument to being unable to
+        answer the question it is nominated for.
+        """
+        sys.path.insert(0, str(CHILD.parent))
+        try:
+            import determinism_child
+        finally:
+            sys.path.pop(0)
+        produced = determinism_child.digests()
+        # Both halves keyed on the same predicate. Partitioning the second by
+        # "/" in name would let a case name that ever contained a slash satisfy
+        # this with the metrics layer removed entirely -- the one regression it
+        # is here to catch.
+        logs = {name for name in produced if not name.startswith("metrics/")}
+        metrics = {
+            name.removeprefix("metrics/")
+            for name in produced
+            if name.startswith("metrics/")
+        }
+        assert logs, "the child digests no event logs"
+        assert metrics == logs, (
+            f"every execution needs a digest at both layers; "
+            f"{sorted(logs ^ metrics)} has one and not the other"
+        )
+
     def test_a1_in_process_matches_subprocess(self) -> None:
         """The in-process result equals the subprocess result, digest for digest."""
         sys.path.insert(0, str(CHILD.parent))

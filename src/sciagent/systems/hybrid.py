@@ -56,6 +56,7 @@ from sciagent.core.errors import (
     BudgetExhaustedError,
     MalformedProposalError,
     ProviderError,
+    SystemConfigurationError,
 )
 from sciagent.core.types import Diagnosis, ExperimentTemplateId, HypothesisId
 from sciagent.experiments import boed
@@ -112,12 +113,12 @@ class Hybrid:
         name: str = "V7",
     ) -> None:
         if max_proposals < 0:
-            raise MalformedProposalError(
+            raise SystemConfigurationError(
                 f"a system cannot make {max_proposals} proposals; pass 0 for a V7 "
                 f"that never extends its hypothesis space"
             )
         if not name.strip():
-            raise MalformedProposalError(
+            raise SystemConfigurationError(
                 "a system needs a SPEC §5 identifier; an unnamed one would be "
                 "scored under an empty label and could not be told apart from "
                 "another arm of the same ablation"
@@ -287,14 +288,14 @@ def library_of(
 
     A convenience for building a V7 whose closed set differs from V1's, which
     the ablations of SPEC §11 item 13 will want. Raises
-    :class:`~sciagent.core.errors.MalformedProposalError` on an unknown name
+    :class:`~sciagent.core.errors.SystemConfigurationError` on an unknown name
     rather than silently returning a smaller library, since a system
     entertaining fewer structures than it was configured with would be scored as
     though the omission were a choice.
     """
     missing = [name for name in names if name not in library]
     if missing:
-        raise MalformedProposalError(
+        raise SystemConfigurationError(
             f"library has no structure(s) {missing!r}; it holds "
             f"{sorted(library)!r}. A system configured with a structure that "
             f"does not exist would be scored as though not entertaining it were "

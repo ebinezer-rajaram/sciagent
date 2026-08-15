@@ -1,0 +1,23 @@
+# Line endings are part of an artefact's bytes.
+#
+# This repository is worked on from Windows locally and from Ubuntu cloud
+# sessions, and SPEC's third invariant asks for byte-identical output. Left to
+# each machine's `core.autocrlf`, a line ending becomes a property of whoever
+# ran the command: this checkout currently holds `store.py` as CRLF and
+# `README.md` as LF, in the same working tree, for no reason anybody chose.
+# Normalise in the repository and on checkout, on every platform.
+* text=auto eol=lf
+
+# The two artefacts this project persists. `EmpiricalTable.save` and
+# `TranscriptStore.save` both pin `newline="\n"` at the writer, so these are
+# already LF before git sees them; the rule is here so that stays true if a
+# future writer forgets, and so the files are never rewritten on checkout.
+#
+# Deliberately `text`, not `-text`. Marking them binary would stop git
+# converting them and also stop it diffing them, and a recorded transcript is
+# sorted and indented precisely so that it reviews as a diff.
+*.json text eol=lf
+
+# Frozen. Reformatting it is what `extend-exclude = ["docs"]` stops ruff doing;
+# this stops git doing the same thing by a different route.
+docs/SPEC.md text eol=lf

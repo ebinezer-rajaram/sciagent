@@ -276,7 +276,7 @@ class TestASaturatedSearchHasNoOpinion:
         assert length.first_design is None
 
     @pytest.mark.parametrize(
-        "scenario_id", [s for s in (str(x.id) for x in slice_scenarios())]
+        "scenario_id", [str(scenario.id) for scenario in slice_scenarios()]
     )
     def test_an_opening_is_named_exactly_when_the_search_resolved(
         self, scenario_id: str
@@ -304,6 +304,10 @@ class TestTheChoiceOfDesignIsPlatformIndependent:
     EARLIER = ExperimentTemplateId("force[arrival@0=0.01|20]:mean_rate")
     LATER = ExperimentTemplateId("query:phase_conditioned_dispersion")
 
+    #: Resolved mass, held equal wherever the point is the *value* comparison.
+    #: The saturated case these were drawn from resolves nothing at all.
+    NO_REACH = 0.0
+
     def test_a_last_place_difference_is_a_tie_the_id_breaks(self) -> None:
         """The exact comparison that flipped between Windows and Linux.
 
@@ -314,8 +318,12 @@ class TestTheChoiceOfDesignIsPlatformIndependent:
         """
         noisy = math.nextafter(4.0, 0.0)
         assert noisy < 4.0
-        assert _choice_key(4.0, self.EARLIER) < _choice_key(noisy, self.LATER)
-        assert _choice_key(noisy, self.EARLIER) < _choice_key(4.0, self.LATER)
+        assert _choice_key(4.0, self.NO_REACH, self.EARLIER) < _choice_key(
+            noisy, self.NO_REACH, self.LATER
+        )
+        assert _choice_key(noisy, self.NO_REACH, self.EARLIER) < _choice_key(
+            4.0, self.NO_REACH, self.LATER
+        )
 
     def test_a_real_margin_still_decides(self) -> None:
         """The rounding must not swallow a difference that means something.
@@ -324,7 +332,21 @@ class TestTheChoiceOfDesignIsPlatformIndependent:
         five hundredths apart, which is eight orders of magnitude above the
         tolerance, so nothing that follows from evidence is being tied here.
         """
-        assert _choice_key(3.95, self.LATER) < _choice_key(4.0, self.EARLIER)
+        assert _choice_key(3.95, self.NO_REACH, self.LATER) < _choice_key(
+            4.0, self.NO_REACH, self.EARLIER
+        )
+
+    def test_resolved_mass_outranks_the_alphabet(self) -> None:
+        """An exact tie on length is settled by what was resolved, not by the id.
+
+        Nearly redundant, because an unresolved branch is charged the
+        ``horizon + 1`` floor and so already shows up in the length. This is the
+        case where it is not: two designs whose expected lengths agree to
+        :data:`~sciagent.eval.oracle.VALUE_PLACES` while one resolves the truth
+        on more paths. Letting the template id decide that would be the alphabet
+        choosing the less informative experiment.
+        """
+        assert _choice_key(4.0, 0.75, self.LATER) < _choice_key(4.0, 0.25, self.EARLIER)
 
     def test_the_order_designs_are_offered_in_cannot_matter(self) -> None:
         """Rounding buys transitivity, which a tolerance would not.
@@ -334,12 +356,12 @@ class TestTheChoiceOfDesignIsPlatformIndependent:
         away from breaking the determinism invariant a second time.
         """
         candidates = [
-            (4.0, self.EARLIER),
-            (math.nextafter(4.0, 0.0), self.LATER),
-            (4.0, ExperimentTemplateId("query:size_dispersion")),
+            (4.0, self.NO_REACH, self.EARLIER),
+            (math.nextafter(4.0, 0.0), self.NO_REACH, self.LATER),
+            (4.0, self.NO_REACH, ExperimentTemplateId("query:size_dispersion")),
         ]
         winners = {
-            min(permuted, key=lambda pair: _choice_key(*pair))[1]
+            min(permuted, key=lambda triple: _choice_key(*triple))[2]
             for permuted in permutations(candidates)
         }
         assert winners == {self.EARLIER}

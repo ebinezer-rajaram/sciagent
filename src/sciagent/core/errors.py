@@ -311,6 +311,23 @@ class InvestigationError(ResearchSystemError):
     """
 
 
+class SystemConfigurationError(ResearchSystemError):
+    """A research system was built with arguments it cannot be run under.
+
+    Covers a negative proposal allowance, a system with no SPEC §5 identifier,
+    and a library naming a structure that does not exist. All three are faults in
+    how the system was *constructed*, decided before any investigation begins and
+    without reference to a model, a grammar or a draft.
+
+    Split out from :class:`MalformedProposalError`, which these once shared.
+    That class is for a draft that failed to decode into a licensed structure --
+    a thing the model did -- so reporting a configuration mistake through it put
+    the blame for a typo in a constructor on the proposal layer, and made
+    ``except MalformedProposalError`` around a call to the model catch a fault
+    that could only have happened before it.
+    """
+
+
 class ProposalError(ResearchSystemError):
     """Base for faults in the LLM proposal layer (SPEC §11 item 12)."""
 

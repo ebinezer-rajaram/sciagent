@@ -11,11 +11,33 @@ is a second path through the event loop, and the argument that it is
 determinism-safe -- streams are derived by name, and a clamp is looked up rather
 than iterated -- is exactly the kind of argument this arm exists to check rather
 than accept.
+
+Two layers, and the second is the one that matters across platforms
+-------------------------------------------------------------------
+
+``<name> <sha256>`` lines digest the **event log**. ``metrics/<name> <sha256>``
+lines digest every value the SPEC §4.3 catalogue computes *from* that log.
+
+The second layer is here because the first cannot settle the question this file
+is nominated for. ``docs/DECISIONS.md`` records the standing instruction that no
+cloud-produced artefact is trusted until this child is run on both platforms and
+diffed, and it also records the suspected cause of a Windows/Ubuntu split:
+``np.dot`` in ``environments/pointproc/diagnostics.py`` against an OpenBLAS built
+``DYNAMIC_ARCH``. That call is *downstream* of the log. A log digest is identical
+whether or not BLAS sums a dot product in a different order, so the instrument
+and the suspicion did not meet, and running the child would have produced a clean
+diff that proved nothing about the layer the registry content-addresses over.
+
+Metric values are digested as IEEE doubles rather than as text, matching
+``ExperimentRecord.digest_of``: the point is a bit, not a rendering, and a
+shortest-round-trip repr would hide a difference in the last place -- which is
+exactly the size of difference a different summation order produces.
 """
 
 from __future__ import annotations
 
 import hashlib
+import struct
 import sys
 from collections.abc import Mapping
 
@@ -27,8 +49,9 @@ from environments.pointproc import (
     mechanism_defect,
     reference_program,
 )
+from environments.pointproc.catalogue import metric_registry
 from environments.pointproc.components import ARRIVAL, SIGN
-from sciagent.core.types import ComponentId, Seed
+from sciagent.core.types import ComponentId, EventLog, Seed
 
 N_EVENTS = 512
 SEED = Seed(20240801)
@@ -44,8 +67,29 @@ CLAMP_MODES: Mapping[str, Mapping[ComponentId, Mapping[int, float]] | None] = {
 }
 
 
+def _metric_digest(log: EventLog) -> str:
+    """Return a digest over every catalogue metric's value on ``log``.
+
+    Metrics are taken in sorted name order and packed as little-endian doubles,
+    so the digest is a statement about the bits each estimator produced and not
+    about the order the registry happens to hold them in.
+    """
+    registry = metric_registry()
+    chunks: list[bytes] = []
+    for name in sorted(registry.names):
+        value = registry.spec(str(name)).compute(log)
+        chunks.append(str(name).encode("utf-8"))
+        chunks.append(struct.pack("<d", float(value)))
+    return hashlib.sha256(b"".join(chunks)).hexdigest()
+
+
 def digests() -> dict[str, str]:
-    """Return one digest per (programme, execution mode)."""
+    """Return one digest per (programme, execution mode), at both layers.
+
+    ``<name>`` digests the event log; ``metrics/<name>`` digests what the §4.3
+    catalogue computes from it. Diffing two platforms on the first alone would
+    miss a divergence introduced by BLAS below it -- see the module docstring.
+    """
     program = reference_program()
     grammar = edit_grammar()
     results: dict[str, str] = {}
@@ -56,6 +100,7 @@ def digests() -> dict[str, str]:
         for suffix in sorted(CLAMP_MODES):
             log = edited.execute(SEED, N_EVENTS, clamps=CLAMP_MODES[suffix])
             results[f"{name}{suffix}"] = hashlib.sha256(log.to_bytes()).hexdigest()
+            results[f"metrics/{name}{suffix}"] = _metric_digest(log)
     return results
 
 

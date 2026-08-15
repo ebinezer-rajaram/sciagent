@@ -59,6 +59,7 @@ from sciagent.core.errors import (
     DuplicateExperimentError,
     DuplicateHypothesisError,
     InferenceError,
+    MalformedDesignError,
     TableError,
     UnknownExperimentError,
     UnknownHypothesisError,
@@ -313,9 +314,16 @@ class EmpiricalTable:
             {template.id: template for template in templates}
         )
         if len(indexed) != len(templates):
-            raise TableError(
+            # MalformedDesignError, not TableError: the fault is in the design
+            # set offered, which is exactly what `Executor.simulator` and
+            # `boed.rank` refuse under that name. Reporting one condition under
+            # two types meant a caller assembling a design set could not catch
+            # it in one place, and the table has nothing wrong with it -- it was
+            # never built.
+            raise MalformedDesignError(
                 f"templates must have distinct ids, got "
-                f"{[str(t.id) for t in templates]!r}"
+                f"{[str(t.id) for t in templates]!r}; a template id omits "
+                f"n_events, so two run lengths of one operation collide here"
             )
         empty = cls(
             templates=indexed,
@@ -391,7 +399,11 @@ class EmpiricalTable:
             ],
         }
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, indent=1), encoding="utf-8")
+        # newline="\n" rather than the default: text mode otherwise translates
+        # every newline to os.linesep on write, so a table saved on Windows and
+        # the same table saved on Linux differ byte for byte while parsing
+        # identically. A round trip cannot see it -- reading translates it back.
+        path.write_text(json.dumps(payload, indent=1), encoding="utf-8", newline="\n")
 
     @classmethod
     def load(

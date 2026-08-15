@@ -497,6 +497,100 @@ class TestTheTranscriptStore:
         with pytest.raises(ProposalError, match="address scheme"):
             TranscriptStore.load(path)
 
+    def test_saving_over_a_corpus_may_not_drop_a_call(self, tmp_path: Path) -> None:
+        """``save`` replaces the whole file, so it has to check what it replaces.
+
+        Two recording sessions loading different snapshots of one path is the
+        real shape of this: each holds calls the other never saw, and the second
+        to save would silently delete the first's. ``put`` guards the in-process
+        store and cannot see a file.
+        """
+        path = tmp_path / "corpus.json"
+        first = TranscriptStore(mode=RECORD)
+        first.put(Transcript("call/a", "p", "m", "brief a", fixed_payload(0, ())))
+        first.save(path)
+
+        second = TranscriptStore(mode=RECORD)
+        second.put(Transcript("call/b", "p", "m", "brief b", fixed_payload(1, ())))
+        with pytest.raises(ProposalError, match="would drop"):
+            second.save(path)
+        assert TranscriptStore.load(path).addresses() == ("call/a",)
+
+    def test_saving_over_a_corpus_may_not_replace_an_answer(
+        self, tmp_path: Path
+    ) -> None:
+        """Holding every address is not enough; the payloads must match too.
+
+        Checking only the address set left the same hole one level in. ``put``
+        refuses a changed payload at a known address in process, so a file
+        boundary that did not would make the append-only guarantee depend on
+        whether the two answers happened to arrive in one session.
+        """
+        path = tmp_path / "corpus.json"
+        first = TranscriptStore(mode=RECORD)
+        first.put(Transcript("call/a", "p", "m", "brief a", fixed_payload(0, ())))
+        first.save(path)
+
+        second = TranscriptStore(mode=RECORD)
+        second.put(Transcript("call/a", "p", "m", "brief a", fixed_payload(1, ())))
+        with pytest.raises(ProposalError, match="would replace the response"):
+            second.save(path)
+        kept = TranscriptStore.load(path)
+        assert kept.get("call/a").payload == first.get("call/a").payload
+
+    def test_a_malformed_corpus_is_not_treated_as_holding_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        """A present-but-unreadable file may hold calls nobody can reconstruct.
+
+        Swallowing the read failure would have made ``save`` truncate exactly
+        the corpus that cannot be rebuilt. The one readable-failure that *may*
+        be replaced is an older address scheme, because every call in such a
+        file misses anyway -- and that case is covered by the test above it.
+        """
+        path = tmp_path / "corpus.json"
+        recorded = TranscriptStore(mode=RECORD)
+        recorded.put(Transcript("call/a", "p", "m", "brief a", fixed_payload(0, ())))
+        recorded.save(path)
+        # Same file, one field removed: version-correct, so `load` gets past the
+        # address-scheme check and fails on the entry itself.
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        del raw["calls"][0]["brief"]
+        path.write_text(json.dumps(raw), encoding="utf-8", newline="\n")
+        store = TranscriptStore(mode=RECORD)
+        store.put(Transcript("call/new", "p", "m", "brief", fixed_payload(0, ())))
+        with pytest.raises(KeyError):
+            store.save(path)
+        assert "call/a" in path.read_text(encoding="utf-8"), (
+            "the malformed corpus was overwritten rather than left alone"
+        )
+
+    def test_saving_a_superset_is_how_a_corpus_grows(self, tmp_path: Path) -> None:
+        """The check refuses loss, not addition; recording has to stay possible."""
+        path = tmp_path / "corpus.json"
+        store = TranscriptStore(mode=RECORD)
+        store.put(Transcript("call/a", "p", "m", "brief a", fixed_payload(0, ())))
+        store.save(path)
+
+        grown = TranscriptStore.load(path, mode=RECORD)
+        grown.put(Transcript("call/b", "p", "m", "brief b", fixed_payload(1, ())))
+        grown.save(path)
+        assert TranscriptStore.load(path).addresses() == ("call/a", "call/b")
+
+    def test_a_corpus_is_written_with_unix_newlines(self, tmp_path: Path) -> None:
+        """A corpus is the reproducible artefact, so its bytes are the point.
+
+        Text mode translates every newline to ``os.linesep`` on write, so without
+        pinning this the same corpus recorded here and on the Ubuntu half of this
+        project would differ byte for byte while replaying identically. A
+        round-trip assertion cannot see it: reading translates it back.
+        """
+        path = tmp_path / "corpus.json"
+        store = TranscriptStore(mode=RECORD)
+        store.put(Transcript("call/a", "p", "m", "brief a", fixed_payload(0, ())))
+        store.save(path)
+        assert b"\r\n" not in path.read_bytes()
+
 
 class TestAddressingIsDeterministic:
     """An address is a pure function of the request, in any process."""

@@ -178,17 +178,25 @@ report.
 
 ```sh
 uv sync                              # install; never call pip
-uv run pytest                        # 201 tests, ~36s
-uv run mypy --strict                 # must be clean
+uv run pytest                        # minutes, not seconds; read the tail
+uv run mypy                          # no arguments; must be clean
 uv run ruff format . && uv run ruff check --fix .
 ```
+
+`mypy` takes no arguments: `pyproject.toml` sets `strict` and the file set, so
+naming a path checks *less* than the configured one. The suite's runtime is
+dominated by simulation rather than by tests — a structure with no row in the
+calibrated table costs 2000 replicates to fill — so do not read the test count
+as a health check. It moves with every backlog item.
 
 `docs/` is excluded from ruff: `SPEC.md` contains Python blocks that formatting
 would silently rewrite, and it must not change.
 
-Python 3.12+, `uv` for dependencies, `numpy` and `scipy` only. Strict typing
-throughout, `@dataclass(frozen=True)` for value types, no mutable global state,
-no I/O in `core/`.
+Python 3.12+, `uv` for dependencies. `numpy` and `scipy` carry the science;
+`anthropic` arrived with the proposal layer at item 12 and is reached from one
+module, which never runs during a replay. Strict typing throughout,
+`@dataclass(frozen=True)` for value types, no mutable global state, no I/O in
+`core/`.
 
 ## Contributing
 

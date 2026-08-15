@@ -248,17 +248,31 @@ def _belief_key(belief: Mapping[HypothesisId, Probability]) -> tuple[int, ...]:
     return tuple(round(float(belief[key]) * 1_000_000) for key in sorted(belief))
 
 
-def _choice_key(value: float, template: ExperimentTemplateId) -> tuple[float, str]:
+def _choice_key(
+    value: float, reached: float, template: ExperimentTemplateId
+) -> tuple[float, float, str]:
     """Return the order the dynamic programme picks a design by.
 
     Guarantees a total order that is a pure function of its arguments and
     independent of the order candidates are offered in. Rounding before
-    comparing is what buys both: near-ties collapse to exact ties so the
-    template id settles them, and unlike a tolerance the relation stays
-    transitive, so no chain of pairwise comparisons can turn on which candidate
-    was seen first.
+    comparing is what buys both: near-ties collapse to exact ties so the later
+    keys settle them, and unlike a tolerance the relation stays transitive, so
+    no chain of pairwise comparisons can turn on which candidate was seen first.
+
+    Three keys, in order: fewer expected experiments, then *more* resolved
+    probability mass, then the template id.
+
+    The middle key is nearly redundant and is here for the case where it is not.
+    An unresolved branch is charged the ``horizon + 1`` floor, so a design that
+    resolves less mass already pays for it in ``value`` -- which is why adding
+    this key changes no measured opening on the twelve slice scenarios. What it
+    covers is the exact tie: two designs whose expected lengths agree to
+    :data:`VALUE_PLACES` while one of them resolves the truth on more paths.
+    Settling that by template id would let the alphabet pick the less
+    informative experiment, and nothing about the alphabet is a scientific
+    reason.
     """
-    return (round(value, VALUE_PLACES), str(template))
+    return (round(value, VALUE_PLACES), -round(reached, VALUE_PLACES), str(template))
 
 
 def _mass_on(
@@ -377,13 +391,12 @@ def oracle_policy_length(
                 steps += probability * sub_steps
                 reached += probability * sub_reached
             candidate = (1.0 + steps, reached, template)
-            # Fewer experiments first; ties by the template id, so the choice is
-            # the same in every process (the determinism invariant). Compared
-            # through _choice_key rather than on the raw floats, which read a
-            # difference of one unit in the last place as a strict win.
-            if best is None or _choice_key(candidate[0], candidate[2]) < _choice_key(
-                best[0], best[2]
-            ):
+            # Fewer experiments, then more resolved mass, then the template id,
+            # so the choice is the same in every process (the determinism
+            # invariant). Compared through _choice_key rather than on the raw
+            # floats, which read a difference of one unit in the last place as a
+            # strict win.
+            if best is None or _choice_key(*candidate) < _choice_key(*best):
                 best = candidate
         assert best is not None  # ordered is non-empty, checked above
         memo[key] = best

@@ -16,8 +16,10 @@ import io
 import re
 import subprocess
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Final
 
 ROOT = Path(__file__).resolve().parent.parent
 SPEC = ROOT / "docs" / "SPEC.md"
@@ -269,10 +271,27 @@ def git_state(root: Path) -> tuple[str, list[str]]:
     return f"{branch} @ {head}", dirty
 
 
+#: SPEC §11 items set aside on a recorded decision, by item number.
+#:
+#: Distinct from "untracked". An untracked item has no A-gate, so this script
+#: cannot say whether it is done; a deferred one *is* known not to be done and
+#: is not waiting on anybody. Without the distinction item 1 reads as pending
+#: work somebody forgot, which is the opposite of what was decided about it.
+#:
+#: Adding a number here is not how an item gets deferred. The decision is made
+#: and written to ``docs/DECISIONS.md`` first, and this constant follows it, so
+#: the reason is always one file away and never only a number in a script.
+DEFERRED: Final[Mapping[int, str]] = {
+    1: "2026-08-15 — item 1: the recorder is deferred",
+}
+
+
 def item_state(
     item: BacklogItem, gates: dict[int, GateStatus], *, execute: bool
 ) -> str:
     """Return a one-word state for a backlog item."""
+    if item.number in DEFERRED:
+        return "deferred"
     if not item.gates:
         return "untracked"
     statuses = [gates[number] for number in item.gates if number in gates]
@@ -332,7 +351,15 @@ def report(*, execute: bool) -> int:
             and (gates[number].green if execute else gates[number].written)
         )
         gate_text = f"{ready}/{covered} gates" if item.gates else "no A-gate"
-        marker = {"done": "x", "written": "~", "open": " ", "untracked": "?"}[state]
+        if state == "deferred":
+            gate_text = "deferred, see DECISIONS"
+        marker = {
+            "done": "x",
+            "written": "~",
+            "open": " ",
+            "untracked": "?",
+            "deferred": "-",
+        }[state]
         print(
             f"  [{marker}] {item.number:>2}  "
             f"{item.title[:TITLE_WIDTH]:<{TITLE_WIDTH}}  {gate_text}"
@@ -381,10 +408,19 @@ def report(*, execute: bool) -> int:
         blocked_by = ", ".join(f"A{number}" for number in blocking)
         print(f"cursor: item {cursor.number} — {cursor.title}")
         print(f"        blocked on {blocked_by}")
-    untracked = [item.number for item in backlog if not item.gates]
+    untracked = [
+        item.number
+        for item in backlog
+        if not item.gates and item.number not in DEFERRED
+    ]
     if untracked:
         numbers = ", ".join(str(number) for number in untracked)
         print(f"        items {numbers} have no A-gate and are not tracked here")
+    deferred = [item.number for item in backlog if item.number in DEFERRED]
+    if deferred:
+        numbers = ", ".join(str(number) for number in deferred)
+        noun = "item" if len(deferred) == 1 else "items"
+        print(f"        {noun} {numbers} deferred on a recorded decision, not pending")
 
     failing = [status for status in statuses if status.total and not status.green]
     return 1 if execute and failing else 0

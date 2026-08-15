@@ -147,7 +147,11 @@ def memory_ablation(
     :class:`~sciagent.core.errors.TranscriptMissError` rather than a wrong
     number. Constructing the pair is cheap; reusing it is the trap.
     """
-    prompt = system_prompt or ABLATION_SYSTEM_PROMPT
+    # `.strip()` rather than a bare `or`: a whitespace-only prompt is truthy, so
+    # the plain fallback handed both arms a blank instruction and called it the
+    # caller's choice. `Hybrid` already strips the name it is given for the same
+    # reason; this makes the two agree.
+    prompt = system_prompt.strip() or ABLATION_SYSTEM_PROMPT
     return (
         Hybrid(
             library,

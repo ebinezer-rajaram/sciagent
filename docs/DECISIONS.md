@@ -2764,3 +2764,250 @@ the metric's arithmetic.
 Proposing)` -- structural, so any system exposing `attempts` is picked up and no
 system is named. A future system holding a layer must expose the attribute even
 on runs where it asks nothing, or it will be reported as having no layer.
+
+## 2026-08-15 — item 1: the recorder is deferred, and the clock was allowed to run
+
+**Decision.** SPEC §11 item 1 -- "Recorder to EC2 and S3", gated on "running, gap
+detection live" -- is deliberately not built, and will not be built as part of
+the slice. It has zero lines of code with items 2 through 14 complete. This entry
+is the record that the omission is a choice rather than an oversight, because
+nothing else in the repository can distinguish the two.
+
+**Why.** SPEC §11 says of item 1 "**Do this first; it is the only item with a
+clock**", and §13's closing line repeats it: "The next action is item 1: put the
+recorder on a websocket feed. Everything else can start whenever. That cannot."
+Both are correct about the clock and neither was followed. The reason the core
+track proceeded anyway is F2: the two tracks are independent, and the core
+research track "answers the central question with no market data, no exchange
+semantics, no Rust". Every acceptance criterion A1-A24, every §5 baseline, all
+twelve slice scenarios and §9's whole matrix run on `environments/pointproc`,
+which is a generator. None of them has ever needed a recorded tick.
+
+So the cost of the omission is not paid by anything currently built. It is paid
+by **R4** -- "do closed-world results transfer to higher fidelity?" -- and by any
+phase-6 market environment, both of which want history that exists only if
+somebody was recording at the time. That history is now permanently missing for
+the window 2026-08-01 to today, and each further day widens it.
+
+**The alternative, and what it would have cost.** Building item 1 first, as
+specified. It is infrastructure with no A-gate, no dependency on anything in
+`sciagent/`, and no effect on any number the slice reports; doing it first would
+have delayed every gate by the length of an EC2-and-S3 deployment for a payoff
+that arrives at phase 6. The judgement taken -- and it is a judgement, not a
+derivation -- is that a wider gap in market history is a smaller loss than a
+later validated evaluation apparatus. It is recorded here so that a session
+reading §13's closing line does not conclude the backlog was simply misread.
+
+**Closes off.** R4 is unanswerable on any data predating whenever the recorder is
+eventually started, and the gap is not recoverable from a vendor for a
+websocket feed nobody was subscribed to. Nothing in items 2-15 waits on this.
+`scripts/status.py` now reports item 1 as `deferred` rather than as an untracked
+item with no A-gate, so the cursor stops reading as though it were pending work
+somebody forgot.
+
+## 2026-08-15 — infrastructure: the deny list, corrected on the local machine
+
+**Decision.** `.claude/settings.json` now carries a deny list that was checked
+against the permissions documentation rather than carried over from
+`~/.claude/`. This closes the entry of 2026-08-04, "the personal deny rules do
+not survive the move into the repository", which recorded the working-tree
+version as known-wrong and said it "waits on the local machine".
+
+**One finding in that entry was itself wrong, and this supersedes it.** It said
+"a `Read` deny covers `Edit` but not `Write`, so six paths were read-denied and
+still writable". The documentation says the opposite: a `Read` deny rule also
+blocks **`Edit` and `Write`** on the same path, including creating a new file
+there. What is genuinely not covered is `NotebookEdit`, and separately there is
+**no `Write(...)` rule namespace at all** -- a rule written against `Write`,
+`Glob` or `MultiEdit` is accepted and then never consulted, which is the worst
+of both worlds. The `Edit(...)` entries kept here are therefore belt-and-braces,
+not the load-bearing part.
+
+**What the other three findings turned into.**
+
+- `Bash(curl*|*sh)` and `Bash(iwr*|*iex)` matched nothing, as recorded, because
+  `|` is one of the recognised separators (`&&`, `||`, `;`, `|`, `|&`, `&`,
+  newline) and a rule must match each subcommand independently, so no subcommand
+  ever contains the literal `|`. The documented replacement is to deny the
+  network fetchers outright -- `Bash(curl *)`, `Bash(wget *)` -- and reach
+  approved hosts through `WebFetch(domain:...)` instead. Nothing in this project
+  fetches over `curl`: dependencies come through `uv`, and the one networked
+  module uses the `anthropic` SDK.
+- The home-directory paths are now spelled `~/.ssh/**`, not `**/.ssh/**`. A
+  project-level rule anchors at the project root, so the old spelling could not
+  reach the files it named; `~/` is the prefix that anchors at home. The
+  project-relative spellings are kept *alongside* rather than replaced, since a
+  `.ssh` or `.aws` directory inside a checkout is a different file from the one
+  in `$HOME` and both should be refused.
+- PowerShell has its own `PowerShell(...)` namespace, parsed from the PowerShell
+  AST with its own subcommand splitting, and this machine's primary shell is
+  PowerShell. Every destructive `Bash(...)` rule now has a `PowerShell(...)`
+  counterpart. A `Bash(...)` rule was never going to be consulted for a
+  PowerShell command, which is why the original `iwr`/`iex` pair was doubly dead.
+
+**Measured against what it costs.** 38 deny rules against the 20 that were in the
+tree. `Bash(curl *)` and `Bash(wget *)` are the only two that can plausibly
+interrupt ordinary work here, and both were unused across this repository's
+history.
+
+**Two things deliberately not denied.** `Edit(docs/SPEC.md)` would be the natural
+protection for a frozen document, and is omitted because the catalogue change
+now planned amends SPEC §4.3 on the demonstrated contradiction §13 provides --
+a rule that has to be removed to do sanctioned work trains people to remove
+rules. And `Bash(rm -rf *)` in general: the two narrow forms kept are weak by
+construction, since the documentation is explicit that Bash patterns are
+fragile against re-spelling. They are a guard against an accident, never against
+an adversary, and should not be read as more.
+
+**Closes off.** An unattended cloud session now runs with a deny list that
+reaches what it names. The reasoning lives here because JSON admits no comments,
+so the file itself cannot say why any rule is shaped the way it is.
+
+## 2026-08-15 — infrastructure: the cross-platform instrument could not see the layer it was aimed at
+
+**Decision.** `tests/acceptance/determinism_child.py` now emits a second digest
+per case, `metrics/<name>`, over every value the SPEC §4.3 catalogue computes
+from the event log. The Windows baseline is recorded below so that a cloud
+session can produce the Ubuntu half and diff without a local machine running.
+
+**The instrument and the suspicion did not meet.** The entry of 2026-08-04 makes
+this file the thing to run on both platforms before trusting a cloud-produced
+artefact, and the entry of 2026-08-05 names the suspected cause of the
+Windows/Ubuntu split as `np.dot` in `environments/pointproc/diagnostics.py`
+(lines 126, 129, 379, 382) against an OpenBLAS built `DYNAMIC_ARCH`. But the
+child hashed `log.to_bytes()` and nothing else, and every one of those `np.dot`
+calls is **downstream of the log**. Running it on both platforms would have
+produced a clean diff that said nothing whatever about the layer the registry
+content-addresses over, and the clean diff would have been read as the check
+passing. An instrument that cannot fail for the reason you are worried about is
+worse than no instrument, because it retires the worry.
+
+**Values are digested as IEEE doubles**, matching `ExperimentRecord.digest_of`,
+not as text. A shortest-round-trip repr hides a difference in the last place,
+which is exactly the size a different summation order produces.
+
+**Measured, Windows 11, x86-64, this commit.** Eighteen executions: six
+programmes (the reference, the four confounded mechanisms, `SIZE_EXCITATION`)
+each run unclamped, under a forced-arrival prefix, and with a component held
+fixed. Log digests are unchanged by this edit, so the first column also
+establishes that adding the second changed nothing about the first.
+
+```
+reference                       c793c834…   metrics/ bb4043bd…
+reference+forced                4fd50434…   metrics/ c7aace13…
+reference+held                  50f4e2b3…   metrics/ 2a9bbc54…
+hawkes                          d0348135…   metrics/ e70c755e…
+hawkes+forced                   d22b1dcd…   metrics/ 011a3728…
+hawkes+held                     d6a3019a…   metrics/ c6cb92c2…
+poisson_mixture                 70477978…   metrics/ 09e8ccc9…
+poisson_mixture+forced          b15c221e…   metrics/ b861ab7c…
+poisson_mixture+held            fcd7ed49…   metrics/ f20ad404…
+regime_switching                d00bc50d…   metrics/ 3b437f42…
+regime_switching+forced         01687ad6…   metrics/ f7142948…
+regime_switching+held           729531ec…   metrics/ 30d900f6…
+seasonality                     41971612…   metrics/ d2877c94…
+seasonality+forced              0f1f8789…   metrics/ b251e1c1…
+seasonality+held                f905aa58…   metrics/ f2146b52…
+size_excitation                 a0c1c91b…   metrics/ 65f46631…
+size_excitation+forced          8b09e1e5…   metrics/ 5e019a1a…
+size_excitation+held            984026cc…   metrics/ ffa29010…
+```
+
+Full digests come from `uv run python tests/acceptance/determinism_child.py`;
+the truncations above are for reading, and the diff must be taken over the
+command's own output.
+
+**Left incomplete, and it is the same thing as before.** The Ubuntu half has not
+been run. This entry moves the check from "would not have answered the question"
+to "will answer it", and nothing more. `A1` gained
+`test_a1_the_child_digests_the_metric_layer_too`, which asserts both layers are
+present so that a later refactor cannot quietly return the instrument to its
+previous reach; it deliberately asserts no *value*, because the cross-platform
+claim is settled by diffing two runs and not by a constant checked into a test.
+
+## 2026-08-15 — infrastructure: two artefact writers let the platform choose their bytes
+
+**Decision.** `EmpiricalTable.save` and `TranscriptStore.save` pass
+`newline="\n"`. `tests/test_invariants.py` grows a static check that every
+`write_text` under `src/` pins it, and the repository gains a `.gitattributes`.
+
+**Why it was invisible.** `Path.write_text` opens in text mode with
+`newline=None`, which translates every `\n` to `os.linesep` on write — `\r\n`
+here, `\n` in a cloud session. Both files therefore differed byte for byte
+between the two halves of this project while parsing identically, and **no
+round-trip test could see it**, because reading translates the line endings
+back. The third invariant says byte-identical output; these are the only two
+places output leaves the process as a file somebody else is meant to reproduce.
+
+This matters more for the transcript corpus than for the table. The corpus is
+not a cache — `transcripts.py` argues at length that a recorded response *is*
+the reproducible artefact, because the sampling parameters that would pin a
+model call are rejected by the models in question. An artefact whose bytes
+depend on which machine wrote it is not one.
+
+**Measured.** The working tree held `store.py` as CRLF and `README.md` as LF at
+the same commit, which is what `core.autocrlf=true` plus editors that write LF
+produces. No committed blob contains CRLF, so nothing needed renormalising and
+adding `.gitattributes` produced no diff.
+
+**Closes off.** The static check is over `src/` only: a test writing a scratch
+file is not producing an artefact anybody compares, and requiring the keyword
+there would be noise.
+
+## 2026-08-15 — the cross-platform divergence is real, and it has been measured
+
+**Measured.** S12's final posterior predictive p-value, V7 and both ablation
+arms, closed set entertained, scripted provider, shared calibrated table:
+
+| where | commit | platform | final PPC p |
+|---|---|---|---|
+| item 12, this file line 2126 | a380a21 | Windows | 0.1011 |
+| item 13, this file line 2618 | 200d218 | **Ubuntu** | **0.1009** |
+| today, at `HEAD` | 0a9afd5 | Windows | **0.101100** |
+| today, at item 13's own commit | 200d218 | Windows | **0.101100** |
+
+All three arms agree with each other exactly in both of today's runs -- V7, V3
+and V4 return the identical value, which is the architecture behaving as
+designed, since on S12 they run the same trajectory and differ only in a brief
+the scripted provider ignores.
+
+**The code is not the difference.** The last row is the one that settles it: a
+detached worktree at 200d218, the exact commit whose entry records 0.1009, run
+on Windows, gives 0.101100. The ten commits between a380a21 and 200d218 are
+therefore not what moved the number, and neither is item 14. Same source, same
+seed, same script, same library, two platforms, two answers.
+
+**This is the demonstration the entry of 2026-08-05 said was missing.** That one
+inferred a Windows/Ubuntu split from a failure that appeared only on Ubuntu,
+named `np.dot` in `environments/pointproc/diagnostics.py` against a
+`DYNAMIC_ARCH` OpenBLAS as the suspected cause, and closed with "this has not
+been demonstrated". It now has been, at the level of a reported number. The
+mechanism it proposed also fits: the p-value is a tail sum over binned cells, a
+table row is 2000 replicates assigned to bins by those diagnostics, and "one
+replicate of 2000 crossing one bin edge is enough" is exactly the size of effect
+that moves 0.1011 to 0.1009.
+
+**What follows, and it is the serious part.** The registry content-addresses over
+(env version, config, data version, metric version, seed) **with no platform
+term**. The fear recorded on 2026-08-04 was that "two entries can share a content
+address while holding different numbers, and nothing in the system is positioned
+to report it". That is no longer a fear. Any registry built partly on Windows and
+partly in a cloud session is suspect, and so is any table shared between them --
+including `.cache/tables/`, which is keyed on replicates, seed and design set and
+not on the machine that filled it.
+
+**Not yet established, and it is one command away.** That the divergence lives in
+the metric layer specifically. Today's evidence is a downstream number; localising
+it wants `tests/acceptance/determinism_child.py` -- extended in the entry above to
+digest metric values and not only event logs -- run on Ubuntu and diffed against
+the Windows baseline recorded there. If the `metrics/` lines differ and the log
+lines do not, the diagnostics are the site and the event loop is exonerated.
+
+**Deliberately not decided here.** Whether the content address gains a platform
+term, whether tables become platform-scoped, or whether the diagnostics are made
+platform-stable by taking the summations out of BLAS. All three are real options
+with different costs -- the first two retire every stored artefact, the third is a
+change to frozen §4.3 estimators -- and the choice wants the localisation above
+first. Recorded now because the measurement is cheap to lose and expensive to
+redo, and because no further cloud-produced number should be trusted until it is
+settled.

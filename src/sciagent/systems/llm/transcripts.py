@@ -267,15 +267,83 @@ class TranscriptStore:
 
         Sorted and indented so that a recorded transcript is a reviewable diff
         rather than one long line whose changes cannot be read.
+
+        Guarantees the file never loses a call. A write that would drop an
+        address already on disk raises
+        :class:`~sciagent.core.errors.ProposalError` instead.
+
+        The check exists because this method is the one place the store's
+        append-only promise did not hold. :meth:`put` enforces it *in process* --
+        an address holding a different answer raises -- but ``save`` replaces the
+        whole file, so two recording sessions that loaded different snapshots of
+        one path would each write their own view and the second would silently
+        delete the first's calls. Recording is meant to be a deliberate act
+        producing an artefact to review; an artefact quietly missing entries is
+        the one outcome review would not catch, because there is nothing in the
+        diff to look at.
         """
         path.parent.mkdir(parents=True, exist_ok=True)
+        self._refuse_to_drop(path)
         payload = {
             "version": ADDRESS_VERSION,
             "calls": [self._entries[key].as_json() for key in sorted(self._entries)],
         }
+        # newline="\n" rather than the default: a corpus is the reproducible
+        # artefact, and text mode would translate every newline to os.linesep on
+        # write, so the same corpus recorded on Windows and on Linux would differ
+        # byte for byte while replaying identically.
         path.write_text(
-            json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+            newline="\n",
         )
+
+    def _refuse_to_drop(self, path: Path) -> None:
+        """Raise unless writing this store to ``path`` preserves every call there.
+
+        Two ways a write loses a recorded call, and both are refused: an address
+        on disk that this store does not hold at all, and one it holds under a
+        *different payload*. Checking only the address set would have left the
+        second open, which is the same hole one level in -- :meth:`put` raises on
+        a changed payload in process, so a file boundary that did not would make
+        the guarantee depend on whether the two answers happened to arrive in one
+        session.
+
+        A file that does not exist drops nothing. A file recorded under an older
+        address scheme is the one readable-failure that may be replaced: every
+        call in it would miss anyway, which is what :meth:`load` raises about,
+        and refusing here as well would strand the corpus forever. **Every other
+        failure to read propagates**, deliberately -- a corpus that is present
+        but malformed may still hold recoverable calls, and quietly treating it
+        as "drops nothing" would truncate exactly the file nobody can reconstruct.
+        """
+        if not path.exists():
+            return
+        try:
+            on_disk = self.load(path, mode=self._mode)
+        except ProposalError:
+            return
+        dropped = sorted(set(on_disk._entries) - set(self._entries))
+        if dropped:
+            raise ProposalError(
+                f"writing this store to {path} would drop {len(dropped)} "
+                f"recorded call(s) it does not hold, beginning {dropped[:3]}. A "
+                f"transcript store is append-only: load the file, add to it, and "
+                f"save that, rather than saving a view that never saw them"
+            )
+        changed = sorted(
+            address
+            for address, transcript in on_disk._entries.items()
+            if self._entries[address].payload != transcript.payload
+        )
+        if changed:
+            raise ProposalError(
+                f"writing this store to {path} would replace the response at "
+                f"{len(changed)} address(es), beginning {changed[:3]}. A "
+                f"transcript store is append-only: a model that answered "
+                f"differently to an identical prompt is recorded under a new "
+                f"address, never over an old one"
+            )
 
     @classmethod
     def load(cls, path: Path, *, mode: TranscriptMode = REPLAY) -> TranscriptStore:

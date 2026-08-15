@@ -3011,3 +3011,188 @@ change to frozen §4.3 estimators -- and the choice wants the localisation above
 first. Recorded now because the measurement is cheap to lose and expensive to
 redo, and because no further cloud-produced number should be trusted until it is
 settled.
+
+## 2026-08-15 — the estimators fold exactly now, and the simulation did too
+
+**Decision.** Every float-folding reduction that reaches a stored number goes
+through the new `sciagent/core/reductions.py`, which multiplies and subtracts in
+numpy and sums with `math.fsum`. `METRIC_VERSION` 1.0.0 -> 1.1.0 and
+`LIBRARY_VERSION` 1.1.0 -> 1.2.0. This supersedes the option left open in the
+entry above; the other two -- a platform term in the content address, and
+leaving it alone -- are rejected below.
+
+**The scope was larger than the diagnosis suggested, in the direction that
+matters.** The 2026-08-05 entry named `np.dot` in `diagnostics.py`. Searching
+for the *property* rather than the named call found 23 order-dependent folds in
+`diagnostics.py` -- `np.mean` and `np.var` as well as `np.dot`, several of them
+in metrics that are design axes -- and, not previously suspected, **two in
+`components.py`**: the Hawkes intensity kernel and the size-excitation kernel.
+
+Those two are inside the *simulation*. The intensity is what the thinning loop
+compares against, so a summation order chosen by the CPU changes the next
+arrival time and therefore the event log itself. Everything else in this
+investigation concerned numbers computed *from* a log. This one meant the log.
+It also means `determinism_child.py`'s original event-log-only digest was not
+merely aimed at the wrong layer -- it was aimed at a layer that was itself
+affected, and would have caught this had it ever been run on two platforms.
+
+**Measured, and it is the confirmation that the change did what it claims.**
+Re-running the child after the change, against the baseline recorded above:
+
+| case | event log | metrics |
+|---|---|---|
+| `reference` (all three modes) | **unchanged** | changed |
+| `poisson_mixture` (all three) | **unchanged** | changed |
+| `regime_switching` (all three) | **unchanged** | changed |
+| `seasonality` (all three) | **unchanged** | changed |
+| `hawkes` (all three) | **changed** | changed |
+| `size_excitation`, `+held` | **changed** | changed |
+| `size_excitation+forced` | unchanged | changed |
+
+Exactly the four mechanisms with no intensity kernel kept their logs, and
+exactly the two with one moved. `size_excitation+forced` keeping its log is not
+an anomaly: under a forced-arrival prefix the kernel's history window holds few
+enough terms on that trajectory that pairwise summation and exact summation
+agree bit for bit, which is what one expects of a sum with no cancellation in it.
+
+**Why not a platform term in the content address.** It is the honest option and
+it was rejected on cost. Cloud and local sessions could then never share a
+calibrated table or a registered result, so every cloud session rebuilds from
+cold -- and this repository is set up to be driven from a phone, which is most
+of the point. It also preserves the defect rather than fixing it: an estimator
+that disagrees with itself across machines stays wrong, and the address merely
+stops the disagreement being visible.
+
+**Why not leave it.** The measurement above is not of a rounding curiosity. A
+metric value picks a bin, a bin picks a count, a count picks a likelihood.
+
+**Cost, measured before committing to it.** On slice-realistic arrays (n=512)
+the exactly-rounded variance costs 29.06us against numpy's 13.68us and the dot
+13.13us against 1.18us -- about **1.1 seconds** added to a full cold table build
+of 35 rows at 2000 replicates. The ratios look worse than the cost is because
+the absolute numbers are microseconds. An earlier estimate of 25-37x was wrong:
+it squared the deviations in a Python generator. Keeping the elementwise half in
+numpy is what makes this cheap, and it is sound because an elementwise operation
+is a set of independent correctly-rounded ops with no accumulator to reorder --
+vector width cannot change it.
+
+**What a version bump costs, which is the number to plan around.** The suite
+after this change was **909 passed, 7 skipped in 31m45s**, against 875 in 6m44s
+warm on the same machine immediately before it. (The final count for the change
+as shipped is higher -- review and audit added tests afterwards -- but the 31m45s
+is the figure to plan around, and it was measured on the run that rebuilt.) Almost none of that is the
+reductions: both `ENV_VERSION` and `METRIC_VERSION` moved, so all three cached
+tables -- gate, slice and search -- missed their addresses and were rebuilt from
+cold. This is what any versioning event costs here and is worth knowing before
+scheduling one, particularly on a 4 vCPU cloud VM where it will be longer. The
+old files are left in `.cache/tables/` rather than deleted; they are addressed by
+content, so they are simply never read again.
+
+**This closes one class of divergence, not all of them, and the distinction has
+to be stated because an earlier draft of this entry did not.** The *fold* is now
+exact, so no summation order can matter. Nothing here makes the addends
+portable.
+
+**Transcendental functions are not correctly rounded, and this is the bigger
+remaining hole.** Measured: `math.exp` disagrees with the correctly-rounded
+double -- `Decimal.exp()` at 60 digits -- for **17694 of 20000** inputs across
+`[-40, 0]`. Every practical `exp` is allowed that error and implementations
+differ, so the same expression can round differently under the MSVC runtime and
+under glibc. Both Hawkes kernels sum `np.exp(...)` terms, which means an exactly
+rounded fold over inexactly rounded addends is still only as portable as the
+platform's `exp`. Closing it would need a correctly-rounded math library, which
+is a dependency this project does not have and should not acquire for this.
+
+So the honest statement of what changed: the class that was *demonstrated* --
+BLAS and pairwise summation choosing kernels from CPU features -- is closed, and
+what remains is narrower and more testable. Nobody may conclude from this entry
+that the platforms now agree.
+
+**Left open, unchanged by this.** `np.fft.rfft`, in the two spectral metrics.
+There is no exact-rounding substitute for a transform, and numpy's FFT is
+pocketfft compiled in rather than a dispatching library, so it is *probably*
+stable across x86-64 -- an expectation, not a measurement.
+
+**Registered is not measured, and the distinction is what makes this deferrable.**
+`spectral_peak_frequency` and `spectral_peak_prominence` are both in
+`metric_registry()`, so their *names and versions* enter `MetricRegistry.version`
+and therefore every experiment's content address. Their *values* enter nothing:
+`_QUERY_EDGES` gives a discretisation to four metrics plus `mean_rate` for the
+forced design, and a metric with no discretisation is not an axis of any design,
+so no table row and no registered result holds an FFT-derived number today. The
+address covers metric identity, not metric output. Promoting a spectral metric
+to an axis is exactly what the planned §4.3 widening would do, and that is the
+moment this stops being deferrable -- settle it with the two-platform diff first.
+
+**One trap for whoever takes that diff.** `determinism_child.py`'s `metrics/`
+lines digest *every* metric the catalogue declares, spectral ones included --
+deliberately, because the point of that instrument is to see a divergence before
+it reaches a stored number. So a `metrics/` mismatch between the platforms does
+not by itself mean a stored number differs: it has to be attributed to a metric
+first, and a difference confined to the two spectral entries is the FFT question
+above rather than a live registry problem.
+
+**Still not done: the Ubuntu half.** This entry makes the estimators
+platform-stable by construction and confirms the change moved what it should on
+one platform. It does not demonstrate that two platforms now agree. The baseline
+above supersedes the one in the preceding entry -- those digests were taken
+before this change and no longer describe this code.
+
+**New Windows baseline**, this commit, from
+`uv run python tests/acceptance/determinism_child.py`:
+
+```
+reference               c793c834…  metrics/ d7f438d9…
+reference+forced        4fd50434…  metrics/ 24169cd7…
+reference+held          50f4e2b3…  metrics/ 36aa5e1e…
+hawkes                  b8cd586f…  metrics/ 350ce478…
+hawkes+forced           3d624450…  metrics/ 44405918…
+hawkes+held             e6a3cdbb…  metrics/ 9c58aa4d…
+poisson_mixture         70477978…  metrics/ 619fa2cd…
+poisson_mixture+forced  b15c221e…  metrics/ a78bd4ae…
+poisson_mixture+held    fcd7ed49…  metrics/ acc4c3fa…
+regime_switching        d00bc50d…  metrics/ 8c1f5a45…
+regime_switching+forced 01687ad6…  metrics/ f1fec3fa…
+regime_switching+held   729531ec…  metrics/ fdad3f46…
+seasonality             41971612…  metrics/ 429a97e9…
+seasonality+forced      0f1f8789…  metrics/ d4e12f0e…
+seasonality+held        f905aa58…  metrics/ 42e6a5f6…
+size_excitation         31e0e252…  metrics/ b08ed8cf…
+size_excitation+forced  8b09e1e5…  metrics/ 25fdcf17…
+size_excitation+held    6cd9de4a…  metrics/ d8b72f91…
+```
+
+**One site in `sciagent/` too, and the first version of the guard could not see
+it.** `EditGrammar.distance` ended with `float(cost[rows, columns].sum())`
+(`core/edits.py`) -- a bare method-style fold over the assignment costs, which
+is SPEC §8's D1 and therefore reported and stored. Two things had hidden it. The
+guard was scoped to `src/environments`, on the reasoning that a fold outside a
+diagnostic is summarising for a human; and it keyed on the *base* of the call
+being the numpy alias, so `x.sum()` -- whose base here is a subscript, not a
+name -- could never match however it was scoped. The function three lines below
+it already used `math.fsum` for its displacement sum, so this was a half
+migration nobody had a reason to notice.
+
+An earlier draft of this entry claimed "`sciagent/` needed no change: it already
+folded with `math.fsum` throughout". That was wrong, and it was wrong because it
+was inferred from a search that could not have found the counter-example. The
+guard now covers the whole of `src` and both spellings, with controls that watch
+it catch the subscript case specifically.
+
+**No third version bump, and the reason is worth stating.** `distance` is
+reached only by `eval/scoring.py`'s D1 and by `ScenarioRun.structural_distance`.
+It does not touch `code_length`, so the structural prior is unmoved; and neither
+caller writes to the registry, whose key covers env, config, data, metric and
+seed but nothing about scoring. So no stored row changes and `GRAMMAR_VERSION`
+stays put -- the grammar's expressible space is what that version is about, and
+it has not changed. What does change is every *reported* D1, in the last places.
+The figures recorded for item 12's D1-D6 table are quoted to two decimals and
+are unaffected at that precision.
+
+**Closes off.** `tests/test_invariants.py` gains
+`test_metric_values_use_deterministic_reductions`, which fails on any
+order-dependent float fold anywhere under `src` -- so this is a property of the
+tree from now on rather than a set of call sites somebody remembered to change.
+Selections are deliberately not flagged: `np.median`, `np.max` and `np.argmax`
+pick from a multiset rather than accumulating over it, and no kernel can reorder
+a selection into a different answer.

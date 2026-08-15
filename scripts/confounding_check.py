@@ -45,6 +45,7 @@ from environments.pointproc.diagnostics import (
     inter_arrival_dispersion,
     mean_rate,
 )
+from sciagent.core import reductions
 from sciagent.core.edits import Defect
 from sciagent.core.types import Seed
 
@@ -92,8 +93,8 @@ def table(
         summary = {}
         for column in columns:
             draws = np.array([sample[column] for sample in samples], dtype=np.float64)
-            spread = float(np.std(draws, ddof=1)) if len(seeds) > 1 else 0.0
-            summary[column] = (float(np.mean(draws)), spread)
+            spread = reductions.deviation(draws) if len(seeds) > 1 else 0.0
+            summary[column] = (reductions.mean(draws), spread)
         results[case] = summary
         cells = "  ".join(f"{summary[column][0]:9.3f}" for column in columns)
         print(f"{case:<24s}  {cells}")

@@ -42,6 +42,7 @@ from environments.pointproc.outcomes import (
     closed_set,
     executor,
 )
+from sciagent.core import reductions
 from sciagent.core.edits import Defect
 from sciagent.core.types import Floats, Seed
 from sciagent.experiments.dsl import ExperimentDesign, ForceArrival
@@ -128,8 +129,14 @@ def overlap(drawn: dict[str, Floats]) -> None:
         if name == "hawkes":
             continue
         other = drawn[name]
-        auc = float((hawkes[:, None] > other[None, :]).mean())
-        clears = float((hawkes > float(np.quantile(other, 0.99))).mean())
+        # Booleans and counts fold exactly whatever the order, so these three
+        # were never at risk. They go through `reductions` anyway: an exempt
+        # call is one a later reader has to re-derive the exemption for, and
+        # these are printed into the frozen edges in `outcomes.py`.
+        wins = (hawkes[:, None] > other[None, :]).ravel().astype(np.float64)
+        auc = reductions.mean(wins)
+        above = (hawkes > float(np.quantile(other, 0.99))).astype(np.float64)
+        clears = reductions.mean(above)
         print(
             f"  vs {name:<18s} AUC {auc:5.3f}   "
             f"hawkes above its 99th percentile: {clears:5.1%}"
@@ -151,7 +158,7 @@ def suggest(drawn: dict[str, Floats], edges: Sequence[float]) -> None:
     print("-" * (20 + 11 * len(labels)))
     for name in sorted(drawn):
         counts = np.histogram(drawn[name], bins=[-np.inf, *edges, np.inf])[0]
-        share = counts / counts.sum()
+        share = counts / reductions.total(counts.astype(np.float64))
         print(f"{name:<18s}  " + "  ".join(f"{value:9.3f}" for value in share))
 
 

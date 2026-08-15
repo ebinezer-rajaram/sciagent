@@ -19,6 +19,7 @@ import math
 
 import numpy as np
 
+from sciagent.core import reductions
 from sciagent.core.errors import ExecutionError
 from sciagent.core.program import DrawContext, FamilyLibrary
 from sciagent.core.types import (
@@ -124,8 +125,12 @@ def _hawkes_intensity(
     recent = history[_recent(history, time, decay) :]
     if recent.size == 0:
         return base_rate
-    return base_rate + branching * decay * float(
-        np.sum(np.exp(-decay * (time - recent)))
+    # `reductions.total`, not `np.sum`: this fold is inside the *simulation*, so
+    # a summation order chosen by the CPU changes the intensity, which changes
+    # the next arrival time, which changes the event log itself. Of everything
+    # the platform split reaches, this is the layer that reaches furthest.
+    return base_rate + branching * decay * reductions.total(
+        np.exp(-decay * (time - recent))
     )
 
 
@@ -280,8 +285,11 @@ def arrival_size_excited_exponential(context: DrawContext) -> float:
         start = _recent(times, time, decay)
         if start >= times.size:
             return base_rate
-        return base_rate + excitation * decay * float(
-            np.sum(sizes[start:] * np.exp(-decay * (time - times[start:])))
+        # See `_hawkes_intensity` on why this fold may not be `np.sum`. This is
+        # S11's out-of-library mechanism, so its event log is the one the whole
+        # out-of-library evaluation rests on.
+        return base_rate + excitation * decay * reductions.total(
+            sizes[start:] * np.exp(-decay * (time - times[start:]))
         )
 
     time = _previous_time(context)
@@ -380,7 +388,15 @@ def init_two_state_markov(parameters: Parameters, rng: np.random.Generator) -> f
 #: ``ENV_VERSION`` and therefore every registered experiment's content address:
 #: a library that can execute a programme the previous one could not is a
 #: different library, whether or not any existing programme's behaviour moved.
-LIBRARY_VERSION = "1.1.0"
+#:
+#: Bumped to 1.2.0 on 2026-08-15, when both Hawkes intensity kernels moved from
+#: ``np.sum`` to :func:`sciagent.core.reductions.total`. Unlike the 1.1.0 bump
+#: this one *does* move existing behaviour: the intensity is what the thinning
+#: loop compares against, so an event log drawn under 1.2.0 differs from one
+#: drawn under 1.1.0 in the last places, and every stored result computed from
+#: one is retired. That is the intended effect -- see ``docs/DECISIONS.md`` on
+#: the Windows/Ubuntu measurement that made these folds a defect.
+LIBRARY_VERSION = "1.2.0"
 
 LIBRARY = FamilyLibrary(
     name="pointproc",

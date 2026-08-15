@@ -60,6 +60,7 @@ from typing import Literal
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
+from sciagent.core import reductions
 from sciagent.core.errors import (
     EditNotInGrammarError,
     InvalidEditError,
@@ -676,7 +677,11 @@ class EditGrammar:
         cost[n:, m:] = 0.0
 
         rows, columns = linear_sum_assignment(cost)
-        return float(cost[rows, columns].sum())
+        # `reductions.total`, not `.sum()`: this is SPEC §8's D1, so the value
+        # is reported and stored. `_ground_distance` below already folds with
+        # `math.fsum` for exactly this reason; the aggregate three lines up did
+        # not, which is the kind of half-migration only a check can find.
+        return reductions.total(cost[rows, columns])
 
     def _ground_distance(self, left: Edit, right: Edit) -> float:
         if left == right:

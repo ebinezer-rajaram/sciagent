@@ -49,7 +49,21 @@ CANDIDATE_PERIOD = SEASONALITY.parameters["period"]
 
 #: Version borne by every metric below. Bump a metric's own version when its
 #: estimator changes; the registry version then changes with it.
-METRIC_VERSION = "1.0.0"
+#:
+#: Bumped to 1.1.0 on 2026-08-15. Every estimator in ``diagnostics.py`` now folds
+#: through :mod:`sciagent.core.reductions` rather than ``np.mean``, ``np.var``
+#: and ``np.dot``, so no value here depends on which SIMD or BLAS kernel the CPU
+#: dispatched to. The values move in the last places, which is exactly why this
+#: is a version event and not a refactor: a result stored under 1.0.0 was
+#: computed by an estimator whose summation order the machine chose, and must
+#: not be compared against one computed by an estimator that folds exactly.
+#:
+#: This does *not* make every estimator portable, and the note is here so the
+#: version is not read as claiming more than it does. The two spectral metrics
+#: still route through ``np.fft.rfft``, for which no exact-rounding substitute
+#: exists, and any estimator consuming a transcendental inherits that function's
+#: rounding. See :mod:`sciagent.core.reductions` for what is and is not closed.
+METRIC_VERSION = "1.1.0"
 
 
 def _spec(

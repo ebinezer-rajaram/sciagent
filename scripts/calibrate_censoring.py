@@ -45,6 +45,7 @@ from environments.pointproc.outcomes import (
     slice_designs,
     slice_templates,
 )
+from sciagent.core import reductions
 from sciagent.core.edits import ChangeDistributionFamily, Defect
 from sciagent.core.errors import MalformedDesignError
 from sciagent.core.types import Seed
@@ -90,7 +91,7 @@ def diagnostics(
             [runner.measure(design, defect, seed)[0] for seed in seeds],
             dtype=np.float64,
         )
-        summary[name] = (float(np.mean(draws)), float(np.std(draws, ddof=1)))
+        summary[name] = (reductions.mean(draws), reductions.deviation(draws))
     return summary
 
 
@@ -133,7 +134,7 @@ def spectra(defect: Defect, seeds: Sequence[Seed]) -> dict[str, tuple[float, flo
             [runner.measure(design, defect, seed)[0] for seed in seeds],
             dtype=np.float64,
         )
-        summary[name] = (float(np.mean(draws)), float(np.std(draws, ddof=1)))
+        summary[name] = (reductions.mean(draws), reductions.deviation(draws))
     return summary
 
 

@@ -301,6 +301,230 @@ class TestTheRandomnessGuardItself:
         assert _numpy_random_imports(tree) == []
 
 
+#: numpy reductions whose summation order is chosen at runtime.
+#:
+#: Every one of these folds many floats into one, and the order it folds them in
+#: depends on the kernel numpy or its BLAS picks from the CPU's features --
+#: OpenBLAS ships ``DYNAMIC_ARCH`` and numpy's own pairwise sum is SIMD-width
+#: dependent. Floating-point addition is not associative, so two machines
+#: disagree in the last places. That is not a rounding curiosity here: a metric
+#: value decides which bin a replicate falls in, a bin decides a count, and a
+#: count decides a likelihood.
+#:
+#: Elementwise operations are deliberately absent. A lane-wise multiply or
+#: subtract is a set of independent correctly-rounded operations, so vector
+#: width cannot change the result, which is why the deterministic helpers keep
+#: numpy for that part and replace only the fold.
+ORDER_DEPENDENT_REDUCTIONS = frozenset(
+    {
+        "sum",
+        "nansum",
+        "mean",
+        "nanmean",
+        "var",
+        "nanvar",
+        "std",
+        "nanstd",
+        "dot",
+        "vdot",
+        "inner",
+        "matmul",
+        "tensordot",
+        "einsum",
+        "prod",
+        "nanprod",
+        "average",
+        "cumsum",
+        "cumprod",
+        "trace",
+    }
+)
+
+#: Bases whose reduction-shaped attributes are the deterministic ones. Without
+#: this, the module built to fix the problem is the loudest offender in the
+#: report -- ``reductions.total`` is an attribute call whose name is on the list.
+DETERMINISTIC_BASES = frozenset({"reductions", "math"})
+
+
+def _reduction_imports(tree: ast.AST) -> set[str]:
+    """Return names bound directly to a numpy reduction by a ``from`` import.
+
+    ``from numpy import mean`` puts ``mean`` in the module namespace as a bare
+    identifier, so the call is an ``ast.Name`` and every check below keyed on an
+    attribute walks straight past it -- the same shape of gap that
+    :func:`_numpy_random_imports` exists to close for the randomness guard.
+    """
+    bound: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module in {"numpy", "numpy.ma"}:
+            bound.update(
+                alias.asname or alias.name
+                for alias in node.names
+                if alias.name in ORDER_DEPENDENT_REDUCTIONS
+            )
+    return bound
+
+
+def _order_dependent_reductions(tree: ast.AST) -> list[tuple[int, str]]:
+    """Return ``(line, name)`` for every runtime-ordered float fold.
+
+    Four spellings, because the invariant is about what a module reaches and not
+    how it spells it. ``np.sum(x)`` is an attribute call on the numpy alias.
+    ``x.sum()`` is an attribute call on an *arbitrary expression* -- and when
+    that expression is a subscript, as in ``cost[rows, columns].sum()``, no check
+    keyed on the base being a plain name can see it; that exact line sat in
+    ``core/edits.py`` computing SPEC §8's D1 while the first version of this
+    guard reported the tree clean. ``from numpy import mean`` makes the call a
+    bare name that no attribute walk visits at all. And ``a @ b`` is a
+    ``BinOp``, not a call, while reaching the same BLAS ``dot`` this bans by
+    name.
+    """
+    aliases = _numpy_aliases(tree)
+    imported = _reduction_imports(tree)
+    found: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.MatMult):
+            found.append((node.lineno, "@"))
+            continue
+        if not isinstance(node, ast.Call):
+            continue
+        target = node.func
+        if isinstance(target, ast.Name) and target.id in imported:
+            found.append((node.lineno, f"{target.id}()"))
+            continue
+        if not isinstance(target, ast.Attribute):
+            continue
+        if target.attr not in ORDER_DEPENDENT_REDUCTIONS:
+            continue
+        base = target.value
+        if isinstance(base, ast.Name) and base.id in DETERMINISTIC_BASES:
+            continue
+        if isinstance(base, ast.Name) and base.id in aliases:
+            found.append((node.lineno, f"np.{target.attr}"))
+        elif not isinstance(base, ast.Name):
+            found.append((node.lineno, f".{target.attr}()"))
+        elif base.id not in aliases:
+            found.append((node.lineno, f"{base.id}.{target.attr}()"))
+    return found
+
+
+#: Everywhere a fold can reach a number somebody later relies on.
+#:
+#: The same roots as :data:`RANDOMNESS_ROOTS` minus ``tests``, and ``scripts`` is
+#: here for the reason recorded there: ``calibrate_mechanisms.py`` and
+#: ``calibrate_censoring.py`` produce the frozen literals in ``mechanisms.py``
+#: and ``pilot_forced_edges.py`` the frozen bin edges in ``outcomes.py``. A fold
+#: whose value depends on the machine makes a calibration nobody can reproduce,
+#: and unlike a registry row there is no address to notice it.
+#:
+#: ``tests`` is deliberately out. A fold in a test is checking something, not
+#: producing an artefact, and several exist precisely to demonstrate that numpy
+#: disagrees with itself.
+REDUCTION_ROOTS = (SOURCE, ROOT / "scripts")
+
+
+@pytest.mark.parametrize(
+    "path",
+    sorted(p for root in REDUCTION_ROOTS for p in root.rglob("*.py")),
+    ids=lambda p: str(p.name),
+)
+def test_metric_values_use_deterministic_reductions(path: Path) -> None:
+    """CLAUDE.md invariant 3, wherever a float fold reaches a stored number.
+
+    A result is content-addressed with no platform term, so a fold taken in a
+    CPU-chosen order makes two machines produce different numbers under one
+    address. That is not hypothetical here -- ``DECISIONS.md`` records S12's
+    posterior predictive p measured at 0.101100 on Windows and 0.1009 on Ubuntu
+    from the same commit and seed.
+
+    Use :mod:`sciagent.core.reductions`, which keeps numpy for the elementwise
+    work and folds with :func:`math.fsum`. ``fsum`` is exactly rounded, so its
+    result is *the* correctly-rounded sum and cannot depend on the order or the
+    kernel.
+
+    Scoped to the whole of ``src``, not to the environments. The first version
+    of this checked only ``src/environments``, on the reasoning that a fold
+    outside a diagnostic is summarising for a human -- and missed
+    ``EditGrammar.distance``, which is SPEC §8's D1 and is reported and stored.
+    Selections are deliberately absent from
+    :data:`ORDER_DEPENDENT_REDUCTIONS`: ``np.median``, ``np.max`` and
+    ``np.argmax`` pick from a multiset rather than accumulating over it, so no
+    kernel can reorder them into a different answer.
+    """
+    offenders = _order_dependent_reductions(_parse(path))
+    assert not offenders, (
+        f"{path}: {[f'{name} at line {line}' for line, name in offenders]} fold "
+        f"in a CPU-chosen order; use sciagent.core.reductions instead"
+    )
+
+
+class TestTheReductionGuardItself:
+    """Controls for :func:`test_metric_values_use_deterministic_reductions`.
+
+    The guard passes over the whole tree, so every case here would otherwise be
+    a property nobody has seen it hold. The one that matters is the subscript
+    base: the first version of the guard reported the tree clean while
+    ``cost[rows, columns].sum()`` sat in ``core/edits.py`` computing D1.
+    """
+
+    def test_the_numpy_attribute_form_is_caught(self) -> None:
+        tree = ast.parse("import numpy as np\nnp.sum(x)\n")
+        assert [name for _, name in _order_dependent_reductions(tree)] == ["np.sum"]
+
+    def test_the_method_form_is_caught(self) -> None:
+        """``x.sum()`` names no module, so an alias-keyed check cannot see it."""
+        tree = ast.parse("y = x.sum()\n")
+        assert [name for _, name in _order_dependent_reductions(tree)] == ["x.sum()"]
+
+    def test_a_method_call_on_a_subscript_is_caught(self) -> None:
+        """The exact line the first version of the guard could not reach.
+
+        Its base is an ``ast.Subscript``, not an ``ast.Name``, so a check that
+        required a plain identifier could never match it however it was scoped.
+        """
+        tree = ast.parse("total = cost[rows, columns].sum()\n")
+        assert [name for _, name in _order_dependent_reductions(tree)] == [".sum()"]
+
+    def test_a_from_import_is_caught(self) -> None:
+        """``from numpy import mean`` makes the call a bare name.
+
+        No attribute walk visits it, however many base shapes that walk handles
+        -- the same gap :func:`_numpy_random_imports` closes for the randomness
+        guard, and it was open here until the review found it.
+        """
+        tree = ast.parse("from numpy import mean\nmean(x)\n")
+        assert [name for _, name in _order_dependent_reductions(tree)] == ["mean()"]
+
+    def test_the_matmul_operator_is_caught(self) -> None:
+        """``a @ b`` reaches the same BLAS ``dot`` this bans by name.
+
+        It is a ``BinOp`` rather than a ``Call``, so nothing keyed on call
+        syntax sees it at all.
+        """
+        tree = ast.parse("value = centred @ centred\n")
+        assert [name for _, name in _order_dependent_reductions(tree)] == ["@"]
+
+    def test_the_deterministic_helpers_are_not_flagged(self) -> None:
+        """Otherwise the module that fixes the problem is the loudest offender."""
+        tree = ast.parse(
+            "from sciagent.core import reductions\n"
+            "reductions.total(x)\n"
+            "reductions.mean(x)\n"
+            "math.fsum(values)\n"
+        )
+        assert _order_dependent_reductions(tree) == []
+
+    def test_a_selection_is_not_a_fold(self) -> None:
+        """``median``/``max``/``argmax`` pick from a multiset, never accumulate.
+
+        No kernel can reorder a selection into a different answer, so flagging
+        them would be noise -- and noise in a guard is what gets a guard
+        weakened later.
+        """
+        tree = ast.parse("import numpy as np\nnp.median(p)\nnp.max(p)\nnp.argmax(p)\n")
+        assert _order_dependent_reductions(tree) == []
+
+
 def _text_writes_without_newline(tree: ast.AST) -> list[int]:
     r"""Return the lines calling ``write_text`` without pinning ``newline``.
 

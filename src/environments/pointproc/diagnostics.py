@@ -32,6 +32,7 @@ import math
 import numpy as np
 
 from environments.pointproc.components import ARRIVAL, SIGN, SIZE
+from sciagent.core import reductions
 from sciagent.core.errors import ExecutionError
 from sciagent.core.types import EventLog, Floats
 
@@ -61,10 +62,10 @@ def inter_arrival_dispersion(log: EventLog) -> float:
     mechanisms of SPEC §4.2.
     """
     gaps = inter_arrival_times(log)
-    mean = float(np.mean(gaps))
+    mean = reductions.mean(gaps)
     if mean <= 0.0:
         raise ExecutionError("mean inter-arrival time must be positive")
-    return float(np.var(gaps, ddof=1)) / (mean * mean)
+    return reductions.variance(gaps) / (mean * mean)
 
 
 def mean_rate(log: EventLog) -> float:
@@ -105,10 +106,10 @@ def fano_factor(log: EventLog, window: float) -> float:
     at any single window does not, which is the point of the confounding.
     """
     counts = counts_in_windows(log, window)
-    mean = float(np.mean(counts))
+    mean = reductions.mean(counts)
     if mean <= 0.0:
         raise ExecutionError("mean count must be positive")
-    return float(np.var(counts, ddof=1)) / mean
+    return reductions.variance(counts) / mean
 
 
 def count_autocorrelation(log: EventLog, window: float, lag: int = 1) -> float:
@@ -122,11 +123,11 @@ def count_autocorrelation(log: EventLog, window: float, lag: int = 1) -> float:
     counts = counts_in_windows(log, window)
     if counts.size <= lag + 1:
         raise ExecutionError("not enough windows for the requested lag")
-    centred = counts - float(np.mean(counts))
-    denominator = float(np.dot(centred, centred))
+    centred = counts - reductions.mean(counts)
+    denominator = reductions.dot(centred, centred)
     if denominator <= 0.0:
         return 0.0
-    return float(np.dot(centred[:-lag], centred[lag:]) / denominator)
+    return reductions.dot(centred[:-lag], centred[lag:]) / denominator
 
 
 # --------------------------------------------------------------------------
@@ -147,7 +148,7 @@ def power_spectrum(log: EventLog, bin_width: float = 0.25) -> tuple[Floats, Floa
     smoothing is applied, so the result is a function of the log alone.
     """
     counts = counts_in_windows(log, bin_width)
-    centred = counts - float(np.mean(counts))
+    centred = counts - reductions.mean(counts)
     spectrum = np.fft.rfft(centred)
     power = (np.abs(spectrum) ** 2) / float(counts.size)
     frequencies = np.fft.rfftfreq(counts.size, d=bin_width)
@@ -224,10 +225,10 @@ def phase_conditioned_dispersion(
                 f"phase bin {index} holds {members.size} window(s); widen the "
                 f"window, lengthen the run, or use fewer bins"
             )
-        mean = float(np.mean(members))
+        mean = reductions.mean(members)
         if mean <= 0.0:
             continue
-        weighted += members.size * float(np.var(members, ddof=1)) / mean
+        weighted += members.size * reductions.variance(members) / mean
         total_weight += members.size
     if total_weight == 0:
         raise ExecutionError("every phase bin was empty of events")
@@ -247,7 +248,7 @@ def high_run_lengths(log: EventLog, window: float = 1.0) -> Floats:
     latent regime, which is what SPEC §4.2 says identifies regime switching.
     """
     counts = counts_in_windows(log, window)
-    high = counts > float(np.mean(counts))
+    high = counts > reductions.mean(counts)
     lengths: list[float] = []
     current = 0
     for flag in high:
@@ -265,7 +266,7 @@ def high_run_lengths(log: EventLog, window: float = 1.0) -> Floats:
 
 def mean_high_run_length(log: EventLog, window: float = 1.0) -> float:
     """Return the mean length of an above-average run, in windows."""
-    return float(np.mean(high_run_lengths(log, window)))
+    return reductions.mean(high_run_lengths(log, window))
 
 
 def run_length_geometric_deviation(log: EventLog, window: float = 1.0) -> float:
@@ -294,10 +295,10 @@ def run_length_geometric_deviation(log: EventLog, window: float = 1.0) -> float:
     lengths = high_run_lengths(log, window)
     if lengths.size < 2:
         raise ExecutionError("need at least two runs to estimate dispersion")
-    mean = float(np.mean(lengths))
+    mean = reductions.mean(lengths)
     if mean <= 0.0:
         raise ExecutionError("mean run length must be positive")
-    observed = float(np.var(lengths, ddof=1)) / (mean * mean)
+    observed = reductions.variance(lengths) / (mean * mean)
     return abs(observed - (1.0 - 1.0 / mean))
 
 
@@ -316,7 +317,7 @@ def mark_sizes(log: EventLog) -> Floats:
 
 def size_mean(log: EventLog) -> float:
     """Return the mean mark size."""
-    return float(np.mean(mark_sizes(log)))
+    return reductions.mean(mark_sizes(log))
 
 
 def size_dispersion(log: EventLog) -> float:
@@ -328,10 +329,10 @@ def size_dispersion(log: EventLog) -> float:
     the defect to a component other than ``arrival``.
     """
     sizes = mark_sizes(log)
-    mean = float(np.mean(sizes))
+    mean = reductions.mean(sizes)
     if mean <= 0.0:
         raise ExecutionError("mean mark size must be positive")
-    return float(np.var(sizes, ddof=1)) / (mean * mean)
+    return reductions.variance(sizes) / (mean * mean)
 
 
 def size_skewness(log: EventLog) -> float:
@@ -342,11 +343,11 @@ def size_skewness(log: EventLog) -> float:
     missing the other.
     """
     sizes = mark_sizes(log)
-    centred = sizes - float(np.mean(sizes))
-    variance = float(np.mean(centred**2))
+    centred = sizes - reductions.mean(sizes)
+    variance = reductions.mean(centred**2)
     if variance <= 0.0:
         raise ExecutionError("mark sizes have zero variance")
-    return float(np.mean(centred**3)) / math.pow(variance, 1.5)
+    return reductions.mean(centred**3) / math.pow(variance, 1.5)
 
 
 # --------------------------------------------------------------------------
@@ -375,8 +376,8 @@ def sign_autocorrelation(log: EventLog, lag: int = 1) -> float:
     values = signs(log)
     if values.size <= lag + 1:
         raise ExecutionError("not enough events for the requested lag")
-    centred = values - float(np.mean(values))
-    denominator = float(np.dot(centred, centred))
+    centred = values - reductions.mean(values)
+    denominator = reductions.dot(centred, centred)
     if denominator <= 0.0:
         return 0.0
-    return float(np.dot(centred[:-lag], centred[lag:]) / denominator)
+    return reductions.dot(centred[:-lag], centred[lag:]) / denominator

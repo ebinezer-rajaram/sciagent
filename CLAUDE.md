@@ -96,7 +96,9 @@ personal config file because cloud sessions clone the repo and see nothing from
   no such care. Before repeating the suite, ask
   `bash .claude/hooks/suite-freshness.sh check`: it reports whether a full run
   already passed on a byte-identical tree, and `/next` and `/ship` between them
-  used to run it three times per item.
+  used to run it three times per item. Pin with `begin` before starting pytest
+  and `record` after — `record` refuses if another session edited a tracked
+  file mid-run, because such a run describes no single state of the tree.
 - You decide when to delegate to subagents; do not ask each time. Delegate for
   coverage: wide sweeps, locating call sites, enumerating across many files,
   and independently verifying a claim you have already made. Do it yourself for

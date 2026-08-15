@@ -45,9 +45,20 @@ usually just run it on this exact tree, so ask before repeating it:
 bash .claude/hooks/suite-freshness.sh check && echo FRESH || echo STALE
 ```
 
-- **STALE** — run `uv run pytest`, backgrounded, and never alongside a
-  subagent (CLAUDE.md records 30m37s from contention). Then
-  `bash .claude/hooks/suite-freshness.sh record`.
+- **STALE** — pin the tree, run, then record. All three, in order:
+
+  ```sh
+  bash .claude/hooks/suite-freshness.sh begin    # before pytest, not after
+  uv run pytest                                  # backgrounded
+  bash .claude/hooks/suite-freshness.sh record
+  ```
+
+  Backgrounded, and never alongside a subagent (CLAUDE.md records 30m37s from
+  contention). `record` refuses without a `begin`, and refuses again if the
+  tree moved while the suite ran — another session editing a tracked file
+  mid-run means the result describes no single tree, so there is no truthful
+  green to record. If it refuses, re-run on a settled tree rather than
+  recording anyway.
 - **FRESH** — the full suite already passed on a byte-identical tree. Say so
   explicitly, and say when: *"suite not re-run; freshness check reports the
   identical tree already green."* Never write "tests pass" on the strength of

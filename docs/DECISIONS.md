@@ -3196,3 +3196,99 @@ tree from now on rather than a set of call sites somebody remembered to change.
 Selections are deliberately not flagged: `np.median`, `np.max` and `np.argmax`
 pick from a multiset rather than accumulating over it, and no kernel can reorder
 a selection into a different answer.
+
+## 2026-08-15 — infrastructure: the suite's cost is one test, not the suite
+
+**Measured.** Full suite, warm tables, on the developer desktop with the machine
+otherwise idle: **980 passed, 7 skipped in 390.96s (6m30s)**. The slowest 25
+tests account for **360.6s** of that, and a single test accounts for **146.88s**:
+
+| seconds | test |
+|---|---|
+| 146.88 | `test_oracle.py::TestTheBracketIsCoherent::test_the_floor_never_exceeds_what_greedy_achieves[S1]` |
+| 49.77 | `test_a06_a11.py::TestEngineInvariants::test_the_table_is_reproducible_across_builds` |
+| 43.49 | `test_a06_a11.py::TestA6LikelihoodEstimation::test_a6_estimate_is_within_two_standard_errors_of_exact` |
+| 17.43 | `test_a06_a11.py::TestA9PosteriorPredictiveChecks::test_a9_false_positive_rate_is_within_twice_nominal` |
+| 17.13 | `test_oracle.py::TestTheInterventionEarnsItsPlace::test_the_observational_designs_alone_are_worse` |
+
+**Why this is worth the six and a half minutes it costs to reproduce.** The
+entry of item 11 recorded the suite jumping from 3m03s to 6m23s and named
+`test_oracle.py` at 97 seconds *for the whole file*. It is now one
+parametrisation, `[S1]` alone, at 147 seconds — 37% of the suite in one test.
+Anybody reaching for a general remedy should know that first.
+
+It rules out the obvious one. `pytest-xdist` with `-n auto` on twelve cores
+cannot finish faster than its slowest single test, so the floor is ~2m30s rather
+than the ~35s a naive cores-divided reading suggests. That is still a threefold
+win and worth having, but it is a different decision than it looks like, and it
+carries a hazard: workers would race on `.cache/tables/`, where the cold/warm
+gap is 46x (the item 9 gate is 3m46s cold against 10.8s warm).
+
+**Closes off.** Nothing yet. `pytest-xdist` was deliberately not installed —
+`uv add` writes `pyproject.toml` and `uv.lock`, and a second session was
+committing to both. It stays open, and the condition on adopting it is a
+parallel run whose results are byte-identical to the serial one, not a
+wall-clock improvement.
+
+## 2026-08-15 — infrastructure: skill triggering cannot be measured on Windows
+
+**Approach tried and abandoned.** `skill-creator`'s description-optimisation
+loop, to measure whether the implicitly-invoked skills (`/recall`, `/handoff`)
+actually fire when they should. It cannot run on this machine at all.
+
+**Why it fails.** `scripts/run_eval.py:108` polls the `claude -p` subprocess with
+`select.select([process.stdout], ...)`. On win32 `select.select` accepts only
+sockets, never pipes, so every query raises `WinError 10038` before a byte is
+read — and the harness scores the exception as "the skill did not trigger".
+`--num-workers 1` fails identically; it is not a concurrency problem.
+
+**This is worth recording because the failure mode lies convincingly.** It
+reports plausible scores. The first run returned 4/8 and 4/7 on held-out
+queries, with every negative apparently passing and every positive apparently
+failing — a coherent, believable picture of two undertriggering skills, which
+prompted a rewrite of both descriptions that measured no better. What settled it
+was a control query reading literally *"invoke /recall and tell me the recorded
+suite timings"*, which also scored 0.00. That is impossible if the harness works,
+and it is the cheapest possible check. Run a control that must trigger before
+believing any triggering number from this tool.
+
+**Closes off.** The two descriptions are written to the documented
+undertriggering guidance and are **unmeasured**; do not cite a triggering figure
+for them. Measuring means a cloud session — Ubuntu 24.04, where `select` on a
+pipe is fine — and that is the one part of this workflow that genuinely belongs
+in cloud rather than local.
+
+## 2026-08-15 — infrastructure: one working tree, two sessions, and a false green
+
+**Work left deliberately incomplete.** `.claude/hooks/suite-freshness.sh` skips a
+redundant suite run by hashing the tree and comparing against the last recorded
+green. Two ways it could certify a run that never happened were found and fixed;
+the root cause of the second is not fixed, and this records what would fix it.
+
+**The second defect was observed live, not reasoned about.** A suite ran
+18:00–18:07. Another session added a dependency at **18:05:56**, five minutes
+in. The green recorded at 18:07:10 hashed the *new* `pyproject.toml` and
+`uv.lock` and certified a tree pytest had never executed against. Nothing
+noticed, because the script compared against the tree in front of it rather than
+the tree the run saw. It now pins the hash with `begin` before pytest and
+refuses to `record` if the tree moved.
+
+(The first defect was ordinary and is described where it was fixed: `cd ""`
+succeeds in bash, so an unset `CLAUDE_PROJECT_DIR` silently hashed zero files,
+and sha256 of nothing is still 64 characters.)
+
+**What actually fixes it, and what that waits on.** Detection is a patch over
+the real problem, which is that concurrent sessions share one working tree —
+the same problem `/ship` spends twenty lines of scope discipline on. A worktree
+per session removes it at the root. The obstacle is measured and specific:
+`tests/slice_tables.py:75` hardcodes `CACHE = <repo root>/.cache/tables`, and
+`.cache/` is gitignored, so **every new worktree starts cold** — against a 46x
+cold/warm gap that would make a fresh worktree's first suite run far worse than
+the contention it avoids. Worktrees need that path to honour an environment
+variable first, so all trees share one warm cache. That is a one-line change to
+a file another session was holding, which is why it is not made here.
+
+**Closes off.** `record` still cannot verify that pytest ran or passed; the
+caller asserts it. Closing that would mean the script owning the run, which
+forfeits backgrounding — the thing that makes 6m30s tolerable. Left open
+deliberately, and made moot by the worktree fix rather than solved separately.

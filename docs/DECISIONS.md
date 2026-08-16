@@ -4805,7 +4805,7 @@ lens 2 reported it against unrelated work, and it is recorded here rather than
 fixed in that branch because the fix is its own piece of work. It is the most
 serious thing in this file.
 
-**The violation.** `systems/base.py:137-140` exposes the live posterior engine:
+**The violation.** `systems/base.py:141-143` exposes the live posterior engine:
 
 ```python
 @property
@@ -4816,7 +4816,7 @@ def engine(self) -> EmpiricalTableEngine:
 
 "Read-only in effect" is a **docstring**, and invariant 2 says in terms: enforce
 with runtime assertions, not comments. `EmpiricalTableEngine.record`
-(`inference/empirical.py:679-706`) is public and takes an arbitrary
+(`inference/empirical.py:716-743`) is public and takes an arbitrary
 `result: DiagnosticVector`. Its two guards check that the experiment id is fresh
 and that the template matches the table. **Neither constrains the numbers.** The
 posterior is a pure function of recorded observations (`log_likelihood_total`),
@@ -4836,7 +4836,7 @@ Steering pins the posterior exactly on 4 of 5 targets, and on S2 reaches
 `truth_mass=1.000000, log_score=0.0000` — a perfect proper score for one charged
 experiment, with `run_scenario` raising nothing.
 
-**Why nothing catches it.** `campaign.py:214-220` re-derives the expected
+**Why nothing catches it.** `campaign.py:235-241` re-derives the expected
 diagnosis with `diagnose(scenario.id, engine, ...)` — from *the same engine*. A
 system that poisons the state and then reports honestly is compared against a
 derivation from its own poisoned source, so `_audit` checks a lie against itself.
@@ -4853,20 +4853,20 @@ Plausibility itself is genuinely enforced and is the model to copy:
 `HypothesisGraph.__post_init__` re-derives the whole vector and raises
 `PlausibilityWriteError` on disagreement.
 
-**The cheapest detection, named because it is nearly free.** `campaign.py:229`
+**The cheapest detection, named because it is nearly free.** `campaign.py:250`
 stores `experiments=len(investigation.history)` — experiments actually run —
 while the posterior comes from `engine.observations`, which is real *plus*
 fabricated. The two are never compared. That missing reconciliation is precisely
 the absent runtime assertion.
 
 **Also over-exposed, same root cause.** `engine.expand(h)`
-(`empirical.py:830`) takes a `HypothesisNode` directly, so a system can admit a
+(`empirical.py:907`) takes a `HypothesisNode` directly, so a system can admit a
 hypothesis to the engine without `graph.propose` and its A16/A18 validation. It
 ignores `h.plausibility`, so it is not a plausibility channel — it is the same
 boundary leak.
 
 **A second, lower-severity violation, traced but not executed.**
-`Investigation.propose`'s `predictions` parameter (`systems/base.py:222-268`)
+`Investigation.propose`'s `predictions` parameter (`systems/base.py:249-295`)
 lets a system author the thresholds it is graded against: a `Prediction` carries
 a `Condition` holding floats, `validate_prediction` checks satisfiability,
 non-tautology and non-overlap but never that the numbers came from the framework,

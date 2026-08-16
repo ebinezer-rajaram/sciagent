@@ -27,12 +27,13 @@ from environments.pointproc.diagnostics import (
     run_length_geometric_deviation,
     sign_autocorrelation,
     size_dispersion,
+    size_gap_correlation,
     size_mean,
     size_skewness,
     spectral_peak_frequency,
     spectral_peak_prominence,
 )
-from environments.pointproc.mechanisms import SEASONALITY
+from environments.pointproc.mechanisms import SEASONALITY, SIZE_EXCITATION
 from sciagent.core.edits import Defect
 from sciagent.core.types import EventLog, Seed
 
@@ -231,3 +232,70 @@ class TestGuards:
         assert run_length_geometric_deviation(first) == run_length_geometric_deviation(
             second
         )
+
+
+# ==========================================================================
+# The mark-arrival coupling
+# ==========================================================================
+
+
+class TestSizeGapCorrelation:
+    """The catalogue's only cross-component statistic, and why it is there.
+
+    Every other diagnostic reads the arrival stream alone or the marks alone,
+    which is what made scenario S11 invisible to Stage A: its mechanism couples
+    them while perturbing neither marginal. These tests pin the property that
+    licensed adding it to SPEC §4.3 -- the whole closed set reads zero, plain
+    Hawkes included, and only size excitation reads negative.
+    """
+
+    def test_the_reference_programme_is_uncoupled(self, null_log: EventLog) -> None:
+        """Marks are drawn independently of arrivals, so the coupling is zero."""
+        assert size_gap_correlation(null_log) == pytest.approx(0.0, abs=0.02)
+
+    @pytest.mark.parametrize(
+        "mechanism", ["hawkes", "poisson_mixture", "regime_switching", "seasonality"]
+    )
+    def test_every_closed_set_mechanism_reads_zero(self, mechanism: str) -> None:
+        """None of SPEC §4.2's four couples the marks to the arrivals.
+
+        Hawkes is the one that matters. It is what covers S11 on every
+        arrival-only statistic, so a statistic that could not tell the two apart
+        would leave the catalogue exactly where it was.
+        """
+        assert size_gap_correlation(run(mechanism_defect(mechanism))) == pytest.approx(
+            0.0, abs=0.02
+        )
+
+    def test_size_excitation_reads_clearly_negative(self) -> None:
+        """A large mark shortens the following gap, and by a wide margin.
+
+        Piloted at 500 replicates of 512 events: the closed set spans about
+        [-0.09, +0.10] and size excitation [-0.19, -0.07]. This asserts the
+        separation at the long length used throughout this file, where both
+        distributions are far tighter than that.
+        """
+        coupling = size_gap_correlation(run(frozenset({SIZE_EXCITATION})))
+        assert coupling < -0.08, (
+            f"size excitation read {coupling:+.4f}, which is inside the range the "
+            f"closed set occupies; the statistic no longer separates S11"
+        )
+
+    def test_the_coupling_is_bounded(self) -> None:
+        """A correlation, so the catalogue's declared [-1, 1] range holds."""
+        for defect in ("hawkes", "seasonality"):
+            assert -1.0 <= size_gap_correlation(run(mechanism_defect(defect))) <= 1.0
+        assert -1.0 <= size_gap_correlation(run(frozenset({SIZE_EXCITATION}))) <= 1.0
+
+    def test_too_few_events_is_rejected(self) -> None:
+        """Two events give one gap and one paired mark: no correlation exists."""
+        from sciagent.core.errors import ExecutionError
+
+        with pytest.raises(ExecutionError):
+            size_gap_correlation(reference_program().execute(SEED, 2))
+
+    def test_it_is_deterministic(self) -> None:
+        """Same seed, same number: this one feeds the registry's content hashes."""
+        first = run(frozenset({SIZE_EXCITATION}), n_events=4000)
+        second = run(frozenset({SIZE_EXCITATION}), n_events=4000)
+        assert size_gap_correlation(first) == size_gap_correlation(second)

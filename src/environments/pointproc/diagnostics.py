@@ -381,3 +381,45 @@ def sign_autocorrelation(log: EventLog, lag: int = 1) -> float:
     if denominator <= 0.0:
         return 0.0
     return reductions.dot(centred[:-lag], centred[lag:]) / denominator
+
+
+# --------------------------------------------------------------------------
+# MarkArrivalCoupling
+# --------------------------------------------------------------------------
+
+
+def size_gap_correlation(log: EventLog) -> float:
+    """Return the correlation of a mark against the inter-arrival gap after it.
+
+    Guarantees a value in ``[-1, 1]``, and ``0.0`` when either component is
+    constant over the log and the correlation is therefore undefined.
+
+    The only statistic in this catalogue that reads two components jointly.
+    Every other entry is a function of the arrival stream alone or of the marks
+    alone, which is precisely why scenario S11 was invisible to the posterior
+    predictive check: its mechanism is ``AddDependency(size -> arrival)``, a
+    Hawkes process whose marks gate the excitation, and it is calibrated to the
+    same operating point as the four mechanisms it hides among. It perturbs no
+    marginal distribution. It only couples them.
+
+    Sign convention: a large mark raises the subsequent arrival rate, which
+    *shortens* the following gap, so size excitation reads **negative** here and
+    an uncoupled programme reads zero. ``docs/DECISIONS.md`` records the
+    measurement -- the closed set sits within 0.001 of zero, plain Hawkes
+    included, against -0.134 for the out-of-library mechanism.
+
+    Pairs the ``i``-th mark with the gap from arrival ``i`` to arrival ``i+1``,
+    so the last mark is dropped: it has no gap after it. Pairing a mark with the
+    gap *before* it would measure the reverse coupling, which no mechanism in
+    the grammar produces and which would read zero on S11.
+    """
+    sizes = mark_sizes(log)[:-1]
+    if sizes.size < 2:
+        raise ExecutionError("the size-gap correlation needs at least three events")
+    gaps = np.diff(arrival_times(log))
+    spread = reductions.deviation(sizes) * reductions.deviation(gaps)
+    if spread <= 0.0:
+        return 0.0
+    centred_sizes = sizes - reductions.mean(sizes)
+    centred_gaps = gaps - reductions.mean(gaps)
+    return reductions.dot(centred_sizes, centred_gaps) / ((sizes.size - 1) * spread)

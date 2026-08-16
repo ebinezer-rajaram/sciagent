@@ -97,6 +97,32 @@ class Scenario:
     rationale: str = ""
     """What the scenario is for, in SPEC §4.5's terms. Documentation, not data."""
 
+    stage_a: ExperimentDesign | None = None
+    """A design the *framework* runs once, before the system sees anything.
+
+    SPEC F5 gives both experiment selection and inadequacy detection to
+    conventional methods, which reads as though the two shared an interest. They
+    do not, and the measurement is in ``docs/DECISIONS.md``: a design that
+    detects inadequacy of a hypothesis space is by construction uninformative
+    *within* that space, so one-step greedy BOED -- which maximises expected
+    information gain about the entertained set -- ranks it last and never selects
+    it. Measured over all twelve slice scenarios, the mark-arrival design was
+    chosen zero times, and S11's posterior predictive p-value was identical to
+    its value before that design existed.
+
+    So Stage A gets an allocation the system does not control and cannot spend
+    elsewhere. It is deliberately *not* an experiment: nothing is registered, no
+    budget is charged, and it never enters the evidence index, so a system can
+    neither cite it nor be credited for it. It is framework apparatus on the same
+    footing as the posterior predictive check it feeds -- the executor already
+    draws this line, where a table-building execution "is not an experiment".
+
+    On the scenario rather than on :func:`~sciagent.eval.campaign.run_scenario`'s
+    signature so that no caller can omit it for one system and supply it for
+    another. An asymmetry there would bias every §9 comparison, and would do it
+    invisibly.
+    """
+
     def __post_init__(self) -> None:
         overlap = {edit.target for edit in self.truth} & {
             edit.target for edit in self.nuisance

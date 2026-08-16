@@ -25,17 +25,19 @@ from environments.pointproc.scenarios import scenario
 from sciagent.core.errors import (
     BudgetExhaustedError,
     DiagnosisError,
+    DuplicateExperimentError,
     InvestigationError,
 )
 from sciagent.core.types import (
     ComponentId,
     Diagnosis,
+    ExperimentId,
     FrozenDict,
     HypothesisId,
     Probability,
     ScenarioId,
 )
-from sciagent.eval.campaign import ScenarioRun, run_scenario
+from sciagent.eval.campaign import ScenarioRun, run_scenario, stage_a_id
 from sciagent.eval.scenarios import Scenario
 from sciagent.eval.scoring import closed_world_score
 from sciagent.experiments.dsl import ExperimentDesign, ForceArrival
@@ -251,6 +253,89 @@ class TestTheBaselinesDoWhatSpecFiveSays:
             assert isinstance(system, ResearchSystem)
 
 
+class TestAProbeIsNotEvidence:
+    """SPEC §4.6's Stage A reading reaches the check and nothing else.
+
+    The guard on a defect that shipped for a day and was found by its
+    consequences rather than by a test. ``_run_stage_a`` recorded the probe
+    through ``engine.record``, which appends to the list
+    ``log_likelihood_total`` folds over -- so the reading entered every system's
+    posterior: an extra observation, charged to no budget and absent from the
+    run's evidence index, silently reweighting the belief the run is scored on.
+    What surfaced was B5's structural recovery falling from three scenarios of
+    nine to one, because its beam ranks candidates by fit against
+    ``engine.observations``.
+
+    Nothing in the suite said so directly. These tests do, so that a future
+    ``record`` where ``record_probe`` belongs fails by name instead of moving a
+    baseline's score for reasons nobody can see.
+    """
+
+    def _probe(self) -> tuple[EmpiricalTableEngine, ExperimentId]:
+        """Take S11's Stage A reading into a fresh engine, and hand both back."""
+        harness = _harness("S11")
+        design = harness.scenario.stage_a
+        assert design is not None, "S11 declares a Stage A probe"
+        result = harness.executor.measure(
+            design, harness.scenario.executed, harness.scenario.seed
+        )
+        experiment = ExperimentId("probe")
+        harness.engine.record_probe(experiment, design.template(), result)
+        return harness.engine, experiment
+
+    def test_a_probe_moves_no_posterior_mass(self) -> None:
+        """The one that matters. A reading about the space is not evidence in it.
+
+        SPEC §4.6's Stage A asks whether the entertained set is adequate at all.
+        A reading answering that must not also redistribute mass *within* the
+        set, or the adequacy verdict is partly a consequence of the belief it
+        exists to audit.
+        """
+        harness = _harness("S11")
+        design = harness.scenario.stage_a
+        assert design is not None
+        before = dict(harness.engine.posterior())
+        result = harness.executor.measure(
+            design, harness.scenario.executed, harness.scenario.seed
+        )
+        harness.engine.record_probe(ExperimentId("probe"), design.template(), result)
+        assert dict(harness.engine.posterior()) == before
+
+    def test_a_probe_is_absent_from_the_record_a_system_reads(self) -> None:
+        """``observations`` is what B5 ranks on and what ``_supporting`` walks."""
+        engine, experiment = self._probe()
+        assert experiment not in {o.experiment for o in engine.observations}
+
+    def test_an_unscoped_check_does_not_fold_the_probe_in(self) -> None:
+        """Else the reported p-value cites evidence the run's index cannot show."""
+        engine, experiment = self._probe()
+        assert experiment not in engine.ppc().per_experiment
+
+    def test_naming_the_probe_reaches_it(self) -> None:
+        """The whole reason it is recorded rather than discarded."""
+        engine, experiment = self._probe()
+        assert experiment in engine.ppc(experiments={experiment}).per_experiment
+
+    def test_a_probe_cannot_shadow_an_experiment(self) -> None:
+        """Ids are unique across both compartments, so a check is never ambiguous."""
+        harness = _harness("S11")
+        design = harness.scenario.stage_a
+        assert design is not None
+        result = harness.executor.measure(
+            design, harness.scenario.executed, harness.scenario.seed
+        )
+        experiment = ExperimentId("probe")
+        harness.engine.record_probe(experiment, design.template(), result)
+        with pytest.raises(DuplicateExperimentError):
+            harness.engine.record(experiment, design.template(), result)
+
+    def test_the_stage_a_reading_is_not_in_a_runs_evidence(self) -> None:
+        """End to end: a real run's index holds the experiments it can cite."""
+        run = _run(PPCOnly(), "S11")
+        cited = {record.experiment for record in run.evidence.ordered()}
+        assert stage_a_id(run.scenario) not in cited
+
+
 class TestDeterminism:
     """SPEC's third invariant, at the level of a whole investigation."""
 
@@ -260,6 +345,12 @@ class TestDeterminism:
         assert [e for e in first.diagnosis.supporting] == [
             e for e in second.diagnosis.supporting
         ]
+        # The check too, not just the posterior. Since 2026-08-16 a Stage A probe
+        # is recorded before every run under a seed derived from the scenario's,
+        # and the p-value is the only place a difference in that derivation would
+        # show -- the probe moves no posterior mass by construction, so the two
+        # assertions above would agree whatever it did.
+        assert first.ppc == second.ppc
 
     def test_two_scenarios_sharing_a_truth_are_not_the_same_run(self) -> None:
         """S1 and S5 are both Hawkes; distinct seeds must make them distinct."""

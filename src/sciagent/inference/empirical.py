@@ -52,7 +52,7 @@ import json
 import math
 import os
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -61,8 +61,11 @@ from sciagent.core.edits import Defect, EditGrammar, canonical, sort_key
 from sciagent.core.errors import (
     DuplicateExperimentError,
     DuplicateHypothesisError,
+    ExecutionError,
     InferenceError,
     MalformedDesignError,
+    OutOfRangeError,
+    StructureNotMeasurableError,
     TableError,
     UnknownExperimentError,
     UnknownHypothesisError,
@@ -426,9 +429,33 @@ class EmpiricalTable:
             draw = replicate_seed(self.seed, key, index)
             for template_id in sorted(self.templates):
                 template = self.templates[template_id]
-                result = simulate(defect, template, draw)
+                try:
+                    result = simulate(defect, template, draw)
+                except ExecutionError as exc:
+                    raise StructureNotMeasurableError(
+                        f"structure {key!r} executes but design {template_id!r} "
+                        f"cannot be measured on it: {exc}"
+                    ) from exc
                 calls += 1
-                tallies[template_id][template.outcome.cell_of(result)] += 1
+                # ``cell_of`` is inside the guard, not after it. Both ways a row
+                # can fail to exist are properties of the candidate -- a
+                # diagnostic that cannot be computed, and one whose value falls
+                # outside the metric's declared range -- and a caller told this
+                # boundary reports "no row here" as one exception type cannot
+                # also be expected to catch the second kind separately. It could
+                # not, in fact: ``BeamSearch`` catches only
+                # ``StructureNotMeasurableError`` where it proposes, so an
+                # ``OutOfRangeError`` escaping here aborted the search instead of
+                # costing one candidate its rank.
+                try:
+                    cell = template.outcome.cell_of(result)
+                except OutOfRangeError as exc:
+                    raise StructureNotMeasurableError(
+                        f"structure {key!r} produces a value under design "
+                        f"{template_id!r} that no cell of the discretisation "
+                        f"holds: {exc}"
+                    ) from exc
+                tallies[template_id][cell] += 1
         merged = {
             **self.counts,
             **{
@@ -602,6 +629,8 @@ class EmpiricalTableEngine:
         "_hypotheses",
         "_index",
         "_observations",
+        "_probe_index",
+        "_probes",
         "_simulate",
         "_table",
     )
@@ -627,6 +656,8 @@ class EmpiricalTableEngine:
         }
         self._observations: list[Observation] = []
         self._index: dict[ExperimentId, Observation] = {}
+        self._probes: list[Observation] = []
+        self._probe_index: dict[ExperimentId, Observation] = {}
 
     # -- queries -----------------------------------------------------------
 
@@ -637,7 +668,13 @@ class EmpiricalTableEngine:
 
     @property
     def observations(self) -> tuple[Observation, ...]:
-        """Return every recorded experiment, in the order it was recorded."""
+        """Return every recorded experiment, in the order it was recorded.
+
+        Experiments only. A reading taken through :meth:`record_probe` is not
+        one, and is deliberately not visible here: this property is what a system
+        reads to decide what to do next, and what :meth:`log_likelihood_total`
+        folds over to form a posterior.
+        """
         return tuple(self._observations)
 
     @property
@@ -688,10 +725,53 @@ class EmpiricalTableEngine:
         registered row, and a second result under the same id would mean the
         registry's content address had failed to determine the outcome.
         """
-        if e in self._index:
+        observation = self._validated(e, template, result)
+        self._observations.append(observation)
+        self._index[e] = observation
+        return observation
+
+    def record_probe(
+        self,
+        e: ExperimentId,
+        template: ExperimentTemplate,
+        result: DiagnosticVector,
+    ) -> Observation:
+        """Record one reading that bears on the *space*, not on what is in it.
+
+        Guarantees the reading changes no belief. It is kept in a compartment
+        :meth:`observations` does not expose and :meth:`log_likelihood_total`
+        does not fold over, so it moves no posterior mass, enters no supporting
+        set, and is invisible to a system that reads the engine's record. The one
+        thing it does reach is :meth:`ppc` when a caller names it, which is the
+        whole reason it is recorded rather than discarded.
+
+        The separation is a statement about what the reading *means*, not a
+        convenience. SPEC §4.6's Stage A asks whether the entertained set is
+        adequate at all; a reading answering that question must not also
+        redistribute mass *within* the set, or one measurement would be doing
+        two jobs and the adequacy verdict would be partly a consequence of the
+        belief it is supposed to be auditing.
+
+        Ids are unique across both compartments, so a probe cannot shadow an
+        experiment and ``ppc(experiments={...})`` is never ambiguous about which
+        reading it selected.
+        """
+        observation = self._validated(e, template, result)
+        self._probes.append(observation)
+        self._probe_index[e] = observation
+        return observation
+
+    def _validated(
+        self,
+        e: ExperimentId,
+        template: ExperimentTemplate,
+        result: DiagnosticVector,
+    ) -> Observation:
+        """Return the observation to store, or raise if it may not be stored."""
+        held = self._index.get(e) or self._probe_index.get(e)
+        if held is not None:
             raise DuplicateExperimentError(
-                f"experiment {e!r} is already recorded with result "
-                f"{self._index[e].result!r}"
+                f"experiment {e!r} is already recorded with result {held.result!r}"
             )
         stored = self._table.template(template.id)
         if stored != template:
@@ -700,10 +780,7 @@ class EmpiricalTableEngine:
                 f"built under; likelihoods read under a changed design would be "
                 f"confidently wrong"
             )
-        observation = Observation(experiment=e, template=template, result=result)
-        self._observations.append(observation)
-        self._index[e] = observation
-        return observation
+        return Observation(experiment=e, template=template, result=result)
 
     # -- the protocol ------------------------------------------------------
 
@@ -856,15 +933,52 @@ class EmpiricalTableEngine:
             simulator_calls=calls, experiments_reevaluated=len(self._observations)
         )
 
-    def ppc(self) -> PPCResult:
+    def ppc(self, *, experiments: Collection[ExperimentId] | None = None) -> PPCResult:
         """Return a posterior predictive check over every recorded experiment.
 
         Delegates to :func:`sciagent.inference.ppc.posterior_predictive_check`;
         see there for what the p-value means and why it is conservative.
+
+        ``experiments`` restricts the check to a subset, and exists because a
+        check over *everything* is not always the check that is wanted. The
+        combination rule scales the harmonic mean by ``1 + ln(n)``, so readings
+        that bear on the question are diluted by readings that do not: an
+        experiment chosen to separate two hypotheses *inside* a space says
+        little about whether the space is the right one. Scoping the check to a
+        dedicated adequacy probe is what SPEC §4.6's Stage A actually asks,
+        measured in ``docs/DECISIONS.md``.
+
+        Unscoped, the check covers the recorded *experiments* and no probe. A
+        probe is not part of the record an investigation accumulated -- it is not
+        registered, not charged to a budget, and not in the run's evidence index
+        -- so folding one in would produce a summary number that cannot be
+        reconstructed from the evidence the run can cite. Naming a probe under
+        ``experiments`` reaches it; nothing else does. See :meth:`record_probe`.
+
+        Raises :class:`~sciagent.core.errors.UnknownExperimentError` if a named
+        experiment was never recorded, rather than silently checking fewer than
+        the caller asked for -- a check that quietly narrowed its own evidence
+        would report a p-value nobody could reconstruct.
         """
         posterior = self.posterior()
+        selected = list(self._observations)
+        if experiments is not None:
+            wanted = set(experiments)
+            available = [*self._observations, *self._probes]
+            known = {observation.experiment for observation in available}
+            missing = sorted(wanted - known)
+            if missing:
+                raise UnknownExperimentError(
+                    f"cannot check experiment(s) {missing!r}: never recorded; "
+                    f"this engine holds {sorted(known)!r}"
+                )
+            selected = [
+                observation
+                for observation in available
+                if observation.experiment in wanted
+            ]
         predictive: list[tuple[ExperimentId, tuple[float, ...], int]] = []
-        for observation in self._observations:
+        for observation in selected:
             template = observation.template
             cells = template.outcome.n_cells
             resolved = {

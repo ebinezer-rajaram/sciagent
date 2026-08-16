@@ -35,12 +35,35 @@ from sciagent.eval.scoring import (
 )
 from sciagent.inference.empirical import EmpiricalTable
 
-#: The two designs held out of D2 and D3: the mark-size diagnostic and the
+#: The designs held out of D2 and D3: the two mark diagnostics and the
 #: forced-arrival intervention. The intervention is the one that matters -- §8
-#: defines D3 over "a held-out intervention battery" -- and the size diagnostic
-#: is included because S11's mechanism is gated by marks, so a candidate that got
-#: the arrival side right and the mark side wrong should not score a clean 1.
-HELD_OUT = slice_designs()[3:]
+#: defines D3 over "a held-out intervention battery" -- and the mark diagnostics
+#: are included because S11's mechanism is gated by marks, so a candidate that
+#: got the arrival side right and the mark side wrong should not score a clean 1.
+#:
+#: **Named, not sliced.** This was ``slice_designs()[3:]`` until 2026-08-16, and
+#: a positional slice silently absorbed ``size_gap_correlation`` when SPEC §4.3
+#: gained it -- growing the battery from two designs to three, and moving a
+#: reported number, with nothing in the diff to say so. Membership of a battery
+#: that D2 and D3 are defined over has to be a stated choice.
+#:
+#: ``size_gap_correlation`` is kept rather than dropped, and that decision is the
+#: one this comment exists for. It is the *most* direct instance of the rationale
+#: above: it is precisely the statistic that catches an arrival side got right
+#: and a mark coupling got wrong, which is Hawkes against S11's truth exactly.
+#: Excluding it would have preserved an earlier finding by declining to measure
+#: the thing that tests it. See ``docs/DECISIONS.md``.
+_HELD_OUT_IDS = frozenset(
+    {
+        "query:size_dispersion",
+        "query:size_gap_correlation",
+    }
+)
+HELD_OUT = tuple(
+    design
+    for design in slice_designs()
+    if str(design.id) in _HELD_OUT_IDS or str(design.id).startswith("force[")
+)
 
 _TABLE: list[EmpiricalTable] = []
 
@@ -70,12 +93,25 @@ def _vector(candidate_name: str) -> DimensionVector:
 class TestD3SeesWhatD1Cannot:
     """R7, measured on the scenario it is about."""
 
-    def test_hawkes_is_interventionally_close_to_s11s_truth(self) -> None:
-        """0.96 similarity, against 0.62-0.70 for every other library member.
+    def test_hawkes_is_interventionally_closest_to_s11s_truth(self) -> None:
+        """0.70 similarity, against 0.48-0.53 for every other library member.
 
         S11's mechanism is a Hawkes process whose marks gate the excitation, so
-        a plain Hawkes reproduces its response to a forced arrival almost
-        exactly. That is the finding D3 exists to record.
+        a plain Hawkes reproduces its response to a forced arrival better than
+        anything else in the library. Read against
+        ``test_hawkes_is_structurally_no_closer_than_the_null``: D1 puts Hawkes
+        *further* from the truth than proposing nothing, and that disagreement
+        between the two dimensions is what R7 is and what §8 forbids collapsing.
+
+        **Revised 2026-08-16, and the revision is the interesting part.** This
+        read 0.960 against a best rival of 0.698 when the held-out battery was
+        two designs, and asserted ``hawkes > 0.9`` -- near-indistinguishable from
+        the truth's own 1.000. With ``size_gap_correlation`` in the battery it is
+        0.697 against 0.527. Hawkes was never interventionally *equivalent* to
+        S11's truth; the battery could not see the mark-arrival coupling, which
+        is the one dimension the two genuinely differ on. It remains the closest
+        available approximation, which is the weaker claim the numbers support
+        and the one asserted here. See ``docs/DECISIONS.md``.
         """
         hawkes = _vector("hawkes").d3_intervention_similarity
         others = [
@@ -83,11 +119,16 @@ class TestD3SeesWhatD1Cannot:
             for name in sorted(closed_set())
             if name != "hawkes"
         ]
-        assert hawkes > 0.9
-        assert hawkes > max(others) + 0.2, (
+        assert hawkes > max(others) + 0.15, (
             f"Hawkes scores {hawkes:.3f} against a best rival of {max(others):.3f}; "
-            f"D3 is no longer separating the interventionally-equivalent "
+            f"D3 is no longer separating the interventionally-closest "
             f"explanation from the rest"
+        )
+        assert hawkes < 0.8, (
+            f"Hawkes scores {hawkes:.3f}, which is back in the range that reads as "
+            f"interventional equivalence. That was an artefact of a battery blind "
+            f"to the mark-arrival coupling; if it has returned, check whether "
+            f"size_gap_correlation is still in HELD_OUT"
         )
 
     def test_structural_distance_does_not_see_it(self) -> None:

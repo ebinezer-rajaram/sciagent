@@ -63,7 +63,16 @@ CANDIDATE_PERIOD = SEASONALITY.parameters["period"]
 #: still route through ``np.fft.rfft``, for which no exact-rounding substitute
 #: exists, and any estimator consuming a transcendental inherits that function's
 #: rounding. See :mod:`sciagent.core.reductions` for what is and is not closed.
-METRIC_VERSION = "1.1.0"
+#:
+#: Bumped to 1.2.0 on 2026-08-16, when ``size_gap_correlation`` joined the
+#: catalogue. This is an *addition* rather than a change to an estimator, so
+#: every value stored under 1.1.0 is still the number 1.2.0 would compute -- but
+#: the registry addresses an experiment over the whole catalogue, and a result
+#: recorded against a catalogue that could not see the mark-arrival coupling was
+#: produced by a system that could not run the experiment which detects S11. The
+#: two are not comparable, so the version moves. SPEC §4.3 gains an entry with
+#: it; ``docs/DECISIONS.md`` records the measurement that licensed the change.
+METRIC_VERSION = "1.2.0"
 
 
 def _spec(
@@ -140,6 +149,16 @@ def metric_registry() -> MetricRegistry:
             _spec(
                 "sign_autocorrelation",
                 partial(diagnostics.sign_autocorrelation, lag=1),
+                low=-1.0,
+                high=1.0,
+            ),
+            # -- the mark-arrival coupling ---------------------------------
+            # The only cross-component statistic in the catalogue, and the one
+            # that makes S11's out-of-library mechanism visible to Stage A at
+            # all. See diagnostics.size_gap_correlation and docs/DECISIONS.md.
+            _spec(
+                "size_gap_correlation",
+                diagnostics.size_gap_correlation,
                 low=-1.0,
                 high=1.0,
             ),

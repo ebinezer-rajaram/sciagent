@@ -134,9 +134,11 @@ type World = Mapping[ExperimentTemplateId, Sequence[float]]
 IDENTIFIED = 0.5
 
 #: How deep the exhaustive dynamic programme goes. The tree branches by designs
-#: times cells at every level -- on the slice, five designs over nine to fifteen
-#: cells, so about sixty children per node and a quarter of a million nodes at
-#: three. Four would be fifteen million and is where "where tractable" stops.
+#: times cells at every level -- on the slice, six designs over nine to fifteen
+#: cells, so about seventy children per node and some four hundred thousand
+#: nodes at three. Four is tens of millions and is where "where tractable" stops.
+#: The sixth design arrived with SPEC §4.3's 2026-08-16 amendment, which widened
+#: the tree by a fifth at every level; the horizon did not have to move for it.
 DEFAULT_HORIZON = 3
 
 #: Seed the greedy rollouts are drawn under when a caller states none. Zero, and

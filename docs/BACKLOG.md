@@ -99,7 +99,24 @@ framework immaturity that items 2–11 exist to prevent.
 **Touches.** No frozen decision directly. It compromises R2 by adding a
 training axis to the memory ablation, and it makes R1 unanswerable on any
 scenario whose ground truth lies inside `agent_grammar`.
-## A mark-arrival cross-diagnostic, so S11 Stage A is detectable
+## DONE (2026-08-16) — A mark-arrival cross-diagnostic, so S11 Stage A is
+## detectable
+
+**Closed.** `size_gap_correlation` joined the §4.3 catalogue and
+`METRIC_VERSION` moved 1.1.0 -> 1.2.0 with it, which is the versioning event
+this entry said it would be. The statistic is the first of the two the entry
+named — a mark against the inter-arrival gap that follows it — chosen over the
+windowed cross-correlation on measurement: 3.42 sd of separation against 2.42
+for a high-versus-low mark gap ratio, with plain Hawkes reading -0.0012 against
+S11's -0.134.
+
+The user took the §4.3 judgement the entry said could not be settled by
+implementation alone. `docs/DECISIONS.md` carries the pilot, the bin-edge
+quantiles, and the re-measured A9. Note that SPEC §12 criterion 4 still needs
+re-specifying and this did not do it: B1 holds only the null and fires on 7/12
+scenarios, so "at a rate at least matching B1" is the wrong yardstick whatever
+the catalogue contains. The original entry follows, unedited.
+
 
 **Idea.** Add one diagnostic to the §4.3 catalogue that measures the *joint*
 behaviour of the mark and arrival components — the correlation between a mark's
@@ -303,7 +320,22 @@ artefact of where predictions were attached.
 
 ---
 
-## Relevance clause 3 fires on every pair, so A20 is not testing what it reads as
+## STRUCK (2026-08-16, refuted by measurement) — Relevance clause 3 fires on
+## every pair, so A20 is not testing what it reads as
+
+**Struck, not done.** The claim below is false of A20 and always was. Disabling
+the `SCOPE_OVERLAP` arm of `verify/relevance.py::clauses` leaves **17 of 102**
+cases unsurfaced, all of them `scope_overlap/*`; the other 85 are carried by
+clauses 1, 2, 4, 5 and 6 independently. A20's cases are *constructed* and already
+give each omitted record an `env_version` of `other/{variant}` — written at item
+10 on 2026-08-04, five days before this entry — so the fix it asks for is
+already in the tree. `docs/DECISIONS.md` records the mutation run.
+
+What the entry gets right is the behaviour on *real slice runs*, where clause 3
+does fire for every pair. That is not a defect: an experiment from the same
+environment version is relevant under §7.1, and conservative evidence
+completeness is what the clause is for. The original entry follows, unedited.
+
 
 **Idea.** Either narrow SPEC §7.1 clause 3's environment-version axis, or make
 A20's constructed cases vary scope so the other clauses are the ones deciding.
@@ -373,3 +405,217 @@ as the learned-policy entry above, and needs no change to a frozen decision.
 is the baseline the comparison is against, and running both at once would triple
 the recording cost of a matrix whose subscription rate-limit budget is not yet
 measured.
+
+---
+
+## A resumable campaign driver, which item 15 needs and does not have
+
+**Idea.** A driver that runs SPEC §9's matrix cell by cell, keyed on the
+registry's content addresses: before running a cell, ask whether its address is
+already registered, and skip it if so. Checkpointing falls out of that rather
+than being bolted on. `eval/campaign.py` says in its module docstring that the
+§9 matrix "is item 15's and is not here"; this is the thing that is not here.
+
+**Rationale.** 56 cells at twenty seeds is ~1,120 investigations and days of
+compute, which is longer than any session — and longer than any recording run
+that has to fit inside subscription rate caps. A matrix that can only be run in
+one sitting cannot be run at all. Resuming from the registry rather than from a
+session's notes is also the only version that survives a session ending badly,
+which `/handoff` exists because sessions do.
+
+Two properties it must have, both from the invariants rather than from taste.
+Invariant 4 makes a re-run an *append* with a new content address, never a
+correction of the old row — so "resume" means "skip what is addressed", not
+"overwrite what looks stale". And invariant 3 means every seed reaches the cell
+through an explicitly passed generator, so the driver may not derive seeds from
+iteration order.
+
+One trap worth writing down before somebody hits it: a cell that needs re-running
+because its *inputs* changed is a new address, so the old row stays and both are
+in the registry. Any report over the matrix therefore has to select rows by
+address rather than assume one row per cell.
+
+**Touches.** No frozen decision. It is item 15's implementation, not a change to
+what item 15 is.
+
+## A report layer for D1–D6, since §8 forbids the obvious one
+
+**Idea.** Render the matrix as a vector table: D1 through D6 per system per
+scenario, with intervals, and no total column. Nothing renders one today —
+`eval/scoring.py` computes `dimension_vector`, and the deliberate absence of a
+`total` field on it is asserted by a test.
+
+**Rationale.** The numbers are useless to a reader in the form they are
+computed, and the natural rendering is the forbidden one. §8 says the six
+dimensions are "reported separately, never collapsed into one number", and item
+12's S11 table is the demonstration of why: Hawkes scores 1.50 on D1 — worse
+than proposing nothing, which scores 1.00 — and 0.960 on D3 against a best rival
+of 0.698. A mean of the six would report that as mediocre. A ranking column
+would report it as a loss. Both would be wrong about the one scenario the slice
+is built around.
+
+So the report layer is where the prohibition either holds or quietly fails, and
+building it deliberately is how it holds. It should also carry the two things
+the matrix skill says must appear wherever these numbers are reported: which
+platform every cell ran on, and that slice results are exploratory by
+construction.
+
+**Touches.** None. §8 as written; this implements the reporting discipline it
+already mandates.
+
+## Grammar sensitivity (R5) deserves promoting out of the freeze list
+
+**Idea.** Run the ranking under coarse and fine variants of the edit grammar and
+report how much it moves. It is named in SPEC §13's known-backlog-at-freeze list
+as one item among ten, and this entry argues it is not one item among ten.
+
+**Rationale.** R5 asks how much scores depend on the edit grammar and notes the
+answer "could be large enough to undermine any ranking". Item 12 measured
+something that makes this concrete rather than hypothetical: on S11, a plain
+Hawkes proposal is 1.50 from the truth under `grammar.distance` while the *null*
+is 1.00, so a system proposing the mechanism that reproduces S11's interventional
+behaviour almost exactly scores worse structurally than one proposing nothing.
+D1 is `grammar.distance` and nothing else, so that number is a statement about
+the grammar, not about the world.
+
+SPEC §0 already concedes the general point — the grammar "does not eliminate
+author bias", it makes it "formalised, inspectable, versioned" — and says the
+actual improvement is that it "can be varied in sensitivity analysis". That
+sentence is a promise R5 is the only thing that keeps. With D1 reported in every
+cell of the matrix, the promise is about to be load-bearing.
+
+**Touches.** No frozen decision. It varies the grammar deliberately and reports
+the spread, which is what §0 says the grammar's versioning is for. Sequencing:
+after item 15, since the first matrix is the ranking whose sensitivity is being
+measured, and running it earlier means measuring the sensitivity of nothing.
+
+## A Stage A battery, because one probe only looks in one direction
+
+**Idea.** Give Stage A more than one adequacy probe, and combine the readings by
+a rule that does not dilute — a minimum-p with an explicit correction, or a
+per-direction verdict reported separately — rather than folding them into one
+harmonic mean.
+
+**Rationale.** Measured 2026-08-16 at 100 scenarios per arm, alpha 0.05:
+
+| misspecification | all templates | probe only |
+|---|---|---|
+| `size_excitation` (S11's mechanism) | 52% | **90%** |
+| `size_mixture` (a component no closed-set hypothesis touches) | 100% | **3%** |
+
+Scoping the check to `query:size_gap_correlation` nearly doubles power against
+the mechanism the probe was built for, and costs almost all of it against a
+misspecification in a direction the probe does not measure. Both effects come
+from the same combination rule: `1 + ln(n)` dilution is why eight readings do
+worse than one on `size_excitation`, and one reading is why the eighth is missed
+on `size_mixture`.
+
+This is already visible in the slice rather than hypothetical. V7's adequacy
+check fires on S11 alone across the twelve, and specifically not on S8, whose
+compound truth is outside its space and which the full-record check flags at
+0.0396. S8's misspecification is a size mixture, so the 3% row is the reason.
+Every Stage A detection figure in the repository is currently a statement about
+the mark-arrival direction alone.
+
+Doing nothing is defensible for the slice — §12 criterion 4 is about S11 and a
+probe aimed at S11 answers it — but it stops being defensible at the 104-scenario
+benchmark, where the misspecification directions are not known in advance and a
+single-direction gate would report a detection rate that means nothing.
+
+**Touches.** SPEC §4.6, which describes Stage A as a check rather than a battery,
+and would need the combination rule stated. Not a change to make on the way past
+some other work: the rule is the whole design, and choosing it by convenience
+while shipping something else is how the `1 + ln(n)` dilution got in.
+
+## SPEC §12 criterion 4 is incoherent, and fixing it needs a decision made cold
+
+**Idea.** Re-specify criterion 4 — currently *"Detects inadequacy on S11 at a
+rate at least matching B1"* — as a power-against-size comparison on a named
+check, and decide what "a system detected inadequacy" means for a system that
+never consults the check.
+
+**Rationale.** Measured 2026-08-16. The criterion names no check, and the two
+that exist disagree:
+
+| | fires on |
+|---|---|
+| full-record `ppc` | B1 on 5 of 12 (S1, S5, S8, S10, S11); V7 on none |
+| Stage A adequacy probe | B1 on S11 alone (0.0294); V7 on S11 alone (0.0112) |
+
+Three separate problems, none of which the wording survives:
+
+1. **It compares different checks.** B1 holds no proposal layer, so it never
+   calls `Investigation.ppc()`; its "detection" can only be read off a run,
+   while V7's is a gate it acts on. Reading one arm's gate against the other
+   arm's full-record summary is not a comparison.
+2. **B1's full-record rate is a multiplicity artefact.** B1 holds only the null,
+   so its space is inadequate on eleven of twelve by construction, and the rate
+   comes from eight experiments agreeing rather than from adequacy detection. A
+   bar set there rewards firing indiscriminately.
+3. **There is no false-positive term**, so it measures size rather than power.
+
+**And the field a fixed criterion would read does not exist yet.** A
+`ScenarioRun.adequacy` field was written on 2026-08-16 and withdrawn the same
+day. The only place the harness can evaluate it uniformly across arms is after
+`investigate` returns — which reads the *final* posterior, so a system that
+successfully proposed a structure explaining the probe records as having failed
+to detect, inverting the criterion. Measured on V7/S11: gated on p=0.0128,
+end-of-run 0.0112. The deeper trouble is that the field conflates *is this space
+adequate* (a property of space and scenario, arm-symmetric, harness-computable
+before the run) with *did this system detect that it was not* (a property of
+behaviour, undefined for B1). Any re-specification has to pick one and say which.
+
+**Touches.** SPEC §12, an exit criterion, and therefore CLAUDE.md's invariant 6
+in its surviving form: **this must not be decided in a session that has just
+measured V7 against the candidate wording.** A draft replacement was written on
+2026-08-16 and reverted unshipped for exactly that reason — an independent code
+review and an invariant audit both flagged it, and they were right. The
+measurements above are the input; the decision is not this session's to make,
+and should be taken by someone who has not just watched V7 pass it.
+
+## Invariant 2 is held by convention where it should be held by construction
+
+**Idea.** Give `Investigation.engine` a read-only view instead of the live
+`EmpiricalTableEngine`, so that recording evidence is a capability the harness
+holds and a system cannot reach.
+
+**Rationale.** Found by the `invariant-auditor` on 2026-08-16 and not acted on
+in that session, deliberately — see **Touches**. `Investigation.engine`
+(`src/sciagent/systems/base.py`) returns `self._engine` itself, and its docstring
+says *"Read-only in effect: it writes the numbers."* That is a comment, and
+CLAUDE.md's second invariant says in as many words: **enforce with runtime
+assertions, not comments.**
+
+The engine exposes two public mutating methods a system can therefore reach:
+
+- `record(...)` — folds straight into `log_likelihood_total` and `posterior()`.
+  A system calling it with a fabricated `DiagnosticVector` writes its own
+  posterior. `_validated` checks only for a duplicate id and a matching
+  template; nothing checks the result came from an execution.
+- `record_probe(...)` — added 2026-08-16. Followed by
+  `engine.ppc(experiments={own_id})` it bypasses `Investigation.ppc()`'s scoping
+  to the framework-chosen `_stage_a` entirely, letting a system compute an
+  adequacy verdict over evidence of its own choosing.
+
+`_audit` in `campaign.py` cannot catch either, and this is the part worth
+understanding: it re-derives the expected diagnosis from **the same engine
+object** the system was handed. It detects a system whose *reported* numbers
+disagree with the engine; it cannot detect a system that changed the engine
+before returning, because then both sides agree.
+
+**Latent, not active.** No shipped system calls either method — verified by
+grep across `src/sciagent/systems/**`; every one of V1, V3, V4, V7, B1, B4 and
+B5 touches the engine only through `.table`, `.observations`, `.live`, or by
+passing it read-only to `boed.plan`. So this is a gap in enforcement, not a
+defect in behaviour, and it long predates the session that found it: `record`
+has been public and reachable since the engine existed. What 2026-08-16 did was
+add a second method to the same unguarded surface, which is what drew the audit's
+attention to it.
+
+**Touches.** No frozen decision — invariant 2 already demands this and the code
+merely fails to deliver it. It is here rather than done because the fix is a
+capability boundary crossed by every system and every baseline, and bolting one
+on at the end of an unrelated session is how the three defects that same review
+caught got written in the first place. Sequencing: before item 15, since the
+matrix is the first time these systems run at scale and a fabricated posterior
+would be indistinguishable from a real one in the report.

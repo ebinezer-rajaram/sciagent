@@ -46,6 +46,7 @@ from sciagent.core.types import (
     ComponentId,
     Diagnosis,
     Direction,
+    ExperimentId,
     HypothesisId,
     Intervention,
     TotalEffect,
@@ -54,7 +55,7 @@ from sciagent.eval.scenarios import Scenario
 from sciagent.eval.scoring import ClosedWorldScore, closed_world_score
 from sciagent.experiments.executor import Executor
 from sciagent.hypothesis.graph import HypothesisGraph
-from sciagent.inference.empirical import EmpiricalTableEngine
+from sciagent.inference.empirical import EmpiricalTableEngine, replicate_seed
 from sciagent.inference.interface import PPCResult
 from sciagent.systems.base import Investigation, ResearchSystem, diagnose
 from sciagent.systems.hybrid import ProposalAttempt
@@ -93,8 +94,26 @@ class ScenarioRun:
     diagnosis: Diagnosis
     score: ClosedWorldScore
     ppc: PPCResult
-    """The Stage A verdict. Carried here rather than on the diagnosis because
-    SPEC §3.4 has no field for it, and B1's whole output is this flag."""
+    """How well the entertained set explains the whole recorded record.
+
+    Carried here rather than on the diagnosis because SPEC §3.4 has no field for
+    it, and B1's whole output is this flag. Over the run's *experiments*, and no
+    probe -- so it is reconstructible from :attr:`evidence`, which a number
+    folding in a reading absent from that index would not be.
+
+    **Not** the verdict a system acted on where a scenario declares a Stage A
+    probe, and deliberately no longer accompanied by one. A companion
+    ``adequacy`` field was written on 2026-08-16 and withdrawn the same day: the
+    only honest place to evaluate it is *after* ``investigate`` returns, which
+    reads the final posterior rather than the one the gate saw, so a system that
+    successfully proposed a structure explaining the probe would be recorded as
+    having failed to detect. The field also conflated two different quantities --
+    whether the space is adequate, which is a property of the space and the
+    scenario, and whether a *system* detected that it was not, which B1 cannot
+    have an answer to because it never consults the check. Both are open in
+    ``docs/BACKLOG.md``. Until they are settled there is no consumer, and a field
+    whose correct semantics depend on an unmade decision is worse than none.
+    """
 
     experiments: int
     """How many experiments were actually run, which may be under the budget."""
@@ -208,7 +227,9 @@ def run_scenario(
         engine=engine,
         graph=graph,
         seed=scenario.seed,
+        stage_a=stage_a_id(scenario) if scenario.stage_a is not None else None,
     )
+    _run_stage_a(scenario, executor=executor, engine=engine)
     reported = system.investigate(investigation)
 
     expected = diagnose(
@@ -243,6 +264,64 @@ def run_scenario(
             default=math.inf,
         ),
     )
+
+
+def stage_a_id(scenario: Scenario) -> ExperimentId:
+    """Return the id the scenario's Stage A reading is recorded under.
+
+    One definition, because two would be a latent bug of the worst kind: the
+    reading is written under this name and the adequacy check looks it up by it,
+    so a mismatch would not raise -- ``ppc(experiments=...)`` would, but only
+    after the two had already diverged -- and the two sites are in different
+    modules. Public so that a probe or a test can name the reading without
+    rebuilding the string.
+    """
+    return ExperimentId(f"stage_a/{scenario.id}")
+
+
+def _run_stage_a(
+    scenario: Scenario,
+    *,
+    executor: Executor,
+    engine: EmpiricalTableEngine,
+) -> None:
+    """Take the scenario's Stage A reading, if it declares one.
+
+    Guarantees the reading reaches the posterior predictive check and nothing
+    else. It is measured rather than run, so no registry row is written, no
+    budget is charged and ``investigation.history`` does not hold it; and it goes
+    in through :meth:`~sciagent.inference.empirical.EmpiricalTableEngine.record_probe`,
+    so it is absent from ``engine.observations``, contributes no likelihood, and
+    moves no posterior mass. A system can neither see that it happened nor cite
+    it.
+
+    That routing is load-bearing and was wrong for a day. ``engine.record``
+    appends to the same list ``log_likelihood_total`` folds over, so a probe
+    recorded through it entered *every* system's posterior -- an extra
+    observation, free of budget and missing from the evidence index, silently
+    reweighting the belief the run is scored on. B5 was where it showed:
+    structural recovery fell from 3 of 9 scenarios to 1, because its beam ranks
+    candidates by fit against ``engine.observations`` and was ranking them partly
+    on a reading it was never meant to see. See ``docs/DECISIONS.md``.
+
+    Identical for every system by construction, since it is taken from the
+    scenario before ``investigate`` is called and no system is consulted about
+    it. That is the property SPEC §9's comparison rests on: a Stage A allocation
+    given to one arm and not another would make every detection figure a
+    statement about the harness.
+
+    The seed is derived from the scenario seed and the design id under the same
+    :func:`replicate_seed` every experiment uses, at a step index that no
+    experiment can occupy -- Stage A precedes them all, so it takes step
+    ``-1``'s place by name rather than by number and cannot collide with the
+    first experiment's stream.
+    """
+    if scenario.stage_a is None:
+        return
+    design = scenario.stage_a
+    seed = replicate_seed(scenario.seed, f"stage_a:{design.id}", 0)
+    result = executor.measure(design, scenario.executed, seed)
+    engine.record_probe(stage_a_id(scenario), design.template(), result)
 
 
 def _attempts_of(system: ResearchSystem) -> tuple[ProposalAttempt, ...] | None:

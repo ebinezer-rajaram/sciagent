@@ -20,7 +20,7 @@ those systems could in principle meet:
 * the **closed set** of SPEC §4.2 as its hypotheses, entertained through
   :func:`~sciagent.systems.base.entertain` -- the same call V1 and B4 make;
 * the **agent grammar**'s prior, since the graph carries that grammar;
-* the slice's five designs;
+* the slice's six designs;
 * and, as the world, the empirical row of the defect the scenario *executes* --
   truth and nuisance together -- which for S11 and S12 is not any hypothesis's
   row.

@@ -236,7 +236,9 @@ Minimum discriminating plan is three stages: establish clustering is temporal ra
 
 ### 4.3 Diagnostic catalogue (slice)
 
-`InterArrivalDispersion`, `FanoFactorByWindow`, `AutocorrelationOfCounts`, `PowerSpectrum`, `PhaseConditionedDispersion`, `RunLengthDistribution`, `SizeDistributionMoments`, `SignAutocorrelation`.
+`InterArrivalDispersion`, `FanoFactorByWindow`, `AutocorrelationOfCounts`, `PowerSpectrum`, `PhaseConditionedDispersion`, `RunLengthDistribution`, `SizeDistributionMoments`, `SignAutocorrelation`, `MarkArrivalCoupling`.
+
+**Amended 2026-08-16**, on the demonstrated contradiction SPEC §13 requires. `MarkArrivalCoupling` — the correlation between a mark and the inter-arrival gap that follows it — was added because every other entry above is a statistic of one component in isolation, and S11's out-of-library mechanism couples two components while perturbing neither marginal. With the original catalogue the posterior predictive check had **0.000** power against it across 100 scenarios (min p 0.0508, median 0.7972), so §4.6 requirement 1 was unsatisfiable and §9's primary contrast conditioned on an event that never occurred. The failing measurement, the alternatives rejected, and the bin-edge quantiles are in `docs/DECISIONS.md`. This moved `METRIC_VERSION` to 1.2.0 and therefore the content address of every experiment registered against the catalogue.
 
 ### 4.4 Experiment operations (slice)
 

@@ -3833,6 +3833,693 @@ pays both. This is a harness behaviour, not a repository fact, so it is recorded
 here: nothing in the tree would tell a later session that array order in
 `settings.json` is not sequencing.
 
+## 2026-08-16 — item 15 prerequisite: the mark-arrival cross-diagnostic works, measured
+
+**Measured**, and this is the evidence SPEC §13 asks for before a frozen
+document moves. Two runs, ~15 minutes of compute together.
+
+**First, the current state, re-taken.** The 0.000 power figure for
+`SIZE_EXCITATION` in this file's item 12 entries was measured on 2026-08-04,
+*before* `core/reductions.py` moved `METRIC_VERSION` to 1.1.0 and rebuilt every
+table. It had to be re-taken rather than inherited, and it holds:
+
+```
+METRIC_VERSION 1.1.0, alpha 0.05, 100 scenarios per arm
+realised size (correctly specified): 0.010
+power[size_mixture   ] = 1.000   min p 0.0351  median p 0.0383
+power[size_excitation] = 0.000   min p 0.0508  median p 0.7972
+```
+
+**The min and the median are the new information.** Not one scenario in a
+hundred crosses alpha, and the best of them reaches only 0.0508 while the median
+sits at 0.7972. A p-distribution that flat is an *absence of signal*, not a
+threshold that a smaller alpha would rescue. Anyone tempted to fix S11 by
+loosening the check should read the median first.
+
+**Second, the candidate.** Correlation between a mark and the inter-arrival gap
+that follows it — the statistic `docs/BACKLOG.md` names. 200 replicates of 512
+events per structure:
+
+| structure | mean | sd |
+|---|---|---|
+| null | +0.0001 | 0.0445 |
+| **hawkes** | **-0.0012** | 0.0456 |
+| poisson_mixture | -0.0012 | 0.0444 |
+| regime_switching | -0.0020 | 0.0392 |
+| seasonality | +0.0006 | 0.0462 |
+| **SIZE_EXCITATION (S11)** | **-0.1342** | 0.0308 |
+
+Worst-case separation against the closed set is **3.42 sd**. Two variants were
+tried and are worse — a Spearman rank version at 3.20 sd, and a high-versus-low
+mark gap ratio at 2.42 sd — so the plain Pearson correlation is kept, which is
+also the cheapest and the one already named in the backlog.
+
+**The Hawkes row is the load-bearing one.** SPEC §4.2 calibrates S11's mechanism
+to the same operating point as the four it hides among, and Hawkes is what
+covers it on every arrival-only statistic. Here Hawkes sits at -0.0012,
+indistinguishable from the null. The statistic separates the confounded pair
+rather than merely detecting that something is clustered.
+
+**Third, indicative power.** Threshold calibrated on the pooled closed set
+(2000 draws) to a one-sided 5%, then applied to S11:
+
+```
+one-sided 5% threshold: -0.0692
+realised size on closed set:   0.050
+power against SIZE_EXCITATION: 0.968   (today: 0.000)
+  false-positive rate[hawkes] = 0.025   <- lowest of the five
+```
+
+**0.968 is an upper bound, not a prediction, and the distinction matters.** The
+real posterior predictive check bins outcomes into cells and combines across
+experiments by the harmonic mean of 2026-08-04; this probe thresholds a
+continuous statistic from a single execution. What it establishes is that the
+information is present in the mark-arrival joint behaviour and absent from every
+statistic in §4.3 — not what the check will report once the statistic is binned
+and given discretisation edges. Re-measure A9 after the change; do not quote
+0.968 as the detection rate.
+
+**Closes off.** It does not decide §4.3. Adding the diagnostic is a
+`MetricRegistry.version` event, so it re-addresses every experiment registered
+against the catalogue and rebuilds all three cached tables — the 2026-08-15
+reductions entry priced that class of change at **31m45s** for the suite against
+6m44s warm. What this entry removes is the excuse of not knowing whether the
+change would work. SPEC §12 criterion 4 still needs re-specifying regardless:
+B1 fires on 7/12 scenarios because it holds only the null, so "at a rate at
+least matching B1" is the wrong yardstick whatever the catalogue contains.
+
+## 2026-08-16 — the call address excludes the binary version, deliberately
+
+**Decision.** `call_address` does not cover `claude_code_version`, and should
+not. The CLI version is `Completion.provenance` and `Transcript.provenance`,
+recorded beside the payload and never hashed into its identity. Settled in
+`be97cb0` with the reasoning in the `transcripts.py` module docstring; this
+entry exists because that commit left none, and without it the question still
+reads as open.
+
+**Why it is written down at all.** The 2026-08-15 entry "the Agent SDK backend,
+measured against live sessions" closes with item (3) — the binary version is
+observable but `call_address` does not cover it — and says "worth deciding
+before item 15 records, not after". A session reading this file in order reaches
+that sentence and finds nothing after it, so the natural next move is to bump
+`ADDRESS_VERSION`. That move is now wrong, and expensively so.
+
+**Why the exclusion is right, and the argument is stronger at matrix scale than
+it was at one call.** Item 15 is ~1,120 investigations under subscription rate
+caps, which the same entry records as unmeasured and likely to spread the
+recording across days. Claude Code auto-updates. Put the binary version in the
+address and a mid-recording update silently re-addresses every subsequent call:
+the corpus splits in two, and replaying the first half misses. The cost is not a
+tidiness argument about identity, it is a recording run that cannot be replayed
+through. **`ADDRESS_VERSION` stays at `transcript/2`.**
+
+**Closes off.** Reproducibility of a corpus is "given a comparable binary", not
+"given any binary", and that gap is real and is accepted rather than hidden —
+provenance is what makes it auditable after the fact. Supersedes item (3) of the
+2026-08-15 entry. Item (2) of that entry, the rate caps, is still unmeasured and
+is now the only one of its three left open.
+
+## 2026-08-16 — review: A20 is not carried by clause 3, and the backlog entry is wrong
+
+**Approach abandoned, because the defect it targets does not exist.**
+`docs/BACKLOG.md`'s entry "Relevance clause 3 fires on every pair, so A20 is not
+testing what it reads as" asks for A20's cases to be given genuinely differing
+scopes, on the reasoning that "A20 would still pass if clauses 1, 2, 4, 5 and 6
+were all broken". They already differ, and it would not.
+
+**Measured, by mutation rather than by reading.** Disabling the
+`RelevanceClause.SCOPE_OVERLAP` arm of `verify/relevance.py::clauses` and
+re-running A20:
+
+```
+17 of 102 omitted experiments went unsurfaced: ['scope_overlap/0', ...]
+```
+
+All 17 are the clause's own cases. The other 85 are surfaced by clauses 1, 2, 4,
+5 and 6 independently of clause 3, which is the exact inverse of the entry's
+claim. Two further A20 tests fail under the mutation and both fail *only* on
+`scope_overlap` cases.
+
+**Why the entry got it wrong, which is the part worth keeping.** It reasoned
+correctly about *real slice runs* — `EvidenceIndex.from_history` does stamp every
+record with the single `executor.scope()`, so on a real run clause 3 does fire
+for every pair and `uncited_relevant` is every uncited experiment. It then
+carried that conclusion across to A20, whose cases are **constructed** and give
+each omitted record an `env_version` of `other/{variant}` precisely so the other
+clauses are the ones deciding. Those constructed cases and
+`test_a20_four_clauses_are_independently_sufficient` were both written at item 10
+on 2026-08-04, five days *before* the entry of 2026-08-09.
+
+**Closes off.** No change to `verify/relevance.py`, no change to A20, no change
+to SPEC §7.1 — the tree was already right. The observation about real slice runs
+stands on its own and is not a defect: an experiment from the same environment
+version *is* relevant under §7.1, and evidence completeness being conservative is
+the behaviour that clause is for. The backlog entry should be struck rather than
+implemented, and this is the measurement that licenses striking it.
+
+## 2026-08-16 — the catalogue was not the whole contradiction: BOED never selects the Stage A design
+
+**Measured**, immediately after adding `size_gap_correlation` and taking
+`METRIC_VERSION` to 1.2.0. V1 (BOED-only) on all twelve scenarios at their own
+budgets, closed set entertained, shared table:
+
+| id | budget | new design run? | final PPC p | designs actually run |
+|---|---|---|---|---|
+| S1 | 8 | **no** | 0.8509 | countauto, force, interarrival, phasecond |
+| S5 | 8 | **no** | 1.0000 | force, interarrival, phasecond |
+| S10 | 2 | **no** | 0.2629 | interarrival |
+| **S11** | 8 | **no** | **0.5273** | countauto, force, interarrival, phasecond |
+| S12 | 8 | **no** | 0.1006 | countauto, force, interarrival, phasecond |
+
+Zero selections in twelve scenarios. **S11's p-value is 0.5273, which is item
+12's number to four decimal places.** Adding the diagnostic changed nothing where
+it matters.
+
+**A9 says 0.520 and a real run says nothing, and both are correct.**
+`ppc_outcomes` calls `observe`, which runs *every* template unconditionally. A
+budgeted investigation selects, and one-step greedy BOED selects by expected
+information gain **about the entertained hypothesis set**. Every closed-set
+member is uncoupled and reads zero on this metric, so its expected gain is
+approximately zero and it is the least attractive design on the board. BOED is
+not malfunctioning; it is doing exactly what it is specified to do.
+
+**The general statement, which is the part worth keeping.** *A design that
+detects inadequacy of a hypothesis space is, by construction, uninformative
+within that space.* Stage A asks a question about the space; BOED optimises
+inside it. SPEC F5 hands experiment selection and inadequacy detection both to
+"conventional methods" and thereby reads as though they were one interest. They
+are opposed, and nothing in the loop makes the selector serve the detector.
+
+**This predates the change, and that is how it went unnoticed.**
+`size_dispersion` is also never selected on any of the twelve, for the same
+reason -- no closed-set hypothesis perturbs the size component. So A9's headline
+100% power against `size_mixture` is measured in a regime no investigation
+enters either. The gap has been in the apparatus since item 6; adding a
+cross-diagnostic did not create it, it made it load-bearing.
+
+**What this means for the work that was just done.** SPEC §4.3's amendment and
+the 1.2.0 version event are necessary and are *not* sufficient. The pilot's
+3.42 sd separation and A9's 0.520 both stand as measurements of the statistic.
+Neither is a measurement of detection in an investigation, and no figure from
+this session should be quoted as one.
+
+**Deliberately not decided.** Four options, and the choice is the user's because
+three of them touch a frozen decision:
+
+1. Reserve budget: every investigation runs the Stage A design once, outside
+   BOED's selection. Cheapest, and it must apply to every system identically or
+   it biases the §9 comparison. Touches the budget semantics, not F5.
+2. Give Stage A its own experiment allocation, separate from the BOED loop.
+   Same idea, stated as an architecture rather than a special case.
+3. Add an adequacy term to BOED's objective. Touches F5 directly and makes
+   V1 no longer the "optimal selection, no representation change" baseline §5
+   defines it as.
+4. Accept it and report that Stage A detection needs a design BOED will not
+   choose. Honest, and leaves §9's contrast conditioning on a near-zero event
+   exactly as before.
+
+**Closes off.** Nothing is reverted -- the diagnostic, the version event and the
+§4.3 amendment are prerequisites for every one of the four options, and option 4
+is the only one under which they buy nothing. Whoever takes this must re-measure
+detection *from runs* rather than from A9, and should fix A9's own regime while
+they are there, since a power figure measured over all templates does not
+describe any system SPEC §5 defines.
+
+## 2026-08-16 — the Stage A allocation, and the two things it did not fix
+
+**Decision.** `Scenario.stage_a` is a design the *framework* runs once before the
+system sees anything: measured rather than run, so nothing is registered, no
+budget is charged, and it never enters the evidence index. `run_scenario` takes
+it from the scenario rather than from its own signature, so no caller can supply
+it to one arm and omit it for another — an asymmetry there would bias every §9
+comparison invisibly. This is option 1 of the four left open in the entry above.
+
+**Measured, V1 on all twelve, and it is a real improvement that is not enough.**
+S11's final posterior predictive p-value:
+
+| | S11 | S12 | S10 |
+|---|---|---|---|
+| before the catalogue change | 0.5273 | 0.1011 | 0.2629 |
+| catalogue change alone | 0.5273 | 0.1006 | 0.2629 |
+| **with the Stage A allocation** | **0.2090** | 0.1166 | 0.4640 |
+
+**2.5x on S11, and still four times alpha.** The middle row is the one to read
+first: adding the diagnostic to the catalogue moved S11 by nothing at all,
+because BOED never selected it. The allocation is what made the diagnostic
+reachable, and the remaining gap is a third thing.
+
+**What the remaining gap is.** The check combines per-experiment probabilities
+by the harmonic mean scaled by `1 + ln(n)` (2026-08-04). With the allocation
+there are nine readings, of which **one** bears on adequacy and eight were chosen
+by BOED to discriminate *within* the entertained set. The informative reading is
+diluted, and the penalty term grew because it arrived. That entry measured the
+scaling against Fisher's method and found Fisher catastrophic here, so the
+combination rule is not something to change casually: any replacement needs its
+own realised-size and power pass, exactly as that one had.
+
+**Left open deliberately, and it is now a well-posed question rather than a
+mystery.** Either Stage A reads its own probe alone rather than through the
+combined statistic -- defensible, since an experiment chosen to separate two
+hypotheses inside a space says little about whether the space is right -- or the
+combination is weighted rather than uniform. Both are changes to how the check is
+*used*; neither needs a new diagnostic, and the catalogue work is a prerequisite
+for both.
+
+**A latent bug this surfaced, which is independent of all of the above.**
+Enabling the allocation turned eight `tests/test_agency.py` tests red, and the
+cause is not the allocation. The extra reading changes the engine's state before
+the system runs, so B5's beam search scores differently and proposes a *different*
+structure; filling that structure's table row raises `ExecutionError: phase bin 0
+holds 1 window(s)` out of `phase_conditioned_dispersion`. Isolated by setting
+`stage_a=None`, which makes the tests pass again.
+
+So `ensure_structure` can be handed a structure whose executions are degenerate
+for one catalogue diagnostic, and nothing guards it. That is reachable today by
+any system proposing an unlucky structure -- B5 explores fifty per scenario --
+and it is luck rather than design that no arrangement had hit it before. It must
+be fixed before the allocation lands, and it should be fixed on its own terms
+rather than as part of this.
+
+**Closes off.** Nothing is committed. The catalogue change (`METRIC_VERSION`
+1.2.0, the diagnostic, its edges, SPEC §4.3's amendment) is green on the suites
+run against it and is a prerequisite for every remaining option. The allocation
+is written and correct as far as it goes, and leaves the tree red until the
+`ensure_structure` fragility above is closed.
+
+## 2026-08-16 — Stage A reads its own probe, and S11 finally fires
+
+**Measured**, V1 on all twelve at their own budgets, with the Stage A allocation
+in place. "combined" is the check over every reading, which is what ships today.
+"probe" is the same check scoped to the Stage A reading alone, via the new
+`experiments=` argument to `EmpiricalTableEngine.ppc`.
+
+| id | truth in library? | combined p | **probe p** | fires at 0.05 |
+|---|---|---|---|---|
+| S1 | yes | 0.9287 | 0.4924 | no |
+| S2 | yes | 0.7928 | 0.0595 | no |
+| S3 | yes | 1.0000 | 0.8283 | no |
+| S4 | yes | 1.0000 | 0.5128 | no |
+| S5 | yes | 1.0000 | 0.2494 | no |
+| S6 | yes | 1.0000 | 0.5138 | no |
+| S7 | yes | 0.7840 | 0.0595 | no |
+| S8 | yes | 1.0000 | 0.5138 | no |
+| S9 | yes | 1.0000 | 0.1832 | no |
+| S10 | yes | 0.4640 | 1.0000 | no |
+| **S11** | **no** | 0.2090 | **0.0112** | **YES** |
+| S12 | yes | 0.1166 | 0.5083 | no |
+
+**One scenario fires and it is the right one.** Eleven in-library scenarios stay
+quiet, nearest miss 0.0595. Against a starting point where S11's check read
+0.5273 and detection over twelve scenarios was zero, this is the discrimination
+the slice was missing.
+
+**Why scoping is not a trick to make the number smaller.** The combination rule
+scales the harmonic mean by `1 + ln(n)`, so nine readings dilute one. Eight of
+those nine were selected by BOED to separate hypotheses *inside* the entertained
+set, and an experiment chosen for that says close to nothing about whether the
+set is the right one. The probe exists for the other question. The full-record
+check is still the honest summary of fit and is what `ScenarioRun.ppc` keeps
+reporting; what changes is which check opens SPEC F6's gate.
+
+**Stated plainly, because it bears on how this should be read.** This rule was
+chosen after measuring that the alternative fell short, which is the ordering
+that should make a reader suspicious. Two things stand against that. It was named
+as the preferred option *before* 0.2090 was measured, in the same session, on the
+argument above. And it is falsifiable in the direction that would have embarrassed
+it: had the probe fired on several in-library scenarios it would have been a worse
+rule than the one it replaced, and the table above is where that would have shown.
+It did not.
+
+**It also relocates R2 rather than killing it, which the previous entry feared.**
+Item 13's ablation runs on S8, S11 and S12, and the 2026-08-11 entry recorded
+that only S12 ever reached the proposal layer. Under the combined check with the
+allocation, S12's gate closed and R2 had no cell left anywhere. Under the probe,
+**S11's gate opens**, so V3 and V4 both have their briefs rendered on the
+out-of-library scenario the architecture exists for. That is a better cell than
+S12 ever was: S12's proposals were driven by a censoring nuisance over a truth
+that is *in* the closed set, which is a false positive that happened to be useful.
+
+**Left to do, and it is threading rather than discovery.** The measurement above
+computes the probe check post hoc. Nothing yet *uses* it: `Hybrid`'s half-budget
+gate, `PPCOnly` and the campaign all still call `ppc()` unscoped. Threading it
+needs the Stage A experiment id to reach the systems, which wants a method on
+`Investigation` rather than an id every system reconstructs -- SPEC's second
+invariant argues for the framework owning it. Until that lands, no system's
+behaviour has changed and the two red tests in `tests/test_agency.py` still
+describe V7's old S12 behaviour.
+
+**Closes off.** `ppc(experiments=...)` raises `UnknownExperimentError` on a name
+never recorded rather than checking fewer readings than asked, so a scoped check
+cannot silently become a narrower one. SPEC §12 criterion 4 should be
+re-specified against the table above -- power against S11 versus false positives
+on S1-S10 and S12 -- and not against B1, which fires on 7/12 for reasons that are
+about holding only the null.
+
+## 2026-08-16 — the gate is threaded, and V7 reaches Stage B on S11 for the first time
+
+**Measured**, V7 and B1 on all twelve at their own budgets, scripted provider,
+shared calibrated table, with the scoped gate live. ``asked`` is how many times
+the proposal layer was consulted.
+
+| id | V7 asked | V7 correct | | id | V7 asked | V7 correct |
+|---|---|---|---|---|---|---|
+| S1 | 0 | yes | | S7 | 0 | yes |
+| S2 | 0 | yes | | S8 | 0 | no |
+| S3 | 0 | yes | | S9 | 0 | yes |
+| S4 | 0 | yes | | S10 | 0 | no |
+| S5 | 0 | yes | | **S11** | **2** | no |
+| S6 | 0 | yes | | S12 | 0 | yes |
+
+**Two proposals on S11 and none anywhere else.** Item 12 measured the exact
+inverse -- S10 and S12 asked twice each, S11 not at all -- and recorded that
+SPEC §9's preregistered contrast "conditions on an event that occurs zero times
+in twelve". It now occurs on exactly the scenario it was written for. **The
+primary contrast is runnable.**
+
+**V7 is still correct on 9/12**, the same nine as before, so nothing in-library
+was traded away for it. S11 stays "no" and must: its truth is outside the agent
+grammar, so exact recovery is impossible by construction, and D3 rather than
+correctness is what SPEC §8 says to score it on.
+
+**How it is threaded, and why it is two files rather than five.**
+``Investigation.ppc`` is the single system-facing entry point -- ``Hybrid``'s
+gate, ``PPCOnly`` and ``llm/encoding`` all reach the check through it -- so
+scoping it there reaches every system at once. ``Scenario.stage_a`` names the
+design, ``campaign.stage_a_id`` names the reading, and ``run_scenario`` passes
+that id to the investigation. ``ScenarioRun.ppc`` deliberately still calls
+``engine.ppc()`` unscoped: the full-record check remains the honest summary of
+how well the entertained set explains everything seen, and only the check a
+system *acts on* is scoped.
+
+``stage_a_id`` exists as a function because the reading is written in one module
+and looked up in another. Two copies of the f-string would diverge silently --
+``ppc(experiments=...)`` raises on an unknown name, but only after the write and
+the read had already disagreed.
+
+**Five tests moved from S12 to S11, and the move is the finding rather than an
+adjustment.** ``tests/test_hybrid.py``'s gating and transcript tests and
+``tests/test_agency.py``'s ``EXTENDING_SCENARIO`` all needed a scenario where the
+layer is actually consulted. That was S12, whose truth is *in* the closed set;
+the gate opened there because the censoring nuisance fooled a check holding no
+reading that bore on adequacy. It is S11 now. Nothing was weakened to make them
+pass -- they assert the same properties on a scenario where the property is the
+one being tested, and `test_agency` needed a one-line change because it already
+named the extending scenario exactly once.
+
+**What this does to item 13, which the entry before last feared was dead.** R2's
+ablation runs on S8, S11 and S12, and the 2026-08-11 entry recorded S12 as the
+only cell ever reaching the proposal layer. It is now S11 -- a strictly better
+cell, since V3 and V4 diverge there on the out-of-library scenario the memory
+question is actually interesting for. R2 was never measurable on a cell that
+mattered before today.
+
+**Still not done, and none of it is discovery.** SPEC §12 criterion 4 wants
+re-specifying against the numbers above rather than against B1, which fires on
+nearly everything for reasons about holding only the null -- its full-record
+p-values here run 0.042 to 0.123 on the eleven non-null scenarios and 1.0000 on
+S9. A9 still measures power in the every-template regime that no budgeted run
+enters, and should be re-measured against the probe. And every V7 figure in this
+entry is a **scripted** provider: this is the apparatus working, not a
+measurement of what a model proposes.
+
+## 2026-08-16 — R7 revised: Hawkes was never interventionally equivalent to S11
+
+**Measured**, every closed-set structure scored against S11's out-of-library
+truth, held-out battery of the two mark diagnostics and the forced-arrival
+intervention. This supersedes the table in "item 12: D1-D6, and the measurement
+that shows why §8 forbids collapsing them" (2026-08-04), which was taken over a
+battery of two designs that could not see the mark-arrival coupling.
+
+| candidate | D1 | D2 | **D3 (2026-08-04)** | **D3 now** | D6 |
+|---|---|---|---|---|---|
+| *the truth itself* | 0.00 | -1.615 | 1.000 | 1.000 | 24.0 |
+| **hawkes** | 1.50 | -4.516 | **0.960** | **0.697** | 24.0 |
+| regime_switching | 1.50 | -6.978 | 0.698 | 0.527 | 29.0 |
+| poisson_mixture | 1.50 | -6.891 | 0.677 | 0.518 | 24.6 |
+| seasonality | 1.50 | -6.950 | 0.629 | 0.483 | 23.0 |
+| null | **1.00** | -6.992 | 0.617 | 0.478 | 1.0 |
+
+**R7 survives in its weak form and dies in its strong one.** The 2026-08-04
+entry read Hawkes at 0.960 against a truth of 1.000 and described it as
+reproducing S11's interventional response "almost exactly" -- interventionally
+*equivalent* while structurally wrong. At 0.697 against 1.000 it is plainly
+distinguishable from the truth. Hawkes was never equivalent; the battery could
+not see the one dimension on which the two genuinely differ, which is the
+mark-arrival coupling that S11's mechanism is built out of.
+
+**What still holds, and it is the part that matters for §8.** Hawkes remains the
+closest closed-set candidate by a clear margin -- 0.697 against a best rival of
+0.527 -- while sitting at D1 1.50, *further* from the truth than the null's 1.00.
+So a candidate that reproduces the truth's interventional behaviour better than
+anything else available still scores worse structurally than proposing nothing.
+That disagreement between two dimensions is what §8's prohibition on collapsing
+them exists for, and no number above weakens it.
+
+**How the battery changed, which is a defect worth naming separately.**
+`HELD_OUT` in `tests/test_scoring.py` was `slice_designs()[3:]` -- a *positional*
+slice. When SPEC §4.3 gained `size_gap_correlation` the slice silently grew from
+two designs to three, and a reported number moved with nothing in the diff to say
+so. It now names its designs. Membership of a battery that D2 and D3 are defined
+over cannot be a consequence of where a design happens to sort.
+
+**The design was kept in the battery, deliberately, and the reasoning should be
+inspectable because the incentive ran the other way.** Dropping it would have
+restored the 0.960 and preserved a finding this repository had already published
+to itself. It was kept because the battery's own stated rationale demands it: the
+comment on `HELD_OUT` says the mark diagnostic is there so that "a candidate that
+got the arrival side right and the mark side wrong should not score a clean 1",
+and `size_gap_correlation` is the sharpest available instance of exactly that
+case. Excluding it would have meant declining to measure the thing that tests the
+claim.
+
+**Read this against the entry recording the catalogue change.** The two are the
+same fact from opposite ends. A catalogue blind to the mark-arrival coupling
+could not detect S11 (power 0.000) *and* could not tell Hawkes from S11's truth
+(D3 0.960). One diagnostic moved both, and it should be no surprise that it did:
+they were the same blindness.
+
+**Closes off.** Item 12's D1-D6 table is superseded for D2 and D3; its D1 and D6
+columns are unaffected, since neither depends on the battery. Any figure quoting
+Hawkes at 0.960 on S11 is now stale, including the prose in that entry, which is
+left unedited per this file's append-only rule. `test_scoring.py` asserts both
+directions now -- that Hawkes still leads by 0.15, and that it is *below* 0.8 --
+with the second assertion naming `HELD_OUT` so that a future battery change which
+restores the artefact says so in its failure message.
+
+## 2026-08-16 — the Stage A probe was evidence, and only B5 noticed
+
+**The defect.** `_run_stage_a` recorded the adequacy probe through
+`engine.record`, which appends to the same list `log_likelihood_total` folds
+over. So the reading entered *every system's posterior*: an extra observation,
+charged to no budget, absent from the run's evidence index, silently reweighting
+the belief the run is scored on. Its docstring claimed "a system can neither see
+that it happened nor cite it", and both halves were false — `engine.observations`
+is public, and B5 ranks its beam on it.
+
+Fixed by giving the engine a second compartment. `record_probe` writes there;
+`observations`, `log_likelihood_total` and `_supporting` cannot see it; `ppc`
+reaches it only when a caller names the id. Unscoped, `ppc()` is over experiments
+alone, which is what makes `ScenarioRun.ppc` reconstructible from
+`ScenarioRun.evidence` — a summary p-value folding in a reading absent from the
+index is one nobody can check.
+
+**Why it hid in the posterior and not in the beam.** Measured on S1, four
+experiments in, closed set entertained, recording the probe the old way:
+
+| | |
+|---|---|
+| largest posterior move | **0.004** |
+| the term it adds to each candidate's fit | -1.79 to -1.66 nats |
+| spread of that term across five structures | **0.129 nats** |
+
+A posterior normalises, so a term the live hypotheses agree about cancels almost
+exactly — five structures agreeing to within 0.13 nats move the posterior by
+0.004, which no test would ever catch. B5 ranks on the *unnormalised* sum, over
+the agent grammar's ~18M candidates rather than five, where nothing constrains
+that term to be shared. 0.129 nats is a floor observed on the closed set, not a
+measurement of the beam's spread; the beam's own spread was not measured, and the
+recovery figures below are the evidence that it is much larger.
+
+**The cost, and the only thing that reported it.**
+
+| | before the probe | probe as evidence | probe compartmented |
+|---|---|---|---|
+| B5 right structural cell, of 9 | 3 | **1** | **4** |
+| B5 mean distance | 0.775 | — | 0.812 |
+| B1 full-record p on S1 | 0.0489 | 0.0569 | 0.0489 |
+
+Nothing else in the suite moved. B1's two detection tests failed, but for the
+second-order reason that the probe diluted their full-record check — a symptom
+that looked like a threshold to adjust. The structural regression was the only
+signal pointing at the cause, and it pointed the wrong way round, which is what
+made it worth chasing: an observation on the mark-arrival axis should *help* a
+search whose grammar contains size-coupling structures. It hurt because the
+search was being scored on a reading it was never meant to see.
+
+B5 ends at 4 of 9 rather than the 3 it started from. The extra cell is not this
+fix: the propose loop now falls through to the next beam member when the top one
+turns out unmeasurable at the engine's replicate count, where it used to propose
+nothing at all.
+
+**A regression guard exists now, which it did not before.**
+`TestAProbeIsNotEvidence` in `tests/test_systems.py` asserts the probe moves no
+posterior mass, is absent from `observations`, is absent from the unscoped check,
+is reachable when named, and cannot shadow an experiment id. A future `record`
+where `record_probe` belongs fails by name rather than moving a baseline's score
+for reasons nobody can see.
+
+**`ScenarioRun` now carries both checks.** `ppc` is the full record; `adequacy`
+is the verdict the system itself acted on, taken from `Investigation.ppc()` so no
+second copy of the scoping rule can drift. Both are needed because SPEC §12
+criterion 4 compares an LLM's detection against B1's, and B1 holds no proposal
+layer to gate — its detection can only be read off a run. Reading one arm's gate
+against the other arm's full-record check is not a comparison.
+
+That distinction immediately pays, on the twelve-scenario table re-measured after
+the fix. On the **full-record** check B1 fires on 5 of 12 (S1, S5, S8, S10, S11)
+and V7 on none. On the **adequacy** check both fire on S11 alone — B1 at 0.0294,
+V7 at 0.0112. B1's apparent detection advantage is a multiplicity artefact of
+holding only the null across eight experiments, not a finding about adequacy, and
+§12 criterion 4 as written would have credited it.
+
+**Unchanged by the fix**, which is the point: V7 still asks the proposal layer
+twice on S11 and zero times on the other eleven, still fires the gate on S11
+alone, still scores correct on 9 of 12. Everything the Stage A work bought
+survived the correction.
+
+**Closes off.** The general rule this settles: a reading about whether the
+entertained set is *adequate* must not also redistribute mass *within* it, or the
+adequacy verdict is partly a consequence of the belief it exists to audit. Any
+future harness-side measurement — a calibration reading, a second-stage probe —
+goes through `record_probe` or states why it is evidence. Still open: §12
+criterion 4 wants re-specifying against the adequacy column above, and A9 still
+reports power in the every-template regime no budgeted run enters.
+
+## 2026-08-16 — A9 re-measured against the probe: the Stage A gate is directional
+
+**Measured**, 100 scenarios per arm, closed set entertained, alpha 0.05. A9 had
+only ever reported power over *every template at once* — a regime no budgeted run
+enters, and since the gate was scoped, not the regime any system acts on either.
+Both are now reported.
+
+| misspecification | all templates | probe only |
+|---|---|---|
+| `size_excitation` (S11's own mechanism) | 52% | **90%** |
+| `size_mixture` (a component no closed-set hypothesis touches) | 100% | **3%** |
+| correctly specified (size, must stay under 2α) | 0% | 0% |
+
+**Neither regime dominates, and that is the finding.** Against the mechanism the
+probe was built for, scoping nearly doubles power: the combination rule scales
+the harmonic mean by `1 + ln(n)`, so eight readings silent about the mark-arrival
+coupling dilute the one reading that carries it. Against a size-distribution
+mixture the probe does not measure, scoping costs almost everything — 100% to 3%.
+
+**So the number SPEC §6.2 says the LLM must not be credited with is 90%, not
+52%**, and it is 90% only in one direction. The earlier figure understated the
+gate on its own mechanism by nearly half while overstating it everywhere else.
+
+**What this explains, which was otherwise loose.** V7's adequacy check fires on
+S11 alone across the twelve — including *not* on S8, whose compound truth is
+genuinely outside its space and which B1's full-record check does flag at 0.0396.
+That is not a bug in the gate; S8's misspecification is a size-distribution
+mixture, and the third row above says the probe has 3% power against exactly
+that. A single directional probe buys S11 and pays for it on S8.
+
+**Both sizes stay at 0%**, well inside the 2α bound, so the scoped check is not
+trading size for power — it is trading breadth for depth. The false-positive
+assertion is now parameterised over both arms, because the scoped one is what
+gates every proposal an investigation makes and a bound holding only over the
+whole catalogue would bound nothing anyone acts on.
+
+**A floor rather than a pin.** The assertion is `> 0.8` against a measured 0.90.
+It sits above the 52% the whole catalogue manages, which is the comparison
+carrying the content, and leaves room for Monte Carlo noise at n=100. The
+all-templates arm keeps its own assertion on `size_mixture`, so a catalogue that
+stopped covering what the probe misses fails here rather than in a campaign.
+
+**Closes off.** SPEC §12 criterion 4 was re-specified against these numbers in
+the same session and now reads as power against size — detection on S11 at a
+strictly higher rate than firing where the space contains the truth, on the Stage
+A check, with B1 reported alongside rather than used as the bar. What is *not*
+settled is whether one probe is enough: `BACKLOG.md` carries the question of a
+Stage A battery, which would touch §4.6 and is not a change to make on the way
+past. Until then, every Stage A detection figure in this repository is a
+statement about the mark-arrival direction and should be read as one.
+
+## 2026-08-16 — the review caught an invariant 6 violation on the way out, and it was right
+
+**Withdrawn before shipping**, on findings from `/code-review` and the
+`invariant-auditor` lens 6 run during `/ship`. Two things written earlier today
+are corrected here rather than edited, per this file's append-only rule. **The
+entries above that describe them are stale in exactly these respects**, and no
+figure in them moved — only what was shipped.
+
+**1. The SPEC §12 criterion 4 rewrite is reverted.** The entry
+"A9 re-measured against the probe" closes by saying criterion 4 "was
+re-specified against these numbers in the same session". That sentence describes
+the violation accurately enough to have been the evidence for it. An exit
+criterion that grades V7, rewritten in the same sitting that measured V7 against
+the gate the new wording names, is the confound CLAUDE.md's invariant 6 survives
+to prevent — and it does not matter that the old wording was genuinely
+incoherent, that the replacement was stricter, or that the rewrite was asked
+for. The ordering is the violation.
+
+Criterion 4 is back to its frozen text. The argument for changing it, the three
+distinct ways the old wording fails, and the measurements are now in
+`BACKLOG.md`, which is where SPEC §13 says a change to a frozen decision goes.
+It is explicitly marked as not this session's decision to take.
+
+**2. `ScenarioRun.adequacy` is withdrawn.** Added a few hours earlier so B1's
+detection and V7's gate could be read on the same check. The review found it
+evaluated after `investigate` returns, so it reads the final posterior rather
+than the one the system gated on — V7 on S11 acted on p=0.0128 and the field
+recorded 0.0112. The consequence is worse than the discrepancy: a system that
+*successfully* proposes a structure explaining the probe ends with
+`inadequate == False`, so a correct detection records as a miss, inverting the
+criterion the field existed to serve.
+
+Chasing that down surfaced the real defect, which is that the field conflates two
+quantities: whether *the space* is adequate for a scenario, which is
+arm-symmetric and computable by the harness before any system runs, and whether
+*a system* detected that it was not, which B1 cannot have an answer to because it
+never calls the check. Both are open in `BACKLOG.md`. With criterion 4 reverted
+the field has no consumer, and a field whose correct semantics wait on an unmade
+decision is worse than no field.
+
+**3. A9's new assertion is withdrawn; its new measurement is kept.** The
+two-regime power table stands and is the session's real finding. What came out is
+the threshold placed on `size_excitation/probe` — S11's own mechanism, and
+therefore the arm V7 is graded against. The test's own docstring already said
+"the control arm is asserted and the hard arm is only recorded", and adding a bar
+to the hard arm after measuring it inverted that discipline. The control arm's
+assertion is unchanged; both regimes are reported and bounded.
+
+**Three real defects the same review found, which were fixed rather than
+withdrawn.** `EmpiricalTable.with_structure` computed `cell_of` outside its
+guard, so `OutOfRangeError` escaped unwrapped while `beam_search` documented the
+boundary as wrapping both and caught only the wrapped type — latent (108
+wrapped, 0 out-of-range across the twelve) but it would have aborted a search
+rather than costing one candidate its rank. `BeamSearch` reported the admitted
+hypothesis as a residual candidate once the propose loop could fall past rank 0,
+and `_audit` excludes that field, so it would have been wrong in the report and
+silent everywhere else. And the Stage A design is in `slice_designs()`, so B1,
+B4 and B5 rotate onto it and spend budget there while V1 and V7 select by
+information gain and can decline — left as it is, flagged, and it belongs with
+the criterion 4 question rather than being settled on the way past.
+
+**Closes off.** What ships is the probe-compartment fix and the catalogue
+amendment, neither of which is an acceptance bar. The §4.3 amendment stays: it
+rests on a demonstrated §13 contradiction — 0.000 power made §4.6 requirement 1
+unsatisfiable — and it moves every arm alike, B1 detecting S11 at 0.0294 on the
+same instrument V7 reads at 0.0112. That is a different kind of change from a
+criterion, and the distinction is the one worth keeping: **fix the instrument
+when it cannot measure; do not touch the bar in the session that reads it.**
+
+The general lesson is cheaper stated than learned. The author of a change is the
+worst judge of whether it was written to fit what he had just measured, because
+the argument for it is genuinely good either way — every finding above came with
+a defensible rationale, and three of them were still wrong to ship.
+
 ## 2026-08-16 — infrastructure: what the recall fan-out actually recovers, and one finding it did not survive
 
 **A measured number that is expensive to reproduce.** `/recall` gained a fan-out

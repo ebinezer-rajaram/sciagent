@@ -30,6 +30,7 @@ from sciagent.core.errors import (
     GrammarError,
     InvestigationError,
     OutOfRangeError,
+    StructureNotMeasurableError,
 )
 from sciagent.core.types import Diagnosis, HypothesisId
 from sciagent.experiments.dsl import defect_key
@@ -51,12 +52,18 @@ type PredictiveFit = Callable[[Defect, Sequence[Observation]], float]
 #: window, say. ``OutOfRangeError`` is a value outside the metric's declared
 #: range, so the discretisation has no cell for it.
 #:
-#: Both are properties of the *candidate*, not faults: an edit space's corners
-#: contain parameterisations that produce degenerate programmes, and a search
-#: that enumerates corners will find them. They are scored ``-inf`` rather than
-#: skipped, so an unmeasurable structure is ranked last by a stated verdict
+#: ``StructureNotMeasurableError`` is the same fact reported from the table
+#: boundary rather than from the metric: ``EmpiricalTable.with_structure`` wraps
+#: the first two so a caller can tell "this structure has no row here" from a
+#: fault in the framework. It must be listed, or a candidate that used to score
+#: ``-inf`` would instead abort the search.
+#:
+#: All three are properties of the *candidate*, not faults: an edit space's
+#: corners contain parameterisations that produce degenerate programmes, and a
+#: search that enumerates corners will find them. They are scored ``-inf`` rather
+#: than skipped, so an unmeasurable structure is ranked last by a stated verdict
 #: instead of vanishing from a search that then looks exhaustive.
-_UNSCORABLE = (ExecutionError, OutOfRangeError)
+_UNSCORABLE = (ExecutionError, OutOfRangeError, StructureNotMeasurableError)
 
 
 def table_fit(table: EmpiricalTable, simulate: Simulator) -> PredictiveFit:
@@ -147,23 +154,47 @@ class BeamSearch:
 
         beam = self._search(investigation)
         proposed: list[HypothesisId] = []
-        for rank, (_, key, defect) in enumerate(beam[:1]):
+        for rank, (_, key, defect) in enumerate(beam):
             if find_duplicate(investigation.graph, defect) is not None:
                 continue
             node_id = HypothesisId(f"beam/{rank}/{key}")
-            investigation.propose(
-                node_id,
-                program_edit=defect,
-                rationale=f"beam search, predictive fit rank {rank}",
-            )
+            try:
+                investigation.propose(
+                    node_id,
+                    program_edit=defect,
+                    rationale=f"beam search, predictive fit rank {rank}",
+                )
+            except StructureNotMeasurableError:
+                # Measurability is *stochastic*, which is why the ``_UNSCORABLE``
+                # guard in ``table_fit`` does not already cover this. The search
+                # table is cheap and low-replicate; the engine's is calibrated at
+                # two thousand. A structure whose degenerate corner no search draw
+                # happened to hit can still be ranked first and then fail when the
+                # engine draws far more often, so the guard has to exist at both
+                # boundaries and cannot be hoisted to one.
+                #
+                # Falling through to the next candidate rather than proposing
+                # nothing keeps the same verdict ``_UNSCORABLE`` gives: an
+                # unmeasurable structure loses its rank, and the search still
+                # offers the best structure it *can* be scored on.
+                continue
             proposed.append(node_id)
+            break
 
         self._rotate(investigation, int(investigation.budget.remaining))
+        # What was *not* admitted, rather than everything below rank 0. The two
+        # agreed while only the leading candidate could be proposed; now that the
+        # loop falls through an unmeasurable or duplicate leader, the admitted
+        # hypothesis need not be rank 0, and a rank-based filter would report it
+        # as a residual as well. ``_audit`` excludes ``residual_candidates`` --
+        # it is the one field a system legitimately authors -- so that would have
+        # been wrong in the report and silent everywhere else.
+        admitted = set(proposed)
         return investigation.conclude(
             residual_candidates=tuple(
-                HypothesisId(f"beam/{rank}/{key}")
+                node_id
                 for rank, (_, key, _) in enumerate(beam)
-                if rank >= 1
+                if (node_id := HypothesisId(f"beam/{rank}/{key}")) not in admitted
             ),
         )
 

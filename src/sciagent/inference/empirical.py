@@ -453,27 +453,37 @@ class EmpiricalTable:
         # collide in the temporary file as well. os.replace is atomic on POSIX
         # and on Windows, and overwrites an existing destination on both.
         tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-        # newline="\n" rather than the default: text mode otherwise translates
-        # every newline to os.linesep on write, so a table saved on Windows and
-        # the same table saved on Linux differ byte for byte while parsing
-        # identically. A round trip cannot see it -- reading translates it back.
-        tmp.write_text(json.dumps(payload, indent=1), encoding="utf-8", newline="\n")
-        for attempt in range(_REPLACE_ATTEMPTS):
-            try:
-                os.replace(tmp, path)
-                return
-            except PermissionError as exc:
-                # Windows only, and transient: a reader has the destination open.
-                if attempt == _REPLACE_ATTEMPTS - 1:
-                    tmp.unlink(missing_ok=True)
-                    raise TableError(
-                        f"could not replace {path} after {_REPLACE_ATTEMPTS} attempts; "
-                        f"another process is holding it open"
-                    ) from exc
-                time.sleep(_REPLACE_BACKOFF_S * (attempt + 1))
-            except OSError:
-                tmp.unlink(missing_ok=True)
-                raise
+        # The write is inside the try with the replace, not before it: the cache
+        # directory is shared between worktrees, so a temporary file left behind
+        # by a failure there would accumulate in a directory other trees read.
+        try:
+            # newline="\n" rather than the default: text mode otherwise translates
+            # every newline to os.linesep on write, so a table saved on Windows and
+            # the same table saved on Linux differ byte for byte while parsing
+            # identically. A round trip cannot see it -- reading translates it back.
+            tmp.write_text(
+                json.dumps(payload, indent=1), encoding="utf-8", newline="\n"
+            )
+            for attempt in range(_REPLACE_ATTEMPTS):
+                try:
+                    os.replace(tmp, path)
+                    return
+                except PermissionError as exc:
+                    # Windows only, and transient: a reader has the destination open.
+                    if attempt == _REPLACE_ATTEMPTS - 1:
+                        raise TableError(
+                            f"could not replace {path} after "
+                            f"{_REPLACE_ATTEMPTS} attempts; "
+                            f"another process is holding it open"
+                        ) from exc
+                    time.sleep(_REPLACE_BACKOFF_S * (attempt + 1))
+        finally:
+            # `finally`, not `except BaseException: ... raise`: a successful
+            # os.replace has already moved the temporary away, so this is a no-op
+            # on the way out, and every failing path -- including an interrupt
+            # between the write and the replace, which is exactly how a stray
+            # .tmp gets stranded -- cleans up without catching anything.
+            tmp.unlink(missing_ok=True)
 
     @classmethod
     def load(

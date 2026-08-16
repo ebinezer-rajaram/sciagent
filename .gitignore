@@ -14,6 +14,12 @@ wheels/
 # tests/acceptance/test_a06_a11.py). They are derived, not authored.
 .cache/
 
+# Machine-local harness settings: absolute paths and per-machine permissions,
+# which belong to no other checkout. Ignored here rather than relying on a
+# developer's personal ~/.config/git/ignore -- that covers this machine only, so
+# on any other one `git add -A` inside a worktree would stage it.
+.claude/settings.local.json
+
 # One git worktree per concurrent local session, created here by the harness.
 # A worktree is a checkout of this same repository, so leaving it untracked
 # would show every one of its files as untracked in the parent's `git status` --

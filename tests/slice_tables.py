@@ -19,6 +19,8 @@ fresh one.
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 from collections.abc import Sequence
 from functools import lru_cache
 from pathlib import Path
@@ -33,7 +35,7 @@ from environments.pointproc.outcomes import (
     slice_templates,
 )
 from sciagent.core.edits import Defect, EditGrammar
-from sciagent.core.errors import ExecutionError, OutOfRangeError
+from sciagent.core.errors import ExecutionError, OutOfRangeError, TableError
 from sciagent.core.program import stable_key
 from sciagent.core.types import ExperimentTemplateId, FrozenDict, Seed
 from sciagent.inference.empirical import (
@@ -72,28 +74,104 @@ REPLICATES = 2000
 #: Seed of the slice table. Fixed, so the table is a reproducible artefact.
 TABLE_SEED = Seed(20260803)
 
+
+def _cache_root() -> Path:
+    """Return the directory built tables are kept in, shared across worktrees.
+
+    Guarantees that every git worktree of this repository resolves to the *same*
+    directory, so a new tree is warm on its first run. Acquiring the slice table
+    was measured at **3m11s** cold against **1.055s** through a warm cache, a
+    factor of 181, which is large enough that a cold worktree costs more than the
+    contention a worktree per session avoids. (``DECISIONS.md`` records 46x for
+    the item 9 gate; that is a wider instrument which does more than acquire the
+    table.)
+
+    The main tree is found through ``git rev-parse --git-common-dir``, which is
+    the one participant that knows: a worktree's ``.git`` is a file pointing into
+    the main repository, and the common dir's parent is the main worktree. An
+    earlier attempt used an environment variable set in
+    ``.claude/settings.local.json``; that file is untracked, so no worktree
+    checkout could ever contain it and every worktree silently took the cold
+    path. Asking git needs no configuration and has nothing to forget.
+
+    ``SCIAGENT_TABLE_CACHE`` still overrides, for a caller that wants an explicit
+    location. If git cannot answer -- no git on PATH, not a repository -- this
+    falls back to the tree's own ``.cache/tables``, which is the original
+    behaviour and what a source archive without ``.git`` gets.
+
+    Sharing is safe because a cached file is content-addressed over the table's
+    own address and ``ENV_VERSION`` (see :func:`_cache_key`), so a tree can only
+    read a file that agrees with what it would have built; and because
+    :meth:`EmpiricalTable.save` replaces atomically, so a concurrent reader
+    cannot observe a half-written one. The residual exposure is that
+    ``ENV_VERSION`` is composed of hand-maintained version literals rather than a
+    hash of the environment's source, so two worktrees on different commits rely
+    on those having been bumped -- a pre-existing limitation the environment
+    protocol is meant to close, widened rather than created by sharing.
+    """
+    override = os.environ.get("SCIAGENT_TABLE_CACHE")
+    if override:
+        return Path(override).expanduser().resolve()
+    here = Path(__file__).resolve().parents[1]
+    try:
+        common = subprocess.run(
+            ("git", "rev-parse", "--git-common-dir"),
+            cwd=here,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return here / ".cache" / "tables"
+    if not common:
+        return here / ".cache" / "tables"
+    # `here / common` yields `common` unchanged when it is absolute, which is the
+    # worktree case; in the main tree git answers the relative `.git`.
+    root = (here / common).resolve().parent
+    # Landmark check, for the same reason `_hook_is_project_root` has one: git
+    # answers about whatever repository encloses this directory. A sciagent tree
+    # vendored inside another repo -- or one whose own `.git` is missing -- would
+    # otherwise put its cache in the *outer* repository's root, silently and
+    # nowhere near the tree it belongs to.
+    if not (root / "pyproject.toml").is_file() or not (root / "src").is_dir():
+        return here / ".cache" / "tables"
+    return root / ".cache" / "tables"
+
+
 #: Where built tables are kept between runs. Gitignored: derived, not authored.
-#:
-#: ``SCIAGENT_TABLE_CACHE`` overrides the location so that several git worktrees
-#: can share one warm cache. Without it every new worktree starts cold, which
-#: costs more than the contention a worktree per session avoids: acquiring this
-#: table in a fresh worktree was measured at **3m11s** cold against **1.06s**
-#: through a shared warm cache, a factor of 181. (``DECISIONS.md`` records 46x
-#: for the item 9 gate, which is a wider instrument -- it does more than acquire
-#: the table.)
-#: Sharing is safe because a cached file is content-addressed over the table's
-#: own address and ``ENV_VERSION`` (see :func:`_cache_key`), so a tree can only
-#: ever read a file that agrees with what it would have built; and because
-#: :meth:`EmpiricalTable.save` replaces atomically, so a concurrent reader
-#: cannot observe a half-written one.
-#:
-#: Unset falls back to this tree's own ``.cache/tables``, which is the previous
-#: behaviour exactly -- cloud sessions never set it and are unaffected.
-CACHE = (
-    Path(_cache_override).expanduser().resolve()
-    if (_cache_override := os.environ.get("SCIAGENT_TABLE_CACHE"))
-    else Path(__file__).resolve().parents[1] / ".cache" / "tables"
-)
+CACHE = _cache_root()
+
+
+def _publish(table: EmpiricalTable, path: Path) -> None:
+    """Write ``table`` to the cache, treating a failure to do so as survivable.
+
+    Guarantees that a contended cache write cannot destroy work already done.
+    Publishing is not part of building: by the time this runs the table is
+    computed and correct, and the file exists only so the next run need not
+    repeat minutes of simulation. Letting a failed write propagate would throw
+    that away over the artefact meant to protect it.
+
+    Every write into the shared cache goes through here rather than calling
+    :meth:`EmpiricalTable.save` directly. That is the point of the helper: the
+    first version of this guarded only :func:`cached_table`, and left
+    :func:`save_gate_table` -- reached from six test modules, so far the likelier
+    collision -- able to fail a session outright. A single door is harder to
+    forget than a convention.
+
+    The catch is narrow on purpose. ``TableError`` is what ``save`` raises when
+    it exhausts its retries against another process holding the destination;
+    anything else still surfaces. Note that pytest captures stderr on a passing
+    test, so in a green run this notice is visible only under ``-s``.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        table.save(path)
+    except TableError as exc:
+        print(
+            f"slice_tables: could not cache {path.name} ({exc}); continuing",
+            file=sys.stderr,
+        )
 
 
 def _cache_key(probe: EmpiricalTable, *parts: str) -> str:
@@ -154,7 +232,7 @@ def cached_table(
         replicates=replicates,
         seed=seed,
     )
-    table.save(path)
+    _publish(table, path)
     return table
 
 
@@ -207,8 +285,7 @@ def gate_table() -> EmpiricalTable:
 
 def save_gate_table(table: EmpiricalTable) -> None:
     """Persist the gate table, including any rows a system's proposals added."""
-    GATE_TABLE.parent.mkdir(parents=True, exist_ok=True)
-    table.save(GATE_TABLE)
+    _publish(table, GATE_TABLE)
 
 
 #: Replicates behind B5's search estimates, and the seed they are drawn under.
@@ -259,5 +336,5 @@ def search_table() -> EmpiricalTable:
             table, _ = table.with_structure(defect, simulate)
         except (ExecutionError, OutOfRangeError):
             continue
-    table.save(path)
+    _publish(table, path)
     return table

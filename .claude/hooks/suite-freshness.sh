@@ -66,8 +66,40 @@ hook_cd_project || {
     exit 1
 }
 
-RECORD=".cache/claude/last-green.txt"
+# The green record is SHARED between worktrees; the pin is not. That split is
+# the whole design, and it follows from what each one means.
+#
+# A green says "the full suite passed on this exact content". The key is a hash
+# of the content, so the fact is global -- if some tree verified that hash, any
+# tree holding it is verified, and which directory ran pytest is irrelevant.
+# Keeping it per-tree meant a fresh worktree had no record at all and `check`
+# exited 1 on the missing file, so every new worktree paid a full ~7-minute
+# suite for its first ship no matter how little it changed -- even when it was
+# byte-identical to a main tree that had just gone green.
+#
+# A pin is the opposite: it names one in-flight run in one tree. Sharing it
+# would let two worktrees overwrite each other's pin, and `record` would then
+# compare against somebody else's starting hash -- silently reintroducing the
+# false green the pairing exists to prevent.
+#
+# The record is a SET, one hash per line, not a single value. With one slot,
+# worktree A going green erased worktree B's, and B re-ran seven minutes to
+# rediscover something already known. `check` therefore matches any recorded
+# line, and a one-line file from the previous format still reads correctly.
+CLAUDE_CACHE=".cache/claude"
+common="$(git rev-parse --git-common-dir 2>/dev/null)"
+if [ -n "$common" ] && [ -d "$common" ]; then
+    main_tree="$(cd "$common/.." 2>/dev/null && pwd)"
+    [ -n "$main_tree" ] && [ -d "$main_tree/src" ] && CLAUDE_CACHE="$main_tree/.cache/claude"
+fi
+
+RECORD="$CLAUDE_CACHE/last-green.txt"
 PENDING=".cache/claude/pending-run.txt"
+
+#: How many green trees to remember. Enough for several worktrees plus a little
+#: history; the file is one 64-character line each, so the cap is about hygiene
+#: rather than space.
+KEEP_GREENS=20
 
 # Fewer than this many .py files means the search did not find the tree, not
 # that the tree shrank. The repository has ~107; mypy reports the same number.
@@ -100,8 +132,9 @@ current=$(tree_hash)
 case "$1" in
     check)
         [ -f "$RECORD" ] || exit 1
-        recorded=$(head -1 "$RECORD" 2>/dev/null)
-        [ "$recorded" = "$current" ] || exit 1
+        # -F -x: a hash is a literal and must match the whole line, so no part
+        # of one recorded hash can satisfy a query for another.
+        grep -Fxq "$current" "$RECORD" 2>/dev/null || exit 1
         exit 0
         ;;
     begin)
@@ -132,7 +165,22 @@ case "$1" in
             exit 1
         fi
         mkdir -p "$(dirname "$RECORD")" 2>/dev/null || exit 1
-        printf '%s\n' "$current" > "$RECORD" || exit 1
+        # Newest first, previous entries kept, duplicates dropped. Written via a
+        # temporary and moved into place, so a *reader* sees either the old set
+        # or the new one, never a half-written file. $$ keeps concurrent writers
+        # off each other's temporary.
+        #
+        # It is still a read-modify-write, so two trees recording at the same
+        # instant can lose one of the two greens. That is left alone: the loser
+        # re-runs a suite it need not have, which costs seven minutes and no
+        # correctness, and closing it means a lock file whose own failure modes
+        # are worse than the thing it prevents.
+        tmp="$RECORD.$$.tmp"
+        {
+            printf '%s\n' "$current"
+            [ -f "$RECORD" ] && grep -Fxv "$current" "$RECORD" 2>/dev/null
+        } | head -n "$KEEP_GREENS" > "$tmp" || { rm -f "$tmp"; exit 1; }
+        mv -f "$tmp" "$RECORD" || { rm -f "$tmp"; exit 1; }
         rm -f "$PENDING"
         echo "recorded green suite for tree $current"
         exit 0

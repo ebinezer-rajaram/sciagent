@@ -26,7 +26,13 @@ esac
 # cd first: a relative file_path is only meaningful once the working directory
 # is the repository root, so testing existence before the cd would resolve it
 # against wherever the hook happened to start.
-hook_cd_project || exit 0
+#
+# The path is passed as a hint so the *file's own* tree wins. With one worktree
+# per session the alternatives all name the wrong one: settings.json invokes
+# this hook by an absolute path into the main tree, so neither BASH_SOURCE nor
+# CLAUDE_PROJECT_DIR distinguishes the tree being edited. A relative hint is
+# ignored by hook_cd_project, which is the case this comment is about.
+hook_cd_project "$file_path" || exit 0
 [ -f "$file_path" ] || exit 0
 
 uv run ruff format --force-exclude "$file_path" >/dev/null 2>&1

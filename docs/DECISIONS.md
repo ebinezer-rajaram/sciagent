@@ -3561,3 +3561,149 @@ run, which is what backgrounding invites. `record` still cannot verify pytest ra
 or passed; the caller asserts it, and that remains open. Cross-platform
 determinism is untouched — `SCIAGENT_TABLE_CACHE` is unset in cloud sessions, so
 the fallback path is the previous behaviour exactly.
+
+## 2026-08-16 — infrastructure: what shipping without the review step cost
+
+**Work left deliberately incomplete, and an approach that failed.** `136550a` was
+pushed without `/ship` step 2, which has always called for `/code-review` and the
+`invariant-auditor` subagent. Running them afterwards found nine issues. Two were
+confirmed by probe and meant the worktree feature did not work in the case it was
+built for. Both are fixed here; this records what they were, because both were
+things the commit's own verification claimed to have checked.
+
+**Defect 1: the verification tested an invocation form nobody uses.** `136550a`
+made `hook_cd_project` prefer `BASH_SOURCE` so a worktree session would resolve
+to its own tree, and a probe confirmed it. But `settings.json` invokes hooks as
+`bash "$CLAUDE_PROJECT_DIR/.claude/hooks/X.sh"`, so `BASH_SOURCE` is an absolute
+path into the *main* tree however the session started. Measured on the same
+session:
+
+| invocation | resolved tree |
+|---|---|
+| `settings.json` form (the real one) | main tree |
+| manual `. .claude/hooks/lib.sh` (the one probed) | worktree |
+
+`guard-determinism.sh` would therefore have checked invariant 3 against the main
+tree after an edit in a worktree and reported clean — which that hook's own
+comment calls worse than no guard. The fix asks git, which is the only
+participant that knows: the tree containing the edited file when a caller passes
+one, else the session's cwd. Cost 0.04s, against the 0.038s `sed` already
+accepted per edit.
+
+**Defect 2: the mechanism could not reach the case it was for.** The shared table
+cache was keyed on `SCIAGENT_TABLE_CACHE`, set in `.claude/settings.local.json`
+— which is untracked, so no worktree checkout can contain it. Every worktree
+therefore took the cold path. The original 1.055s measurement held only because
+the variable had been set by hand on the command line. Now resolved from
+`git rev-parse --git-common-dir`, whose parent is the main worktree; the variable
+survives as an override. Verified with it unset in a fresh cold worktree: cache
+resolves to the main tree, acquisition **1.084s** against 3m11s.
+
+**Both defects share one cause, which is the reusable lesson.** Each was a probe
+that confirmed the mechanism in a configuration the real system never uses. A
+green probe against the wrong setup is indistinguishable from a green probe
+against the right one, and neither `mypy`, `ruff` nor the suite can tell the
+difference — none of them execute a hook or a worktree. The independent review
+found both within minutes, which is the argument for running it *before*
+committing rather than after. CLAUDE.md now records that invoking `/ship` is the
+authorisation for its step-2 subagents.
+
+**A judgement call worth recording.** `cached_table` now catches `TableError`
+from `table.save` and returns the table anyway. That sits close to the rule
+against suppressing errors, and the reasoning is that publishing a cache is not
+part of building a table: the computation succeeded, and letting a contended
+write discard a 3m11s build would trade correctness for nothing. The catch is
+narrow — `TableError` is specifically what `save` raises when it gives up — and
+the failure is reported on stderr rather than swallowed.
+
+**Left open, and why it was not closed here.** The auditor flagged that
+`ENV_VERSION` is composed of three hand-maintained version literals
+(`grammar.py`, `components.py`, `operations.py`) rather than a hash of the
+environment's source, as `outcomes.py` itself documents as an interim stand-in.
+Sharing one cache across worktrees widens that exposure: two trees on different
+commits now rely on those literals having been bumped. Not fixed, because
+changing the addressing scheme invalidates every cached table and touches what
+A6–A11 calibrate against. It waits on the environment protocol.
+
+Also open: the full multi-process race was validated out-of-band, not in the
+suite. `tests/test_empirical_io.py` covers the *mechanism* deterministically by
+patching `os.replace` — retry, give-up, no leaked temporary, and an existing
+table left intact by a failed save — because a real two-process race is slow and
+intermittent and asserts the absence of a symptom rather than the presence of the
+mechanism.
+
+## 2026-08-16 — the main working tree does not obey .gitattributes
+
+**A measured finding, handed to a separate investigation.** Found while checking
+whether a fresh worktree could inherit the main tree's recorded green. It cannot,
+and the reason is not the freshness mechanism.
+
+`.gitattributes` sets `* text=auto eol=lf`, and its own comment gives the reason:
+Windows locally, Ubuntu in cloud sessions, and SPEC's third invariant asking for
+byte-identical output. A fresh worktree checkout obeys it. **The main working
+tree does not.** Measured on `tests/test_invariants.py`, a file nothing in this
+session touched:
+
+| | bytes | endings |
+|---|---|---|
+| stored blob | 24673 | LF |
+| fresh worktree checkout | 24673 | LF |
+| main working tree | 25240 | CRLF |
+
+**132 of the hashed `.py` files** differ between the main tree and a fresh
+worktree on line endings alone. `core.autocrlf` is `true` at system and global
+scope and unset locally, so these were checked out before the `.gitattributes`
+rule landed; git renormalises only on checkout, never spontaneously, and
+`git diff` reports nothing because it normalises CRLF away on the way in. That
+is why this has been invisible.
+
+**Consequences, and what is *not* claimed.** A fresh worktree cannot match a
+green recorded by the main tree, so the shared green record helps within a tree
+and between established worktrees but not on first use. Beyond that: source line
+endings do not change Python's behaviour, and `ENV_VERSION` is composed of
+declared literals rather than a hash over source, so **no numerical impact was
+observed and none is asserted**. What is true is that the file written to keep
+the Windows and Ubuntu halves byte-identical is not in force locally, which is
+worth knowing before any cross-platform table is compared.
+
+**Deliberately not fixed here.** Renormalising rewrites ~132 working files,
+which is not a thing to do while other sessions hold them open, and it is a
+larger question than the change it was found during. Left for its own
+investigation. The cheap check for whoever picks it up: compare
+`wc -c` of a file against `git show HEAD:<path> | wc -c`.
+
+## 2026-08-16 — what the pre-commit review caught that the post-commit one had not
+
+**An approach that failed, recorded because the failure repeated.** The fix for
+`136550a` was itself reviewed before committing, this time. Five findings, and
+one of them was the same *class* of mistake as the defects being fixed.
+
+**The one worth remembering.** `cached_table` was given a `try/except TableError`
+so a contended cache write could not discard a built table. `search_table` and
+`save_gate_table` write to the same shared directory and were left unguarded --
+and `save_gate_table` is reached from six test modules, so it is by far the more
+likely collision. The low-traffic path was protected and the high-traffic one was
+not. Both reviewers found it independently; nothing mechanical could, because
+`mypy`, `ruff` and a green suite all pass either way. All three writers now go
+through one `_publish` helper, so the protection cannot be applied to some
+callers and forgotten at others.
+
+**The rest, briefly.** `_cache_root` asked git for the enclosing repository
+without checking the answer was *this* repository, so a tree lacking its own
+`.git` would put its cache in an outer repo's root -- the same landmark check
+`_hook_is_project_root` already had, missing here. A `# type: ignore[arg-type]`
+had reached the new test, which CLAUDE.md forbids outright; replaced by spelling
+the accepted type. `except BaseException ... raise` became `try/finally`, which
+gives the same cleanup while catching nothing.
+
+**A claim corrected rather than defended.** The comment on the shared green
+record said a reader "must never see a half-written set". The temporary-plus-move
+delivers that for readers, but `record` remains a read-modify-write, so two trees
+recording at the same instant can lose one green. Left as is -- the loser re-runs
+a suite it need not have, costing seven minutes and no correctness -- but the
+comment now says what is true rather than what was intended.
+
+**Also corrected:** the previous entry says a failed cache write is "reported on
+stderr rather than swallowed". Pytest captures stderr on a passing test, so in a
+green run that notice appears only under `-s`. Still not swallowed, but weaker
+than the earlier wording implies.

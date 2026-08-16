@@ -60,7 +60,12 @@ printf '%s' "$hook_payload" | grep -qE "random|default_rng" || exit 0
 # Fatal rather than advisory: a guard that silently disables itself when it
 # cannot find the tree is worse than no guard, because the absence of a
 # complaint reads as a pass.
-hook_cd_project || {
+# The edited file's own tree, not this script's. settings.json invokes hooks by
+# an absolute path into the main tree, so without the hint a worktree session
+# would run the AST test over the main tree and report clean -- a guard that
+# passes because it looked somewhere else, which is the failure this block's own
+# comment calls worse than no guard.
+hook_cd_project "$file_path" || {
     echo "guard-determinism: not in the sciagent tree; invariant 3 NOT checked" >&2
     exit 2
 }

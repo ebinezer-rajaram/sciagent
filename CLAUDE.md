@@ -110,6 +110,13 @@ personal config file because cloud sessions clone the repo and see nothing from
 - For the verification case specifically, use the `evidence-checker` subagent.
   It has not seen your reasoning, which is the whole point: you are the worst
   judge of a claim you just made.
+- **Invoking `/ship` is the authorisation for its step 2 subagents.** Run
+  `/code-review` and, when the diff touches `sciagent/` or an agent-reachable
+  path, `invariant-auditor` — without asking, and *before* committing. Shipping
+  136550a without them cost two defects that reached `main`: a hook fix verified
+  against the wrong invocation form, and a cache override in an untracked file
+  no worktree could read. Both were found by the review minutes after the push,
+  and either would have been caught before it.
 - Choose a subagent model only when the fit is obvious: haiku or sonnet for
   mechanical enumeration and pattern matching. Otherwise omit the model and
   inherit the session. Never pin opus explicitly.
@@ -146,10 +153,13 @@ Two things follow that are easy to get wrong:
 Worktrees do **not** buy parallel testing: the 30m37s contention figure is CPU,
 and it applies across worktrees exactly as within one.
 
-All trees share one table cache through `SCIAGENT_TABLE_CACHE`, set per-machine
-in `.claude/settings.local.json`. Without it a new worktree starts cold against
-a 46x cold/warm gap. Unset — as in every cloud session — the path falls back to
-the tree's own `.cache/tables`, which is the original behaviour.
+All trees share one table cache, resolved from `git rev-parse --git-common-dir`
+so that every worktree finds the main tree's `.cache/tables` with nothing to
+configure. Acquiring the slice table is **3m11s** cold against **1.055s** warm,
+so a cold worktree costs more than the contention it avoids. An earlier version
+set this through an environment variable in `.claude/settings.local.json`; that
+file is untracked, so no worktree checkout could contain it and every worktree
+silently took the cold path. `SCIAGENT_TABLE_CACHE` still overrides if set.
 
 ## Working style
 

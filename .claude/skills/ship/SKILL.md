@@ -176,15 +176,21 @@ changes that tree, so the result stops describing what is about to land. Merge
 first and verify after — never the reverse. Ask which case you are in:
 
 ```sh
-git merge-base --is-ancestor main HEAD && echo FF || echo DIVERGED
+if git merge-base --is-ancestor main HEAD; then echo FF; else echo DIVERGED; fi
 ```
+
+Written as `if`, not `A && B || C`: that form also prints DIVERGED when the
+*comparison itself* fails — a missing local `main`, say — and §4 rejects it for
+the same reason. Here it would send you into a needless second suite run rather
+than stopping to ask, which is the wrong direction to fail in.
 
 - **FF** — `main` has not moved since you branched. Fast-forward it. The tree is
   byte-identical to what the suite ran on, so the green still holds and there is
   **nothing to re-run**:
 
   ```sh
-  git -C "$(git rev-parse --git-common-dir)/.." merge --ff-only <your-branch>
+  main_tree="$(cd "$(git rev-parse --git-common-dir)/.." && pwd)"
+  git -C "$main_tree" merge --ff-only "$(git rev-parse --abbrev-ref HEAD)"
   ```
 
 - **DIVERGED** — another session shipped first. Merge `main` into your branch,
@@ -195,6 +201,16 @@ git merge-base --is-ancestor main HEAD && echo FF || echo DIVERGED
 - **Conflict** — stop and report it. Do not resolve another session's code: the
   tree may be mid-refactor in a session you cannot see, and that call is the
   user's. Leave the merge in progress or abort it, say which, and ask.
+
+**Then push from the main tree, not the worktree.** This is easy to get wrong:
+after the fast-forward the commit is on `main`, but the worktree is still on its
+own branch, so `git push` there publishes the branch and leaves `origin/main`
+untouched — while §4's `origin/main..HEAD` fallback still prints an empty list
+and reads as success. Run §4 in the main tree:
+
+```sh
+git -C "$main_tree" push
+```
 
 Do not delete the worktree as part of shipping. The user decides when it goes,
 via `ExitWorktree`.

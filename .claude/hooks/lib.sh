@@ -24,33 +24,73 @@ hook_read_payload() {
 # in whatever directory it happened to start in. `/ship` invokes these hooks
 # with CLAUDE_PROJECT_DIR unset, so this is the normal case, not an edge one.
 #
-# Guarding on emptiness is therefore necessary but still not sufficient: a
-# caller could be anywhere. The landmark check is what makes the result
-# trustworthy, and callers whose correctness depends on being in the right tree
-# must treat failure here as fatal rather than carrying on.
+# Guarding on emptiness is necessary but nowhere near sufficient: a caller could
+# be anywhere, and one candidate being non-empty says nothing about it being the
+# right tree. Each candidate below is therefore *validated* before it is
+# accepted, which is also what keeps the later fallbacks reachable at all --
+# `dirname ""` returns `.`, so a candidate is essentially never empty and an
+# emptiness guard would make every branch after the first dead code.
 #
 # WHICH tree, when there are several. One git worktree per concurrent session
-# means CLAUDE_PROJECT_DIR is no longer a synonym for "the tree these hooks
-# belong to". Measured: with the variable pointing at the main tree and the
-# session's cwd inside a worktree, the old precedence resolved to the *main*
-# tree, whose hash differs -- so suite-freshness.sh would have pinned, recorded
-# and checked against a tree the run never touched. That is the false green the
-# script exists to prevent, arriving through the back door.
+# means neither CLAUDE_PROJECT_DIR nor BASH_SOURCE is a synonym for "the tree
+# this invocation is about":
 #
-# So the script's own location wins. These hooks are checked in, so a worktree
-# has its own copy under its own .claude/hooks, and BASH_SOURCE therefore names
-# the tree whose files this invocation is about. CLAUDE_PROJECT_DIR is kept only
-# as a fallback for a caller that somehow has no readable script path.
+#   - CLAUDE_PROJECT_DIR can name the main tree while the session edits a
+#     worktree. Measured: the old precedence then resolved to the main tree,
+#     whose hash differs, so suite-freshness.sh pinned and checked against a tree
+#     the run never touched -- the false green it exists to prevent.
+#   - BASH_SOURCE does not fix that, because settings.json invokes these hooks as
+#     `bash "$CLAUDE_PROJECT_DIR/.claude/hooks/X.sh"`. The script path is then an
+#     absolute path into the *main* tree however the session was started, so
+#     guard-determinism.sh would check invariant 3 against the wrong tree and
+#     report clean. Measured on 2026-08-16: settings.json form -> main tree,
+#     manual form -> worktree, for the same session.
+#
+# So ask git, which is the only participant that actually knows. The tree
+# containing the *edited file* is the most precise answer, and callers with a
+# file in hand pass it as $1; otherwise the session's cwd decides. Cost is 0.04s
+# against the 0.038s `sed` already accepted per edit -- see the 0.517s Python
+# startup rejected above -- so this is affordable in a PostToolUse hook.
+_hook_is_project_root() {
+    [ -n "$1" ] && [ -d "$1" ] &&
+        [ -f "$1/pyproject.toml" ] && [ -d "$1/src" ] && [ -d "$1/tests" ]
+}
+
 hook_cd_project() {
-    local root=""
-    root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd)"
-    if [ -z "$root" ] && [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -d "${CLAUDE_PROJECT_DIR}" ]; then
-        root="$CLAUDE_PROJECT_DIR"
+    local hint="${1:-}" candidate="" root=""
+
+    # 1. The tree containing the file being edited. Absolute paths only: a
+    #    relative file_path is meaningless until after the cd, which is the very
+    #    thing being decided here.
+    case "$hint" in
+        /* | [A-Za-z]:[/\\]*)
+            if [ -e "$hint" ]; then
+                candidate="$(git -C "$(dirname "$hint")" rev-parse --show-toplevel 2>/dev/null)"
+                _hook_is_project_root "$candidate" && root="$candidate"
+            fi
+            ;;
+    esac
+
+    # 2. The tree the session is working in.
+    if [ -z "$root" ]; then
+        candidate="$(git rev-parse --show-toplevel 2>/dev/null)"
+        _hook_is_project_root "$candidate" && root="$candidate"
     fi
+
+    # 3. The tree this script was read from.
+    if [ -z "$root" ]; then
+        candidate="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd)"
+        _hook_is_project_root "$candidate" && root="$candidate"
+    fi
+
+    # 4. Last resort, for a caller with no git, no readable script path and no
+    #    usable cwd. Reachable now only because each branch above validates.
+    if [ -z "$root" ] && [ -n "${CLAUDE_PROJECT_DIR:-}" ]; then
+        _hook_is_project_root "$CLAUDE_PROJECT_DIR" && root="$CLAUDE_PROJECT_DIR"
+    fi
+
     [ -n "$root" ] || return 1
-    cd "$root" 2>/dev/null || return 1
-    # Landmarks: being in *a* directory is not being in *this* repository.
-    [ -f pyproject.toml ] && [ -d src ] && [ -d tests ]
+    cd "$root" 2>/dev/null
 }
 
 # Extract a flat JSON string field by name. Safe for `file_path` and other

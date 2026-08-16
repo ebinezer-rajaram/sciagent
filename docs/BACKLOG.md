@@ -573,7 +573,22 @@ review and an invariant audit both flagged it, and they were right. The
 measurements above are the input; the decision is not this session's to make,
 and should be taken by someone who has not just watched V7 pass it.
 
-## Invariant 2 is held by convention where it should be held by construction
+## DONE (2026-08-16, before item 15) — Invariant 2 is held by convention where
+## it should be held by construction
+
+**Done as specified**, and the sequencing note below is why it went ahead of
+item 15 rather than after it. `Investigation.engine` now returns
+`sciagent.inference.view.EngineView`, which withholds `record`, `record_probe`,
+`expand`, `ensure_structure` and `ppc`; `run_scenario` additionally reconciles
+the engine's observations against the experiments the investigation charged for
+and raises `EngineTamperError` on disagreement, so a system reaching an engine
+by some other route is caught rather than scored. Guarded by
+`TestTheEngineIsSealedAgainstTheSystem` in `tests/test_systems.py`, whose
+poisoner reproduced the silent-scoring case before the fix.
+
+Two channels named in `docs/DECISIONS.md` are **not** closed by this and remain
+open: `Investigation.propose(predictions=...)`, and reconciliation of the probe
+compartment.
 
 **Idea.** Give `Investigation.engine` a read-only view instead of the live
 `EmpiricalTableEngine`, so that recording evidence is a capability the harness

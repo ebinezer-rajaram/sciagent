@@ -99,8 +99,8 @@ from sciagent.core.types import (
     Probability,
 )
 from sciagent.experiments.dsl import CompareCandidates, defect_key
-from sciagent.inference.empirical import EmpiricalTableEngine
 from sciagent.inference.entropy import entropy_bits, entropy_standard_error
+from sciagent.inference.view import ReadableEngine
 
 __all__ = [
     "InformationGain",
@@ -498,7 +498,7 @@ def greedy(
 
 
 def plan(
-    engine: EmpiricalTableEngine,
+    engine: ReadableEngine,
     templates: Sequence[ExperimentTemplateId],
     observe: OutcomeSource,
     *,
@@ -511,13 +511,19 @@ def plan(
     :meth:`~sciagent.inference.empirical.EmpiricalTableEngine.posterior` and the
     predictive from the engine's table, so a system driving BOED has no argument
     through which a number could be authored (SPEC's second invariant).
+
+    Typed :class:`~sciagent.inference.view.ReadableEngine` rather than
+    :class:`~sciagent.inference.empirical.EmpiricalTableEngine` because a system
+    is handed an :class:`~sciagent.inference.view.EngineView` and never the
+    engine. Planning reads a belief and never writes one, so the narrower type
+    is not an accommodation -- it is the accurate one.
     """
     return greedy(
         templates, engine.posterior(), table_predictive(engine), observe, steps=steps
     )
 
 
-def table_predictive(engine: EmpiricalTableEngine) -> PredictiveSource:
+def table_predictive(engine: ReadableEngine) -> PredictiveSource:
     """Return the predictive an empirical table supports.
 
     The cell probabilities are

@@ -47,6 +47,7 @@ from sciagent.inference.empirical import (
     replicate_seed,
 )
 from sciagent.inference.interface import ExpansionCost, PPCResult
+from sciagent.inference.view import EngineView
 from sciagent.registry.budget import Budget
 from sciagent.registry.metrics import MetricRegistry
 
@@ -138,9 +139,22 @@ class Investigation:
         return self._designs
 
     @property
-    def engine(self) -> EmpiricalTableEngine:
-        """Return the posterior engine. Read-only in effect: it writes the numbers."""
-        return self._engine
+    def engine(self) -> EngineView:
+        """Return the posterior engine, as much of it as a system may reach.
+
+        A view and not the engine, and the difference is the whole of SPEC's
+        second invariant: the engine's ``record``, ``record_probe``, ``expand``
+        and ``ensure_structure`` do not exist on what comes back, so a system
+        cannot write the belief it is scored on. ``ppc`` is withheld too --
+        :meth:`ppc` is the sanctioned path and scopes the check to the
+        framework's Stage A reading, which ``engine.ppc(experiments={...})``
+        would let a system choose for itself.
+
+        This used to return ``self._engine`` under a docstring saying it was
+        "read-only in effect". It was not, and a system that recorded a
+        fabricated result scored on it with nothing raising.
+        """
+        return EngineView(self._engine)
 
     @property
     def graph(self) -> HypothesisGraph:
@@ -273,8 +287,15 @@ class Investigation:
         -- lateness costs nothing in likelihood but forfeits a confirmatory claim
         without a prospectively registered experiment -- has the datum it needs.
         """
+        # Unconditionally, and before the graph moves. A structure that cannot be
+        # measured raises here, leaving the graph and the engine both untouched,
+        # which is what lets B5 try a candidate and carry on. Inside the
+        # ``predictions is None`` branch -- where it used to be -- the explicit
+        # path reached the same call through ``expand`` *after* the graph had
+        # already been reassigned, so a caught failure left the graph holding a
+        # node the engine did not and tripped ``_reconcile`` on an honest system.
+        self._engine.ensure_structure(program_edit)
         if predictions is None:
-            self._engine.ensure_structure(program_edit)
             predictions = list(
                 table_predictions(
                     self._engine.table, node_id, program_edit, self._designs

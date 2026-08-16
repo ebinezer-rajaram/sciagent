@@ -4912,3 +4912,159 @@ the seed. Four shapes are caught — `for` over a set, a comprehension over one,
 is the fix. Syntactic and therefore a floor, not a proof: a set arriving through
 a parameter is invisible to it, which is the same bargain the other three guards
 strike.
+
+## 2026-08-16 — invariant 2: the engine is sealed, and what the seal does not reach
+
+**Supersedes the "left open" clause of** *2026-08-16 — invariant 2 is violated: a
+system can write its own posterior*, which named the shape of the fix and
+deliberately did not build it. That entry stands; this one closes the part of it
+that is now closed and is explicit about the part that is not.
+
+**Sequenced ahead of item 15 on the backlog entry's own instruction** —
+"before item 15, since the matrix is the first time these systems run at scale
+and a fabricated posterior would be indistinguishable from a real one in the
+report". `/next`'s cursor pointed at item 15; the backlog overrode it.
+
+**Decision.** Two defences, not one. `Investigation.engine` returns an
+`EngineView` that withholds `record`, `record_probe`, `expand`,
+`ensure_structure` and `ppc`; and `run_scenario` reconciles what the engine
+holds against what the run is entitled to, raising `EngineTamperError` when they
+differ. The view is the boundary, the reconciliation is the runtime assertion
+the invariant demands, and the second exists because the previous arrangement
+*was* a boundary — an undocumented one, believed for as long as nothing checked
+it.
+
+**The reconciliation needs two clauses, and shipping with one would have left
+the hole half-open.** This is the part worth recording, because the first
+version had only the obvious clause and looked complete.
+
+- *Evidence.* Engine observations against `investigation.history`. Catches a
+  fabricated `record`.
+- *Hypotheses.* `engine.hypotheses` against the graph's admitted nodes. Catches
+  `expand`, which admits a structure to the engine **without** `graph.propose`'s
+  A16/A18 validation. Mass is distributed over what the *engine* holds, so a
+  hypothesis the graph never saw takes weight and scores — while the evidence
+  clause passes untouched, because the system ran and charged for exactly the
+  experiments it recorded.
+
+**Found by `/ship`'s independent review, by execution, not by reading.** Against
+the evidence-only version a system that ran one experiment and smuggled one
+hypothesis moved its own log score from `-inf` to `-12.2` with nothing raising.
+Guarded now by `test_a_smuggled_hypothesis_is_refused`, which was confirmed red
+against the one-clause version before the clause was restored. The general
+lesson is the one the review's existence assumes: the author of a check is the
+worst judge of what it misses, and *this* check's blind spot was the second
+mutating verb in a list the same author had written three lines above.
+
+`ensure_structure` needs no clause. It fills a table row and admits nothing, and
+`EmpiricalTable.with_structure` leaves every existing row untouched, so it moves
+no mass — checked rather than assumed.
+
+**Then the invariant auditor found the same mistake twice more, one level down.**
+The two-clause version named *what the engine holds* and still not *what it is
+worth*. Two further channels, both reachable by the same route and neither
+touching an id:
+
+- **Structure rewrite.** `_Hypothesis` is `@dataclass(slots=True)` and not
+  frozen, so an existing hypothesis's `program_edit` can be reassigned in place.
+  `engine_edits` reads it straight off the engine and `run_scenario` passes that
+  mapping to both `closed_world_score` and `structural_distance` — so rewriting
+  the leader's edit set to the scenario's truth awards an exact match while
+  every id stays put. This is the sharpest of the lot: it sets the score
+  directly rather than moving mass and hoping.
+- **Status flip.** `posterior()` gives a rejected hypothesis exactly zero and
+  renormalises the rest over themselves, so flipping a rival to `rejected`
+  hands its mass to the leader.
+
+Both are now clauses. The status clause is free of false positives *by
+construction rather than by luck*: nothing in `src/sciagent/` rejects anything —
+`Investigation` never calls `graph.reject` — so `engine.live == engine.hypotheses`
+on every honest run, and the day that stops being true the clause fails loudly
+instead of silently widening.
+
+**Left uncovered, and named rather than implied: table replacement.** `_table`
+is a plain slot that `ensure_structure` legitimately reassigns, so there is no
+fixed expectation to compare against. A caller who can reach the private engine
+to swap the table can reach anything else, which is the honest limit of this
+whole approach: `_reconcile` is a check with a stated scope, not a containment
+proof. Python has no capability boundary to offer and pretending otherwise is
+how the docstring got it wrong twice.
+
+**Two ordering defects the same audit found, neither of them about tampering.**
+
+- `_attempts_of(system)` reads `Proposing.attempts`, a **property** — system code
+  — and it sat *after* `_reconcile` in `run_scenario`'s argument list. Keyword
+  arguments evaluate in source order, so `graph=` and `evidence=` were captured
+  after it: a system holding its `Investigation` could add an experiment to the
+  evidence index, or a node to the graph, once the check had passed. Hoisted
+  above the check. The score itself was never exposed — it is evaluated earlier
+  in the same list — which is why this reads as a near miss rather than a hole.
+- `Investigation.propose` called `ensure_structure` only in the
+  `predictions is None` branch, so the explicit-predictions path reached it via
+  `expand` *after* the graph had been reassigned. A caught
+  `StructureNotMeasurableError` would then leave the graph holding a node the
+  engine did not — an `EngineTamperError` on an honest system. Not live (nothing
+  passes `predictions=`), but it is a false positive that this change would have
+  introduced, coupling the known-open `predictions=` channel to a new failure.
+  `ensure_structure` is now unconditional and precedes the graph move in both
+  paths, which is the ordering B5 already depends on.
+
+**The pattern across all three rounds is worth more than any individual fix.**
+Each version of the check enumerated the ways of cheating that its author could
+think of, and each time an independent reader found one more by asking a
+different question: first *which verbs mutate*, then *which fields are mutable*,
+then *what runs after the check*. None of the three was subtle. All three were
+invisible from inside the reasoning that produced the previous version.
+
+**Why `ppc` is withheld though it mutates nothing.** Everything else on that
+list writes. `ppc(experiments={...})` only reads — but it reads *evidence of the
+caller's choosing*, and SPEC §4.6's Stage A is a question asked of the
+framework-selected reading. Forwarding it, even unscoped, hands back the choice
+that `Investigation.ppc`'s scoping exists to remove. This is the non-obvious
+half of the boundary: read-only is not the criterion, *authorship* is.
+
+**The view's docstring claimed a guarantee it cannot hold, and that was the
+same review's second finding.** It said the wrapped engine "cannot be mutated
+through this object"; `view._engine` is one attribute away, and the test meant
+to catch that filters underscore names, so it structurally could not. The
+docstring now states only what is true — no *method* here writes — and names the
+reconciliation as what actually binds. Recorded because the failure mode is
+precisely the one invariant 2 legislates against, committed inside the change
+written to satisfy it: a comment holding a line it cannot hold. Enforcement
+prose is not enforcement, including in a file about enforcement.
+
+**Why the delegation is written out by hand.** An `EngineView` forwarding
+through `__getattr__` would have been four lines and would have re-exposed every
+method the engine grows afterwards — the boundary would widen silently with the
+class it wraps. Explicit delegation makes admitting a capability an edit to
+`view.py`. The cost is a file that must be touched when the engine gains a query,
+and that cost is the feature.
+
+**`ReadableEngine` is in `inference/view.py` and not in `inference/interface.py`,
+where a protocol belongs.** `boed.plan` and `table_predictive` needed widening to
+accept either the engine or a view; the protocol they need has a `table`
+property returning an `EmpiricalTable`, and `inference.interface` is what
+`inference.empirical` imports *from*, so putting it there is a cycle. Recorded
+because the placement looks like carelessness and is not.
+
+**What this does not reach, and what each is waiting on.**
+
+- `Investigation.propose(predictions=...)` — a system can still author the
+  thresholds `verify/statistical.py` grades it against. Left out because the fix
+  changes `propose`'s signature, which SPEC §3.5 speaks to, and because no
+  system passes the parameter today: the only caller is framework-side. It needs
+  a decision about the signature before it needs code.
+- **Probe reconciliation.** `_probes` has no public accessor, so reconciling the
+  probe compartment would mean adding one — widening the surface this change
+  narrows. Not done, and not merely forgotten.
+- **Historical runs remain unverifiable.** The previous entry's closing point
+  survives untouched: whether any *already recorded* run exercised this cannot be
+  settled by inspection, because no artefact stores the engine's observation
+  count. The reconciliation covers runs from here forward and says nothing about
+  the registry as it stands.
+
+**Cheap, unlike the other change queued in front of item 15.** No
+`MetricRegistry.version` event, so no table rebuild: the full suite ran 443.92s
+(1138 passed, 7 skipped) against the ~6m44s warm baseline, versus the 31m45s that
+the mark-arrival diagnostic's re-addressing would cost. The seal can land before
+the matrix without paying for it.

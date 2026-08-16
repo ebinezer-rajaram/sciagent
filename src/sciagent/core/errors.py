@@ -335,6 +335,25 @@ class InvestigationError(ResearchSystemError):
     """
 
 
+class EngineTamperError(ResearchSystemError):
+    """The posterior engine holds evidence the investigation never charged for.
+
+    SPEC's second invariant made a runtime check rather than a docstring. The
+    posterior is a pure function of what the engine has recorded, so a system
+    that adds an observation writes its own belief and therefore its own score,
+    and ``_audit`` cannot see it: that check re-derives the expected diagnosis
+    from the same engine object the system was handed, so a poisoned state is
+    compared against itself and agrees.
+
+    Raised by :func:`~sciagent.eval.campaign.run_scenario` when the engine's
+    observations disagree with the experiments the investigation ran. It is a
+    second line rather than the first --
+    :class:`~sciagent.inference.view.EngineView` withholds the recording surface
+    from a system in the first place -- and it exists because a boundary with no
+    check behind it is how the last one was believed for as long as it was.
+    """
+
+
 class SystemConfigurationError(ResearchSystemError):
     """A research system was built with arguments it cannot be run under.
 

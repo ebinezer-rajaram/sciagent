@@ -26,6 +26,7 @@ from sciagent.core.errors import (
     BudgetExhaustedError,
     DiagnosisError,
     DuplicateExperimentError,
+    EngineTamperError,
     InvestigationError,
 )
 from sciagent.core.types import (
@@ -42,7 +43,7 @@ from sciagent.eval.scenarios import Scenario
 from sciagent.eval.scoring import closed_world_score
 from sciagent.experiments.dsl import ExperimentDesign, ForceArrival
 from sciagent.experiments.executor import Executor
-from sciagent.hypothesis.graph import HypothesisGraph
+from sciagent.hypothesis.graph import HypothesisGraph, HypothesisNode
 from sciagent.inference.empirical import EmpiricalTableEngine
 from sciagent.registry.store import ExperimentStore
 from sciagent.systems.base import (
@@ -163,6 +164,195 @@ class TestTheFrameworkWritesTheNumbers:
     def test_an_honest_system_passes_the_same_audit(self) -> None:
         """The check must not be one no real system can satisfy."""
         assert _run(PPCOnly()).system == "B1"
+
+
+class TestTheEngineIsSealedAgainstTheSystem:
+    """Invariant 2 held by construction, not by a docstring.
+
+    ``Investigation.engine`` used to return the live
+    :class:`~sciagent.inference.empirical.EmpiricalTableEngine`, whose docstring
+    claimed it was "read-only in effect". It was not: ``record`` folds straight
+    into ``log_likelihood_total`` and therefore into ``posterior()``, so a system
+    that called it wrote the belief it is scored on. ``_audit`` cannot catch
+    that -- it re-derives the expected diagnosis from *the same engine object*
+    the system was handed, so a system that poisons the state and then reports
+    honestly is compared against its own poisoned source and both sides agree.
+
+    Two defences, tested separately because either alone is weak: the view
+    withholds the capability, and ``run_scenario`` reconciles what the engine
+    holds against what the investigation charged for.
+    """
+
+    def _view(self) -> object:
+        """Return the engine as a system sees it."""
+        harness = _harness()
+        return Investigation(
+            scenario_id=harness.scenario.id,
+            designs=harness.scenario.designs,
+            truth=harness.scenario.executed,
+            executor=harness.executor,
+            engine=harness.engine,
+            graph=harness.graph,
+            seed=harness.scenario.seed,
+        ).engine
+
+    def test_a_system_cannot_record_an_observation(self) -> None:
+        """The channel that writes the posterior. ``record`` is not reachable."""
+        assert not hasattr(self._view(), "record")
+
+    def test_a_system_cannot_record_a_probe(self) -> None:
+        """``record_probe`` plus a scoped ``ppc`` is a self-authored verdict."""
+        assert not hasattr(self._view(), "record_probe")
+
+    def test_a_system_cannot_admit_a_hypothesis_to_the_engine(self) -> None:
+        """``expand`` bypasses ``graph.propose`` and its A16/A18 validation."""
+        assert not hasattr(self._view(), "expand")
+
+    def test_a_system_cannot_scope_the_adequacy_check(self) -> None:
+        """``Investigation.ppc`` is the sanctioned path, and it scopes to Stage A.
+
+        ``engine.ppc(experiments={...})`` chooses its own evidence, which is the
+        whole thing the scoping exists to prevent.
+        """
+        assert not hasattr(self._view(), "ppc")
+
+    def test_the_engine_itself_has_no_public_accessor_on_the_view(self) -> None:
+        """A view that hands back what it wraps is not a boundary.
+
+        The same check ``test_the_ground_truth_has_no_public_accessor`` makes of
+        an investigation, for the same reason: withholding the methods is worth
+        nothing if the object carrying them is one attribute away.
+        """
+        harness = _harness()
+        view = Investigation(
+            scenario_id=harness.scenario.id,
+            designs=harness.scenario.designs,
+            truth=harness.scenario.executed,
+            executor=harness.executor,
+            engine=harness.engine,
+            graph=harness.graph,
+            seed=harness.scenario.seed,
+        ).engine
+        for name in (n for n in dir(view) if not n.startswith("_")):
+            assert getattr(view, name, None) is not harness.engine, name
+
+    def test_the_view_still_carries_what_the_baselines_read(self) -> None:
+        """A boundary that withholds too much is a different bug, not a fix."""
+        view = self._view()
+        for name in ("table", "observations", "live", "hypotheses", "posterior"):
+            assert hasattr(view, name), name
+
+    def test_a_poisoned_engine_is_refused(self) -> None:
+        """The reconciliation, against a system that reaches the engine anyway.
+
+        It records a second copy of a real result under a fresh id -- valid in
+        every way ``_validated`` checks, and double-counting the evidence
+        sharpens the posterior -- then concludes honestly. Before the
+        reconciliation this ran to completion and produced a score.
+        """
+        harness = _harness()
+
+        class Poisoner:
+            name = "poisoner"
+
+            def investigate(self, investigation: Investigation) -> Diagnosis:
+                entertain(investigation, closed_set())
+                result = investigation.run(investigation.designs[0])
+                harness.engine.record(
+                    ExperimentId("fabricated"),
+                    investigation.designs[0].template(),
+                    result.result,
+                )
+                return investigation.conclude()
+
+        with pytest.raises(EngineTamperError, match="fabricated"):
+            run_scenario(
+                harness.scenario,
+                Poisoner(),
+                executor=harness.executor,
+                engine=harness.engine,
+                graph=harness.graph,
+            )
+
+    def test_a_smuggled_hypothesis_is_refused(self) -> None:
+        """The half the first version of the reconciliation did not have.
+
+        ``expand`` admits a structure to the engine without ``graph.propose``'s
+        A16/A18 validation, and mass is distributed over what the *engine*
+        holds. So a hypothesis the graph never saw still takes weight and still
+        scores, while the evidence half of the check passes untouched -- the
+        system ran and charged for exactly the experiments it recorded.
+
+        Found by review rather than by this suite. Against the evidence-only
+        version it raised nothing and moved the system's log score from ``-inf``
+        to ``-12.2``.
+        """
+        harness = _harness()
+
+        class Smuggler:
+            name = "smuggler"
+
+            def investigate(self, investigation: Investigation) -> Diagnosis:
+                investigation.run(investigation.designs[0])
+                harness.engine.expand(
+                    HypothesisNode(
+                        id=HypothesisId("smuggled"),
+                        program_edit=closed_set()["hawkes"],
+                        status="live",
+                        predictions=(),
+                        plausibility=Probability(0.0),
+                        rationale="",
+                        rejection_reason=None,
+                        proposed_at=None,
+                        version=1,
+                    )
+                )
+                return investigation.conclude()
+
+        with pytest.raises(EngineTamperError, match="smuggled"):
+            run_scenario(
+                harness.scenario,
+                Smuggler(),
+                executor=harness.executor,
+                engine=harness.engine,
+                graph=harness.graph,
+            )
+
+    def test_a_rewritten_structure_is_refused(self) -> None:
+        """The sharpest channel of the three, because it sets the score directly.
+
+        ``engine_edits`` reads each hypothesis's edit set straight off the
+        engine, and `campaign.run_scenario` passes that mapping to
+        ``closed_world_score`` and to ``structural_distance``. So rewriting the
+        leading hypothesis's structure to the scenario's truth awards an exact
+        match without touching a single id -- the evidence and identity clauses
+        both pass, because nothing was added or removed.
+        """
+        harness = _harness()
+        truth = harness.scenario.truth
+
+        class Forger:
+            name = "forger"
+
+            def investigate(self, investigation: Investigation) -> Diagnosis:
+                investigation.run(investigation.designs[0])
+                held = harness.engine._hypotheses[HypothesisId("null")]
+                held.program_edit = truth
+                return investigation.conclude()
+
+        with pytest.raises(EngineTamperError, match="disagree about a structure"):
+            run_scenario(
+                harness.scenario,
+                Forger(),
+                executor=harness.executor,
+                engine=harness.engine,
+                graph=harness.graph,
+            )
+
+    def test_an_honest_system_that_runs_experiments_still_passes(self) -> None:
+        """The control. A reconciliation over two empty tuples proves nothing."""
+        run = _run(BOEDOnly(closed_set()))
+        assert run.experiments > 0
 
 
 class TestWhatAnInvestigationRefuses:

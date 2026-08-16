@@ -37,7 +37,7 @@ from dataclasses import dataclass, replace
 from typing import Protocol, runtime_checkable
 
 from sciagent.core.edits import Defect
-from sciagent.core.errors import InvestigationError
+from sciagent.core.errors import EngineTamperError, InvestigationError
 from sciagent.core.types import (
     CLAIM_MODALITIES,
     CLAIM_STRENGTHS,
@@ -231,6 +231,13 @@ def run_scenario(
     )
     _run_stage_a(scenario, executor=executor, engine=engine)
     reported = system.investigate(investigation)
+    # Read before reconciling, not in the call below. ``Proposing.attempts`` is a
+    # property, so reading it runs system code -- and every keyword argument
+    # after it in ``ScenarioRun`` is evaluated later still, which would let a
+    # system that kept its ``Investigation`` add an experiment to ``evidence``
+    # or a node to ``graph`` after the check had already passed.
+    attempts = _attempts_of(system)
+    _reconcile(system, investigation, engine)
 
     expected = diagnose(
         scenario.id,
@@ -249,7 +256,7 @@ def run_scenario(
         ppc=engine.ppc(),
         experiments=len(investigation.history),
         proposed=investigation.proposed,
-        attempts=_attempts_of(system),
+        attempts=attempts,
         graph=investigation.graph,
         evidence=EvidenceIndex.from_history(
             investigation.history,
@@ -452,6 +459,110 @@ def claims_from_run(run: ScenarioRun) -> tuple[Claim, ...]:
                     else draft
                 )
     return tuple(built)
+
+
+def _reconcile(
+    system: ResearchSystem,
+    investigation: Investigation,
+    engine: EmpiricalTableEngine,
+) -> None:
+    """Raise unless the engine's evidence is exactly what the run charged for.
+
+    The check :func:`_audit` cannot be. ``_audit`` re-derives the expected
+    diagnosis from *the same engine object* the system was handed, so it sees a
+    system whose reported numbers disagree with the engine and is blind to one
+    that changed the engine and then reported honestly -- there, both sides are
+    computed from the poisoned state and agree.
+
+    So this compares things that come from different places. **Evidence:** what
+    the engine holds against what
+    :class:`~sciagent.systems.base.Investigation` recorded as it charged each
+    experiment to the budget. **Hypotheses:** what the engine entertains against
+    what the graph admitted. The posterior is a pure function of the first pair
+    and is distributed over the second, so either disagreeing means the belief
+    rests on something the run cannot cite.
+
+    **What is compared, and why each clause is here.**
+
+    1. *Evidence* -- engine observations against ``investigation.history``, by id
+       and in order. Catches a fabricated ``record``, and a substitution as well
+       as an addition, for the same cost as counting.
+    2. *Structure* -- each entertained hypothesis's edit set against the graph's.
+       Catches ``expand``, which admits a structure without ``graph.propose``'s
+       A16/A18 validation; and catches a rewrite of an existing hypothesis's edit
+       set, which ``engine_edits`` feeds straight into ``closed_world_score`` and
+       ``structural_distance``.
+    3. *Status* -- the engine's live set against the graph's non-rejected nodes.
+       A rejected hypothesis is given exactly zero and the rest renormalise over
+       themselves, so a status flip is a redistribution of mass. Nothing in the
+       framework rejects, so this clause is quiet on every honest run by
+       construction rather than by luck.
+
+    Clauses 2 and 3 were both absent from earlier versions and both were found by
+    review rather than by this reasoning -- clause 2 against a system that
+    smuggled a hypothesis in and moved its own log score from ``-inf`` to
+    ``-12.2`` while clause 1 passed. That is the argument for stating the scope
+    below rather than implying completeness.
+
+    **Not covered.** Replacement of the engine's table. It changes legitimately
+    under ``ensure_structure``, so there is no fixed expectation to compare it
+    against, and a caller able to reach the private engine to swap it could
+    equally reach anything else. This function is a check with a scope, not a
+    containment proof, and the scope is these three clauses.
+
+    ``ensure_structure`` needs no clause here. It fills a table row and admits
+    nothing, and
+    :meth:`~sciagent.inference.empirical.EmpiricalTable.with_structure` leaves
+    every existing row untouched, so it moves no mass. Probes are not compared
+    either: they live in a compartment with no public accessor, and adding one
+    to reconcile them would widen the surface this exists to narrow.
+
+    Exact equality is right, not merely convenient. ``_run_stage_a`` takes its
+    reading through
+    :meth:`~sciagent.inference.empirical.EmpiricalTableEngine.record_probe`,
+    which ``observations`` does not expose, so the framework itself adds nothing
+    here beyond what :meth:`~sciagent.systems.base.Investigation.run` appended.
+    """
+    held = tuple(observation.experiment for observation in engine.observations)
+    charged = tuple(result.experiment for result in investigation.history)
+    if held != charged:
+        raise EngineTamperError(
+            f"system {system.name!r} left the engine holding experiments {held!r}, "
+            f"but the investigation ran and charged for {charged!r}. The posterior "
+            f"is a function of what the engine holds, so a system that records "
+            f"writes its own score; no system may author a number (SPEC §1, second "
+            f"invariant)"
+        )
+    entertained = {h: engine.program_edit(h) for h in engine.hypotheses}
+    admitted = {
+        node_id: node.program_edit
+        for node_id, node in investigation.graph.nodes.items()
+        if node.program_edit is not None
+    }
+    if entertained != admitted:
+        raise EngineTamperError(
+            f"system {system.name!r} left the engine entertaining "
+            f"{sorted(entertained)!r}, but the graph admitted {sorted(admitted)!r}, "
+            f"or the two disagree about a structure. Mass is distributed over what "
+            f"the engine holds and the score is read off the structures it holds, "
+            f"so either divergence lets a system author its own result; no system "
+            f"may author a number (SPEC §1, second invariant)"
+        )
+    live_held = frozenset(engine.live)
+    live_admitted = frozenset(
+        node_id
+        for node_id, node in investigation.graph.nodes.items()
+        if node.program_edit is not None and node.status != "rejected"
+    )
+    if live_held != live_admitted:
+        raise EngineTamperError(
+            f"system {system.name!r} left the engine treating "
+            f"{sorted(live_held)!r} as live, but the graph makes "
+            f"{sorted(live_admitted)!r} live. A rejected hypothesis is given "
+            f"exactly zero and the rest renormalise over themselves, so a status "
+            f"flip is a redistribution of mass; no system may author a number "
+            f"(SPEC §1, second invariant)"
+        )
 
 
 def _audit(system: ResearchSystem, reported: Diagnosis, expected: Diagnosis) -> None:

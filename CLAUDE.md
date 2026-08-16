@@ -138,9 +138,17 @@ another session was committing to.
 Use `EnterWorktree` at the start of a session that will edit anything. It
 creates the tree under `.claude/worktrees/`, which is gitignored — so the parent
 `git status` stays clean, VS Code's search skips it, and the explorer can still
-browse it. `/ship` merges the branch back to `main`.
+browse it.
 
-Two things follow that are easy to get wrong:
+`/ship` gets the branch back onto `main`, but **it cannot finish from inside the
+worktree and will stop to ask.** Every route to `main` needs `git -C` against the
+shared checkout, which the harness refuses from a worktree-isolated session, and
+`ExitWorktree` is reserved for you rather than callable by the agent. So a
+worktree ship ends with a question — approve leaving the worktree (`keep`), after
+which the merge and push run in the main tree. Worth knowing before it happens,
+rather than at the blocked step.
+
+Two more things follow that are easy to get wrong:
 
 - **A merge voids the green.** The suite verified *your* tree; merging `main` in
   changes it, so the result no longer describes what lands on `main`. Merge

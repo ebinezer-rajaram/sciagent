@@ -93,6 +93,26 @@ hook_cd_project() {
     cd "$root" 2>/dev/null
 }
 
+# Print the path of the shared checkout -- the main working tree -- or nothing.
+# Returns nonzero when it cannot be resolved.
+#
+# Every worktree shares one `.git`, and `--git-common-dir` names it: a relative
+# `.git` from the main tree, an absolute path to it from a worktree. Its parent
+# is therefore the main tree from anywhere in the repository, which is what makes
+# a cache written by one tree findable by all of them with nothing to configure.
+#
+# Validated the same way hook_cd_project validates its candidates, and for the
+# same reason: a tree lacking its own `.git` would otherwise resolve the enclosing
+# repository's root and put this repository's cache in somebody else's.
+hook_main_tree() {
+    local common="" main_tree=""
+    common="$(git rev-parse --git-common-dir 2>/dev/null)" || return 1
+    [ -n "$common" ] && [ -d "$common" ] || return 1
+    main_tree="$(cd "$common/.." 2>/dev/null && pwd)" || return 1
+    _hook_is_project_root "$main_tree" || return 1
+    printf '%s' "$main_tree"
+}
+
 # Extract a flat JSON string field by name. Safe for `file_path` and other
 # values that contain no escaped quotes -- which is every path, since a quote is
 # not legal in a Windows path and would be unusual in a POSIX one. Not safe for

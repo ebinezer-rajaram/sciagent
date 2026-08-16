@@ -21,7 +21,24 @@
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 hook_cd_project || exit 0
 
+# Own tree first, then the shared checkout's copy.
+#
+# session-start.sh writes this cache, and it runs at session start -- but a
+# worktree is created *mid*-session by EnterWorktree, so it never has one of its
+# own and the statusline read `cursor unknown - ? gates` for the whole session.
+# Since worktree-per-session became the default that was most sessions, which is
+# a poor showing for a line whose entire job is to save you re-reading the
+# report.
+#
+# The two derived values are repository-wide facts -- the §11 cursor and how many
+# gates have tests -- so the main tree's copy is a good answer for any tree. Own
+# tree still wins when it has one, because a worktree whose branch moved the
+# backlog should report itself rather than `main`.
 LINE=".cache/claude/statusline.txt"
+if [ ! -f "$LINE" ]; then
+    main_tree="$(hook_main_tree)"
+    [ -n "$main_tree" ] && [ -f "$main_tree/$LINE" ] && LINE="$main_tree/$LINE"
+fi
 
 branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')
 dirty=$(git status --porcelain 2>/dev/null | grep -c .)

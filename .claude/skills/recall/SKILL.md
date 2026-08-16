@@ -7,9 +7,12 @@ allowed-tools: Bash, Read, Grep
 # Recall a decision
 
 `docs/DECISIONS.md` is the only place holding what the repository cannot tell
-you. It is also ~190KB across ~90 entries and grows by roughly 40 lines a
-session, so reading it whole costs about 50k tokens and will only get worse.
-Append-only means it never shrinks.
+you. It is also **over 220KB across more than 100 entries** and grows by roughly
+40 lines a session, so reading it whole costs upwards of 55k tokens and will only
+get worse. Append-only means it never shrinks, so treat every figure here as a
+floor rather than a measurement — they were taken on 2026-08-16 and move one way.
+Do not restate them as exact: a session that appends three entries falsifies its
+own copy of the number.
 
 **Never read the file end to end.** Read headers, then read the two or three
 entries that match.
@@ -22,8 +25,10 @@ entries that match.
 grep -n '^## ' docs/DECISIONS.md
 ```
 
-Every entry is `## YYYY-MM-DD — <scope>: <title>`. Ninety of those is a page;
-ninety entries is a book. Scan the titles.
+Most entries are `## YYYY-MM-DD — <scope>: <title>`, but **the scope is optional
+and a handful of entries have none** — seven as of 2026-08-16. The date is the
+only part you can rely on, so never filter on the scope alone. A hundred of those
+is a page; a hundred entries is a book. Scan the titles.
 
 ### 2. Narrow by whichever axis the question has
 

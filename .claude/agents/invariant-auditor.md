@@ -1,6 +1,6 @@
 ---
 name: invariant-auditor
-description: Sweep the repository for violations of the six non-negotiable sciagent invariants that static tests cannot reach. Use before shipping any change touching src/sciagent, core/, or an agent-reachable path. Read-only; reports, never fixes.
+description: Sweep the repository for violations of the six non-negotiable sciagent invariants that static tests cannot reach. Use before shipping any change touching src/sciagent/, src/sciagent/core/, or an agent-reachable path. Read-only; reports, never fixes.
 tools: Read, Glob, Grep, Bash
 model: sonnet
 ---
@@ -42,12 +42,23 @@ The AST test catches `random.` and bare `np.random.<dist>`. It does not catch:
 Any `update`, `delete`, `overwrite`, `truncate`, or `"w"`-mode open under
 `registry/`. There must be no such path at all.
 
-## Invariant 6 — no LLM code until backlog item 12
+## Invariant 6 — discharged, but its reason still governs
 
-Check `git log --oneline --grep='backlog item'` for whether item 12 has landed.
-If it has not, any `anthropic`, `openai`, `llm`, or prompt-construction import
-or module under `src/` is a violation. If it has, report that the invariant is
-now lifted so it is not mistaken for a live constraint.
+**Do not report LLM code under `src/` as a violation.** CLAUDE.md records this
+invariant as discharged at `a380a21`: `systems/llm/`, `systems/hybrid.py` and
+`systems/ablation.py` are in bounds. An audit that flags them is reporting a
+constraint that no longer exists, and costs the reader more than it saves.
+
+What still governs is the *reason* it existed: agent performance must never be
+confounded with framework immaturity. So the live question is ordering, not
+presence — **is any evaluation apparatus younger than the system it grades?**
+
+- A gate, metric or acceptance test added *after* the system whose score it
+  decides reopens the confound. `git log --oneline --diff-filter=A` over
+  `tests/acceptance/` against the commit that added the system is what settles
+  it.
+- Flag it as a finding whether or not it looks favourable. A gate written after
+  the fact is a problem even when it is the stricter one.
 
 ## Reporting
 

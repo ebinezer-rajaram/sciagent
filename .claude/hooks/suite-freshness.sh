@@ -86,11 +86,23 @@ hook_cd_project || {
 # worktree A going green erased worktree B's, and B re-ran seven minutes to
 # rediscover something already known. `check` therefore matches any recorded
 # line, and a one-line file from the previous format still reads correctly.
-CLAUDE_CACHE=".cache/claude"
-common="$(git rev-parse --git-common-dir 2>/dev/null)"
-if [ -n "$common" ] && [ -d "$common" ]; then
-    main_tree="$(cd "$common/.." 2>/dev/null && pwd)"
-    [ -n "$main_tree" ] && [ -d "$main_tree/src" ] && CLAUDE_CACHE="$main_tree/.cache/claude"
+#
+# SHARING DEPENDS ON LINE ENDINGS, which is not obvious and was not free. The
+# hash is over bytes, so two trees at the same commit share a green only if they
+# agree byte for byte. They did not: `.gitattributes` asks for `eol=lf`, a fresh
+# worktree checkout obeys it, and the main working tree did not -- it held 71 of
+# 140 tracked files as CRLF, checked out before that rule landed. `git status`
+# reported clean throughout, because git normalises CRLF away on read. The two
+# trees hashed differently at the same commit and no worktree could ever reuse
+# the main tree's green, which is exactly the case this sharing was written for.
+# Refreshing the main tree's working files settled it; see DECISIONS 2026-08-16.
+# If a tree ever drifts back, the symptom is a permanent STALE that no amount of
+# re-running fixes: compare `wc -c` against `git show HEAD:<path> | wc -c`.
+main_tree="$(hook_main_tree)"
+if [ -n "$main_tree" ]; then
+    CLAUDE_CACHE="$main_tree/.cache/claude"
+else
+    CLAUDE_CACHE=".cache/claude"
 fi
 
 RECORD="$CLAUDE_CACHE/last-green.txt"

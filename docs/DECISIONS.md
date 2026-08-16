@@ -3745,3 +3745,90 @@ partial success would move the ref while leaving the main tree's index stale.
 This waits on one of two things: the harness permitting `--ff-only` against the
 common dir, or §3a being rewritten to end at `ExitWorktree` and hand the last
 two commands to the user rather than issuing them.
+
+## 2026-08-16 — infrastructure: §3a discharged, by asking rather than reaching
+
+**Decision.** The second option in the entry above, taken. §3a is now in two
+halves: the FF/DIVERGED question is answered in the worktree, and then `/ship`
+**stops and asks** the user to approve `ExitWorktree` with `keep`. After that the
+session's working directory *is* the shared checkout, so the merge and the push
+are plain `git` with no `-C` at all. This supersedes the "waits on" clause above.
+
+**Why.** Rewriting the path expression was never going to work: the refusal is on
+`-C` leaving the worktree, not on how the path was built, which `d509ba0` already
+demonstrated by fixing the quoting and changing nothing. Nor could `/ship` call
+`ExitWorktree` itself — the tool's own contract reserves it for the user and it
+is a no-op unless the calling session created the worktree. So the only shape
+left is to ask, and the honest thing is to say up front that a worktree ship ends
+by asking rather than discovering it at the blocked step.
+
+Two things were added on the way through, both absent before. The post-exit path
+now checks the shared checkout is on `main` and clean *before* merging into it —
+a fast-forward rewrites that tree's files, and doing it under a live session is
+the hazard worktrees were introduced to prevent. And §4's base check is now
+stated to run in the tree being pushed from: it reads `HEAD` and `@{u}` of
+wherever it runs, so in a worktree with an upstream it answers about the worktree
+branch and then authorises a push of `main` — two refs, one plausible-looking
+empty list.
+
+**Closes off.** Worktree isolation now costs exactly one question per ship. If
+the harness later permits `--ff-only` against the common dir, that question
+becomes removable, but nothing else in §3a would need to change.
+
+## 2026-08-16 — infrastructure: the CRLF drift cost seconds, not a rewrite
+
+**Decision.** Done, not deferred. The entry "the main working tree does not obey
+`.gitattributes`" left this for its own investigation on the grounds that it
+"rewrites ~132 working files". That estimate was wrong in the way that matters:
+**`HEAD` already stores LF.** The repository was already normalised; only the
+working tree was stale. So the fix is a working-tree refresh with no commit, no
+blob change and nothing to review:
+
+```sh
+git status --porcelain          # must be empty
+git ls-files -z | xargs -0 rm -f
+git checkout .
+```
+
+Measured: 140 paths restored, 71 of which had been CRLF. Seconds. `git status`
+empty before and after; `git log` unchanged.
+
+**Why it was worth doing now rather than later.** It was the precondition for a
+mechanism already shipped. `suite-freshness.sh` shares its green record between
+trees on the theory that a content hash is a global fact — but the main tree
+hashed `39cf6f44…` and a worktree `91a15f02…` at the same commit and both clean,
+so no worktree could ever reuse the main tree's green and every new one paid a
+full suite. After the refresh both trees hash `91a15f02…`, which was already
+line 1 of the record, so the main tree went FRESH with **no suite run at all**.
+
+**Closes off.** The sharing rationale in `suite-freshness.sh` now records this
+dependency, because the failure mode is silent: a tree that drifts back to CRLF
+reports a permanent STALE that re-running never fixes. The check is `wc -c`
+against `git show HEAD:<path> | wc -c`. What is still not claimed, exactly as
+before: no numerical impact was observed and none is asserted.
+
+## 2026-08-16 — infrastructure: two hooks on one event race, because they run in parallel
+
+**Decision.** `ruff-after-edit.sh` and `guard-determinism.sh` are no longer two
+`PostToolUse` entries. A new `after-edit.sh` captures stdin once and runs them in
+order, propagating the guard's exit status.
+
+**Why.** Claude Code runs **every hook matching an event in parallel**, and offers
+no ordering mechanism — no sequence field, and array order in `settings.json`
+means nothing. The documented remedy for a dependency between two hooks is to
+make them one hook. The dependency here was invisible and real: ruff rewrites the
+edited file while the guard walks the same tree with `path.read_text()` and
+`ast.parse`. A file caught mid-rewrite raises inside the test, pytest reports a
+*failing test* and exits 1 — and exit 1 is exactly the status the guard is
+entitled to read as a genuine violation. It would have printed "INVARIANT 3
+VIOLATED" about an edit that was fine, and the accusation would not reproduce.
+
+The guard already distinguishes 2/3/4/5 as "the guard failing, not your code",
+which is what made this worth fixing rather than tolerating: the one status it
+trusts was the one the race could forge.
+
+**Closes off.** Cost of serialising is nil — the pre-filter still exits in ~40ms
+on the overwhelming majority of edits, and only an edit mentioning randomness
+pays both. This is a harness behaviour, not a repository fact, so it is recorded
+here: nothing in the tree would tell a later session that array order in
+`settings.json` is not sequencing.

@@ -95,10 +95,34 @@ from an agent, also delegate to the `invariant-auditor` subagent — the six
 invariants are violated by construction more often than by syntax, and
 `tests/test_invariants.py` only reaches invariants 1 and 3 statically.
 
-Those paths are spelled from the repository root on purpose. There is no
-top-level `sciagent/` or `core/`; the packages live under `src/`, and a
-condition naming a directory that does not exist is one a literal reading never
-fires.
+**Launch it as four lenses, in one message, alongside `/code-review`.** The
+agent's four sections are unlike investigations, and run as a single pass they
+compete for attention: lens 2 is a call-graph trace, lens 4 is a grep, and the
+grep always finishes. Splitting them also lets each take the tier it needs
+instead of all four sharing the weakest.
+
+| Lens | Model | Why that tier |
+|---|---|---|
+| 2 — agent→`plausibility` reachability | **omit it** | Inherits the session model. A miss here is a real invariant violation reaching `main`. |
+| 3 — ordering sensitivity | `sonnet` | Bounded judgement, one site at a time. |
+| 4 — registry append-only | `haiku` | Pattern match; a miss is recoverable by a grep you can run in seconds. |
+| 6 — gate-vs-system ordering | `sonnet` | Mechanical, but there is a wrong answer available. |
+
+Omitting the model on lens 2 is deliberate and is not the same as forgetting it:
+inheriting is how that lens gets the strong model, since CLAUDE.md forbids
+pinning opus explicitly. The tiers are graded by what a **false negative** costs,
+not by what the lens costs to run — a cheap auditor reporting "nothing found" is
+indistinguishable from a clean sweep, so cheapness is only affordable where you
+could catch the miss yourself.
+
+A lens returning nothing is a covered lens. Report four lenses run and three
+clean as exactly that; "the auditor found nothing" hides whether a lens was
+skipped.
+
+The paths in that condition — `src/sciagent/`, `src/sciagent/core/` — are
+spelled from the repository root on purpose. There is no top-level `sciagent/`
+or `core/`; the packages live under `src/`, and a condition naming a directory
+that does not exist is one a literal reading never fires.
 
 Some sessions carry a harness line — *"Do not call the AgentTool unless the user
 requested it"* — appended below everything else in the prompt, and it does not
@@ -112,8 +136,11 @@ If you do withhold a call this step prescribes, say so and say what you did
 instead. An inline self-check is not the independent judgement this step exists
 to get.
 
-`/code-review` runs as a background subagent. Do not start it alongside a step-1
-suite re-run — that is the 30m37s contention case §1 warns about.
+`/code-review` runs as a background subagent, and with the lenses that is **five**
+concurrent agents rather than two. All five are read-only and do no CPU work, so
+they cost nothing against each other — but do not start any of them alongside a
+step-1 suite re-run. That is the 30m37s contention case §1 warns about, and five
+agents make it worse than the measurement, not better.
 
 Fix what the review finds, then re-run step 1 — but only what the fixes could
 have broken. If the review changed **no** file, the freshness check still

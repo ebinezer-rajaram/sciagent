@@ -1,7 +1,7 @@
 ---
 name: recall
-description: Search docs/DECISIONS.md for a decision, measurement or abandoned approach already recorded there, rather than re-deriving it. Use proactively before answering why the project is the way it is, whether something was already tried or measured, how long something takes, or why work was skipped or deferred — even when the user never mentions decisions or history. Questions shaped like "why does X work this way", "did we already try Y", "was that already measured", "has this been proposed before", or "before I redo Z" are answered from that file. It is 190KB; this greps headers and reads only what matches.
-allowed-tools: Bash, Read, Grep
+description: Search docs/DECISIONS.md for a decision, measurement or abandoned approach already recorded there, rather than re-deriving it. Use proactively before answering why the project is the way it is, whether something was already tried or measured, how long something takes, or why work was skipped or deferred — even when the user never mentions decisions or history. Questions shaped like "why does X work this way", "did we already try Y", "was that already measured", "has this been proposed before", or "before I redo Z" are answered from that file. It is over 220KB; this greps headers and reads only what matches, and fans out across slices when the question spans the corpus.
+allowed-tools: Bash, Read, Grep, Agent
 ---
 
 # Recall a decision
@@ -52,6 +52,55 @@ Note the scope word is not always `item N`. Entries are also filed under
 Get the line number from the header grep, find the next `^## ` after it, and
 read that range with `Read` using `offset` and `limit`. One entry averages 36
 lines; the longest is 163.
+
+## When the question is corpus-shaped, sweep instead
+
+The method above answers "was X decided". It fails on questions that span the
+file, because **an entry can bear on a question without using its words** — the
+suite's whole timing history came out only from a hand-built compound grep, and
+a plainer one would have returned a reading list. Reading two or three entries
+then yields a confidently incomplete answer, which is worse than a slow one.
+
+**Fan out when either holds**, and not otherwise:
+
+- The question is corpus-shaped: *everything about X*, *all the measurements of
+  Y*, *what have we abandoned*, *has this ever come up*.
+- The §2 narrowing grep returns **more than about eight** candidate headers —
+  meaning it did not narrow, and picking three of them is picking arbitrarily.
+
+Anything else takes the cheap path above. Four agents on a question one grep
+answers is waste, and the narrow path is the common case.
+
+### How to slice
+
+§1 already produced what you need: `grep -n '^## '` gives every header's line
+number. Cut that list into **four contiguous ranges at entry boundaries** —
+roughly 25 entries and 950 lines each — so every line is covered exactly once,
+with no overlap and no gap. Range four ends at the end of the file.
+
+Launch four `decisions-sweeper` agents **in a single message** so they run
+concurrently, each given the question verbatim and one range. They are read-only
+and do no CPU work, so the rule against running subagents alongside the suite
+does not bite here — unless a suite is actually running, in which case it does.
+
+**If `decisions-sweeper` does not resolve, do not abandon the sweep.** The agent
+registry is read at session start, so the agent is unavailable in the session
+that creates it, and it may also be unavailable in a worktree if the registry is
+read from the shared checkout — unsettled as of 2026-08-16. Either way the fix
+is the same: launch four `general-purpose` agents instead, at `sonnet`, pasting
+this file's sweeper contract into each prompt. The slicing and the merge are
+unchanged. Say which form you used, because only one of them is the agent whose
+definition you can point at afterwards.
+
+### Merging four reports
+
+- The supersession rule below still governs, and now matters more: a later entry
+  may overturn an earlier one across a slice boundary, where no single sweeper
+  could see both. Order the union by date before drawing a conclusion.
+- A sweeper reporting nothing is a covered slice, not a failed one. Say the
+  sweep covered the whole file — that coverage is the point of it.
+- Do not re-read an entry a sweeper already quoted. Read one yourself only when
+  the question turns on something the quote does not settle.
 
 ## Reporting
 

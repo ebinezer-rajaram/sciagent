@@ -3832,3 +3832,69 @@ on the overwhelming majority of edits, and only an edit mentioning randomness
 pays both. This is a harness behaviour, not a repository fact, so it is recorded
 here: nothing in the tree would tell a later session that array order in
 `settings.json` is not sequencing.
+
+## 2026-08-16 — infrastructure: what the recall fan-out actually recovers, and one finding it did not survive
+
+**A measured number that is expensive to reproduce.** `/recall` gained a fan-out
+branch for corpus-shaped questions: four `decisions-sweeper` agents over four
+contiguous slices of this file, launched in one message. Probed against the
+question *"everything about how long things take and about resource contention"*:
+
+| method | entries returned |
+|---|---|
+| header grep, eight search terms | 4, of which **2 are false positives** on the word "second" |
+| four-slice sweep | **24** |
+
+The gap is not a matter of degree. Four of the five entries slice 2 returned are
+titled `item N: what is left open` — a title that matches no topical grep in any
+wording — and between them they hold the entire suite timing history, 23.5s at
+item 0 through 2m50s at item 9. The header grep returns none of them. The
+30m37s contention figure and the 3m11s/1.055s cache figures, both cited in
+`CLAUDE.md` as settled facts, are likewise invisible to it.
+
+Reproducing this costs four sonnet passes over 226KB, so it is recorded rather
+than re-derived. The trigger written into the skill is deliberately narrow —
+corpus-shaped question, or a §2 grep returning more than about eight headers —
+because the narrow path remains right for "was X decided" and is the common case.
+
+**An approach abandoned: `decisions-sweeper` could not be probed as itself.** The
+agent registry is read at session start, so a newly written agent file does not
+resolve in the session that writes it; all four launches were rejected against
+the registry as it stood at startup. The probe above therefore ran
+`general-purpose` with the sweeper's contract inlined, which tests the design and
+not the registration. **Waiting on:** a session restart to confirm the agent
+resolves, and to settle a question this session could not — whether a worktree
+session reads `.claude/agents/` from its own tree or from the shared checkout.
+`invariant-auditor` exists in both, so it does not discriminate. If the latter,
+the sweeper is unusable until this branch reaches `main`.
+
+**A finding raised by the audit and refuted, recorded so it is not raised again.**
+The four-lens audit's lens 6 reported `src/sciagent/eval/agency.py` as reopening
+the invariant-6 confound: a metric module added at `0a9afd5` (2026-08-13), two
+days after the ablation at `200d218` and nine after the LLM layer at `a380a21`,
+therefore evaluation apparatus younger than the systems it grades. The dates are
+exactly right. The charge is not:
+
+```
+$ git log --format='%h %ad' --date=iso -S'| 14 | Agency metrics' -- docs/SPEC.md
+7f69717 2026-08-01 20:47:28 +0100      # Initialise repo
+```
+
+`agency.py` is named in SPEC §11 row 14 and in the §14 module layout **from the
+initial commit** — three days before any system existed and twelve before it was
+implemented. The invariant's reason asks whether apparatus was *conceived* after
+the thing it grades; here the specification predates everything and the frozen
+backlog is what put the implementation at item 14. The audit further read the
+2026-08-13 entry's V1/B1 passage as evidence the boundary was tuned against
+observed scores. It is not: that passage argues from `entertain` routing every
+library structure through `Investigation.propose` — a property of the API — and
+from V1's SPEC §5 *definition* as never extending its hypothesis space. Both are
+deductive, neither is a measurement.
+
+**Closes off.** The ordering fact is real and any future lens-6 sweep will find
+it again, which is why this is here rather than left to be re-litigated. What
+would genuinely violate the reason clause is a gate or metric with no SPEC row
+predating the system it scores; that test, not the commit dates alone, is what
+lens 6 should apply. Nothing here changes the audit's standing — it also
+returned three correctly clean lenses, and being wrong about a real ordering fact
+in the conservative direction is the failure mode that costs least.

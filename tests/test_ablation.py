@@ -385,6 +385,7 @@ class TestTheArmsSwapRepresentations:
         investigation = _investigation()
         addresses = {
             memory: call_address(
+                settings="",
                 provider="p",
                 model="m",
                 system="s",

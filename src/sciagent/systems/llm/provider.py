@@ -33,7 +33,11 @@ from sciagent.systems.llm.encoding import (
     structural_menu,
     tool_schema,
 )
-from sciagent.systems.llm.transcripts import TranscriptStore, call_address
+from sciagent.systems.llm.transcripts import (
+    Completion,
+    TranscriptStore,
+    call_address,
+)
 
 __all__ = ["Proposal", "ProposalLayer", "Provider"]
 
@@ -63,10 +67,31 @@ class Provider(Protocol):
         reason."""
         ...
 
+    @property
+    def settings(self) -> str:
+        """Return everything provider-side that could change the answer.
+
+        Rendered as one stable string, and part of every address. A backend run
+        at a different reasoning effort, or with a lower output ceiling, is
+        asking its model a different question; without this the two share an
+        address and the second is either refused as a conflicting recording or
+        silently served the first one's answer.
+
+        Empty is a legitimate value, and means the backend has nothing that
+        varies. It is not defaulted, so that a new backend has to decide.
+        """
+        ...
+
     def complete(
         self, system: str, brief: str, schema: Mapping[str, Any]
-    ) -> Mapping[str, Any]:
-        """Return a payload conforming to ``schema``.
+    ) -> Completion:
+        """Return a :class:`~sciagent.systems.llm.transcripts.Completion`.
+
+        The payload must conform to ``schema``; the provenance says what produced
+        it and may be empty. The two are returned together rather than the
+        provenance being read back off the provider afterwards, so that a
+        backend needs no per-call state and a completion cannot be paired with
+        the wrong run's metadata.
 
         Raises :class:`~sciagent.core.errors.ProviderError` if nothing could be
         produced at all -- a refusal, a transport failure, a response carrying no
@@ -174,6 +199,7 @@ class ProposalLayer:
         address = call_address(
             provider=self._provider.id,
             model=self._provider.model,
+            settings=self._provider.settings,
             system=self._system,
             brief=brief,
             schema=schema,
@@ -186,6 +212,7 @@ class ProposalLayer:
             provider=self._provider.id,
             model=self._provider.model,
             brief=brief,
+            settings=self._provider.settings,
         )
         draft = draft_from_payload(transcript.payload)
         return self._build(draft, address)

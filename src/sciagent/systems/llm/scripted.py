@@ -28,6 +28,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from sciagent.core.errors import ProviderError
+from sciagent.systems.llm.transcripts import Completion
 
 __all__ = [
     "ScriptedProvider",
@@ -72,13 +73,23 @@ class ScriptedProvider:
         return self._model
 
     @property
+    def settings(self) -> str:
+        """Return the empty string: nothing here varies the answer.
+
+        A scripted answer is a pure function of the brief and the call index,
+        which is the whole point of this backend, so there is no reasoning
+        effort or output ceiling for an address to distinguish.
+        """
+        return ""
+
+    @property
     def calls(self) -> int:
         """Return how many completions have been requested."""
         return self._calls
 
     def complete(
         self, system: str, brief: str, schema: Mapping[str, Any]
-    ) -> Mapping[str, Any]:
+    ) -> Completion:
         """Return the scripted payload for this brief.
 
         A sequence policy is consumed in order and raises
@@ -90,13 +101,13 @@ class ScriptedProvider:
         index = self._calls
         self._calls += 1
         if callable(self._policy):
-            return self._policy(brief)
+            return Completion(self._policy(brief))
         if index >= len(self._policy):
             raise ProviderError(
                 f"scripted provider was asked for completion {index} but only "
                 f"{len(self._policy)} were scripted"
             )
-        return self._policy[index]
+        return Completion(self._policy[index])
 
 
 def fixed_payload(

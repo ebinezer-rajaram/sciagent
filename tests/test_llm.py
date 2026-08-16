@@ -57,6 +57,7 @@ from sciagent.systems.base import Investigation, entertain, null_seeded_graph
 from sciagent.systems.llm import (
     RECORD,
     REPLAY,
+    Completion,
     EditDraft,
     ProposalDraft,
     ProposalLayer,
@@ -113,6 +114,7 @@ def _address(
     *,
     provider: str = "p",
     model: str = "m",
+    settings: str = "",
     system: str = "s",
     brief: str = "b",
     index: int = 0,
@@ -121,6 +123,7 @@ def _address(
     return call_address(
         provider=provider,
         model=model,
+        settings=settings,
         system=system,
         brief=brief,
         schema=SCHEMA,
@@ -428,7 +431,7 @@ class TestTheTranscriptStore:
         with pytest.raises(TranscriptMissError, match="will not call out"):
             store.resolve(
                 "call/absent",
-                lambda: fixed_payload(0, ()),
+                lambda: Completion(fixed_payload(0, ())),
                 provider="p",
                 model="m",
                 brief="b",
@@ -437,7 +440,9 @@ class TestTheTranscriptStore:
     def test_record_fills_a_miss_and_counts_it(self) -> None:
         store = TranscriptStore(mode=RECORD)
         payload = fixed_payload(0, ())
-        store.resolve("call/x", lambda: payload, provider="p", model="m", brief="b")
+        store.resolve(
+            "call/x", lambda: Completion(payload), provider="p", model="m", brief="b"
+        )
         assert store.misses == 1
         assert store.get("call/x").payload == payload
 
@@ -445,11 +450,19 @@ class TestTheTranscriptStore:
         """What a reproducibility check asserts: it replayed, it did not re-derive."""
         store = TranscriptStore(mode=RECORD)
         store.resolve(
-            "call/x", lambda: fixed_payload(0, ()), provider="p", model="m", brief="b"
+            "call/x",
+            lambda: Completion(fixed_payload(0, ())),
+            provider="p",
+            model="m",
+            brief="b",
         )
         replayed = TranscriptStore({t.address: t for t in store}, mode=REPLAY)
         replayed.resolve(
-            "call/x", lambda: fixed_payload(1, ()), provider="p", model="m", brief="b"
+            "call/x",
+            lambda: Completion(fixed_payload(1, ())),
+            provider="p",
+            model="m",
+            brief="b",
         )
         assert replayed.misses == 0
 
@@ -487,6 +500,116 @@ class TestTheTranscriptStore:
         assert all(
             loaded.get(a).payload == store.get(a).payload for a in store.addresses()
         )
+
+    def test_provenance_survives_a_round_trip(self, tmp_path: Path) -> None:
+        """What produced an answer is part of the artefact, not of its identity.
+
+        A corpus that recorded which binary answered and then lost it on the
+        first save would be worse than one that never claimed to: the field
+        would read as evidence while being empty.
+        """
+        store = TranscriptStore(mode=RECORD)
+        store.put(
+            Transcript(
+                "call/x",
+                "p",
+                "m",
+                "b",
+                fixed_payload(0, ()),
+                {"claude_code_version": "2.1.233", "served_models": "claude-opus-5"},
+            )
+        )
+        path = tmp_path / "transcripts.json"
+        store.save(path)
+        assert TranscriptStore.load(path).get("call/x").provenance == {
+            "claude_code_version": "2.1.233",
+            "served_models": "claude-opus-5",
+        }
+
+    def test_a_transcript_with_no_provenance_round_trips_too(
+        self, tmp_path: Path
+    ) -> None:
+        """Nothing to declare stays nothing, rather than becoming a null."""
+        store = TranscriptStore(mode=RECORD)
+        store.put(Transcript("call/x", "p", "m", "b", fixed_payload(0, ())))
+        path = tmp_path / "transcripts.json"
+        store.save(path)
+        assert TranscriptStore.load(path).get("call/x").provenance == {}
+
+    def test_saving_over_a_corpus_keeps_the_earlier_provenance(
+        self, tmp_path: Path
+    ) -> None:
+        """``put``'s first-recording rule has to hold at the file boundary too.
+
+        A fresh RECORD store that re-derived the same answers on a newer binary
+        and saved over the corpus would otherwise rewrite what produced each one
+        -- and the payloads being byte-identical, the diff would show only the
+        edit nobody was reviewing.
+        """
+        path = tmp_path / "transcripts.json"
+        payload = fixed_payload(0, ())
+        first = TranscriptStore(mode=RECORD)
+        first.put(Transcript("call/x", "p", "m", "b", payload, {"v": "2.1.233"}))
+        first.save(path)
+
+        second = TranscriptStore(mode=RECORD)
+        second.put(Transcript("call/x", "p", "m", "b", payload, {"v": "2.9.999"}))
+        second.save(path)
+
+        assert TranscriptStore.load(path).get("call/x").provenance == {"v": "2.1.233"}
+
+    def test_saving_fills_in_provenance_a_corpus_never_had(
+        self, tmp_path: Path
+    ) -> None:
+        """Restoring the earlier value must not mean pinning an empty one.
+
+        A corpus recorded before provenance existed should gain it on the next
+        save rather than being frozen without it forever.
+        """
+        path = tmp_path / "transcripts.json"
+        payload = fixed_payload(0, ())
+        old = TranscriptStore(mode=RECORD)
+        old.put(Transcript("call/x", "p", "m", "b", payload))
+        old.save(path)
+
+        fresh = TranscriptStore(mode=RECORD)
+        fresh.put(Transcript("call/x", "p", "m", "b", payload, {"v": "2.1.233"}))
+        fresh.save(path)
+
+        assert TranscriptStore.load(path).get("call/x").provenance == {"v": "2.1.233"}
+
+    def test_the_settings_a_call_was_made_under_are_stored(self) -> None:
+        """Address-determining, therefore recorded, for the same reason as model.
+
+        Two calls recorded at different efforts differ in address and would
+        otherwise be indistinguishable in the file -- which is the question a
+        reader opens a transcript to answer.
+        """
+        store = TranscriptStore(mode=RECORD)
+        store.resolve(
+            "call/x",
+            lambda: Completion(fixed_payload(0, ())),
+            provider="p",
+            model="m",
+            brief="b",
+            settings="effort=low",
+        )
+        assert store.get("call/x").settings == "effort=low"
+
+    def test_a_rerecording_that_agrees_on_the_answer_agrees(self) -> None:
+        """Payloads decide whether two recordings conflict; provenance does not.
+
+        A store that compared provenance would refuse a re-recording which
+        reproduced the answer exactly on a newer binary -- treating agreement as
+        conflict, which is the opposite of what an append-only guarantee is for.
+        The first recording's provenance is the one kept.
+        """
+        store = TranscriptStore(mode=RECORD)
+        payload = fixed_payload(0, ())
+        store.put(Transcript("call/x", "p", "m", "b", payload, {"v": "2.1.233"}))
+        store.put(Transcript("call/x", "p", "m", "b", payload, {"v": "2.9.999"}))
+        assert store.get("call/x").provenance == {"v": "2.1.233"}
+        assert len(store) == 1
 
     def test_a_file_from_another_address_scheme_is_refused(
         self, tmp_path: Path
@@ -724,9 +847,9 @@ class TestTheProposalLayer:
             id = "scripted"
             model = "scripted/1"
 
-            def complete(
-                self, system: str, brief: str, schema: object
-            ) -> dict[str, object]:
+            settings = ""
+
+            def complete(self, system: str, brief: str, schema: object) -> Completion:
                 raise AssertionError("a replay must not call the provider")
 
         replayed = ProposalLayer(
@@ -764,11 +887,27 @@ class TestTheAnthropicProvider:
         assert call_address(
             provider=provider.id,
             model=provider.model,
+            settings=provider.settings,
             system="s",
             brief="b",
             schema=SCHEMA,
             index=0,
         ).startswith("call/")
+
+    def test_a_ceiling_that_raises_is_not_in_the_address(self) -> None:
+        """One rule for both backends: a bound that aborts is not one that alters.
+
+        ``max_tokens`` exhaustion raises rather than returning a shorter answer,
+        so no two ceilings can produce different *recorded* payloads. Addressing
+        it would make a headroom bump invalidate every replay and re-bill a
+        recorded matrix for something no answer depended on -- the same reasoning
+        that keeps the Agent SDK's turn ceiling out.
+        """
+        from sciagent.systems.llm.anthropic_provider import AnthropicProvider
+
+        assert AnthropicProvider(max_tokens=16000).settings == "effort=high"
+        assert AnthropicProvider(max_tokens=64000).settings == "effort=high"
+        assert AnthropicProvider(effort="low").settings == "effort=low"
 
     def test_the_sdk_is_a_declared_dependency(self) -> None:
         assert _sdk_available(), "anthropic is declared in pyproject but not installed"
@@ -837,17 +976,27 @@ def _result(**overrides: Any) -> Any:
     return ResultMessage(**fields)
 
 
-def _stub_runner(result: Any, captured: dict[str, Any] | None = None) -> Any:
+def _stub_runner(
+    result: Any,
+    captured: dict[str, Any] | None = None,
+    *,
+    manifest: dict[str, Any] | None = None,
+) -> Any:
     """Return a stand-in for ``claude_agent_sdk.query`` that yields ``result``.
 
     Records what it was called with, so a test can assert on the request that
-    *would* have been sent without a process being spawned to send it.
+    *would* have been sent without a process being spawned to send it. When
+    ``manifest`` is given, an ``init`` system event carrying it is yielded first,
+    in the order a real session emits them.
     """
+    from claude_agent_sdk import SystemMessage
 
     async def runner(*, prompt: str, options: Any) -> Any:
         if captured is not None:
             captured["prompt"] = prompt
             captured["options"] = options
+        if manifest is not None:
+            yield SystemMessage(subtype="init", data=manifest)
         yield result
 
     return runner
@@ -894,6 +1043,90 @@ class TestTheAgentSdkProvider:
             provider=agent_sdk.id, model=agent_sdk.model
         )
 
+    def test_two_efforts_do_not_share_one_address(self) -> None:
+        """The defect this backend's `settings` exists to prevent.
+
+        Before `settings` entered the address, two providers differing only in
+        reasoning effort hashed identically. The consequence was not cosmetic:
+        `TranscriptStore.put` compares payloads, so recording both either raised
+        a conflicting-answer error that named nothing about effort, or -- worse,
+        on replay -- served the high-effort answer to the low-effort run without
+        anything noticing. The two ask their model a different question and must
+        address differently.
+        """
+        from sciagent.systems.llm.agent_sdk_provider import AgentSdkProvider
+
+        high = AgentSdkProvider(effort="high")
+        low = AgentSdkProvider(effort="low")
+        assert high.id == low.id and high.model == low.model
+        assert _address(
+            provider=high.id, model=high.model, settings=high.settings
+        ) != _address(provider=low.id, model=low.model, settings=low.settings)
+
+    def test_bypassing_the_environment_guard_addresses_differently(self) -> None:
+        """An unguarded run must not be able to share a guarded run's address.
+
+        ``require_subscription=False`` disables the contamination refusal, so an
+        inherited variable the module itself calls out as changing the artefact
+        can reach the model. That makes the answer depend on an input nothing
+        records -- so the bypass goes in the address, and only when it is on, so
+        ordinary runs address as they always did.
+        """
+        from sciagent.systems.llm.agent_sdk_provider import AgentSdkProvider
+
+        guarded = AgentSdkProvider()
+        unguarded = AgentSdkProvider(require_subscription=False)
+        assert guarded.settings == "effort=high"
+        assert unguarded.settings == "effort=high;unguarded"
+
+    def test_it_records_which_binary_answered(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Provenance rides beside the payload, never inside the address.
+
+        The version is worth keeping -- a corpus should say which binary produced
+        it -- and must not be hashed, or a Claude Code auto-update would expire
+        every recorded call on somebody else's release schedule.
+        """
+        from sciagent.systems.llm.agent_sdk_provider import AgentSdkProvider
+
+        _clear_contaminants(monkeypatch)
+        provider = AgentSdkProvider(
+            runner=_stub_runner(_result(), manifest={"claude_code_version": "2.1.233"})
+        )
+
+        completion = provider.complete("s", "b", SCHEMA)
+
+        assert completion.payload == AGENT_SDK_PROPOSAL
+        assert completion.provenance == {
+            "claude_code_version": "2.1.233",
+            "served_models": "claude-opus-5",
+        }
+        # And the address is indifferent to it.
+        assert _address(
+            provider=provider.id, model=provider.model, settings=provider.settings
+        ) == _address(
+            provider="claude-agent-sdk", model="claude-opus-5", settings="effort=high"
+        )
+
+    def test_a_session_that_reports_no_version_records_an_empty_one(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An older CLI that omits the field is not a reason to refuse the run.
+
+        Unlike the model check, where absence of evidence is refused, a missing
+        version costs only audit detail -- the answer is still the pinned model's.
+        Recording an empty string says so honestly.
+        """
+        from sciagent.systems.llm.agent_sdk_provider import AgentSdkProvider
+
+        _clear_contaminants(monkeypatch)
+        provider = AgentSdkProvider(runner=_stub_runner(_result(), manifest={}))
+        assert provider.complete("s", "b", SCHEMA).provenance == {
+            "claude_code_version": "",
+            "served_models": "claude-opus-5",
+        }
+
     def test_the_request_it_builds_carries_no_ambient_context(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -936,7 +1169,7 @@ class TestTheAgentSdkProvider:
         assert options.env == {}
         assert options.mcp_servers == {}
         assert options.strict_mcp_config is True
-        assert options.max_turns == 1
+        assert options.max_turns == 4  # measured: a real brief takes two
         assert options.model == "claude-opus-5"
         assert options.output_format == {"type": "json_schema", "schema": dict(SCHEMA)}
 
@@ -1023,7 +1256,7 @@ class TestTheAgentSdkProvider:
         provider = AgentSdkProvider(
             require_subscription=False, runner=_stub_runner(_result())
         )
-        assert provider.complete("s", "b", SCHEMA) == AGENT_SDK_PROPOSAL
+        assert provider.complete("s", "b", SCHEMA).payload == AGENT_SDK_PROPOSAL
 
     def test_a_response_served_by_another_model_is_refused(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1061,7 +1294,7 @@ class TestTheAgentSdkProvider:
                 _result(model_usage={"opus": _model_usage(canonical="claude-opus-5")})
             )
         )
-        assert provider.complete("s", "b", SCHEMA) == AGENT_SDK_PROPOSAL
+        assert provider.complete("s", "b", SCHEMA).payload == AGENT_SDK_PROPOSAL
 
     def test_a_response_with_no_per_model_usage_is_refused(
         self, monkeypatch: pytest.MonkeyPatch

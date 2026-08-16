@@ -44,6 +44,7 @@ from sciagent.systems.hybrid import Hybrid
 from sciagent.systems.llm import (
     RECORD,
     REPLAY,
+    Completion,
     ProposalLayer,
     ScriptedProvider,
     TranscriptStore,
@@ -253,10 +254,11 @@ class TestDeterminism:
         class Refuses:
             id = "scripted"
             model = "scripted/1"
+            settings = ""
 
             def complete(
                 self, system: str, brief: str, schema: Mapping[str, Any]
-            ) -> Mapping[str, Any]:
+            ) -> Completion:
                 raise AssertionError("a replay must not call the provider")
 
         store = TranscriptStore({t.address: t for t in recording.store}, mode=REPLAY)

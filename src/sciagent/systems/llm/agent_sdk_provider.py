@@ -96,6 +96,7 @@ from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, Literal
 
 from sciagent.core.errors import ProviderError
+from sciagent.systems.llm.transcripts import Completion
 
 if TYPE_CHECKING:  # pragma: no cover - import cost, not behaviour
     from collections.abc import AsyncIterator
@@ -132,6 +133,11 @@ CONTAMINATING_VARIABLES: tuple[tuple[str, str], ...] = (
 #: by another provider is not the artefact this backend claims to record, and the
 #: field is the only evidence of it that survives into the response.
 FIRST_PARTY = "firstParty"
+
+#: Turn ceiling for one proposal. A real brief measured two turns consistently --
+#: the answer, then the structured-output call -- so this is that with headroom.
+#: See :meth:`AgentSdkProvider._options` for why it is not part of the address.
+MAX_TURNS = 4
 
 #: The shape of :func:`claude_agent_sdk.query`, so a test can supply one without
 #: spawning a process. Lazily evaluated (PEP 695), so the annotations it names
@@ -184,9 +190,30 @@ class AgentSdkProvider:
         """Return the model identifier, which is part of every address."""
         return self._model
 
+    @property
+    def settings(self) -> str:
+        """Return the request settings that could change the answer.
+
+        ``effort``, and a marker when the environment guard is off.
+
+        The marker is not bookkeeping. ``require_subscription=False`` disables
+        :meth:`_refuse_a_contaminated_environment`, and that guard is the only
+        thing standing between an inherited ``CLAUDE_CODE_MAX_OUTPUT_TOKENS`` --
+        which this module's own table calls out as changing the artefact between
+        machines -- and the model. An unguarded run is therefore a run whose
+        answer has an input nothing else records, and it must not be able to
+        share an address with a guarded one.
+
+        Only present when the guard is off, so the ordinary case addresses as it
+        would have anyway and no corpus is disturbed by this rule existing.
+        """
+        if self._require_subscription:
+            return f"effort={self._effort}"
+        return f"effort={self._effort};unguarded"
+
     def complete(
         self, system: str, brief: str, schema: Mapping[str, Any]
-    ) -> Mapping[str, Any]:
+    ) -> Completion:
         """Return a payload conforming to ``schema``.
 
         Raises :class:`~sciagent.core.errors.ProviderError` for a refusal, a
@@ -195,9 +222,18 @@ class AgentSdkProvider:
         provider is pinned to.
         """
         self._refuse_a_contaminated_environment()
-        result = self._call(system, brief, schema)
+        result, manifest = self._call(system, brief, schema)
         self._refuse_a_substitute_model(result)
-        return _payload_of(result, self._model)
+        return Completion(
+            payload=_payload_of(result, self._model),
+            provenance={
+                # Which binary answered. Deliberately not in the address: Claude
+                # Code auto-updates, and a corpus must not expire on somebody
+                # else's release schedule.
+                "claude_code_version": str(manifest.get("claude_code_version", "")),
+                "served_models": ",".join(_served_models(result)),
+            },
+        )
 
     def _refuse_a_contaminated_environment(self) -> None:
         """Raise if an inherited variable would change what this run produces.
@@ -240,10 +276,10 @@ class AgentSdkProvider:
     def _options(self, system: str, schema: Mapping[str, Any]) -> ClaudeAgentOptions:
         """Return the hermetic option set for one call.
 
-        Every field is load-bearing; see this module's docstring for why
-        ``skills`` is ``None`` rather than ``[]`` and why ``system_prompt`` is a
-        bare string. Separate from :meth:`_call` so a test can read what would be
-        sent without anything being sent.
+        Every field is load-bearing; see this module's docstring for what
+        ``skills`` does and does not buy, and for why ``system_prompt`` is a bare
+        string. Separate from :meth:`_call` so a test can read what would be sent
+        without anything being sent.
         """
         from claude_agent_sdk import ClaudeAgentOptions
 
@@ -259,7 +295,19 @@ class AgentSdkProvider:
             # tool through which the surrounding filesystem could reach the
             # model.
             tools=[],
-            max_turns=1,
+            # Measured, not guessed: a real brief takes two turns -- the model
+            # answers, then emits the structured-output call -- consistently
+            # across runs. `1` looked right, passed a trivial probe twice, and
+            # failed a real proposal with "Reached maximum number of turns (1)".
+            # Four leaves headroom without admitting an agentic loop; with
+            # tools=[] there is nothing to loop over anyway.
+            #
+            # Deliberately *not* in `settings`. A turn ceiling either yields the
+            # answer or raises, so it cannot produce a different one, and putting
+            # it in the address would invalidate a corpus the next time the
+            # headroom is adjusted -- the same reasoning that keeps the binary
+            # version out.
+            max_turns=MAX_TURNS,
             # No ~/.claude, no .claude/, no CLAUDE.md.
             setting_sources=[],
             # What the SDK documents for "no skills". Inert under this option
@@ -271,8 +319,8 @@ class AgentSdkProvider:
 
     def _call(
         self, system: str, brief: str, schema: Mapping[str, Any]
-    ) -> ResultMessage:
-        """Run one query to completion and return its result message."""
+    ) -> tuple[ResultMessage, dict[str, Any]]:
+        """Run one query to completion; return its result and session manifest."""
         try:
             from claude_agent_sdk import ResultMessage, query
         except ImportError as error:  # pragma: no cover - dependency present
@@ -281,16 +329,27 @@ class AgentSdkProvider:
                 "be made; replaying a recorded transcript does not need it"
             ) from error
 
+        from claude_agent_sdk import SystemMessage
+
         runner: QueryFn = query if self._runner is None else self._runner
         options = self._options(system, schema)
 
-        async def drain() -> ResultMessage | None:
-            """Consume the whole stream, keeping the terminal result."""
+        async def drain() -> tuple[ResultMessage | None, dict[str, Any]]:
+            """Consume the whole stream, keeping the result and the manifest.
+
+            The ``init`` event is the session's manifest -- what it loaded, and
+            which Claude Code built it. The version is the provenance worth
+            keeping; the rest is what the hermeticity of this option set was
+            verified against, and is how it would be checked again.
+            """
             seen: ResultMessage | None = None
+            manifest: dict[str, Any] = {}
             async for message in runner(prompt=brief, options=options):
                 if isinstance(message, ResultMessage):
                     seen = message
-            return seen
+                elif isinstance(message, SystemMessage) and message.subtype == "init":
+                    manifest = dict(message.data)
+            return seen, manifest
 
         # asyncio.run refuses to nest, and catching the RuntimeError it raises
         # would also catch one raised by the call itself. Ask first instead.
@@ -306,14 +365,14 @@ class AgentSdkProvider:
                 "directly"
             )
 
-        result = asyncio.run(drain())
+        result, manifest = asyncio.run(drain())
         if result is None:
             raise ProviderError(
                 f"the {self._model} session ended without a result message, so "
                 f"there is nothing to record"
             )
         self._refuse_a_failed_run(result)
-        return result
+        return result, manifest
 
     def _refuse_a_failed_run(self, result: ResultMessage) -> None:
         """Raise unless the session ended in a way that can carry a proposal.

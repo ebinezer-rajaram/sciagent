@@ -335,3 +335,41 @@ own. Prefer that one.
 
 **Sequencing.** Before item 15's matrix, since A20's figure is reported there,
 and cheap either way — it is test data, not framework code.
+
+---
+
+## Model tier as a preregistered evaluation axis
+
+**Idea.** Run the matrix's V7 arm at more than one model tier — Opus, Sonnet,
+Haiku — on identical scenarios, seeds and grammar, and report the tiers side by
+side as an additional axis. Not a substitution for cost reasons: the same
+scenarios, the same everything else, with the tier declared in advance.
+
+**Rationale.** The framework's central claim is a division of labour: conventional
+methods own posterior updating, statistical computation, experiment selection and
+inadequacy detection, and the LLM owns only hypothesis-space construction. If that
+division does what it is meant to, the burden it leaves on the model is narrow —
+choose which structure the residual points at — and a smaller model may stay
+competitive at it. That is a direct, cheap test of the thesis rather than a
+detail about vendors, and the answer is interesting in both directions: if a
+cheap tier keeps up, the constraint structure is doing the work; if it does not,
+the structural proposal step is where the capability is actually spent.
+
+The machinery is already there. The tier reaches the transcript address through
+`Provider.model`, so tiers cannot contaminate each other's recorded calls, and
+`Provider.settings` keeps effort separate from tier — which matters, because the
+two are otherwise easy to confound in a comparison.
+
+Two cautions if it is run. Effort must be held fixed across tiers or swept
+deliberately, since a cheap tier at high effort against an expensive one at low
+effort measures nothing. And the tiers' rate limits differ, so a tier that has to
+be recorded across several days is not thereby a slower system — wall-clock from a
+recording run is not a result.
+
+**Touches.** None. It is an additional arm beside V1 and V7, on the same footing
+as the learned-policy entry above, and needs no change to a frozen decision.
+
+**Sequencing.** After item 15's first matrix, not before. The single-tier result
+is the baseline the comparison is against, and running both at once would triple
+the recording cost of a matrix whose subscription rate-limit budget is not yet
+measured.

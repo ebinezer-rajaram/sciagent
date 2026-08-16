@@ -50,6 +50,7 @@ from sciagent.systems.llm.scripted import ScriptedProvider, fixed_payload
 from sciagent.systems.llm.transcripts import (
     RECORD,
     REPLAY,
+    Completion,
     Transcript,
     TranscriptStore,
     call_address,
@@ -58,6 +59,7 @@ from sciagent.systems.llm.transcripts import (
 __all__ = [
     "RECORD",
     "REPLAY",
+    "Completion",
     "EditDraft",
     "Memory",
     "MenuEntry",

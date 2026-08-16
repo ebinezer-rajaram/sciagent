@@ -29,23 +29,46 @@ What the address covers
 -----------------------
 
 Everything that could change the answer: the provider's identity, the model id,
-the system prompt, the rendered brief, the tool schema, and the index of the call
-within the investigation. The last one matters because a system may ask twice
-with an identical brief -- after an experiment that moved nothing, say -- and the
-two calls are different events that may legitimately get different answers.
+the provider's **settings**, the system prompt, the rendered brief, the tool
+schema, and the index of the call within the investigation. The last one matters
+because a system may ask twice with an identical brief -- after an experiment
+that moved nothing, say -- and the two calls are different events that may
+legitimately get different answers.
 
 It deliberately does **not** cover the scenario id or the seed. Those reach the
 address only through the brief, which is where they belong: two scenarios that
 present a model with the identical brief are, as far as the model is concerned,
 the same question, and giving them different addresses would record the same
 answer twice and hide that fact.
+
+Address, and provenance
+-----------------------
+
+The two are different questions and the split is deliberate.
+
+The **address** is what determines the request. ``settings`` is in it because a
+provider run at a different reasoning effort, or a lower output ceiling, asks a
+different question and may get a different answer; without it two such runs share
+an address, and the second either trips the append-only check or is silently
+served the first one's answer. That was a real defect, not a tidiness argument.
+
+**Provenance** is what produced the answer, and is recorded beside the payload
+rather than hashed into its identity. The version of a spawned CLI belongs here:
+it is worth knowing which binary answered, and it must not be part of the
+address, because a tool that auto-updates would otherwise invalidate an entire
+corpus on somebody else's release schedule.
+
+One consequence worth stating plainly: :meth:`TranscriptStore.put` compares
+**payloads**, not provenance. Two recordings of one address that agree on the
+answer agree, whichever binary produced them, and the first one's provenance is
+kept.
 """
 
 from __future__ import annotations
 
 import json
 from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -55,6 +78,7 @@ from sciagent.core.program import stable_key
 __all__ = [
     "RECORD",
     "REPLAY",
+    "Completion",
     "Transcript",
     "TranscriptMode",
     "TranscriptStore",
@@ -73,13 +97,14 @@ RECORD: TranscriptMode = "record"
 #: change to *what* is hashed invalidates stored transcripts rather than silently
 #: matching them against a differently-computed key -- the same promise
 #: ``OPERATIONS_VERSION`` makes for the empirical table's cache.
-ADDRESS_VERSION = "transcript/1"
+ADDRESS_VERSION = "transcript/2"
 
 
 def call_address(
     *,
     provider: str,
     model: str,
+    settings: str,
     system: str,
     brief: str,
     schema: Mapping[str, Any],
@@ -93,12 +118,17 @@ def call_address(
     a rendered brief. ``stable_key`` is the same hash the registry and the
     empirical table are addressed by, so one notion of content identity serves
     the whole framework.
+
+    ``settings`` is required rather than defaulted deliberately. A default would
+    let a new backend forget to declare what it varies and get a plausible
+    address anyway, which is the failure this argument exists to prevent.
     """
     payload = "\x00".join(
         (
             ADDRESS_VERSION,
             provider,
             model,
+            settings,
             system,
             brief,
             json.dumps(schema, sort_keys=True, separators=(",", ":")),
@@ -106,6 +136,24 @@ def call_address(
         )
     )
     return f"call/{stable_key(payload) % (1 << 64):016x}"
+
+
+@dataclass(frozen=True, slots=True)
+class Completion:
+    """What a provider returns: the answer, and what produced it.
+
+    The split is the point. ``payload`` is the model's answer and is what an
+    address identifies. ``provenance`` is metadata about the run that produced
+    it -- a CLI version, which model actually served the turn -- recorded for
+    audit and deliberately not hashed, so that a corpus does not expire when a
+    tool updates.
+
+    Provenance values are strings so that a transcript file stays diffable and
+    a reader does not have to know which fields happen to be numeric.
+    """
+
+    payload: Mapping[str, Any]
+    provenance: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,14 +174,33 @@ class Transcript:
     payload: Mapping[str, Any]
     """The tool payload the model returned, exactly as received."""
 
+    provenance: Mapping[str, str] = field(default_factory=dict)
+    """What produced the payload, for audit. Never part of the address.
+
+    Defaulted so that a caller who has nothing to declare -- a scripted backend,
+    a hand-built fixture -- says nothing rather than inventing a value.
+    """
+
+    settings: str = ""
+    """The provider settings this call was made under. Part of the address.
+
+    Stored for the same reason ``provider`` and ``model`` are: without it two
+    entries recorded at different reasoning efforts differ in address and are
+    otherwise indistinguishable in the file, which is precisely the question a
+    reader opens a transcript to answer. Last in the field order and defaulted,
+    so the five-argument constructions that predate it still read the same.
+    """
+
     def as_json(self) -> dict[str, Any]:
         """Return the JSON form written to disk."""
         return {
             "address": self.address,
             "provider": self.provider,
             "model": self.model,
+            "settings": self.settings,
             "brief": self.brief,
             "payload": dict(self.payload),
+            "provenance": dict(self.provenance),
         }
 
 
@@ -206,7 +273,15 @@ class TranscriptStore:
             ) from None
 
     def put(self, transcript: Transcript) -> None:
-        """Store a call. Raises if the address already holds a different one."""
+        """Store a call. Raises if the address already holds a different answer.
+
+        **Payloads decide; provenance does not.** Two recordings of one address
+        that agree on the answer agree, whichever binary or SDK version produced
+        them, and the first one's provenance is the one kept. Comparing
+        provenance too would make an append-only store reject a re-recording
+        that reproduced the answer exactly, which is the opposite of what the
+        guarantee is for.
+        """
         existing = self._entries.get(transcript.address)
         if existing is not None:
             if existing.payload != transcript.payload:
@@ -222,11 +297,12 @@ class TranscriptStore:
     def resolve(
         self,
         address: str,
-        call: Callable[[], Mapping[str, Any]],
+        call: Callable[[], Completion],
         *,
         provider: str,
         model: str,
         brief: str,
+        settings: str = "",
     ) -> Transcript:
         """Return the response at ``address``, calling out only if permitted.
 
@@ -243,18 +319,24 @@ class TranscriptStore:
                 f"{self._mode!r} mode, so it will not call out. Record the "
                 f"transcript deliberately, or run against a store that holds it"
             )
-        payload = call()
-        if not isinstance(payload, Mapping):
+        completion = call()
+        if not isinstance(completion, Completion):
+            raise ProposalError(
+                f"a provider must return a Completion, got {type(completion).__name__}"
+            )
+        if not isinstance(completion.payload, Mapping):
             raise ProposalError(
                 f"a provider must return a mapping payload, got "
-                f"{type(payload).__name__}"
+                f"{type(completion.payload).__name__}"
             )
         transcript = Transcript(
             address=address,
             provider=provider,
             model=model,
             brief=brief,
-            payload=dict(payload),
+            payload=dict(completion.payload),
+            provenance=dict(completion.provenance),
+            settings=settings,
         )
         self.put(transcript)
         self._misses += 1
@@ -281,12 +363,21 @@ class TranscriptStore:
         producing an artefact to review; an artefact quietly missing entries is
         the one outcome review would not catch, because there is nothing in the
         diff to look at.
+
+        The same reasoning covers provenance one level down. :meth:`put` keeps
+        the *first* recording's provenance in process; without
+        :meth:`_keep_earlier_provenance`, a fresh ``RECORD`` store that
+        re-recorded the same addresses on a newer binary and saved over the file
+        would rewrite what the corpus says produced each answer -- a silent edit
+        to the audit trail, in a file whose payloads are byte-identical and whose
+        diff would therefore show only the thing nobody was looking at.
         """
         path.parent.mkdir(parents=True, exist_ok=True)
         self._refuse_to_drop(path)
+        entries = self._keep_earlier_provenance(path)
         payload = {
             "version": ADDRESS_VERSION,
-            "calls": [self._entries[key].as_json() for key in sorted(self._entries)],
+            "calls": [entries[key].as_json() for key in sorted(entries)],
         }
         # newline="\n" rather than the default: a corpus is the reproducible
         # artefact, and text mode would translate every newline to os.linesep on
@@ -297,6 +388,35 @@ class TranscriptStore:
             encoding="utf-8",
             newline="\n",
         )
+
+    def _keep_earlier_provenance(self, path: Path) -> dict[str, Transcript]:
+        """Return this store's calls, with any earlier provenance on disk kept.
+
+        Extends :meth:`put`'s rule -- first recording wins -- across the file
+        boundary. An address already on disk keeps the provenance it was recorded
+        with, even when this store re-derived the same answer on a newer binary,
+        because the corpus is a record of what produced each answer *when it was
+        measured*.
+
+        Only ever restores; never invents. An address absent from disk, or one
+        whose stored provenance is empty, takes this store's value, so a corpus
+        recorded before provenance existed gains it on the next save rather than
+        being pinned to nothing. ``_refuse_to_drop`` has already established that
+        the payloads agree, so this cannot pair one run's provenance with
+        another's answer.
+        """
+        entries = dict(self._entries)
+        if not path.exists():
+            return entries
+        try:
+            on_disk = self.load(path, mode=self._mode)
+        except ProposalError:
+            return entries
+        for address, stored in on_disk._entries.items():
+            current = entries.get(address)
+            if current is not None and stored.provenance:
+                entries[address] = replace(current, provenance=stored.provenance)
+        return entries
 
     def _refuse_to_drop(self, path: Path) -> None:
         """Raise unless writing this store to ``path`` preserves every call there.
@@ -370,7 +490,12 @@ class TranscriptStore:
                 provider=str(call["provider"]),
                 model=str(call["model"]),
                 brief=str(call["brief"]),
+                settings=str(call.get("settings", "")),
                 payload=dict(call["payload"]),
+                provenance={
+                    str(key): str(value)
+                    for key, value in dict(call.get("provenance", {})).items()
+                },
             )
             for call in raw.get("calls", [])
         }

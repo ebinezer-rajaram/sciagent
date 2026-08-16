@@ -89,6 +89,7 @@ def addresses() -> dict[str, str]:
             out[f"{name}/{memory.value}"] = call_address(
                 provider="child",
                 model="child/1",
+                settings="",
                 system="system",
                 brief=render_brief(investigation, menu, memory=memory),
                 schema=schema,

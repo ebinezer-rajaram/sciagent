@@ -40,6 +40,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from sciagent.core.errors import ProviderError
+from sciagent.systems.llm.transcripts import Completion
 
 if TYPE_CHECKING:  # pragma: no cover - import cost, not behaviour
     from anthropic import Anthropic
@@ -91,9 +92,26 @@ class AnthropicProvider:
         """Return the model identifier, which is part of every address."""
         return self._model
 
+    @property
+    def settings(self) -> str:
+        """Return the request settings that could change the answer.
+
+        ``effort`` only. ``max_tokens`` is deliberately excluded, and the two
+        cases are worth separating because they look alike: effort changes how
+        the model reasons, and so changes the answer; the token ceiling either
+        yields that answer or **raises** (see :meth:`complete`), so it can never
+        produce a different recorded payload. Addressing it would mean a bump to
+        :data:`DEFAULT_MAX_TOKENS` turning every replay into a miss and re-billing
+        a whole recorded matrix for headroom nobody's answer depended on.
+
+        Same rule as the Agent SDK backend's turn ceiling: a bound that aborts is
+        not a bound that alters.
+        """
+        return f"effort={self._effort}"
+
     def complete(
         self, system: str, brief: str, schema: Mapping[str, Any]
-    ) -> Mapping[str, Any]:
+    ) -> Completion:
         """Return a payload conforming to ``schema``.
 
         Raises :class:`~sciagent.core.errors.ProviderError` for a refusal, a
@@ -126,7 +144,12 @@ class AnthropicProvider:
                 f"finishing; thinking counts against the same allowance, so raise "
                 f"max_tokens rather than lowering effort"
             )
-        return _payload_of(response, self._model)
+        return Completion(
+            payload=_payload_of(response, self._model),
+            # What the API says served the request, which need not be the alias
+            # that was asked for. Recorded, never addressed.
+            provenance={"response_model": str(getattr(response, "model", ""))},
+        )
 
     def _messages(self) -> Any:
         """Return the Messages resource, constructing the client on first use."""

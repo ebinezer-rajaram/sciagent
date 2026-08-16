@@ -91,13 +91,15 @@ from sciagent.inference.ppc import posterior_predictive_check
 
 _LN2 = math.log(2.0)
 
-#: How many times :meth:`EmpiricalTable.save` retries its atomic replace, and how
-#: long it waits between attempts. Windows refuses ``MoveFileEx`` while another
-#: process holds the destination open, so a cache shared across worktrees turns
-#: a save into an occasionally-contended operation. Measured under deliberate
-#: contention the failure was rare -- one writer in two -- so a handful of short
-#: waits covers it with a wide margin, while still failing loudly rather than
-#: hanging if something holds the file open indefinitely.
+#: How many times :meth:`EmpiricalTable.save` retries its atomic replace and
+#: :func:`_read_text_contended` retries its read, and how long each waits between
+#: attempts. Windows refuses ``MoveFileEx`` while another process holds the
+#: destination open, and refuses an ``open`` while the replace holds it, so a
+#: cache shared across worktrees turns both halves into occasionally-contended
+#: operations. Measured under deliberate contention the failure was rare -- one
+#: writer in two -- so a handful of short waits covers it with a wide margin,
+#: while still failing loudly rather than hanging if something holds the file
+#: open indefinitely.
 _REPLACE_ATTEMPTS = 8
 _REPLACE_BACKOFF_S = 0.05
 
@@ -108,6 +110,41 @@ _SEED_MODULUS = 1 << 63
 #: in a cell, ``3 / M`` is the one-sided 95% upper bound on that cell's
 #: probability. See :meth:`EmpiricalTable.resolved_probabilities`.
 _RULE_OF_THREE = 3.0
+
+
+def _read_text_contended(path: Path) -> str:
+    """Return ``path``'s text, waiting out a concurrent writer's atomic replace.
+
+    Guarantees that a reader gives up only after ``_REPLACE_ATTEMPTS`` attempts,
+    rather than on the first collision, and that it then fails as a typed
+    :class:`TableError` naming the cause rather than as a bare ``PermissionError``
+    from the filesystem.
+
+    :meth:`EmpiricalTable.save` has always retried the writer's half of this race.
+    Its docstring recorded the reader's half as safe -- 2000 clean reads under two
+    writers and two readers -- and that held for the shape it was measured on. It
+    does not hold at four ``pytest-xdist`` workers plus four agents against one
+    shared cache: a reader died with ``PermissionError`` (errno 13) on the gate
+    table, because Windows refuses an ``open`` for the window in which
+    ``os.replace`` holds the destination. Two readers were too few to land in it.
+
+    Backoff is fixed rather than jittered for the same reason it is in ``save``:
+    nothing here may consult a random source (invariant 3), and the wait affects
+    timing only, never bytes. The final attempt is outside the loop so that the
+    attempt which raises is the one whose exception is reported.
+    """
+    for attempt in range(_REPLACE_ATTEMPTS - 1):
+        try:
+            return path.read_text(encoding="utf-8")
+        except PermissionError:
+            time.sleep(_REPLACE_BACKOFF_S * (attempt + 1))
+    try:
+        return path.read_text(encoding="utf-8")
+    except PermissionError as exc:
+        raise TableError(
+            f"could not read {path} after {_REPLACE_ATTEMPTS} attempts; "
+            f"another process is holding it open"
+        ) from exc
 
 
 @lru_cache(maxsize=4096)
@@ -434,10 +471,18 @@ class EmpiricalTable:
         times each, against two readers, produced 2000 clean reads and zero
         partial ones -- but one writer died with ``PermissionError`` (WinError 5),
         because ``MoveFileEx`` refuses while another process holds the
-        destination open. Readers are never wrong; writers merely have to wait.
-        Retrying converts a flaky suite run into a slightly slower one. Backoff
-        is fixed rather than jittered: nothing here may consult a random source
-        (invariant 3), and the wait affects timing only, never bytes.
+        destination open. Retrying converts a flaky suite run into a slightly
+        slower one. Backoff is fixed rather than jittered: nothing here may
+        consult a random source (invariant 3), and the wait affects timing only,
+        never bytes.
+
+        That measurement once carried the conclusion *readers are never wrong;
+        writers merely have to wait*, and the second half is still true. The
+        first is not: at four ``pytest-xdist`` workers plus four agents a reader
+        died on the gate table, because the replace holds the destination for a
+        window in which Windows refuses an ``open``. Two readers were too few to
+        land in it. :func:`_read_text_contended` is the reader's half, and
+        :meth:`load` goes through it.
         """
         payload = {
             "version": self.version,
@@ -496,7 +541,7 @@ class EmpiricalTable:
         was not built under would give confidently wrong likelihoods, and nothing
         downstream could detect it.
         """
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(_read_text_contended(path))
         table = cls(
             templates=FrozenDict[ExperimentTemplateId, ExperimentTemplate](
                 {template.id: template for template in templates}

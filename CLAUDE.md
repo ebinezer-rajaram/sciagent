@@ -89,11 +89,42 @@ personal config file because cloud sessions clone the repo and see nothing from
 - **Do not prefix shell commands with `cd <project dir> &&`.** The working
   directory is already set. Measured across 50 transcripts, 1,141 of 1,402
   commands carried this prefix and none needed it.
-- **The suite is ~7 minutes; background it rather than blocking.** One test,
-  `test_the_floor_never_exceeds_what_greedy_achieves[S1]`, is 147s of that, and
-  the slowest 25 are about 6 minutes of it. Never run a subagent alongside it —
-  contention alone took one run from 6m30s to 30m37s. `mypy` is 1.9s and needs
-  no such care. Before repeating the suite, ask
+- **Run the suite as `uv run pytest -n 4 --dist loadfile`, and background it
+  rather than blocking.** Measured 2026-08-16 on this desktop (12 logical
+  processors, 16 GB), warm tables:
+
+  | invocation | wall clock |
+  |---|---|
+  | serial | 262.44s |
+  | `-n 4 --dist loadfile` | **151.30s** |
+  | `-n 4` (default `load`) | 135.88s–282.96s |
+  | `-n 6` | 253.70s |
+  | `-n auto` (12) | 279.16s, **3 failed** on `MemoryError` |
+
+  **`--dist loadfile` is not a tuning knob — it is the thing that makes this
+  correct.** Tests in one module share simulated table rows through the gate
+  table, so splitting a module across workers makes each worker re-simulate at
+  2000 replicates what a sibling already did.
+  `test_the_floor_never_exceeds_what_greedy_achieves[S3]` costs **0.00s** serially
+  and **118.14s** under default `load`. That is duplicated work, not
+  rescheduling, and it is why more workers ran *slower*. `loadfile` keeps a
+  module on one worker and the duplication disappears.
+
+  Memory binds before cores here, so do not "improve" this to `-n auto`. `-n 4`
+  is also what `-n auto` resolves to on the 4 vCPU cloud VM. It does **not**
+  belong in `addopts`: worker startup takes a single file from 1.76s to 3.41s,
+  and iterating on one file is the commoner act. Do not read a passed count as a
+  total — a green run reports `1109 passed, 7 skipped` out of 1116 collected.
+  Quote the invocation beside any timing you record: every figure in
+  `DECISIONS.md` before this date is serial, and the three are not comparable.
+- **Never run a subagent alongside the suite.** Measured 2026-08-16: four
+  read-only `decisions-sweeper` agents took a `-n 4` run from ~163s to **183.25s
+  and 185.37s**, about 12–15%, while alive for only ~38s of it. "Read-only, so no
+  CPU work" is false as a premise even though the rule it was offered for is
+  right. The **30m37s** figure often quoted for this is not a local measurement:
+  it was taken on the 4 vCPU cloud VM against a **7m50s** baseline on that same
+  VM (`1c01fb1`), and pairing it with the desktop's idle figure splices two
+  machines. `mypy` is 1.9s and needs no such care. Before repeating the suite, ask
   `bash .claude/hooks/suite-freshness.sh check`: it reports whether a full run
   already passed on a byte-identical tree, and `/next` and `/ship` between them
   used to run it three times per item. Pin with `begin` before starting pytest
@@ -118,11 +149,13 @@ personal config file because cloud sessions clone the repo and see nothing from
   list's clothing. Three places here clear the bar — `/ship` step 2's four
   invariant lenses plus `/code-review`, `/recall`'s four `decisions-sweeper`
   slices, and triaging a suite run that came back with more than about three
-  unrelated failures, one agent per failure. The 30m37s figure is about
-  **CPU**, so what it forbids is a subagent running *alongside the suite* — it
-  does not forbid concurrent read-only agents, which is why five at once in
-  `/ship` step 2 costs nothing. The triage case is safe for a second reason
-  worth stating separately: pytest has already exited.
+  unrelated failures, one agent per failure. The contention is **CPU**, so what
+  it forbids is a subagent running *alongside the suite* — it does not forbid
+  concurrent read-only agents, which is why five at once in `/ship` step 2 is
+  affordable. Do not read "affordable" as free: four such agents cost a `-n 4`
+  suite 12–15% (measured 2026-08-16), so the exemption is for agents running
+  beside *each other*, never beside pytest. The triage case is safe for a second
+  reason worth stating separately: pytest has already exited.
 - **Invoking `/ship` is the authorisation for its step 2 subagents.** Run
   `/code-review` and, when the diff touches `src/sciagent/` or an agent-reachable
   path, `invariant-auditor` as its four lenses — without asking, and *before*
@@ -179,8 +212,11 @@ Two more things follow that are easy to get wrong:
 - **Never resolve another session's conflict.** Stop and report it. The tree may
   be mid-refactor in a session you cannot see, and that call is the user's.
 
-Worktrees do **not** buy parallel testing: the 30m37s contention figure is CPU,
-and it applies across worktrees exactly as within one.
+Worktrees do **not** buy parallel testing — the contention is CPU, and it applies
+across worktrees exactly as within one. Parallel testing comes from
+`pytest-xdist` instead, and only within a run: `-n 4 --dist loadfile`, as above.
+Two suites in
+two worktrees at once is still the thing to avoid.
 
 All trees share one table cache, resolved from `git rev-parse --git-common-dir`
 so that every worktree finds the main tree's `.cache/tables` with nothing to
@@ -190,13 +226,22 @@ set this through an environment variable in `.claude/settings.local.json`; that
 file is untracked, so no worktree checkout could contain it and every worktree
 silently took the cold path. `SCIAGENT_TABLE_CACHE` still overrides if set.
 
+Sharing one cache means several processes read and write one file, and **both**
+halves of that race are now guarded: `EmpiricalTable.save` retries its atomic
+replace, and `_read_text_contended` retries the read that `load` goes through.
+The reader's half was added on 2026-08-16 after a `-n 4` suite run died with
+`PermissionError` on the gate table; before it, a probe at four writers and six
+readers lost 4 reads in 900, and after it, none in 900 or in 1200 at six and
+eight. Anything new that reads a cached artefact should go through the same door.
+
 ## Working style
 
 - **Ask before assuming.** If the spec is ambiguous, ask rather than picking.
   Ambiguity in the spec is a real finding worth surfacing.
 - **Tests first for anything with an acceptance criterion.** Write the A-test,
   watch it fail, then implement.
-- Run `uv run pytest` and `uv run mypy` before saying done. `mypy` takes no
+- Run `uv run pytest -n 4 --dist loadfile` and `uv run mypy` before saying done.
+  `mypy` takes no
   arguments: `pyproject.toml` sets `strict` and the file set, so naming a path
   checks less than the configured one.
 - If something in the spec seems wrong, say so. Do not silently work around it.
@@ -246,12 +291,18 @@ Three differences from a local session actually change behaviour:
 - **Work happens on the session's own branch, never `main`.** The GitHub proxy
   accepts a push only for the branch the session is already on, so a commit
   made on `main` cannot be pushed. `/ship` handles this; do not work around it.
-- **The VM is 4 vCPU / 16 GB / 30 GB.** The suite runs in about 8 minutes here
-  with the machine to itself, close to the 6m30s–7m45s a developer desktop takes,
-  and a cold first session spends roughly half a minute installing dependencies
-  before the status hook prints. Four vCPUs is the thing to plan around: a suite
-  run measured at **30m37s** while a subagent was working in the same container,
-  a fourfold slowdown from contention alone. Do not start a long run and a
+- **The VM is 4 vCPU / 16 GB / 30 GB.** `-n auto` resolves to 4 here, which is
+  the same worker count the desktop wants, so the invocation does not change.
+  The serial suite ran about 8 minutes here against 6m30s–7m45s on a desktop;
+  both figures predate `35cf96a`, which took the desktop's serial suite to
+  262.44s, and the parallel figure on this VM has never been measured. A cold
+  first session also spends roughly half a minute installing dependencies before
+  the status hook prints. Four vCPUs is the thing to plan around: a suite run
+  measured at **30m37s** while a subagent was working in the same container,
+  against **7m50s** idle on that same VM — a near-fourfold slowdown from
+  contention alone, and the origin of a figure that is often quoted as though it
+  were a desktop measurement. It is not; see the working defaults above for what
+  contention costs locally. Do not start a long run and a
   subagent together and then read the timing as the suite's. Do not use the test
   count as a health check either — it moves with every backlog item — read the
   tail of the pytest output instead.

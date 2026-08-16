@@ -51,24 +51,30 @@ Tests first, for anything with an acceptance criterion:
    uv run mypy                    # 1.9s, and needs no arguments: pyproject.toml
                                   # sets strict and the file set, so naming a
                                   # path checks *less* than the configured one
-   uv run pytest                  # ~7 min - background it, see below
+   uv run pytest -n 4 --dist loadfile   # ~2m30s - background it, see below
    ```
 
-   **Background the suite.** It is measured at ~7 minutes and one test
-   (`test_the_floor_never_exceeds_what_greedy_achieves[S1]`) is 147s of that.
-   Run it with `run_in_background` and read the diff or draft the `/decide`
-   entry while it runs, rather than blocking. Two rules:
+   **Background the suite.** At `-n 4 --dist loadfile` it is measured at
+   **151.30s**, against 262.44s serial, and one test
+   (`test_the_floor_never_exceeds_what_greedy_achieves[S1]`) is 89.74s of the
+   serial figure. `--dist loadfile` is not optional: without it a module's tests
+   split across workers and each re-simulates rows its siblings already built,
+   which is worse than serial. Run it with `run_in_background` and read the diff
+   or draft the
+   `/decide` entry while it runs, rather than blocking. Two rules:
 
-   - **Never start a subagent while it runs.** A suite run measured at 30m37s
-     against 6m30s from container contention alone is recorded in CLAUDE.md.
-     This applies across worktrees too: the contention is CPU, and isolation
-     does nothing for it.
+   - **Never start a subagent while it runs.** Measured 2026-08-16: four
+     read-only agents took a `-n 4` run from ~163s to 183.25s and 185.37s, about
+     12–15%, while alive for a fifth of it. Read-only is not free. This applies
+     across worktrees too: the contention is CPU, and isolation does nothing for
+     it. Delegating the run itself to `suite-runner` is the way to have the
+     context back without paying this.
    - Pin the tree *before* starting it and record after, so `/ship` need not
      repeat the run:
 
      ```sh
      bash .claude/hooks/suite-freshness.sh begin    # before pytest
-     uv run pytest                                  # backgrounded
+     uv run pytest -n 4 --dist loadfile             # backgrounded
      bash .claude/hooks/suite-freshness.sh record   # refuses if the tree moved
      ```
 

@@ -75,9 +75,9 @@ the numbers are reported.
 
 Twenty seeds per cell, all randomness through explicitly passed seeded
 generators (invariant 3). The suite's own economics apply: this is long, so
-background it rather than blocking, and **do not run a subagent alongside** — a
-run measured at 30m37s against 6m30s from container contention alone is recorded
-in `CLAUDE.md`.
+background it rather than blocking, and **do not run a subagent alongside** —
+four read-only agents alongside a `-n 4` suite cost 12–15% (measured 2026-08-16,
+recorded in `CLAUDE.md`), and a matrix cell is far longer than a suite run.
 
 Checkpoint as cells complete. Days of compute is longer than any session, so the
 matrix must be resumable from the registry rather than from a session's memory:

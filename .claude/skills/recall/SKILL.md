@@ -83,14 +83,20 @@ concurrently, each given the question verbatim and one range. They are read-only
 and do no CPU work, so the rule against running subagents alongside the suite
 does not bite here — unless a suite is actually running, in which case it does.
 
-**If `decisions-sweeper` does not resolve, do not abandon the sweep.** The agent
-registry is read at session start, so the agent is unavailable in the session
-that creates it, and it may also be unavailable in a worktree if the registry is
-read from the shared checkout — unsettled as of 2026-08-16. Either way the fix
-is the same: launch four `general-purpose` agents instead, at `sonnet`, pasting
-this file's sweeper contract into each prompt. The slicing and the merge are
-unchanged. Say which form you used, because only one of them is the agent whose
-definition you can point at afterwards.
+**If `decisions-sweeper` does not resolve, do not abandon the sweep.** Launch
+four `general-purpose` agents instead, at `sonnet`, pasting this file's sweeper
+contract into each prompt. The slicing and the merge are unchanged. Say which
+form you used, because only one of them is the agent whose definition you can
+point at afterwards.
+
+The question this note left open is now settled, and the answer is the worse of
+the two: **a worktree session reads `.claude/agents/` from the shared checkout,
+not from its own tree**, so an agent written in a worktree is unusable until its
+branch reaches `main`. The registry is not the obstacle — it refreshes
+mid-session, and `decisions-sweeper` itself appeared in a running session the
+moment its commit landed. What discriminated the two causes was `suite-runner`,
+which existed only in a worktree and did not resolve while `decisions-sweeper`,
+present in both trees, did.
 
 ### Merging four reports
 

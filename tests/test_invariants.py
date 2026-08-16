@@ -525,6 +525,161 @@ class TestTheReductionGuardItself:
         assert _order_dependent_reductions(tree) == []
 
 
+#: Builders whose result iterates in hash order rather than insertion order.
+#:
+#: Deliberately **not** ``.keys()``, ``.values()`` or ``.items()``. A dict has
+#: preserved insertion order since 3.7, so flagging those would be noise on the
+#: commonest loop in the codebase, and noise is how a guard gets suppressed
+#: rather than obeyed. The hazard this clause names is the set: its iteration
+#: order is a function of the hashes of its members, and for ``str`` that is a
+#: function of ``PYTHONHASHSEED``, which differs per process.
+SET_BUILDERS = frozenset({"set", "frozenset"})
+
+#: Where a set's order becomes observable. ``sorted()`` is absent on purpose --
+#: it is the fix, and a sorted set is exactly what this guard wants to see.
+ORDER_OBSERVING_CALLS = frozenset({"list", "tuple"})
+
+
+def _is_set_valued(node: ast.expr) -> bool:
+    """Return whether ``node`` is a set this guard can recognise as one.
+
+    Syntactic, and therefore incomplete by construction: a set arriving through
+    a parameter or an attribute is invisible here. That is the same bargain the
+    other three guards in this file strike -- they catch the spelling, not the
+    value -- and it is why this one is a floor rather than a proof.
+    """
+    if isinstance(node, ast.Set | ast.SetComp):
+        return True
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in SET_BUILDERS
+    )
+
+
+def _unsorted_set_iterations(tree: ast.AST) -> list[tuple[int, str]]:
+    """Return ``(line, shape)`` for every place a set's order can be observed.
+
+    Four shapes, for the same reason the reduction guard has four: the invariant
+    is about what a module does, not how it spells it. A ``for`` over a set, a
+    comprehension over one, ``list()``/``tuple()`` of one, and ``join()`` of one
+    all turn an unordered collection into an ordered artefact. Wrapping any of
+    them in ``sorted()`` makes the order a property of the values instead of the
+    process, which is the whole of the fix.
+    """
+    found: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.For) and _is_set_valued(node.iter):
+            found.append((node.lineno, "for over a set"))
+        if isinstance(
+            node, ast.ListComp | ast.SetComp | ast.GeneratorExp | ast.DictComp
+        ):
+            found.extend(
+                (node.lineno, "comprehension over a set")
+                for generator in node.generators
+                if _is_set_valued(generator.iter)
+            )
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        target = node.func
+        if not _is_set_valued(node.args[0]):
+            continue
+        if isinstance(target, ast.Name) and target.id in ORDER_OBSERVING_CALLS:
+            found.append((node.lineno, f"{target.id}() of a set"))
+        elif isinstance(target, ast.Attribute) and target.attr == "join":
+            found.append((node.lineno, "join() of a set"))
+    return found
+
+
+@pytest.mark.parametrize(
+    "path",
+    sorted(p for root in REDUCTION_ROOTS for p in root.rglob("*.py")),
+    ids=lambda p: str(p.name),
+)
+def test_no_set_iteration_order_reaches_an_artefact(path: Path) -> None:
+    """CLAUDE.md invariant 3's fourth clause, which had no static guard.
+
+    The invariant names four things and this file guarded three of them: the
+    random source, the fold order, and the line ending. *"No dict/set iteration
+    order dependence in anything affecting output"* was enforced by convention
+    only, and the convention did hold -- this guard was written against a tree it
+    reported clean, over both roots -- but a clause with no guard is a clause
+    whose next violation is found by a reader rather than by the suite.
+
+    Added when ``pytest-xdist`` made the exposure worse rather than merely
+    theoretical. A serial run holds one ``PYTHONHASHSEED`` for its whole
+    duration, so a set-ordering dependence is at least *consistent* within a run
+    and shows up as a cross-run diff. Four workers hold four seeds at once, so
+    the same dependence can make two tests in one run disagree.
+
+    Scoped like the reduction guard, and out of the same reasoning: ``src`` plus
+    ``scripts``, because a calibration script's frozen literals are an artefact
+    nobody can reproduce if a set chose their order, and not ``tests``, where a
+    set is usually being asserted about rather than written out.
+    """
+    offenders = _unsorted_set_iterations(_parse(path))
+    assert not offenders, (
+        f"{path}: {[f'{shape} at line {line}' for line, shape in offenders]} "
+        f"observes a set's order, which follows PYTHONHASHSEED; wrap it in "
+        f"sorted() so the order comes from the values"
+    )
+
+
+class TestTheSetOrderGuardItself:
+    """Controls for :func:`test_no_set_iteration_order_reaches_an_artefact`.
+
+    The guard passes over both roots, so without these every case below is a
+    property nobody has watched hold. The two that carry their weight are the
+    ``sorted()`` exemption -- a guard that flagged the fix would be worse than no
+    guard -- and the dict exemption, because flagging ``.items()`` would bury the
+    real finding under every loop in the codebase.
+    """
+
+    def test_a_for_over_a_set_call_is_caught(self) -> None:
+        tree = ast.parse("for name in set(names):\n    emit(name)\n")
+        assert _unsorted_set_iterations(tree) == [(1, "for over a set")]
+
+    def test_a_set_literal_is_caught(self) -> None:
+        tree = ast.parse("for x in {'a', 'b'}:\n    emit(x)\n")
+        assert _unsorted_set_iterations(tree) == [(1, "for over a set")]
+
+    def test_a_comprehension_over_a_set_comprehension_is_caught(self) -> None:
+        tree = ast.parse("rows = [f(x) for x in {g(y) for y in ys}]\n")
+        assert _unsorted_set_iterations(tree) == [(1, "comprehension over a set")]
+
+    def test_listing_a_set_is_caught(self) -> None:
+        tree = ast.parse("order = list(set(names))\n")
+        assert _unsorted_set_iterations(tree) == [(1, "list() of a set")]
+
+    def test_joining_a_set_is_caught(self) -> None:
+        tree = ast.parse("key = ','.join(frozenset(parts))\n")
+        assert _unsorted_set_iterations(tree) == [(1, "join() of a set")]
+
+    def test_sorting_the_set_first_is_permitted(self) -> None:
+        """The fix must not be flagged, or the guard teaches the wrong lesson."""
+        tree = ast.parse(
+            "for name in sorted(set(names)):\n    emit(name)\n"
+            "order = list(sorted({'a', 'b'}))\n"
+        )
+        assert _unsorted_set_iterations(tree) == []
+
+    def test_a_dict_is_not_a_set(self) -> None:
+        """Insertion order has been guaranteed since 3.7; these are not offences."""
+        tree = ast.parse(
+            "for k, v in mapping.items():\n    emit(k, v)\n"
+            "order = list(mapping.keys())\n"
+            "rows = [f(v) for v in mapping.values()]\n"
+        )
+        assert _unsorted_set_iterations(tree) == []
+
+    def test_membership_against_a_set_is_not_an_iteration(self) -> None:
+        """Sets are the right tool for membership; only observing order is not."""
+        tree = ast.parse(
+            "if name in set(names):\n    emit(name)\nshared = {'a', 'b'} & other\n"
+        )
+        assert _unsorted_set_iterations(tree) == []
+
+
 def _text_writes_without_newline(tree: ast.AST) -> list[int]:
     r"""Return the lines calling ``write_text`` without pinning ``newline``.
 

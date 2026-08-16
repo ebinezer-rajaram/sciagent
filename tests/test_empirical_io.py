@@ -138,3 +138,89 @@ def test_a_failed_save_leaves_an_existing_table_intact(
         "a failed save damaged the table already on disk"
     )
     assert json.loads(dest.read_text(encoding="utf-8"))["counts"]
+
+
+def test_a_transient_read_failure_is_retried(
+    table: EmpiricalTable, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reader's half of the same race, which was once assumed not to exist.
+
+    ``save``'s docstring concluded from 2000 clean reads that readers are never
+    wrong. That held for two readers; it does not hold for the process count a
+    ``-n 4`` suite plus four agents reaches, where a reader died with errno 13 on
+    the gate table. Windows refuses an ``open`` for the window in which
+    ``os.replace`` holds the destination, so the reader has to wait exactly as
+    the writer does.
+    """
+    dest = tmp_path / "table.json"
+    table.save(dest)
+    real_read_text = Path.read_text
+    calls = 0
+
+    def flaky(
+        self: Path, encoding: str | None = None, errors: str | None = None
+    ) -> str:
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise PermissionError(13, "Permission denied")
+        return real_read_text(self, encoding=encoding, errors=errors)
+
+    monkeypatch.setattr(Path, "read_text", flaky)
+    recovered = empirical._read_text_contended(dest)
+
+    assert calls == 3, "the read did not retry a transient PermissionError"
+    assert json.loads(recovered)["counts"]
+
+
+def test_a_read_that_never_succeeds_raises_a_typed_error(
+    table: EmpiricalTable, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A permanent holder must surface as a TableError naming the cause.
+
+    Not as the bare ``PermissionError`` the filesystem raises: that reaches the
+    caller as an unhandled OS error indistinguishable from a missing file or a
+    permissions misconfiguration, and sends the reader looking in the wrong place.
+    """
+    dest = tmp_path / "table.json"
+    table.save(dest)
+
+    def always_denied(
+        self: Path, encoding: str | None = None, errors: str | None = None
+    ) -> str:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(Path, "read_text", always_denied)
+
+    with pytest.raises(TableError, match="holding it open"):
+        empirical._read_text_contended(dest)
+
+
+def test_load_goes_through_the_guarded_read(
+    table: EmpiricalTable, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The guard is worth nothing if the one caller that matters bypasses it.
+
+    ``load`` is the only reader of a cached table, and it read with a bare
+    ``read_text`` until a contended suite run caught it. This is the test that
+    fails if that bypass ever returns.
+    """
+    dest = tmp_path / "table.json"
+    table.save(dest)
+    calls = 0
+    real_read_text = Path.read_text
+
+    def flaky(
+        self: Path, encoding: str | None = None, errors: str | None = None
+    ) -> str:
+        nonlocal calls
+        calls += 1
+        if calls < 2:
+            raise PermissionError(13, "Permission denied")
+        return real_read_text(self, encoding=encoding, errors=errors)
+
+    monkeypatch.setattr(Path, "read_text", flaky)
+    reloaded = empirical.EmpiricalTable.load(dest, list(table.templates.values()))
+
+    assert calls == 2, "load did not retry, so it is not using the guarded read"
+    assert reloaded.version == table.version

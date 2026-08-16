@@ -54,7 +54,9 @@
 #
 # What this still does not verify is that pytest ran at all, or passed. The
 # caller asserts that. Closing it would mean this script owning the run, which
-# would forfeit backgrounding -- the thing that makes a 6m30s suite tolerable.
+# would forfeit backgrounding -- the thing that makes a minutes-long suite
+# tolerable. (Delegating the run to the suite-runner agent is the other way to
+# get that back; it owns the run without this script having to.)
 # Worktree-per-session removes the hazard at the root rather than detecting it.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"

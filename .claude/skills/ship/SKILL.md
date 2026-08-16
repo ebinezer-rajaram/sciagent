@@ -39,8 +39,9 @@ uv run mypy
 uv run ruff check .
 ```
 
-The suite is not cheap: ~7 minutes, of which one test is 147s. `/next` has
-usually just run it on this exact tree, so ask before repeating it:
+The suite is not cheap: about 2m30s at `-n 4 --dist loadfile`, of which one
+oracle test is ~134s. `/next` has usually just run it on this exact tree, so ask
+before repeating it:
 
 ```sh
 bash .claude/hooks/suite-freshness.sh check && echo FRESH || echo STALE
@@ -50,12 +51,17 @@ bash .claude/hooks/suite-freshness.sh check && echo FRESH || echo STALE
 
   ```sh
   bash .claude/hooks/suite-freshness.sh begin    # before pytest, not after
-  uv run pytest                                  # backgrounded
+  uv run pytest -n 4 --dist loadfile             # backgrounded
   bash .claude/hooks/suite-freshness.sh record
   ```
 
-  Backgrounded, and never alongside a subagent (CLAUDE.md records 30m37s from
-  contention). `record` refuses without a `begin`, and refuses again if the
+  Both flags are measured, not guesses — see CLAUDE.md. `-n auto` fails with
+  `MemoryError` on this desktop, and dropping `--dist loadfile` makes workers
+  duplicate 2000-replicate simulations. Backgrounded, and never alongside a
+  subagent:
+  four read-only agents cost a `-n 4` run 12–15%. Delegating the whole step to
+  `suite-runner` is the alternative that keeps the output out of context
+  altogether. `record` refuses without a `begin`, and refuses again if the
   tree moved while the suite ran — another session editing a tracked file
   mid-run means the result describes no single tree, so there is no truthful
   green to record. If it refuses, re-run on a settled tree rather than
@@ -137,10 +143,11 @@ instead. An inline self-check is not the independent judgement this step exists
 to get.
 
 `/code-review` runs as a background subagent, and with the lenses that is **five**
-concurrent agents rather than two. All five are read-only and do no CPU work, so
-they cost nothing against each other — but do not start any of them alongside a
-step-1 suite re-run. That is the 30m37s contention case §1 warns about, and five
-agents make it worse than the measurement, not better.
+concurrent agents rather than two. They are read-only and cheap against each
+other — but do not start any of them alongside a step-1 suite re-run. Four such
+agents were measured on 2026-08-16 costing a `-n 4` suite 12–15% while alive for
+only a fifth of it, so "read-only, so free" is the wrong premise even though the
+rule is the right one; five make it worse, not better.
 
 Fix what the review finds, then re-run step 1 — but only what the fixes could
 have broken. If the review changed **no** file, the freshness check still

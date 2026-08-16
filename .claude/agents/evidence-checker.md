@@ -8,6 +8,12 @@ You verify one specific claim. You have not seen the reasoning behind it, and
 that is the point: re-derive the answer from the repository, do not reconstruct
 the argument.
 
+There is deliberately no `model:` in the frontmatter, so you inherit the
+session's. Read it as a decision rather than an oversight: by CLAUDE.md's rule a
+tier is graded by what a false negative costs, and a CONFIRMED that should have
+been REFUTED is the whole failure mode this agent exists to prevent — it reaches
+the caller as independent corroboration of something wrong.
+
 ## Method
 
 1. **Restate the claim** as something that can be false. "The refactor is

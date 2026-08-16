@@ -3898,3 +3898,330 @@ predating the system it scores; that test, not the commit dates alone, is what
 lens 6 should apply. Nothing here changes the audit's standing — it also
 returned three correctly clean lenses, and being wrong about a real ordering fact
 in the conservative direction is the failure mode that costs least.
+
+## 2026-08-16 — the shared cache's reader was never guarded, and four workers found it
+
+**Found by breaking it.** `pytest-xdist` at `-n 4` failed a suite run with
+`PermissionError: [Errno 13]` reading `.cache/tables/gate-2000-...json`, inside
+`EmpiricalTable.load` at `empirical.py:499`. Not an ordering defect and not a
+test bug: the shared table cache's **read** path had no guard at all.
+
+**Why it was missed, which is the useful part.** The write half is elaborately
+hardened — `save` writes a per-pid temporary and retries `os.replace` eight
+times on `PermissionError`, and `tests/test_empirical_io.py` covers that
+mechanism deterministically by patching `os.replace`. Its docstring concluded
+from the out-of-band probe — two writers, two readers, 2000 clean reads —
+*"Readers are never wrong; writers merely have to wait."* The second clause is
+still true. The first was an extrapolation from two readers, and it fails at the
+process count a `-n 4` suite reaches: Windows refuses an `open` for the window in
+which `os.replace` holds the destination, and with enough readers somebody lands
+in it. `load` read with a bare `path.read_text` on the strength of that sentence.
+
+**Measured, both arms of the same harness**, four writers against six readers and
+six against eight, differing only in the reader's call:
+
+| reader | writers/readers | reads | failures |
+|---|---|---|---|
+| `path.read_text` (before) | 4/6 | 900 | **4** |
+| `path.read_text` (before) | 6/8 | 1200 | **1** |
+| `_read_text_contended` (after) | 4/6 | 900 | 0 |
+| `_read_text_contended` (after) | 6/8 | 1200 | 0 |
+
+**Decision.** `_read_text_contended` mirrors `save`'s retry on the read side,
+using the same `_REPLACE_ATTEMPTS`/`_REPLACE_BACKOFF_S`, raising `TableError`
+rather than letting a bare `PermissionError` reach a caller who would read it as
+a missing file. `load` goes through it. Backoff is fixed, not jittered, for the
+reason it is in `save`: nothing here may consult a random source (invariant 3),
+and the wait affects timing only, never bytes. Three tests follow the file's
+established pattern — retry, typed give-up, and one asserting `load` still routes
+through the guard, which is the test that fails if the bypass ever returns.
+
+**This was latent without xdist.** Worktrees deliberately share one
+`.cache/tables`, so concurrent sessions are the same race with fewer processes.
+xdist did not create it; it made it reproducible, which the 2026-08-16 entry on
+the review step had recorded as impractical — *"a real two-process race is slow
+and intermittent"*. It cost five parallel suite runs to see once, and about
+twenty seconds to see on demand afterwards.
+
+**Closes off.** `save`'s docstring no longer asserts readers cannot fail; it
+records what the old probe did and did not establish. Any future reader of a
+cached artefact should go through the same door.
+
+**What this is *not*, since the shapes invite confusion.** `_publish` and
+`_read_text_contended` are both single doors, and that much is the same lesson —
+protection applied to some callers and forgotten at others is what hid this bug
+and what `_publish` was introduced to prevent. Their *behaviour on failure is
+deliberately opposite*, and neither is the other's equivalent. A failed write is
+survivable because the computation succeeded and the table is in hand: `_publish`
+swallows a `TableError` and returns it. A failed read has nothing to return, so
+`_read_text_contended` raises, and the three `load` sites in `tests/slice_tables.py`
+deliberately have no handler. An exhausted read means the file is held by
+something that is not going away in 1.4 seconds, and continuing from that would
+mean inventing a table.
+
+## 2026-08-16 — infrastructure: pytest-xdist adopted at -n 4, and what the contention rule actually is
+
+**Decision.** `pytest-xdist` is in the dev group and the suite runs at
+**`-n 4 --dist loadfile`**. This closes the item left open on 2026-08-15, whose
+stated condition was *"a parallel run whose results are byte-identical to the
+serial one, not a wall-clock improvement."* That condition is met and was checked
+as stated: junit outcome sets diffed per test id, 1031 tests, `1024 passed, 7
+skipped` identically at `-n 4`, `-n 6` and serial, across four separate parallel
+runs.
+
+**`--dist loadfile` was added late, and the run that justified it nearly did not
+happen.** With the default `load`, wall-clock ranged **135.88s to 282.96s** across
+runs of the same tree — which looked like scheduling noise and was not. Tests in
+a module share simulated rows through the gate table, so splitting a module
+across workers makes each worker re-simulate at 2000 replicates what a sibling
+already built. Per test, serial against default `load`:
+
+| test | serial | `-n 4` |
+|---|---|---|
+| `test_every_in_library_scenario_is_identifiable[S5]` | **0.00s** | **120.07s** |
+| `test_the_floor_never_exceeds_what_greedy_achieves[S3]` | **0.00s** | **118.14s** |
+| `test_the_floor_never_exceeds_what_greedy_achieves[S1]` | 89.74s | 118.62s |
+
+A test that costs nothing serially costing two minutes in parallel is duplicated
+work, not contention, and it explains what had looked like an unrelated puzzle:
+why `-n 6` (253.70s) and `-n auto` (279.16s) came out *slower* rather than merely
+no faster. More workers split more modules. `--dist loadfile` keeps a module on
+one worker and the duplication disappears: **151.30s**, with only one oracle test
+left in the slowest eight where plain `load` showed four.
+
+The general lesson is worth more than the flag. A wall-clock range that looks
+like noise is worth one `--durations` diff against serial before it is written
+off, because the shape that produced it here — a suite whose expensive work is
+cached *within* a process — is invisible in a total and obvious per test.
+
+**Measured** on the developer desktop, 12 logical processors, 16 GB, warm tables:
+
+| invocation | wall clock | outcome |
+|---|---|---|
+| serial | **262.44s** | 1024 passed, 7 skipped |
+| `-n 4` | **159.37s / 166.52s** | identical result sets |
+| `-n 6` | **253.70s** | identical, but no better than serial |
+| `-n auto` (12) | **279.16s** | **3 failed** — `MemoryError` ×3 |
+
+**The prediction was right about the mechanism and wrong about the bound.** The
+2026-08-15 entry reasoned that `-n auto` "cannot finish faster than its slowest
+single test, so the floor is ~2m30s… still a threefold win". The floor argument
+holds, but the binding constraint is **memory, not cores**: twelve workers on
+16 GB die inside `np.fft.rfft`, and six are slow enough to be pointless. The real
+figure is **1.6x**, not 3x. `-n 4` is also what `-n auto` resolves to on the
+4 vCPU cloud VM, so one flag is right on both surfaces.
+
+**Not in `addopts`, deliberately.** Worker startup takes a single file from
+**1.76s to 3.41s**, and the project's own guidance is to run one file while
+iterating. The flag lives in the full-suite invocation and in `suite-runner`.
+
+**What the contention rule turns out to be.** Four read-only `decisions-sweeper`
+agents alongside a `-n 4` run: **183.25s and 185.37s** against ~163s idle, about
+**12–15%**, while alive for only ~38s of the run. So the operational rule both
+skills already state — do not run agents alongside the suite — is confirmed, and
+the premise offered for it, *"read-only and do no CPU work, so they cost
+nothing"*, is not. The **30m37s** figure was never a local measurement: it comes
+from `1c01fb1`'s commit message, taken on the 4 vCPU cloud VM against a **7m50s**
+baseline on that same VM, and it appears nowhere in this file — a four-slice
+sweep over all 3900 lines confirms it. `CLAUDE.md` had paired it with the
+desktop's 6m30s idle figure from six days later, splicing two machines into a
+4.7x that neither measured.
+
+**The suite is also faster than recorded for an unrelated reason.** 262.44s
+serial for 1024 tests, against 390.96s for 980 on 2026-08-15 — `35cf96a`'s
+optimisation pass, which took the slowest test from 146.88s to 89.74s.
+
+**Closes off.** Every wall-clock figure in this file before today is serial, and
+the two are not comparable — this is the hazard the 2026-08-16 performance entry
+raised when it declined to parallelise the replicate loop. The mitigation is that
+`suite-runner` reports its invocation beside its timing, and `CLAUDE.md` now asks
+the same of anyone recording one. Note the distinction that entry turns on:
+parallelising `with_structure` changes the execution model on the path invariant
+3 protects, and still wants its own gate. xdist distributes whole tests across
+processes, each of which runs the simulation exactly as before, so it does not.
+
+**Left open, both raised by the pre-commit review and both costs rather than
+defects.** Neither is fixed here, because both want a decision rather than a
+reflex at ship time.
+
+1. **`save_gate_table` is a read-modify-write, and `-n 4` makes losing one
+   routine.** `gate_table()` loads the shared file, callers grow it, and
+   `save_gate_table` publishes the whole table, so two workers that both load,
+   both add a row and both save leave only the later one's row. Correctness is
+   untouched — the file's own comment establishes that storing a superset is safe
+   because a row is a pure function of `(defect, template, seed)` — but a lost
+   row is re-simulated at 2000 replicates, which the same comment calls the
+   single most expensive thing in the suite. Serially all growth happens in one
+   process and nothing is lost; across four workers it is a per-run event rather
+   than the rare cross-session one it was. **This is not the marginal cost the
+   first draft of this entry claimed** — under default `load` it was the
+   dominant one, worth over 230 seconds across two tests, and `--dist loadfile`
+   contains it only by keeping a module's tests together. It is contained, not
+   fixed: two *modules* that grow the same rows still land on different workers.
+   A merge-on-write in `_publish` for this one file is the obvious fix and has
+   its own narrower race.
+2. **A cold cache under four workers is not merely four times slow.**
+   `slice_table()` is `lru_cache`d per process, so after a version bump up to
+   four workers each build the full table concurrently — 3m11s apiece, in
+   parallel, on a machine where `-n auto` already exhausted 16 GB with the tables
+   *warm*. Warm the cache before a parallel run following any version bump, or
+   run that first suite serially.
+
+**One new exposure the adoption creates, checked and clean but worth naming.**
+xdist workers are separate processes, so a single suite run now holds **four
+`PYTHONHASHSEED` values at once**, where a serial run held one for its whole
+duration. That is a genuinely new shape for invariant 3's dict/set-ordering
+clause, not merely more of an old one. The lens-3 audit sampled the sites most
+plausibly on a path from an unsorted `set`/`.items()` to a stored or printed
+value — `verify/relevance.py`, `verify/verdict.py`, `systems/llm/transcripts.py`,
+`systems/llm/agent_sdk_provider.py` — and found each either membership-only or
+sorted before use, with `agent_sdk_provider.py` documenting the choice for this
+exact reason. The existing discipline anticipates multi-process hash seeds; it
+simply had not met xdist. The sweep was sampled rather than exhaustive across
+roughly ninety sites, so this is "no counterexample found", not a proof.
+
+## 2026-08-16 — infrastructure: a worktree reads its agents from the shared checkout
+
+**Settled, and it is the unfavourable answer.** The 2026-08-16 entry on the
+recall fan-out left this waiting: *"whether a worktree session reads
+`.claude/agents/` from its own tree or from the shared checkout.
+`invariant-auditor` exists in both, so it does not discriminate."* It reads from
+the **shared checkout**. An agent written in a worktree cannot be used from that
+worktree's session; it becomes available when its branch reaches `main`.
+
+**What discriminated it.** `suite-runner` was written in a worktree and exists
+nowhere else — launching it returned `Agent type 'suite-runner' not found`, with
+`decisions-sweeper` listed as available in the same message. `decisions-sweeper`
+is committed and present in both trees, which is exactly why it could not settle
+this on its own.
+
+**The other candidate cause is refuted, not merely set aside.** That entry also
+recorded *"the agent registry is read at session start, so a newly written agent
+file does not resolve in the session that writes it"*. The registry does refresh
+mid-session: `decisions-sweeper` was absent from this session's agent list at
+startup and was announced to it later, when `b3b01a5` landed on `main` — before
+the worktree existed. So a session restart is not the remedy and never was; the
+merge is. What remains true is the practical advice, for a different reason than
+the one given.
+
+**Closes off.** `recall/SKILL.md`'s fallback stands and is now the documented
+route for any agent authored in a worktree: inline the contract into
+`general-purpose` at `sonnet` and say which form was used. `suite-runner` carries
+the same note. This session used that fallback for its own verification run,
+which is the honest form of the precedent — the agent whose definition it added
+could not run it.
+
+## 2026-08-16 — invariant 2 is violated: a system can write its own posterior
+
+**Found by the pre-commit audit, on a branch that did not cause it.** `/ship`'s
+lens 2 reported it against unrelated work, and it is recorded here rather than
+fixed in that branch because the fix is its own piece of work. It is the most
+serious thing in this file.
+
+**The violation.** `systems/base.py:137-140` exposes the live posterior engine:
+
+```python
+@property
+def engine(self) -> EmpiricalTableEngine:
+    """Return the posterior engine. Read-only in effect: it writes the numbers."""
+    return self._engine
+```
+
+"Read-only in effect" is a **docstring**, and invariant 2 says in terms: enforce
+with runtime assertions, not comments. `EmpiricalTableEngine.record`
+(`inference/empirical.py:679-706`) is public and takes an arbitrary
+`result: DiagnosticVector`. Its two guards check that the experiment id is fresh
+and that the template matches the table. **Neither constrains the numbers.** The
+posterior is a pure function of recorded observations (`log_likelihood_total`),
+so a system that writes observations writes its own posterior — and therefore its
+own score.
+
+**Demonstrated by execution, not by reading.** A system that calls
+`investigation.engine.record(...)` with results it chose and then concludes
+honestly:
+
+| system | abstain | leading | log score | experiments charged |
+|---|---|---|---|---|
+| honest | 0.000216 | 0.999784 | **-12.2043** | 1 |
+| poisoner | 0.005893 | 0.994107 | **-7.4069** | 1 |
+
+Steering pins the posterior exactly on 4 of 5 targets, and on S2 reaches
+`truth_mass=1.000000, log_score=0.0000` — a perfect proper score for one charged
+experiment, with `run_scenario` raising nothing.
+
+**Why nothing catches it.** `campaign.py:214-220` re-derives the expected
+diagnosis with `diagnose(scenario.id, engine, ...)` — from *the same engine*. A
+system that poisons the state and then reports honestly is compared against a
+derivation from its own poisoned source, so `_audit` checks a lie against itself.
+The two tests that guard this (`tests/test_systems.py`'s `Liar` and `Hedger`)
+both fabricate the *returned* `Diagnosis`, which is the case `_audit` does catch;
+the state-side case is untested. `ClosedWorldScore`'s propriety argument holds
+over *reports* and is void over *state*.
+
+**A17 does not reach it either.** Invariant 2 names four quantities —
+plausibility, a posterior value, a metric definition, a score — and only
+`plausibility` has a sealed-symbol declaration (`PLAUSIBILITY_SYMBOLS`,
+`hypothesis/graph.py:83-88`). `record` is outside A17's scope by construction.
+Plausibility itself is genuinely enforced and is the model to copy:
+`HypothesisGraph.__post_init__` re-derives the whole vector and raises
+`PlausibilityWriteError` on disagreement.
+
+**The cheapest detection, named because it is nearly free.** `campaign.py:229`
+stores `experiments=len(investigation.history)` — experiments actually run —
+while the posterior comes from `engine.observations`, which is real *plus*
+fabricated. The two are never compared. That missing reconciliation is precisely
+the absent runtime assertion.
+
+**Also over-exposed, same root cause.** `engine.expand(h)`
+(`empirical.py:830`) takes a `HypothesisNode` directly, so a system can admit a
+hypothesis to the engine without `graph.propose` and its A16/A18 validation. It
+ignores `h.plausibility`, so it is not a plausibility channel — it is the same
+boundary leak.
+
+**A second, lower-severity violation, traced but not executed.**
+`Investigation.propose`'s `predictions` parameter (`systems/base.py:222-268`)
+lets a system author the thresholds it is graded against: a `Prediction` carries
+a `Condition` holding floats, `validate_prediction` checks satisfiability,
+non-tautology and non-overlap but never that the numbers came from the framework,
+and `verify/statistical.py:92-93` then grades the system with them. The framework
+has the correct derivation in `table_prediction`, whose docstring — *"why no
+baseline in this package contains a number"* — is the tell: the defence is that
+in-repo systems decline to use the parameter, not that it cannot be used. No
+system currently passes `predictions=`; the only caller is framework-side.
+
+**Left open, deliberately and with the shape of the fix named.** Sealing the
+engine behind a recording boundary the system cannot reach, plus the
+`history`-versus-`observations` reconciliation as a runtime assertion. Whether
+any recorded run has ever exercised this is **not** answerable by inspection: it
+needs a registry sweep comparing each run's `experiments` count against its
+engine observation count, and no artefact currently stores the latter.
+
+## 2026-08-16 — invariant 3's fourth clause finally has a guard
+
+**Decision.** `test_no_set_iteration_order_reaches_an_artefact` in
+`tests/test_invariants.py`, with a `TestTheSetOrderGuardItself` control class,
+over `src` and `scripts`.
+
+**Why it was missing and why now.** The invariant names four things and the file
+guarded three: the random source, the fold order, the line ending. *"No dict/set
+iteration order dependence in anything affecting output"* was convention only,
+found by lens 3 of the same pre-commit audit. The convention held — the guard was
+written against a tree it reports clean over both roots, and the cross-
+`PYTHONHASHSEED` child-process arms of A1 and A15 exercise it end to end for the
+pipelines they run — but a clause with no static guard is one whose next
+violation is found by a reader.
+
+`pytest-xdist` is what moved it from theoretical to worth doing. A serial run
+holds one `PYTHONHASHSEED` throughout, so an ordering dependence is at least
+consistent within a run; four workers hold four seeds at once, so the same
+dependence can make two tests in one run disagree.
+
+**Scoped to sets, deliberately not dicts.** A dict has preserved insertion order
+since 3.7, so flagging `.items()` would put noise on the commonest loop in the
+codebase, and noise is how a guard gets suppressed rather than obeyed. A set's
+order is a function of its members' hashes, and for `str` that is a function of
+the seed. Four shapes are caught — `for` over a set, a comprehension over one,
+`list()`/`tuple()` of one, `join()` of one — and `sorted()` is exempt because it
+is the fix. Syntactic and therefore a floor, not a proof: a set arriving through
+a parameter is invisible to it, which is the same bargain the other three guards
+strike.

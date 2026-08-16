@@ -107,19 +107,40 @@ personal config file because cloud sessions clone the repo and see nothing from
   comprehension: how a module works, whether an invariant holds. The test is
   whether the result could be checked with a grep — if checking it means
   redoing the work, do not delegate. Say what you delegated and what came back.
+  The one exception is work that does not fit one context at all: reading 226KB
+  of `DECISIONS.md` is not grep-checkable either, but the alternative there is
+  not doing it rather than doing it yourself, so the test does not apply.
 - For the verification case specifically, use the `evidence-checker` subagent.
   It has not seen your reasoning, which is the whole point: you are the worst
   judge of a claim you just made.
+- **Launch in parallel only where the work is genuinely independent.** A list is
+  not fan-out: if three items touch one file, that is a sequence wearing a
+  list's clothing. Three places here clear the bar — `/ship` step 2's four
+  invariant lenses plus `/code-review`, `/recall`'s four `decisions-sweeper`
+  slices, and triaging a suite run that came back with more than about three
+  unrelated failures, one agent per failure. The 30m37s figure is about
+  **CPU**, so what it forbids is a subagent running *alongside the suite* — it
+  does not forbid concurrent read-only agents, which is why five at once in
+  `/ship` step 2 costs nothing. The triage case is safe for a second reason
+  worth stating separately: pytest has already exited.
 - **Invoking `/ship` is the authorisation for its step 2 subagents.** Run
-  `/code-review` and, when the diff touches `sciagent/` or an agent-reachable
-  path, `invariant-auditor` — without asking, and *before* committing. Shipping
+  `/code-review` and, when the diff touches `src/sciagent/` or an agent-reachable
+  path, `invariant-auditor` as its four lenses — without asking, and *before*
+  committing. That path is spelled from the repository root deliberately: there
+  is no top-level `sciagent/`, and a condition naming a directory that does not
+  exist never fires. Shipping
   136550a without them cost two defects that reached `main`: a hook fix verified
   against the wrong invocation form, and a cache override in an untracked file
   no worktree could read. Both were found by the review minutes after the push,
   and either would have been caught before it.
-- Choose a subagent model only when the fit is obvious: haiku or sonnet for
-  mechanical enumeration and pattern matching. Otherwise omit the model and
-  inherit the session. Never pin opus explicitly.
+- **Grade a subagent's model by what a false negative costs, not by what the
+  task looks like.** An agent that misses something reports "nothing found",
+  which is indistinguishable from a clean sweep — so cheapness is only
+  affordable where you could catch the miss yourself. `haiku` for work whose
+  answer a grep would recover (`invariant-auditor` lens 4 is the type case);
+  `sonnet` for bounded judgement or extraction from prose; otherwise omit the
+  model and inherit the session, which is how the expensive lenses get the
+  strong model. Never pin opus explicitly.
 
 When compacting, preserve the list of modified files, the commands used to
 verify the work, and any decisions the user pushed back on.

@@ -28,12 +28,24 @@ hook_read_payload() {
 # caller could be anywhere. The landmark check is what makes the result
 # trustworthy, and callers whose correctness depends on being in the right tree
 # must treat failure here as fatal rather than carrying on.
+#
+# WHICH tree, when there are several. One git worktree per concurrent session
+# means CLAUDE_PROJECT_DIR is no longer a synonym for "the tree these hooks
+# belong to". Measured: with the variable pointing at the main tree and the
+# session's cwd inside a worktree, the old precedence resolved to the *main*
+# tree, whose hash differs -- so suite-freshness.sh would have pinned, recorded
+# and checked against a tree the run never touched. That is the false green the
+# script exists to prevent, arriving through the back door.
+#
+# So the script's own location wins. These hooks are checked in, so a worktree
+# has its own copy under its own .claude/hooks, and BASH_SOURCE therefore names
+# the tree whose files this invocation is about. CLAUDE_PROJECT_DIR is kept only
+# as a fallback for a caller that somehow has no readable script path.
 hook_cd_project() {
     local root=""
-    if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -d "${CLAUDE_PROJECT_DIR}" ]; then
+    root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd)"
+    if [ -z "$root" ] && [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -d "${CLAUDE_PROJECT_DIR}" ]; then
         root="$CLAUDE_PROJECT_DIR"
-    else
-        root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd)"
     fi
     [ -n "$root" ] || return 1
     cd "$root" 2>/dev/null || return 1

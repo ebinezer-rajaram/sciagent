@@ -18,6 +18,7 @@ fresh one.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
 from functools import lru_cache
 from pathlib import Path
@@ -72,7 +73,27 @@ REPLICATES = 2000
 TABLE_SEED = Seed(20260803)
 
 #: Where built tables are kept between runs. Gitignored: derived, not authored.
-CACHE = Path(__file__).resolve().parents[1] / ".cache" / "tables"
+#:
+#: ``SCIAGENT_TABLE_CACHE`` overrides the location so that several git worktrees
+#: can share one warm cache. Without it every new worktree starts cold, which
+#: costs more than the contention a worktree per session avoids: acquiring this
+#: table in a fresh worktree was measured at **3m11s** cold against **1.06s**
+#: through a shared warm cache, a factor of 181. (``DECISIONS.md`` records 46x
+#: for the item 9 gate, which is a wider instrument -- it does more than acquire
+#: the table.)
+#: Sharing is safe because a cached file is content-addressed over the table's
+#: own address and ``ENV_VERSION`` (see :func:`_cache_key`), so a tree can only
+#: ever read a file that agrees with what it would have built; and because
+#: :meth:`EmpiricalTable.save` replaces atomically, so a concurrent reader
+#: cannot observe a half-written one.
+#:
+#: Unset falls back to this tree's own ``.cache/tables``, which is the previous
+#: behaviour exactly -- cloud sessions never set it and are unaffected.
+CACHE = (
+    Path(_cache_override).expanduser().resolve()
+    if (_cache_override := os.environ.get("SCIAGENT_TABLE_CACHE"))
+    else Path(__file__).resolve().parents[1] / ".cache" / "tables"
+)
 
 
 def _cache_key(probe: EmpiricalTable, *parts: str) -> str:

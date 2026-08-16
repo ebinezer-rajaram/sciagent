@@ -97,8 +97,10 @@ personal config file because cloud sessions clone the repo and see nothing from
   `bash .claude/hooks/suite-freshness.sh check`: it reports whether a full run
   already passed on a byte-identical tree, and `/next` and `/ship` between them
   used to run it three times per item. Pin with `begin` before starting pytest
-  and `record` after — `record` refuses if another session edited a tracked
-  file mid-run, because such a run describes no single state of the tree.
+  and `record` after — `record` refuses if a tracked file moved mid-run, because
+  such a run describes no single state of the tree. Worktrees make that rare
+  rather than routine, but it still catches your own edits during a backgrounded
+  run, which is exactly what backgrounding invites.
 - You decide when to delegate to subagents; do not ask each time. Delegate for
   coverage: wide sweeps, locating call sites, enumerating across many files,
   and independently verifying a claim you have already made. Do it yourself for
@@ -114,6 +116,40 @@ personal config file because cloud sessions clone the repo and see nothing from
 
 When compacting, preserve the list of modified files, the commands used to
 verify the work, and any decisions the user pushed back on.
+
+## Concurrent local sessions
+
+**Work in a git worktree, one per session.** Several local sessions run against
+this repository at once. Sharing one working tree meant they edited each other's
+files, and the cost was not theoretical: a suite that ran 18:00–18:07 on
+2026-08-15 was certified green against a tree a second session had changed at
+18:05:56. It also blocked real work — `DECISIONS.md` records a one-line fix left
+unmade "because another session was holding the file", and `pytest-xdist` (a
+measured threefold win) left uninstalled because `uv add` writes two files
+another session was committing to.
+
+Use `EnterWorktree` at the start of a session that will edit anything. It
+creates the tree under `.claude/worktrees/`, which is gitignored — so the parent
+`git status` stays clean, VS Code's search skips it, and the explorer can still
+browse it. `/ship` merges the branch back to `main`.
+
+Two things follow that are easy to get wrong:
+
+- **A merge voids the green.** The suite verified *your* tree; merging `main` in
+  changes it, so the result no longer describes what lands on `main`. Merge
+  first, then verify — never the reverse. Nothing extra is needed to notice: the
+  merge moves the tree hash, so `suite-freshness.sh check` reports STALE by
+  itself.
+- **Never resolve another session's conflict.** Stop and report it. The tree may
+  be mid-refactor in a session you cannot see, and that call is the user's.
+
+Worktrees do **not** buy parallel testing: the 30m37s contention figure is CPU,
+and it applies across worktrees exactly as within one.
+
+All trees share one table cache through `SCIAGENT_TABLE_CACHE`, set per-machine
+in `.claude/settings.local.json`. Without it a new worktree starts cold against
+a 46x cold/warm gap. Unset — as in every cloud session — the path falls back to
+the tree's own `.cache/tables`, which is the original behaviour.
 
 ## Working style
 

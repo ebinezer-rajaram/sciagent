@@ -50,6 +50,8 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
@@ -88,6 +90,16 @@ from sciagent.inference.interface import (
 from sciagent.inference.ppc import posterior_predictive_check
 
 _LN2 = math.log(2.0)
+
+#: How many times :meth:`EmpiricalTable.save` retries its atomic replace, and how
+#: long it waits between attempts. Windows refuses ``MoveFileEx`` while another
+#: process holds the destination open, so a cache shared across worktrees turns
+#: a save into an occasionally-contended operation. Measured under deliberate
+#: contention the failure was rare -- one writer in two -- so a handful of short
+#: waits covers it with a wide margin, while still failing loudly rather than
+#: hanging if something holds the file open indefinitely.
+_REPLACE_ATTEMPTS = 8
+_REPLACE_BACKOFF_S = 0.05
 
 #: Widest seed the registry's ``INTEGER`` column holds without loss.
 _SEED_MODULUS = 1 << 63
@@ -400,12 +412,32 @@ class EmpiricalTable:
     # -- persistence -------------------------------------------------------
 
     def save(self, path: Path) -> None:
-        """Write the table to ``path`` as JSON.
+        """Write the table to ``path`` as JSON, atomically.
 
         Counts are small integers and there are few of them, so a readable
         encoding costs nothing and makes a stored table auditable by eye. The
         templates are *not* stored: they are declared by the environment, and
         :meth:`load` checks that the ones offered reproduce the recorded version.
+
+        Guarantees that a concurrent reader sees either the whole file or no file
+        at all, never a prefix of one. Two processes can reach the same cached
+        table at once -- worktrees share one ``.cache/tables`` so that a new tree
+        does not start cold, which is worth minutes -- and both then compute
+        the same content-addressed path and write it. A plain ``write_text``
+        truncates first, so a reader arriving mid-write gets a partial file and a
+        JSON error, which :meth:`load` would report as a corrupt table rather
+        than as the race it is. The temporary file is created in the destination
+        directory because :func:`os.replace` is only atomic within a filesystem.
+
+        The replace is retried, which is a Windows requirement rather than
+        defensiveness. Measured: two processes saving the same 8KB table 200
+        times each, against two readers, produced 2000 clean reads and zero
+        partial ones -- but one writer died with ``PermissionError`` (WinError 5),
+        because ``MoveFileEx`` refuses while another process holds the
+        destination open. Readers are never wrong; writers merely have to wait.
+        Retrying converts a flaky suite run into a slightly slower one. Backoff
+        is fixed rather than jittered: nothing here may consult a random source
+        (invariant 3), and the wait affects timing only, never bytes.
         """
         payload = {
             "version": self.version,
@@ -417,11 +449,31 @@ class EmpiricalTable:
             ],
         }
         path.parent.mkdir(parents=True, exist_ok=True)
+        # A distinct name per writer, so two processes racing on this path do not
+        # collide in the temporary file as well. os.replace is atomic on POSIX
+        # and on Windows, and overwrites an existing destination on both.
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
         # newline="\n" rather than the default: text mode otherwise translates
         # every newline to os.linesep on write, so a table saved on Windows and
         # the same table saved on Linux differ byte for byte while parsing
         # identically. A round trip cannot see it -- reading translates it back.
-        path.write_text(json.dumps(payload, indent=1), encoding="utf-8", newline="\n")
+        tmp.write_text(json.dumps(payload, indent=1), encoding="utf-8", newline="\n")
+        for attempt in range(_REPLACE_ATTEMPTS):
+            try:
+                os.replace(tmp, path)
+                return
+            except PermissionError as exc:
+                # Windows only, and transient: a reader has the destination open.
+                if attempt == _REPLACE_ATTEMPTS - 1:
+                    tmp.unlink(missing_ok=True)
+                    raise TableError(
+                        f"could not replace {path} after {_REPLACE_ATTEMPTS} attempts; "
+                        f"another process is holding it open"
+                    ) from exc
+                time.sleep(_REPLACE_BACKOFF_S * (attempt + 1))
+            except OSError:
+                tmp.unlink(missing_ok=True)
+                raise
 
     @classmethod
     def load(

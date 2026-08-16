@@ -13,3 +13,11 @@ wheels/
 # function of their content address and are rebuilt on demand (see
 # tests/acceptance/test_a06_a11.py). They are derived, not authored.
 .cache/
+
+# One git worktree per concurrent local session, created here by the harness.
+# A worktree is a checkout of this same repository, so leaving it untracked
+# would show every one of its files as untracked in the parent's `git status` --
+# the exact noise the worktrees exist to remove. Ignoring it also keeps VS Code's
+# search out of them (`search.useIgnoreFiles` defaults true) while leaving them
+# browsable in the explorer (`explorer.excludeGitIgnore` defaults false).
+.claude/worktrees/

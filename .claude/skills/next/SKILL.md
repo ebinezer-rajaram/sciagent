@@ -61,6 +61,8 @@ Tests first, for anything with an acceptance criterion:
 
    - **Never start a subagent while it runs.** A suite run measured at 30m37s
      against 6m30s from container contention alone is recorded in CLAUDE.md.
+     This applies across worktrees too: the contention is CPU, and isolation
+     does nothing for it.
    - Pin the tree *before* starting it and record after, so `/ship` need not
      repeat the run:
 
@@ -70,8 +72,9 @@ Tests first, for anything with an acceptance criterion:
      bash .claude/hooks/suite-freshness.sh record   # refuses if the tree moved
      ```
 
-     `record` will refuse if another session edited a tracked file while the
-     suite ran. That refusal is correct — re-run on a settled tree.
+     `record` refuses if a tracked file moved mid-run. In a worktree that is
+     usually your *own* edit while the suite ran in the background — re-run on a
+     settled tree rather than recording anyway.
 
 5. If a gate is still red, **stop**. SPEC §6 is the contract; do not proceed
    past a gate.

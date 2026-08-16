@@ -10,22 +10,23 @@ ask again for permission to commit.
 
 ## 0. Establish scope — before anything else
 
-**Other sessions edit this repository concurrently.** A dirty file is not
-evidence that you changed it. Ship only what *this* session changed.
+Check which tree you are in, because it decides how much of this step applies:
 
-1. List the paths you edited this session, from your own transcript. That list
-   is the scope. If you cannot name them with certainty, stop and ask.
-2. `git status --porcelain` for everything currently dirty.
-3. Anything dirty that is not on your list belongs to someone else. Name those
-   paths in your report and **leave them alone** — do not stage them, do not
-   revert them, do not fix their lint.
+```sh
+git rev-parse --git-common-dir    # differs from .git only inside a worktree
+```
 
-For each path you are about to claim, run `git diff -- <path>` and confirm the
-diff is only your work. Another session may have edited a file you also
-touched; `git add <path>` would stage their change with yours.
+**In a worktree (the normal case).** Nobody else can edit it, so everything
+dirty is yours and `git add -A` is safe. Skim `git status --porcelain` to
+confirm nothing surprising is there, and move on.
 
-**Never** `git add -A`, `git add .`, `git add -u`, or `git commit -a`. Stage
-by explicit path, always.
+**In the main tree, with other sessions live.** A dirty file is not evidence
+that you changed it. List the paths you edited this session from your own
+transcript; that list is the scope. Anything dirty and not on it belongs to
+someone else — name those paths in your report and **leave them alone**. Stage
+by explicit path, and never `git add -A`, `git add .`, `git add -u`, or
+`git commit -a`. If a file you touched was also touched by another session,
+`git diff -- <path>` first and stop if their work is mixed into yours.
 
 If your scope turns out to be empty, say so and stop. There is nothing to ship.
 
@@ -132,8 +133,11 @@ Where to commit depends on the surface. Check it rather than assuming:
 echo "${CLAUDE_CODE_REMOTE:-false}"   # "true" only in a cloud session
 ```
 
-**Local session** — commit to `main`. This repository works directly on `main`;
-do not create a branch unless asked.
+**Local session in a worktree** — commit to the worktree's own branch, then see
+§3a below for getting it onto `main`.
+
+**Local session in the main tree** — commit to `main` directly. This repository
+works directly on `main`; do not create a branch unless asked.
 
 **Cloud session** — commit to the branch the session is already on. Do not
 switch to `main`, and do not create a second branch. The GitHub proxy accepts a
@@ -141,6 +145,38 @@ push only for the session's current working branch, so a commit made on `main`
 is unpushable and has to be unwound.
 
 Show the message and the staged file list before running the commit.
+
+## 3a. Merge a worktree branch onto `main`
+
+Skip this if you committed directly to `main`.
+
+**A merge voids the green.** The suite verified *your* tree. Merging `main` in
+changes that tree, so the result stops describing what is about to land. Merge
+first and verify after — never the reverse. Ask which case you are in:
+
+```sh
+git merge-base --is-ancestor main HEAD && echo FF || echo DIVERGED
+```
+
+- **FF** — `main` has not moved since you branched. Fast-forward it. The tree is
+  byte-identical to what the suite ran on, so the green still holds and there is
+  **nothing to re-run**:
+
+  ```sh
+  git -C "$(git rev-parse --git-common-dir)/.." merge --ff-only <your-branch>
+  ```
+
+- **DIVERGED** — another session shipped first. Merge `main` into your branch,
+  then **go back to step 1**. No special handling is needed to notice: the merge
+  moves the tree hash, so `suite-freshness.sh check` reports STALE by itself.
+  Paying a second suite run here is the cost of the guarantee, not a failure.
+
+- **Conflict** — stop and report it. Do not resolve another session's code: the
+  tree may be mid-refactor in a session you cannot see, and that call is the
+  user's. Leave the merge in progress or abort it, say which, and ask.
+
+Do not delete the worktree as part of shipping. The user decides when it goes,
+via `ExitWorktree`.
 
 ## 4. Push
 

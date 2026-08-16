@@ -3504,3 +3504,60 @@ green". The **per-test** durations are comparable — every test compared lives 
 `test_oracle.py`, `test_a06_a11.py` or `test_baselines_slice.py`, none of which
 that work touches — but the suite wall-clock is not, and the green predates the
 merge. Re-run before shipping rather than trusting it.
+
+## 2026-08-16 — infrastructure: a worktree per local session, and what it took
+
+**Decision.** Concurrent local sessions each get their own git worktree, created
+under `.claude/worktrees/` and merged back to `main` by `/ship`. This closes the
+item left open on 2026-08-15 under "one working tree, two sessions, and a false
+green", which named worktrees as the root fix and the table cache as the blocker.
+
+**Why now, and the evidence it is not theoretical.** The shared tree had already
+blocked work twice in this file — a one-line cache fix left unmade "because
+another session was holding the file", and `pytest-xdist` (a measured threefold
+win) left uninstalled because `uv add` writes two files another session was
+committing to. It happened once more *during* this change: `main` moved from
+973d79a to be97cb0 mid-session, absorbing seventeen dirty files that were not
+mine.
+
+**The measured numbers, which are the whole justification.** Acquiring the slice
+table in a fresh worktree:
+
+| | cache | time |
+|---|---|---|
+| cold — the worktree's own, empty | `_verify/.cache/tables` | **3m11.316s** |
+| warm — shared via `SCIAGENT_TABLE_CACHE` | main tree's `.cache/tables` | **1.055s** |
+
+A factor of **181**. The 46x recorded on 2026-08-15 is not in conflict: it timed
+the item 9 gate, which does more than acquire the table. Without the shared cache
+every new worktree pays three minutes on first use and worktrees cost more than
+they save. Also measured, because both were guessed at in planning: a worktree
+`.venv` builds in **5.02s** (53 packages) and its apparent 593M is hardlinked to
+uv's cache — sampled link count 3, so it is not new disk.
+
+**Three hazards the earlier entry did not anticipate.** Each was found by probing
+rather than by reasoning, and each would have failed silently:
+
+1. **`hook_cd_project` resolved to the wrong tree.** It preferred
+   `CLAUDE_PROJECT_DIR` over its script-relative fallback, so a worktree session
+   with that variable pointing at the main tree pinned, recorded and checked
+   `suite-freshness` against a tree the run never touched — the exact false green
+   the script exists to prevent, arriving through the back door. The script's own
+   location now wins, since the hooks are checked in and therefore per-worktree.
+2. **`.claude/worktrees/` was not gitignored**, so every worktree's files showed
+   as untracked in the parent — the noise worktrees exist to remove.
+3. **`EmpiricalTable.save` was not atomic**, which only matters once trees share
+   a cache. Fixed with a temp file plus `os.replace`, then measured under
+   deliberate contention: 2000 reads, **0 partial**. But one *writer* died with
+   `PermissionError` (WinError 5) — Windows refuses `MoveFileEx` while another
+   process holds the destination open. Readers are never wrong; writers must
+   wait. Hence the bounded retry; without it, concurrent suites would be flaky
+   rather than corrupt.
+
+**Closes off.** Worktrees do **not** buy parallel testing — the 30m37s contention
+figure is CPU and applies across trees exactly as within one. `begin`/`record` is
+kept rather than removed: it still catches your own edits during a backgrounded
+run, which is what backgrounding invites. `record` still cannot verify pytest ran
+or passed; the caller asserts it, and that remains open. Cross-platform
+determinism is untouched — `SCIAGENT_TABLE_CACHE` is unset in cloud sessions, so
+the fallback path is the previous behaviour exactly.

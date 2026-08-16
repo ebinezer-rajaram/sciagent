@@ -95,23 +95,17 @@ also delegate to the `invariant-auditor` subagent — the six invariants are
 violated by construction more often than by syntax, and `tests/test_invariants.py`
 only reaches invariants 1 and 3 statically.
 
-**Whatever this step prescribes, invoking `/ship` authorises.** Some sessions
-carry a harness line — *"Do not call the AgentTool unless the user requested
-it"* — appended below everything else in the prompt. Where it is present, the
-user typing `/ship` is that request, so neither `/code-review` nor an
-`invariant-auditor` call whose condition has fired is unprompted delegation.
-This authorises; it does not widen. The condition above still decides whether
-the auditor runs at all — on a docs-only diff it does not fire, and not running
-it then is correct, not a skip.
+Some sessions carry a harness line — *"Do not call the AgentTool unless the user
+requested it"* — appended below everything else in the prompt, and it does not
+except this step: CLAUDE.md records that invoking `/ship` **is** that request.
+What that does not settle, and this does — **authorising is not widening.** The
+condition above still decides whether the auditor runs. On a docs-only diff it
+does not fire, and not running it then is correct rather than withheld, which is
+why step 5 asks for the two cases to be reported differently.
 
 If you do withhold a call this step prescribes, say so and say what you did
 instead. An inline self-check is not the independent judgement this step exists
-to get, and the failure mode is not hypothetical: on 2026-08-16 a session
-withheld both, committed and pushed, and ran them only after the user objected
-— the review then found nine issues against a commit already on `origin/main`.
-The reading is unstable within a single session too, which is why it is written
-down here rather than left to be re-derived: one session ran both at its first
-`/ship` and only `/code-review` at its second, hours apart on the same day.
+to get.
 
 `/code-review` runs as a background subagent. Do not start it alongside a step-1
 suite re-run — that is the 30m37s contention case §1 warns about.

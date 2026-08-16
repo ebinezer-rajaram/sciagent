@@ -3707,3 +3707,41 @@ comment now says what is true rather than what was intended.
 stderr rather than swallowed". Pytest captures stderr on a passing test, so in a
 green run that notice appears only under `-s`. Still not swallowed, but weaker
 than the earlier wording implies.
+
+## 2026-08-16 — /ship §3a cannot run from the worktree it mandates
+
+**Work left deliberately incomplete.** §3a's fast-forward, and the push step
+`d509ba0` added beside it, both reach the shared checkout through `git -C`. A
+worktree-isolated session is refused:
+
+```
+$ git -C "C:/Users/Ebinezer/Documents/Startup/sciagent" merge --ff-only worktree-delegation-gate
+Refusing to run it — a worktree-isolated session's git operations must target
+its own worktree.
+```
+
+Confirmed twice on this branch: once against the original
+`git -C "$(git rev-parse --git-common-dir)/.."`, and again after `d509ba0`
+rewrote it to resolve `main_tree` first. That rewrite fixed the shell quoting;
+it did not change what is being refused, because the refusal is on `-C` leaving
+the worktree, not on how the path was built.
+
+**Why it matters more than it looks.** `136550a` made worktree-per-session the
+default, so this is not an edge case — it is every ship. It blocks at the last
+step, after the suite is green and recorded, which is the most expensive place
+to discover it: the work is committed and verified, and only the ref move is
+left.
+
+**What was done instead.** `ExitWorktree` to leave isolation, then run the two
+commands from the main tree. That is the sanctioned exit rather than a way
+around the guard, and the skill already reserves the call for the user — so the
+practical shape is that a worktree ship ends by asking, which is worth knowing
+before it happens rather than at the blocked step.
+
+**Closes off.** No in-worktree form is known. `git push . HEAD:main` and
+`git branch -f main` are both expected to fail independently of the harness,
+since `main` is checked out in another worktree — **not tested here**, because a
+partial success would move the ref while leaving the main tree's index stale.
+This waits on one of two things: the harness permitting `--ff-only` against the
+common dir, or §3a being rewritten to end at `ExitWorktree` and hand the last
+two commands to the user rather than issuing them.

@@ -85,10 +85,16 @@ SCRIPT: tuple[Mapping[str, Any], ...] = (
     fixed_payload(1, (10, 20, 30, 40), name="latent_regime"),
 )
 
-#: S12's censoring genuinely misfits the closed set, so Stage A fires and V7 is
-#: asked for a proposal. A scenario whose check passes is the other half of the
-#: pair -- see :func:`_quiet_run`, where the layer exists and is never consulted.
-EXTENDING_SCENARIO = "S12"
+#: S11's mechanism is outside the agent grammar, so Stage A fires and V7 is asked
+#: for a proposal. A scenario whose check passes is the other half of the pair --
+#: see :func:`_quiet_run`, where the layer exists and is never consulted.
+#:
+#: S12 until 2026-08-16. Its truth is *in* the closed set and the old gate opened
+#: there only because the censoring nuisance fooled a check with no reading
+#: bearing on adequacy; once Stage A reads its own probe, S12 falls quiet and S11
+#: fires. The constant exists so this file names the extending scenario once --
+#: which is what made the move a one-line change. See ``docs/DECISIONS.md``.
+EXTENDING_SCENARIO = "S11"
 
 
 class _BrokenRecordSystem:
@@ -153,7 +159,7 @@ def _v7_run(
 
 @lru_cache(maxsize=1)
 def _extending_run() -> ScenarioRun:
-    """Run V7 once on S12. Cached; every proposal-record test reads it."""
+    """Run V7 once on S11. Cached; every proposal-record test reads it."""
     return _v7_run()
 
 

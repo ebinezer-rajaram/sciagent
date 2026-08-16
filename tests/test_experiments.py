@@ -116,19 +116,25 @@ class TestDesignIdentity:
     """A design's id and config are stable, readable and injective."""
 
     def test_slice_design_ids_are_unchanged_by_the_dsl(self) -> None:
-        """The four observational ids are the ones the table was always built on.
+        """The four original observational ids are the ones the table was built on.
 
         ``EmpiricalTable.version`` hashes template ids, so a design that rendered
         differently from the hand-built template it replaced would invalidate a
-        table that took minutes to build and, worse, would do it silently. The
-        fifth id is item 11's forced arrival, which moves the version *on
-        purpose*: it is a new design and the table has to be rebuilt to hold it.
+        table that took minutes to build and, worse, would do it silently.
+
+        Two ids here move the version *on purpose*, and both are additions rather
+        than re-renderings of an existing design. Item 11's forced arrival was the
+        first. ``query:size_gap_correlation`` is the second, added on 2026-08-16
+        with SPEC §4.3's amendment: it is the only design under which S11's
+        out-of-library mechanism is distinguishable from the closed set, and the
+        table has to be rebuilt to hold it.
         """
         assert [str(design.id) for design in slice_designs()] == [
             "query:count_autocorrelation_w2",
             "query:inter_arrival_dispersion",
             "query:phase_conditioned_dispersion",
             "query:size_dispersion",
+            "query:size_gap_correlation",
             "force[arrival@0=0.01,1=0.02,2=0.03,3=0.04,4=0.05,5=0.06,6=0.07,"
             "7=0.08,8=0.09,9=0.1,10=0.11,11=0.12,12=0.13,13=0.14,14=0.15,"
             "15=0.16,16=0.17,17=0.18,18=0.19,19=0.2|20]:mean_rate",

@@ -91,6 +91,7 @@ class Investigation:
         "_proposed",
         "_scenario_id",
         "_seed",
+        "_stage_a",
         "_targets",
         "_truth",
     )
@@ -105,6 +106,7 @@ class Investigation:
         engine: EmpiricalTableEngine,
         graph: HypothesisGraph,
         seed: Seed,
+        stage_a: ExperimentId | None = None,
     ) -> None:
         if not designs:
             raise InvestigationError(
@@ -118,6 +120,7 @@ class Investigation:
         self._engine = engine
         self._graph = graph
         self._seed = seed
+        self._stage_a = stage_a
         self._history: list[ExecutionResult] = []
         self._proposed: dict[HypothesisId, Defect] = {}
         self._targets: dict[ExperimentId, tuple[HypothesisId, ...]] = {}
@@ -173,8 +176,32 @@ class Investigation:
         return self._engine.posterior()
 
     def ppc(self) -> PPCResult:
-        """Return a posterior predictive check over what has been recorded."""
-        return self._engine.ppc()
+        """Return the adequacy check: is the entertained space the right one?
+
+        This is SPEC §4.6's Stage A as a system sees it, and it is deliberately
+        **not** a check over everything recorded. Where the scenario supplies a
+        Stage A reading, the check is scoped to it alone.
+
+        The reason is measured and is in ``docs/DECISIONS.md``. The combination
+        rule scales the harmonic mean by ``1 + ln(n)``, so a check over the whole
+        record dilutes the readings that bear on adequacy with the readings that
+        do not -- and on a budgeted run almost all of them do not, because BOED
+        selects designs to separate hypotheses *inside* the entertained set. An
+        experiment chosen for that says close to nothing about whether the set is
+        the right one. Scoped, S11 reads 0.0112 and every in-library scenario
+        stays quiet; unscoped, S11 reads 0.2090 and nothing fires anywhere.
+
+        The full-record check is still computed and reported -- ``ScenarioRun.ppc``
+        keeps it, since it is the honest summary of how well the entertained set
+        explains everything seen. What is scoped is the check a system *acts on*,
+        which is the one SPEC F6 makes extension conditional upon.
+
+        Falls back to the full record when the scenario declares no Stage A
+        reading, so an environment that supplies none behaves exactly as before.
+        """
+        if self._stage_a is None:
+            return self._engine.ppc()
+        return self._engine.ppc(experiments={self._stage_a})
 
     # -- what a system may do ----------------------------------------------
 

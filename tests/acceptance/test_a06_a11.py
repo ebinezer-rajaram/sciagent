@@ -785,24 +785,62 @@ MISSPECIFICATIONS: tuple[tuple[str, Defect], ...] = (
 )
 
 
+#: The design SPEC §4.6's Stage A gate actually reads, named the way
+#: ``slice_scenarios`` names it. Power measured over every template is an upper
+#: bound no budgeted run attains; power measured over this one is what the gate
+#: can do, and therefore what SPEC §6.2 means by the rate the LLM must not be
+#: credited with.
+PROBE_TEMPLATE = "query:size_gap_correlation"
+
+
+def probe_of(
+    records: Sequence[tuple[ExperimentId, ExperimentTemplate, DiagnosticVector]],
+) -> ExperimentId:
+    """Return the id of the Stage A reading among ``records``."""
+    for experiment, template, _ in records:
+        if str(template.id) == PROBE_TEMPLATE:
+            return experiment
+    raise AssertionError(
+        f"no {PROBE_TEMPLATE!r} reading among {[str(t.id) for _, t, _ in records]!r}; "
+        f"the Stage A design is no longer in the slice's templates"
+    )
+
+
 @lru_cache(maxsize=1)
 def ppc_outcomes() -> Mapping[str, tuple[float, ...]]:
-    """Return the check's p-value per scenario, per defect type.
+    """Return the check's p-value per scenario, per defect type, in two regimes.
 
     ``"correct"`` holds the correctly-specified arm, whose ground truth is in the
     hypothesis set the engine holds.
+
+    Each misspecification is reported twice. ``label`` is the check over every
+    template -- what the engine could see given the whole catalogue at once --
+    and ``label/probe`` is the same runs checked over the Stage A design alone.
+    The second is the operative one and the first is an upper bound: no budgeted
+    run records every template, and since 2026-08-16 the gate a system acts on is
+    scoped to the probe. Reporting only the first would credit the check with
+    power no investigation can draw on, which is exactly the direction SPEC §6.2
+    warns about.
     """
     simulate = simulator(GRAMMAR)
     outcomes: dict[str, tuple[float, ...]] = {
         "correct": tuple(
             engine_over(records).ppc().p_value
             for _, records in benchmark()[:MISSPECIFIED]
-        )
+        ),
+        "correct/probe": tuple(
+            engine_over(records).ppc(experiments={probe_of(records)}).p_value
+            for _, records in benchmark()[:MISSPECIFIED]
+        ),
     }
     for label, defect in MISSPECIFICATIONS:
-        outcomes[label] = tuple(
-            engine_over(observe(defect, label, index, simulate)).ppc().p_value
-            for index in range(MISSPECIFIED)
+        arms = tuple(
+            observe(defect, label, index, simulate) for index in range(MISSPECIFIED)
+        )
+        outcomes[label] = tuple(engine_over(records).ppc().p_value for records in arms)
+        outcomes[f"{label}/probe"] = tuple(
+            engine_over(records).ppc(experiments={probe_of(records)}).p_value
+            for records in arms
         )
     return outcomes
 
@@ -810,16 +848,23 @@ def ppc_outcomes() -> Mapping[str, tuple[float, ...]]:
 class TestA9PosteriorPredictiveChecks:
     """A9: the check's size is bounded and its power is reported per defect."""
 
-    def test_a9_false_positive_rate_is_within_twice_nominal(self) -> None:
-        """On correctly-specified scenarios the check fires at most 2 alpha."""
-        p_values = ppc_outcomes()["correct"]
+    @pytest.mark.parametrize("arm", ["correct", "correct/probe"])
+    def test_a9_false_positive_rate_is_within_twice_nominal(self, arm: str) -> None:
+        """On correctly-specified scenarios the check fires at most 2 alpha.
+
+        Both regimes are bounded, and the scoped one has to be: it is the check a
+        system now gates on, so its size is the false-positive rate of every
+        proposal an investigation makes. A bound that held only over the whole
+        catalogue would bound nothing anyone acts on.
+        """
+        p_values = ppc_outcomes()[arm]
         assert len(p_values) == MISSPECIFIED
         false_positives = sum(1 for p in p_values if p < ALPHA)
         rate = false_positives / len(p_values)
         assert rate <= 2.0 * ALPHA, (
-            f"the check fired on {false_positives}/{len(p_values)} correctly "
-            f"specified scenarios, a rate of {rate:.1%} against a nominal "
-            f"{ALPHA:.0%}"
+            f"in the {arm!r} regime the check fired on {false_positives}/"
+            f"{len(p_values)} correctly specified scenarios, a rate of "
+            f"{rate:.1%} against a nominal {ALPHA:.0%}"
         )
 
     def test_a9_detection_power_is_reported_per_defect_type(self) -> None:
@@ -831,17 +876,49 @@ class TestA9PosteriorPredictiveChecks:
         check has no power at all, which would make baseline B1 a straw man and
         SPEC §4.6's first slice requirement unmeasurable -- so the control arm is
         asserted and the hard arm is only recorded.
+
+        **Both regimes, since 2026-08-16, and neither dominates.** Measured at
+        100 scenarios each:
+
+        =====================  ==============  ==========
+        misspecification       all templates   probe only
+        =====================  ==============  ==========
+        ``size_excitation``    52%             **90%**
+        ``size_mixture``       100%            **3%**
+        =====================  ==============  ==========
+
+        The Stage A probe is a *directional* instrument, and that is the finding
+        this test exists to keep visible. Against S11's own mechanism, scoping
+        nearly doubles power -- the combination rule scales by ``1 + ln(n)``, so
+        eight readings that say nothing about the mark-arrival coupling dilute
+        the one that does. Against a size-distribution mixture, which the probe
+        does not measure, scoping costs almost all of it.
+
+        So the number SPEC §6.2 says the LLM must not be credited with is 90%,
+        not 52%, and the price of it is written in the second row.
+
+        **What is asserted did not change, and that is deliberate.** The control
+        arm is asserted; the hard arm is recorded and bounded, exactly as before
+        the second regime existed. ``size_excitation`` is S11's own mechanism and
+        therefore the arm V7 is graded against, so a threshold placed on it here
+        -- in the same session that measured V7 against the gate it describes --
+        would be an acceptance bar written after seeing the system pass it. The
+        two-regime *reporting* is the finding; asserting on it is what the
+        invariant behind SPEC §11's LLM ordering forbids, and the discipline this
+        test was already written with says the same thing in its own words.
         """
         outcomes = ppc_outcomes()
         power = {
             label: sum(1 for p in outcomes[label] if p < ALPHA) / MISSPECIFIED
-            for label, _ in MISSPECIFICATIONS
+            for label in outcomes
         }
         assert power["size_mixture"] > 0.9, (
-            f"the check detected a defect in a component no closed-set hypothesis "
-            f"touches only {power['size_mixture']:.0%} of the time"
+            f"the catalogue detected a defect in a component no closed-set "
+            f"hypothesis touches only {power['size_mixture']:.0%} of the time; "
+            f"the probe cannot cover this direction and nothing else would"
         )
-        assert 0.0 <= power["size_excitation"] <= 1.0
+        for arm in ("size_excitation", "size_excitation/probe", "size_mixture/probe"):
+            assert 0.0 <= power[arm] <= 1.0
 
     def test_a9_check_reports_a_p_value_for_every_experiment(self) -> None:
         """Every recorded experiment is checked, not just the worst one."""

@@ -16,8 +16,9 @@ rather than a computation anywhere.
 diagnostics read off the same execution are correlated, and the engine's
 likelihood factorises across experiments only because each experiment is a
 separate execution under its own seed. One diagnostic per template keeps that
-factorisation exact rather than approximately true. The five here are the
-smallest set that separates the closed set of SPEC §4.2:
+factorisation exact rather than approximately true. The first five are the
+smallest set that separates the closed set of SPEC §4.2, and the sixth is there
+for what the closed set cannot express at all:
 
 +--------------------------------+----------------------------------------+
 | Template                       | What it decides                        |
@@ -29,7 +30,17 @@ smallest set that separates the closed set of SPEC §4.2:
 | ``size_dispersion``            | the arrival mechanisms cannot touch it,|
 |                                | so it is the check's control channel   |
 | ``force[arrival@...]:mean_rate``| self-exciting, or not                 |
+| ``size_gap_correlation``       | whether marks and arrivals are coupled |
+|                                | -- nothing in the closed set, which is |
+|                                | the point                              |
 +--------------------------------+----------------------------------------+
+
+The sixth separates no pair *within* the closed set and is not meant to. Every
+other row above is a statistic of one component in isolation, so a mechanism
+coupling two components while perturbing neither marginal was invisible: SPEC
+§4.5's S11 is exactly that, and the posterior predictive check had 0.000 power
+against it. It joins the set with SPEC §4.3's 2026-08-16 amendment, and is the
+design SPEC §4.6's Stage A gate reads. See ``docs/DECISIONS.md``.
 
 The first four are observational and separate every pair *except* Hawkes
 self-excitation from latent regime switching, which is correct and measured:
@@ -183,6 +194,33 @@ _QUERY_EDGES: Mapping[str, tuple[float, ...]] = {
     # rule-of-three floor. Splitting that region into thirteen cells rather than
     # three would multiply the smallest attainable p-value by four for nothing.
     "size_dispersion": (0.9, 0.95, 1.0, 1.05, 1.12, 1.25, 3.0, 8.0),
+    # The mark-arrival coupling. Every closed-set hypothesis is uncoupled and
+    # sits on zero -- piloted at 500 replicates, all five within 0.007 of it with
+    # a 2%-98% span of about [-0.09, +0.10], plain Hawkes included. S11's
+    # out-of-library mechanism spans [-0.19, -0.07] with a median of -0.132, so
+    # the two overlap only in [-0.09, -0.07].
+    #
+    # Placed on the same principle as size_dispersion above, and it points the
+    # opposite way from intuition. The tempting layout is fine resolution across
+    # S11's body, which is exactly wrong: the closed set puts no mass there, so
+    # each extra cell is unreached, contributes the rule-of-three floor to the
+    # posterior predictive tail, and *raises* the smallest p-value attainable on
+    # the one scenario this metric exists to detect. Two bins carry S11 -- below
+    # -0.13 and [-0.13, -0.09) -- and the remaining nine resolve the region where
+    # the closed set actually lives. Quantiles are in ``docs/DECISIONS.md``.
+    "size_gap_correlation": (
+        -0.13,
+        -0.09,
+        -0.065,
+        -0.045,
+        -0.025,
+        -0.005,
+        0.015,
+        0.035,
+        0.055,
+        0.08,
+        0.11,
+    ),
 }
 
 #: Interior edges of the post-burst mean rate, the fifth design's axis. Piloted
@@ -262,11 +300,19 @@ def forced_design() -> ExperimentDesign:
 def slice_designs() -> tuple[ExperimentDesign, ...]:
     """Return the slice's experiment designs, in a fixed order.
 
-    The four observational designs first, in metric-name order, then the forced
-    arrival. Four of the five separate every pair of the closed set except
-    Hawkes self-excitation from latent regime switching; the fifth is the only
+    The five observational designs first, in metric-name order, then the forced
+    arrival. Four of the six separate every pair of the closed set except Hawkes
+    self-excitation from latent regime switching; the forced arrival is the only
     thing that separates *that* pair (SPEC §4.2), which is why a scenario's
     oracle policy length is only a meaningful number once it is here.
+
+    The fifth observational design, ``size_gap_correlation``, discriminates
+    nothing *within* the closed set -- every member of it is uncoupled and sits
+    on zero. It is here for Stage A rather than for Stage B: it is the only
+    design under which S11's out-of-library mechanism is distinguishable from
+    the closed set at all, and without it SPEC §9's preregistered contrast
+    conditions on an event that never occurs. Expect it to be worth little
+    information gain on S1-S10 and to be selected late by BOED there.
 
     Guarantees a stable set of ids and outcome spaces, and therefore a stable
     :attr:`~sciagent.inference.empirical.EmpiricalTable.version`.

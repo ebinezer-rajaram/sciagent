@@ -183,13 +183,21 @@ class TestProposalIsGatedOnDetection:
         )
 
     def test_the_proposal_layer_is_asked_where_the_check_fires(self) -> None:
-        """S12's censoring genuinely misfits the closed set, so Stage A fires.
+        """S11 is out of library, so Stage A fires and extension is licensed.
 
         Asserted on the scenario rather than on a constructed case because what
         matters is that the gate opens on real evidence.
+
+        This was S12 until 2026-08-16, and the move is the point rather than an
+        adjustment. S12's truth is *in* the closed set -- regime switching, with
+        censoring as a nuisance -- so the old gate opening there was the nuisance
+        fooling a check that had no reading bearing on adequacy. Once Stage A
+        reads its own probe, S12 correctly falls quiet at 0.5083 and S11, the one
+        scenario whose mechanism is genuinely outside the library, fires at
+        0.0112. See ``docs/DECISIONS.md``.
         """
         layer = _layer()
-        _run("S12", layer)
+        _run("S11", layer)
         assert layer.calls > 0
 
     def test_a_refusing_provider_leaves_a_usable_investigation(self) -> None:
@@ -199,7 +207,7 @@ class TestProposalIsGatedOnDetection:
         the refusal and carries on. The scripted provider is given an empty
         script, which is how it refuses.
         """
-        run = _run("S12", _layer(script=()))
+        run = _run("S11", _layer(script=()))
         assert run.experiments > 0
         total = sum(
             float(run.diagnosis.distribution[h]) for h in run.diagnosis.distribution
@@ -210,7 +218,7 @@ class TestProposalIsGatedOnDetection:
         """The same, for a payload that does not decode."""
         broken = dict(fixed_payload(0, ()))
         broken["edits"] = [{"structure": 999, "parameters": []}]
-        run = _run("S12", _layer(script=(broken,)))
+        run = _run("S11", _layer(script=(broken,)))
         assert run.experiments > 0
 
     def test_a_missing_transcript_is_not_swallowed(self) -> None:
@@ -227,14 +235,14 @@ class TestProposalIsGatedOnDetection:
             TranscriptStore(mode=REPLAY),
         )
         with pytest.raises(TranscriptMissError):
-            _run("S12", empty)
+            _run("S11", empty)
 
 
 class TestDeterminism:
     """Two runs of V7 on one scenario agree exactly (SPEC §1, invariant 3)."""
 
     def test_two_runs_agree_exactly(self) -> None:
-        first, second = _run("S12"), _run("S12")
+        first, second = _run("S11"), _run("S11")
         assert first.diagnosis.distribution == second.diagnosis.distribution
         assert first.experiments == second.experiments
         assert first.ppc.p_value == second.ppc.p_value
@@ -248,7 +256,7 @@ class TestDeterminism:
         rather than re-derived.
         """
         recording = _layer(store=TranscriptStore(mode=RECORD))
-        original = _run("S12", recording)
+        original = _run("S11", recording)
         assert len(recording.store) > 0
 
         class Refuses:
@@ -262,7 +270,7 @@ class TestDeterminism:
                 raise AssertionError("a replay must not call the provider")
 
         store = TranscriptStore({t.address: t for t in recording.store}, mode=REPLAY)
-        replayed = _run("S12", ProposalLayer(Refuses(), AGENT_GRAMMAR, store))
+        replayed = _run("S11", ProposalLayer(Refuses(), AGENT_GRAMMAR, store))
         assert store.misses == 0
         assert replayed.diagnosis.distribution == original.diagnosis.distribution
         assert replayed.proposed == original.proposed

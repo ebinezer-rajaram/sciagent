@@ -140,6 +140,30 @@ class DuplicateMetricError(MetricError):
     """
 
 
+class StructureNotMeasurableError(MetricError):
+    """A structure compiles and executes, but a diagnostic cannot be estimated on it.
+
+    Distinct from :class:`ExecutionError`, which says the programme itself could
+    not be run. Here the programme runs and the *catalogue* cannot describe what
+    came out: acceptance test A2 guarantees every grammar-valid edit compiles,
+    and nothing guarantees the environment's own diagnostics have a value on the
+    result.
+
+    The slice's case is a genuine mismatch rather than a defect in either half. A
+    run is a fixed number of *events*, while the window-based diagnostics are
+    functions of its *duration*, so a structure with a very high effective rate
+    -- ``base_rate=10.0`` under ``branching=0.95`` is some two hundred events per
+    unit time -- packs the whole run into a span too short to hold two windows in
+    every phase bin. The grammar expresses such structures; the catalogue cannot
+    measure them.
+
+    Raised rather than papered over because a system searching structures must be
+    able to tell "this candidate is unmeasurable here" from "this candidate fits
+    badly", and a silently dropped candidate is indistinguishable from one that
+    was considered and rejected.
+    """
+
+
 class BudgetError(SciAgentError):
     """Base for faults in budget accounting."""
 

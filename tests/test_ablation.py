@@ -113,7 +113,7 @@ def _table() -> EmpiricalTable:
 
 
 def _investigation(
-    scenario_id: str = "S12",
+    scenario_id: str = "S11",
     *,
     steps: int = 2,
     entertained: Sequence[str] = ("hawkes", "regime_switching"),
@@ -413,7 +413,7 @@ class TestTheAblationPair:
         their brief, the brief is hashed into the address, and so an address
         collision would mean one arm replaying the other's answer.
         """
-        v3, v4 = _ablation_runs()["S12"]
+        v3, v4 = _ablation_runs()["S11"]
         assert v3.addresses and v4.addresses, "the layer was never asked"
         assert not set(v3.addresses) & set(v4.addresses)
 
@@ -483,7 +483,7 @@ class TestDeterminism:
         )
 
     def test_both_arms_agree_across_two_runs(self) -> None:
-        """S12, because it is the only scenario where the arms render a brief.
+        """S11, because it is the only scenario where the arms render a brief.
 
         A fresh pair per run, not one pair run twice: a layer's call counter and
         the scripted backend's script position both carry over, so the second run
@@ -492,8 +492,8 @@ class TestDeterminism:
         """
         v3_first, v4_first = _arms()
         v3_second, v4_second = _arms()
-        first = _run("S12", v3_first), _run("S12", v4_first)
-        second = _run("S12", v3_second), _run("S12", v4_second)
+        first = _run("S11", v3_first), _run("S11", v4_first)
+        second = _run("S11", v3_second), _run("S11", v4_second)
         for before, after in zip(first, second, strict=True):
             assert before.diagnosis.distribution == after.diagnosis.distribution
             assert before.experiments == after.experiments
@@ -569,9 +569,10 @@ class TestWhereTheDeltaIsDefined:
             f"neither arm's memory representation is ever rendered and R2's delta "
             f"is undefined across §9's whole cell"
         )
-        assert {key for key, count in asked.items() if count} == {"S12"}, (
+        assert {key for key, count in asked.items() if count} == {"S11"}, (
             f"the scenarios where R2 is measurable have moved: {asked}. "
-            f"docs/DECISIONS.md records S12 as the only one of §9's three that "
-            f"reaches the proposal layer, and that measurement is the item's "
-            f"finding -- re-measure and record before changing this"
+            f"docs/DECISIONS.md records S11 as the only one of §9's three that "
+            f"reaches the proposal layer -- it was S12 until the Stage A gate "
+            f"was scoped on 2026-08-16 -- and that measurement is the item's "
+            f"finding, so re-measure and record before changing this"
         )

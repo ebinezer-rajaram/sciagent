@@ -147,6 +147,9 @@ def slice_scenarios() -> tuple[Scenario, ...]:
     scenario perform byte-identical executions.
     """
     designs = slice_designs()
+    stage_a = next(
+        design for design in designs if str(design.id) == "query:size_gap_correlation"
+    )
     return tuple(
         Scenario(
             id=ScenarioId(name),
@@ -157,6 +160,7 @@ def slice_scenarios() -> tuple[Scenario, ...]:
             seed=Seed(_SEEDS[name]),
             nuisance=_NUISANCES.get(name, frozenset()),
             rationale=rationale,
+            stage_a=stage_a,
         )
         for name, scenario_class, truth, budget, rationale in _DEFINITIONS
     )

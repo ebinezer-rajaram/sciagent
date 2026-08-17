@@ -43,7 +43,10 @@ from sciagent.core.types import (
 from sciagent.verify.relevance import EvidenceIndex, EvidenceRecord, claim_targets
 from sciagent.verify.verdict import CheckClass, Finding, Outcome
 
-__all__ = ["CONFIDENCE_LEVEL", "arms", "check", "recompute"]
+__all__ = ["CONFIDENCE_LEVEL", "Z_TWO_SIDED", "arms", "check", "recompute"]
+"""``Z_TWO_SIDED`` is exported because it is the project's one normal quantile and
+:mod:`sciagent.eval.report` derives every reported interval from it. It was
+omitted while this module was the only consumer."""
 
 #: Nominal coverage of every interval this module derives.
 CONFIDENCE_LEVEL: Final = 0.95

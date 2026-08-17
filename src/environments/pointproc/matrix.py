@@ -53,8 +53,15 @@ from typing import Final
 
 from sciagent.core.types import ScenarioId
 from sciagent.eval.matrix import Cell
+from sciagent.eval.report import Preregistration
 
-__all__ = ["ABLATION_SCENARIOS", "CORE_SYSTEMS", "REPLICATES", "SPEC9_CELLS"]
+__all__ = [
+    "ABLATION_SCENARIOS",
+    "CORE_SYSTEMS",
+    "REPLICATES",
+    "SPEC9_CELLS",
+    "SPEC9_CONTRAST",
+]
 
 #: Seeds per cell. §9's "twenty seeds per cell", and the multiplier that turns 56
 #: cells into ~1,120 investigations.
@@ -99,3 +106,29 @@ def _cells() -> tuple[Cell, ...]:
 #: must visit the same cells in the same order, and a list somebody appended to
 #: at import time would be a different matrix with the same name.
 SPEC9_CELLS: Final[tuple[Cell, ...]] = _cells()
+
+#: SPEC §9's preregistered primary contrast, as data rather than as prose.
+#:
+#: Here for the same reason :data:`SPEC9_CELLS` is: it names two systems and a
+#: scenario, and the framework may not know one. What lives in
+#: :mod:`sciagent.eval.report` is :class:`~sciagent.eval.report.Preregistration`,
+#: the type.
+#:
+#: **This single instance is the thing with authority**, and the test that pins it
+#: against drift is what gives it that. A contrast against any other comparator, or
+#: one run unconditionally, comes back with ``preregistered=False`` when checked
+#: against this -- so the rule above has something to be stated with, instead of
+#: being merely written down.
+#:
+#: Not a guarantee of provenance. `contrast()` compares its arguments against
+#: whichever declaration it is handed, and both come from the same caller, so the
+#: flag catches an *accidental* mislabel rather than a fabricated one. See
+#: :class:`~sciagent.eval.report.Preregistration` for why that cannot be closed
+#: from inside the framework.
+SPEC9_CONTRAST: Final = Preregistration(
+    scenario=ScenarioId("S11"),
+    treatment="V7",
+    comparator="B4",
+    dimension="d3_intervention_similarity",
+    conditional_on_inadequacy=True,
+)

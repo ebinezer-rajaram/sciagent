@@ -67,8 +67,10 @@ that pools DEV and TEST cells is a mistake this store will not catch. That is
 deliberate: filtering would mean interpreting ``config``, which is the one thing
 that keeps the store domain-independent -- it holds opaque text and never asks
 what a cell is. Selecting rows by partition belongs to the report layer, which
-is its own entry in ``docs/BACKLOG.md`` and which has to select by address
-anyway, since a re-addressed cell leaves both rows in place.
+has to select by address anyway, since a re-addressed cell leaves both rows in
+place. That is :func:`sciagent.eval.report.summarise`, which matches a whole
+:class:`~sciagent.eval.matrix.CampaignAddress` -- partition included -- and
+refuses to report over no matching row.
 """
 
 from __future__ import annotations

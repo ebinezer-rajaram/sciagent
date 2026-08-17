@@ -53,8 +53,9 @@ platform and said to be, a matrix built partly on each would be internally
 incomparable with nothing in the registry to report it.
 
 Rendering the matrix. SPEC §8 forbids collapsing D1-D6 into one number, so the
-report layer is where that prohibition either holds or quietly fails, and it is
-its own entry in ``docs/BACKLOG.md`` rather than something to improvise here.
+report layer is where that prohibition either holds or quietly fails, which is
+why it was built deliberately rather than improvised here. It is
+:mod:`sciagent.eval.report`.
 """
 
 from __future__ import annotations
@@ -351,15 +352,25 @@ def run_matrix(
     callback rather than something this module does because ``sciagent`` may not
     import an environment.
 
-    It returns a ``CellReading`` and not a float mapping **so that the invariant
-    is structural rather than written down**. ``CellReading`` is constructible
-    only by :func:`reading_of`, which derives every field from
-    :mod:`sciagent.eval.scoring` and the run; rendering to the ledger's payload
-    is :meth:`CellReading.as_payload`, which this function calls itself. An
-    earlier version took ``Mapping[str, float]`` and relied on a docstring
-    saying the caller should not author one, which is the shape CLAUDE.md's
-    second invariant explicitly rejects -- "enforce with runtime assertions, not
-    comments".
+    It returns a ``CellReading`` and not a float mapping **so that a partial or
+    invented payload cannot be authored**. An earlier version took
+    ``Mapping[str, float]`` and relied on a docstring saying the caller should not
+    write one, which is the shape CLAUDE.md's second invariant explicitly rejects
+    -- "enforce with runtime assertions, not comments". Rendering to the ledger's
+    payload is :meth:`CellReading.as_payload`, which this function calls itself,
+    so no caller chooses the key names either.
+
+    **The narrowing is "only through the whole vector", not "only through**
+    :func:`reading_of` **".** An earlier version of this paragraph claimed the
+    latter and it is false: ``CellReading`` is a frozen dataclass with a public
+    ``__init__``, and both test modules construct one directly. What is true is
+    that constructing one costs a complete
+    :class:`~sciagent.eval.scoring.DimensionVector` and
+    :class:`~sciagent.eval.scoring.ClosedWorldScore` -- there is no way to supply
+    three fields and let the rest default -- so the friction a caller hand-rolling
+    a payload would meet is real, while a capability boundary is not something
+    Python offers. ``execute`` is harness code in any case, never
+    agent-reachable.
 
     ``skip_recorded=False`` executes every cell even when it is already
     recorded, which is the *verification* pass: the ledger then compares each

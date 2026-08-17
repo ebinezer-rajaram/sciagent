@@ -430,8 +430,8 @@ cell reading — D2 when the candidate ruled out something that happens, and
 `docs/DECISIONS.md` carries the argument and the rejected alternative.
 
 **Not closed by this**, and none of it is waiting on the driver: the platform
-precondition, the unmeasured subscription rate limits, and the D1–D6 report
-layer, which is the next entry below and stays open. The original entry follows,
+precondition and the unmeasured subscription rate limits. The D1–D6 report layer
+was the third, and is now done — see the entry below. The original entry follows,
 unedited.
 
 
@@ -463,7 +463,48 @@ address rather than assume one row per cell.
 **Touches.** No frozen decision. It is item 15's implementation, not a change to
 what item 15 is.
 
-## A report layer for D1–D6, since §8 forbids the obvious one
+## DONE (2026-08-17, item 15) — A report layer for D1–D6, since §8 forbids the
+## obvious one
+
+**Done.** `sciagent/eval/report.py`, with `scripts/report_matrix.py` as a thin
+CLI in front of it. `summarise` aggregates ledger rows into `CellSummary` rows
+carrying six `DimensionSummary` values; `render` prints them as one block per
+cell with six dimension columns and no total column; `contrast` is §9's
+preregistered question.
+
+**The prohibition is held by three separate things, not by the docstring.** No
+type in the module has a field or property whose name contains `total`,
+`overall`, `rank`, `combined`, `aggregate` or `composite`, and a parametrised
+test asserts that over `dataclasses.fields` and `vars` of each exported type
+rather than trusting the prose. `DIMENSIONS` is a six-tuple, so a seventh column
+would have to be added to it. And the rendered header is checked for the same
+substrings.
+
+**Two things this entry asked for and got, both refusals rather than defaults.**
+The platform and the grammar version are required arguments, and `summarise`
+raises without either — the ledger cannot supply the platform, because the
+registry content-addresses with no platform term, so a default would invent an
+answer. `--platform` and `--grammar` have no defaults on the CLI for the same
+reason, and a test asserts that. The exploratory caveat is rendered
+unconditionally.
+
+**Three decisions the entry did not settle**, all in `docs/DECISIONS.md`:
+intervals are normal 95% reusing `verify/numerical.py`'s `Z_TWO_SIDED` rather
+than a bootstrap; they are **not** clipped to each dimension's support, because
+clipping narrows an interval and would bias §12 criterion 5's non-overlap test
+toward the claim; and non-finite readings are counted and excluded rather than
+folded in, since one `-inf` on D2 would otherwise report twenty replicates as no
+measurement.
+
+**Also added:** `SPEC9_CONTRAST` in `environments/pointproc/matrix.py`, so
+`Contrast.preregistered` is *derived* from a declaration rather than asserted by
+whoever computes it. `Preregistration` (the type) is in the framework and the
+instance is beside the environment — the same split as `Cell`/`SPEC9_CELLS`.
+
+**Not closed by this.** No cell of the matrix has been run: the platform
+precondition and the unmeasured subscription rate limits both stand, and neither
+was ever waiting on this. The original entry follows, unedited.
+
 
 **Idea.** Render the matrix as a vector table: D1 through D6 per system per
 scenario, with intervals, and no total column. Nothing renders one today —

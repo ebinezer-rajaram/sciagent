@@ -5270,3 +5270,328 @@ with different payload bits (`0x7ff8…01`, `0x7ff8…02`) both render `'nan'` u
 construction. Lens 6 confirmed §9's contrast and its comparator B4 date to the
 initial commit `7f69717`, three days before V7 existed at `a380a21` — the
 ordering confound does not reopen.
+
+## 2026-08-17 — item 15: §8 says both "not applicable" and "in all cases", and the code had already chosen
+
+**The ambiguity.** SPEC §8 line 387 says that for closed-world scenarios S1–S10
+"D1–D6 not applicable". Line 391, four lines later, says "Report D1 through D6 as
+a vector in all cases". Taken literally the two cannot both hold for S1–S10.
+
+**Resolved as *not the headline* rather than *not computed*, and not by choosing.**
+The existing code had already settled it in two places, before the report layer
+existed to expose the tension: `scoring.primary_dimension` maps all five
+closed-world classes to `None` while returning a dimension name for the other
+two, and `CellReading` stores a `DimensionVector` *and* a `ClosedWorldScore` for
+every cell without regard to class. So the vector is computed everywhere and read
+as primary nowhere in the closed world. `report.CellSummary` follows that: six
+dimensions plus the proper score on every row, and `primary=None` saying which
+reading is authoritative.
+
+**Why this is worth recording rather than obvious.** The other reading — compute
+the vector only for out-of-library and compound cells — is the one a fresh session
+gets to from line 387 alone, and it would have made `summarise` branch on scenario
+class and emit ragged rows. That is a plausible afternoon's work in the wrong
+direction, and nothing in the code comments on line 387 at all.
+
+**Closes off.** Nothing about §8's wording, which is frozen and stays as written.
+If the two lines are ever reconciled in the spec, this entry is the record of
+which way the implementation went first.
+
+## 2026-08-17 — item 15: the report layer's intervals are normal, unclipped, and share `verify/`'s estimator
+
+**Decision.** `eval/report.py` reports a normal 95% interval on each cell's mean,
+reusing `verify/numerical.py`'s `Z_TWO_SIDED` and `CONFIDENCE_LEVEL` and folding
+through `core/reductions.py`. It is **not** clipped to each dimension's support,
+and non-finite replicates are excluded and counted rather than folded in.
+
+**Why not a bootstrap.** SPEC §12 criterion 5 asks for "a non-overlapping 95%
+interval" and names no estimator, so the choice was open. A bootstrap would need a
+seeded generator threaded into a *rendering* path, which makes a quoted figure
+stochastic — and `verify/numerical.py` already argues the general case: "an
+estimator chosen per claim is a degree of freedom". One estimator across the
+project costs a worse fit at n=20 and buys a number nobody can shop for.
+
+**Why not clipped, which is the part that would have gone wrong quietly.** D3 is
+bounded in [0, 1], and at twenty replicates an interval on a mean near the ceiling
+runs past it — measured on `[0.96, 1.0, 1.0, 1.0]`, mean 0.99, standard error
+0.01, upper bound ≈ 1.0096. Clipping that to 1.0 reads cleaner and is wrong in a
+specific direction: it **narrows** the interval, and §12 criterion 5's test is
+*non-overlap*, so clipping the leading arm makes the preregistered claim easier to
+satisfy. A presentation choice would have biased the headline result. Unclipped
+also leaves the bound overrun visible, which is the honest signal that twenty
+seeds is thin.
+
+**Why non-finite values are counted and excluded.** `-inf` and `nan` are ordinary
+here, not corruption: D2 is `-inf` when the candidate ruled out something that
+happens and `nan` on an empty held-out battery, and `log_score` is `-inf` whenever
+the truth got zero mass, which is B1's every run outside S9. `math.fsum` over one
+of those returns `-inf` for the whole cell and the variance then returns `nan`, so
+a folded-in report would show twenty replicates as `[nan, nan]` — no measurement,
+because one replicate was informative. A cell with no finite replicate gets `nan`
+and no interval, never `0.0`.
+
+**Closes off.** This is now the only interval estimator in the project, in both
+`verify/` and `eval/`. A second one would need a reason recorded here.
+
+## 2026-08-17 — item 15: what the report layer still leaves undone
+
+**Measured.** Full suite green at `-n 4 --dist loadfile`: **136.63s**, 1272
+passed, 7 skipped. `mypy` clean over 119 source files. Do not read this as a
+speed-up against the 204.17s recorded for the driver commit two entries above:
+that run rebuilt cold tables and this one had them warm, so the two are not a
+comparable pair. The count is not comparable either — the 1202 figure in that
+entry predates the review-driven tests the same commit then added, and 607 tracked
+test functions is unchanged by this change, which adds a new untracked file
+instead. (Both figures here were corrected during review: an earlier draft of this
+entry said 138.52s/1266, which was the run *before* the audits added tests, and
+gave a test-function count that the audit fixes then moved. Quoting a count in
+prose is a standing invitation to this; the tail of the pytest output is the
+figure that matters.)
+
+**Work left incomplete, unchanged by this.** Still no cell of the matrix has been
+run, and the two blockers that were never waiting on the report layer both stand:
+the platform precondition (an Ubuntu run of `determinism_child.py` diffed against
+the Windows baseline) and the unmeasured subscription rate limits. The third
+blocker, the report layer, is closed — so item 15's remaining work is now
+*entirely* those two, which is a narrower statement than the driver entry could
+make.
+
+**Deliberately not built, and this is the one worth flagging.** `render` emits
+ASCII only, and there is no machine-readable output — no CSV, no JSON. The first
+is a real constraint discovered rather than chosen: a literal `§` in printed
+output comes back as a replacement character on a Windows console at cp1252, so
+the section signs that are correct in a docstring are wrong in `print`, and a test
+pins `text.isascii()`. The second is scope: nothing consumes a matrix yet, and a
+serialisation format invented before its consumer would be the wrong one. The
+ledger is already the machine-readable artefact.
+
+**Closes off.** Nothing about which backend records the matrix — that still needs
+the rate-limit question answered, exactly as the 2026-08-15 entry left it.
+
+## 2026-08-17 — item 15: three audits, and two of my own tests could not fail
+
+**What the audits caught, and all three findings were about claims rather than
+about numbers.** Invariants 2 and 3 both hold in the report layer — no
+agent-reachable path to `summarise`/`contrast`/`render`, no arithmetic crossing two
+dimensions anywhere in the module, both folds through `core/reductions.py`, and
+`kind = scenario_class(scenario)` correctly hoisted above the `CellSummary(...)`
+argument list, which is the 2752203 evaluation-order hazard not repeated. What did
+not hold was three things I had written down.
+
+**1. `Contrast.preregistered` is a label check, not provenance — three docstrings
+said otherwise.** `contrast()` compares its arguments against a `Preregistration`
+the same caller supplies, so a fabricated declaration yields `preregistered=True`
+for any pairing; an auditor demonstrated it on a B5-on-D1 contrast. **It cannot be
+closed from inside `sciagent`**: a declaration names systems and a scenario, so
+under invariant 1 it must arrive from outside, and anything from outside is
+caller-supplied. Fixed by narrowing all three claims to what the flag buys — an
+*accidental* mislabel, which is the realistic error since the comparator and
+dimension are keyword arguments a later edit can change while the caption stays
+put — and by adding a test that asserts the forgery **succeeds**, so the limit is
+pinned rather than waiting to be rediscovered. The thing with authority is the
+single `SPEC9_CONTRAST` instance, pinned against drift by its own test.
+
+**2. `CellReading` is not "constructible only by `reading_of`", and this
+supersedes the claim in the 2026-08-17 driver entry above.** It is a frozen
+dataclass with a public `__init__`; both test modules construct one directly, and
+`run_matrix` applies no runtime check to the callback's return. The accurate
+narrowing — which is still a real one over the `Mapping[str, float]` it replaced —
+is **"only through the whole vector"**: there is no way to supply three fields and
+let the rest default, so a caller hand-rolling a payload meets real friction. A
+capability boundary is not something Python offers, and `execute` is harness code
+in any case. `eval/matrix.py`'s docstring now says the narrower thing and says
+explicitly that the stronger claim was wrong.
+
+**3. Two of my tests could not fail for the reasons their names gave.** Both found
+by mutation testing rather than by reading, which is the part worth generalising —
+I had read both and thought them fine.
+
+- `test_no_type_carries_a_collapsed_figure` parametrised over a **hand-written**
+  list of three types while `__all__` exports five, so `Contrast` and
+  `Preregistration` were unchecked; giving `Contrast` a `total_score` field and an
+  `overall_rank` property passed the entire file. Now derived from `__all__`, with
+  a second test asserting the derivation still sees all five. Also recorded
+  honestly in the module docstring: the substring check is a **tripwire, not a
+  proof** — a collapsed figure named `headline` would pass it — and what actually
+  holds §8 is `DIMENSIONS` being a six-tuple plus the absence of cross-dimension
+  arithmetic.
+- `test_the_rendered_table_names_the_primary_dimension` asserted only `"d3" in
+  text.lower()`, and `d3` appears in every report's column header and legend;
+  deleting the `primary dimension:` line from `render` entirely still passed. Now
+  asserts the label.
+
+**Measured, and this one cost two wrong mutations before it came out.** A third
+weak test needed a subtler fix. `test_the_row_order_does_not_change_the_rendering`
+used identical values per cell — no fold order-dependence reachable — and compared
+`render()` output, whose `.4f` rounds away exactly the last place a bad fold moves.
+Replacing it took two corrections:
+
+- *Distinct values are not enough.* With `(0.91, 0.87, 0.94, 0.89, 0.92)` a
+  naive fold gives two distinct means across the 120 orderings, but forward,
+  reversed **and** rotated all land on the same one. Reversal in particular
+  exercises less than it looks, because it keeps each cell's replicates
+  contiguous. The test now runs all 120 permutations and compares at
+  `float.hex()`.
+- **CPython's builtin `sum()` is not an order-dependent fold.** It applies
+  Neumaier compensation to floats, so `sum((0.91,0.87,0.94,0.92,0.89))/5` gives
+  `0x1.cfdf3b645a1cbp-1` — bit-identical to `math.fsum` — while an explicit
+  accumulator gives `0x1.cfdf3b645a1cap-1`. My first mutation used `sum()` and was
+  a silent no-op, which read as "the test is fine". Anyone reaching for `sum()` to
+  *fix* a determinism problem would get compensation by accident and never learn
+  why; anyone using it to *test* for one gets a false pass. `math.fsum` is still
+  the right call in `reductions.py` — it is exactly rounded, where Neumaier is only
+  nearly so.
+
+**Verified by mutation, not by reading.** All four now fail: collapsed field on
+`Contrast`, stripped primary-dimension line, `high` clipped to 1.0, and an
+order-dependent fold.
+
+**Left open, deliberately.** `scoring.primary_dimension` raises a bare
+`builtins.KeyError` for an unknown scenario class rather than a typed error from
+`core/errors`. `ScenarioClass` is a `Literal` so mypy catches it, and fixing it
+means editing `scoring.py`, which this change otherwise does not touch. Also: the
+report's rendered text is LF-only and ASCII, but Windows stdout is a text stream,
+so redirecting `scripts/report_matrix.py` and hashing the file gives a
+platform-dependent digest. Noted in that script's docstring; not fixed, because the
+ledger is the artefact and this is a view of it.
+
+## 2026-08-17 — item 15: a seed is in a cell's address but not in the campaign address, and the report pooled two campaigns
+
+**The defect, found by pre-commit review and measured.** `report.summarise`
+selected rows by matching a whole `CampaignAddress` — matrix version, partition,
+env, data and metric versions — and I recorded that as covering "every term of the
+address". It does not. `cell_key` also puts the **seed** in the `ExperimentKey`,
+and the seed is not on `CampaignAddress`. So a campaign re-run after its
+scenario-seed table changed appends a second row per replicate at a *new digest
+whose `config` is byte-identical*, and no version comparison can separate them.
+
+Measured on a three-replicate cell: one seed set at D3 0.10 and a re-seeded one at
+0.90 came back as **one cell of six replicates, point estimate 0.5000**, interval
+spanning both, and nothing raised. That is worse than a wrong number — the
+replicate count reads as a fuller campaign rather than a broken one, and 20 becomes
+40 exactly where somebody would take it as reassurance.
+
+**Fixed by refusing, not by picking.** `_refuse_reseeded` raises if one
+`(system, scenario, replicate)` has more than one row at the address, naming both
+seeds. Under the fourth invariant both rows are legitimate appends and neither
+supersedes the other, so the report layer has no basis to choose; the caller has to
+say which seed set it means. The alternative — threading `scenario_seed` into
+`summarise` so it can compute the expected seeds — is a larger interface for a case
+nobody has hit yet, and would still need this refusal underneath it.
+
+**Why the existing test did not catch it.** `test_a_re_addressed_cell_leaves_both_rows_and_only_one_is_read`
+exercises a *metric version* bump, which **is** on the address and therefore was
+excluded correctly. The seed is the one term of a cell's identity that the campaign
+address omits, so it was the one case the passing test did not represent. A test
+covering the general hazard through the one instance that happens to be handled is
+the shape to watch for.
+
+**A spec ambiguity surfaced and deliberately not resolved.** §9's contrast is
+"conditional on inadequacy detection", and `_arm` filters each arm by its own flag.
+`eval/matrix.py` argues at length that seeds are paired across arms so the contrast
+is not partly a comparison of worlds — and per-arm conditioning can undo exactly
+that, leaving V7 on seeds {a,b,c} and B4 on {b,c,d} with equal replicate counts and
+nothing visible to say so. Which reading §9 intends — each arm on its own
+detections, or both restricted to the seeds where they agree — the text does not
+settle, and deciding it inside the report layer would decide it by fiat. `Contrast`
+now carries `treatment_seeds`, `comparator_seeds` and a `paired` property, and the
+CLI prints it. **This needs answering before the contrast is quoted**, and it is not
+answered here.
+
+**Three smaller findings, fixed.** `DimensionSummary.level` was stored and rendered
+by nothing, so every printed interval was an unlabelled bracket — the header now
+states the level, read off a summary rather than restated so the two cannot drift.
+The CLI read four fields off `SPEC9_CONTRAST` but took the conditioning from the
+function default, so a declaration setting it `False` would have computed the
+conditioned contrast and printed `preregistered False` — the one combination that
+looks like a finding rather than a bug. And `--contrast` let
+`MalformedDesignError` escape as a traceback in a state its own help text calls
+legitimate; it is now a message and exit 3, distinct from the missing-ledger 2.
+
+**One thing deleted.** A public `cells_by` helper, unused, absent from `__all__` —
+and therefore outside the reach of the no-collapse tripwire that derives its type
+list from `__all__`. An unchecked public convenience for slicing cells, in the
+module whose job is not collapsing them, is not worth keeping for a line that reads
+better at the call site.
+
+## 2026-08-17 — item 15: a guard that checks the wrong property is worse than no guard
+
+**All four invariant lenses clean; every finding was a claim, and the worst one
+was a fix.** Lenses 2, 3, 4 and 6 ran on the report layer. Invariants 2, 3, 4 and
+6's reason clause all hold — no agent-reachable path to `summarise`/`contrast`/
+`render`, no arithmetic crossing two dimensions, no write path to the ledger, and
+the layer computes no score `scoring.py` does not already produce. Lens 6 verified
+independently that §9's contrast **and** the interval machinery predate the system
+they grade: the contrast is in `7f69717` (2026-08-01), `Z_TWO_SIDED` arrived at
+`91449a1` (2026-08-04 00:14), and V7 first exists at `a380a21` (2026-08-04 20:43).
+
+**The finding worth generalising: my fix for a bare subscript checked the wrong
+property, and its comment said the case was covered.** The previous audit round
+had me route `_arm`'s inadequacy read through `_values` "so a bare subscript would
+not raise an untyped `KeyError`". `_values` checks a field is **present**. The
+conditioning filter tests `flag == 1.0`. So a *present but non-boolean* value
+passed the guard and then silently failed the filter, **dropping the replicate**:
+measured, one replicate at `inadequate=2.0` moved a contrast arm from `point=0.6333
+n=3` to `point=0.9000 n=2` with nothing raised. The guard was worse than none,
+because the comment beside it told the next reader the case was handled. Split into
+`_flags`, which checks presence *and* value, now used by both `_rate` and `_arm`.
+
+Worth recording separately: the tampered value cannot arrive through
+`CellReading`, whose `inadequate` is a `bool`, so `reading(inadequate=2.0)` stores
+`1.0`. Reaching the defect at all required writing the payload directly — which is
+why this is a hand-built-report guard, and also why the first version of the test
+for it passed against the unfixed code.
+
+**Two overclaims of mine were false in ways a test was passing over.**
+
+- **"ASCII, deliberately, as is every other byte `render` emits"** — false.
+  `render` interpolates the platform, the grammar, and each cell's system and
+  scenario with no check, so `--platform "Ubuntu § café"` produced non-ASCII output
+  and a `UnicodeEncodeError` under cp1252 — exactly the failure the comment exists
+  to prevent. `test_the_rendering_is_ascii` passes an ASCII platform, so it went on
+  passing. Fixed by checking the *inputs*: `_refuse_non_ascii` on platform and
+  grammar in `summarise`, and on system and scenario in `_coordinate`, since those
+  arrive from the ledger rather than from a caller.
+- **"the result is a pure function of the rows and does not depend on the order
+  they arrive in"** — overstated. `cells` and the rendering are order-independent;
+  the `MatrixReport` *value* is not, because `rows` retains the order given, so two
+  reports over one campaign render identically and compare unequal. The docstring
+  now says which is which.
+
+**A defect I reintroduced two lines after writing the comment against it.**
+`render`'s new interval-level line read `report.cells[0].dimensions[DIMENSIONS[0]].level`
+— an `IndexError` on a cell-less report and a `KeyError` on one missing D1, both
+untyped, in the module whose every other failure is a `MalformedDesignError`. Worse,
+with two cells at different levels it printed the first one's as though it governed
+the table, which is the single thing `DimensionSummary.level` exists to prevent. Now
+`_level_of`, which reads every summary and refuses a disagreement.
+
+**Also fixed, smaller.** `_refuse_reseeded`'s exception *text* named whichever of
+the two seeds arrived first, so one situation produced two different messages
+("seeds 0 and 900" / "seeds 900 and 0") — an order-dependent output in a function
+whose docstring promises order-independence; the pair is now sorted, and the same
+canonicalisation applied to `_values`'s and `_rate`'s diagnostic picks. The
+`scenario_class` callback was taken entirely on trust though it decides which figure
+is the headline: an unknown class raised a bare `KeyError` out of `scoring.py`, and a
+*valid but wrong* one silently rendered S11 with no D3 headline. Now checked against
+`SCENARIO_CLASSES`. A self-contrast (`treatment == comparator`) collapsed two arms
+into one dict key and returned `overlaps=True exceeds=False paired=True` — an
+answer to a question nobody asked; refused. And `Z_TWO_SIDED` was absent from
+`verify/numerical.py`'s `__all__` while this layer derives every interval from it.
+
+**A formatting trap, measured.** A `\\u2013` escape in test source does **not**
+survive `ruff format` — it is normalised back to the literal character, which then
+trips ruff's own ambiguous-Unicode rule. Building the string with `chr(0x2013)` is
+what keeps the source ASCII and the test intact. Two rounds were spent discovering
+that.
+
+**Left as stated limitations, not fixed.** `platform` is validated for non-blankness
+and ASCII but not for *truth* — a caller can label a Windows run as Ubuntu, and the
+ledger has no platform term to check against, so this is not closable from here.
+`DIMENSIONS` is a rebindable module global typed `tuple[str, ...]` with no length
+pin; lens 2 confirmed the worst a rebind achieves is duplicating an already-reported
+figure as a seventh column, never synthesising a composite, since no site combines
+two payload fields. And nothing in this layer can detect an `execute` callback that
+took a number from an LLM response — `summarise` cannot distinguish a fabricated
+payload from a derived one, which is invariant 2's problem upstream and not this
+module's.

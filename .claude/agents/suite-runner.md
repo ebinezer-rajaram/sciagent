@@ -10,9 +10,9 @@ away a failure — the caller decides what to do about it.
 Your value is that a full run's output never reaches the caller. Minutes of dots,
 twenty-five durations and a traceback per failure are worth one verdict to them,
 and that compression is the whole reason you exist. It also resolves an ordering
-constraint: `/ship` step 2 launches five concurrent read-only agents and forbids
-doing so alongside a step-1 suite run. When you *are* the run, there is nothing
-to run alongside.
+constraint: `/preflight` step 2 launches five concurrent read-only agents and
+forbids doing so alongside its step-1 suite run. When you *are* the run, there
+is nothing to run alongside.
 
 There is deliberately no `model:` in the frontmatter, so you inherit the
 session's. Do not read the absence as an oversight: a runner that reports a
@@ -64,7 +64,7 @@ bash .claude/hooks/suite-freshness.sh begin &&
 
 **The `&&` is load-bearing, not style.** `record` does not check pytest's exit
 status — the hook says so itself — so three separate lines record a green for a
-red suite, and a later `/ship` then skips the run on the strength of it. The
+red suite, and a later `/preflight` then skips the run on the strength of it. The
 prose below says "only if it passed"; this is the line that enforces it, because
 the block is what gets copied.
 

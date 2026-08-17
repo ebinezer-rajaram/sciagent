@@ -19,7 +19,7 @@
 # PreToolUse fires before the write lands, so the file on disk still holds the
 # old content and the test would pass vacuously. Running after the write means
 # this does not prevent the edit -- it reports it immediately, with exit 2, so
-# the violation is fixed in the same breath rather than surfacing at `/ship`.
+# the violation is fixed in the same breath rather than surfacing at `/preflight`.
 #
 # COST, measured on this machine
 #

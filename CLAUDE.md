@@ -127,7 +127,9 @@ personal config file because cloud sessions clone the repo and see nothing from
   machines. `mypy` is 1.9s and needs no such care. Before repeating the suite, ask
   `bash .claude/hooks/suite-freshness.sh check`: it reports whether a full run
   already passed on a byte-identical tree, and `/next` and `/ship` between them
-  used to run it three times per item. Pin with `begin` before starting pytest
+  used to run it three times per item. That attribution is historical: the runs
+  are `/next`'s and `/preflight`'s now, and after the split `/ship` never runs
+  the suite at all. Pin with `begin` before starting pytest
   and `record` after — `record` refuses if a tracked file moved mid-run, because
   such a run describes no single state of the tree. Worktrees make that rare
   rather than routine, but it still catches your own edits during a backgrounded
@@ -146,26 +148,37 @@ personal config file because cloud sessions clone the repo and see nothing from
   judge of a claim you just made.
 - **Launch in parallel only where the work is genuinely independent.** A list is
   not fan-out: if three items touch one file, that is a sequence wearing a
-  list's clothing. Three places here clear the bar — `/ship` step 2's four
+  list's clothing. Three places here clear the bar — `/preflight` step 2's four
   invariant lenses plus `/code-review`, `/recall`'s four `decisions-sweeper`
   slices, and triaging a suite run that came back with more than about three
-  unrelated failures, one agent per failure. The contention is **CPU**, so what
-  it forbids is a subagent running *alongside the suite* — it does not forbid
-  concurrent read-only agents, which is why five at once in `/ship` step 2 is
-  affordable. Do not read "affordable" as free: four such agents cost a `-n 4`
-  suite 12–15% (measured 2026-08-16), so the exemption is for agents running
-  beside *each other*, never beside pytest. The triage case is safe for a second
-  reason worth stating separately: pytest has already exited.
-- **Invoking `/ship` is the authorisation for its step 2 subagents.** Run
-  `/code-review` and, when the diff touches `src/sciagent/` or an agent-reachable
-  path, `invariant-auditor` as its four lenses — without asking, and *before*
-  committing. That path is spelled from the repository root deliberately: there
-  is no top-level `sciagent/`, and a condition naming a directory that does not
-  exist never fires. Shipping
+  unrelated failures, one agent per failure. `/next`'s A-test lens joins them
+  only when an item names more than one gate; on the current all-untracked
+  backlog it is one agent and not fan-out at all. The contention is **CPU**, so
+  what it forbids is a subagent running *alongside the suite* — it does not
+  forbid concurrent read-only agents, which is why five at once in `/preflight`
+  step 2 is affordable. Do not read "affordable" as free: four such agents cost
+  a `-n 4` suite 12–15% (measured 2026-08-16), so the exemption is for agents
+  running beside *each other*, never beside pytest. The triage case is safe for
+  a second reason worth stating separately: pytest has already exited.
+- **Read-only review is authorised by the work; irreversible action is
+  authorised only by the user.** That is what licenses `/preflight`'s subagents
+  without asking, including when you invoked `/preflight` yourself: `/code-review`,
+  and when the diff touches `src/sciagent/` or an agent-reachable path,
+  `invariant-auditor` as its four lenses — *before* committing. That path is
+  spelled from the repository root deliberately: there is no top-level
+  `sciagent/`, and a condition naming a directory that does not exist never
+  fires. Shipping
   136550a without them cost two defects that reached `main`: a hook fix verified
   against the wrong invocation form, and a cache override in an untracked file
   no worktree could read. Both were found by the review minutes after the push,
   and either would have been caught before it.
+- **`/preflight` may run on your own initiative; `/ship` never may.** `/preflight`
+  scopes, verifies and reviews, and lands nothing — run it at the end of `/next`
+  without asking, and whenever else it would help. `/ship` commits, merges and
+  pushes, and the user's invocation of it *is* the authorisation. Do not supply
+  that yourself on the strength of your own confidence that the work is
+  finished: 136550a's own verification claimed to have checked both defects it
+  shipped.
 - **Grade a subagent's model by what a false negative costs, not by what the
   task looks like.** An agent that misses something reports "nothing found",
   which is indistinguishable from a clean sweep — so cheapness is only
@@ -252,10 +265,13 @@ eight. Anything new that reads a cached artefact should go through the same door
 ## Skills
 
 - `/next` (or `/next 12`) — drive one SPEC §11 backlog item: resolve the
-  cursor, A-test first, watch it fail, implement, verify.
+  cursor, A-test first, watch it fail, review the test, implement, verify.
 - `/decide` — append to `docs/DECISIONS.md`.
 - `/gate A9` — run one acceptance criterion and report the real outcome.
-- `/ship` — verify, review independently, commit and push.
+- `/preflight` — scope, verify and review independently. Lands nothing, so it needs
+  no permission and may run on your own initiative. `/next` ends with it.
+- `/ship` — commit, merge and push what `/preflight` has checked. The user invokes
+  this one; you never do.
 - `/recall <topic>` — find what was already decided, without reading 190KB.
 - `/handoff` — write a note so a session ending badly does not strand its work.
   Prefer `claude --resume`; this is the fallback when resuming is impossible.

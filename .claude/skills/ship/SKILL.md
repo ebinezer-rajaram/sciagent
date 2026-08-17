@@ -1,6 +1,6 @@
 ---
 name: ship
-description: Verify, independently review, commit and push finished work. Invoke as /ship when an item is done. Invoking it is the authorisation to commit and push.
+description: Commit, merge and push work that /preflight has already checked. Invoke as /ship when an item is finished. Invoking it is the authorisation to commit and push.
 ---
 
 # Ship
@@ -8,157 +8,59 @@ description: Verify, independently review, commit and push finished work. Invoke
 Invoking `/ship` **is** the "unless I ask" for committing and pushing. Do not
 ask again for permission to commit.
 
-## 0. Establish scope — before anything else
+This skill is the irreversible half. Scope, verification and independent review
+live in `/preflight`, which is safe to run at any time and which you may run on
+your own initiative. Nothing here is. **Do not invoke `/ship` yourself on the
+strength of your own confidence that the work is finished** — the user invokes
+it, and that invocation is the authorisation.
 
-Check which tree you are in, because it decides how much of this step applies:
+## 0. Verify first — run `/preflight`
 
-```sh
-git rev-parse --git-common-dir    # differs from .git only inside a worktree
-```
+`/preflight` establishes the scope, runs `mypy`, `ruff` and the suite, and runs the
+independent review. It is a precondition, not a suggestion: `136550a` was pushed
+without the review step and it cost two defects on `main`
+(`docs/DECISIONS.md`, 2026-08-16).
 
-**In a worktree (the normal case).** Nobody else can edit it, so everything
-dirty is yours and `git add -A` is safe. Skim `git status --porcelain` to
-confirm nothing surprising is there, and move on.
+- **If `/preflight` has already run and nothing has changed since** — usually
+  because `/next` ran it — say so, say when, and continue. Do not repeat it.
+- **Otherwise, run `/preflight` now**, in full, and read its report before touching
+  anything.
+- **If `/preflight` does not resolve** — `Unknown skill` — do not skip it and do
+  not push. A skill authored in a worktree is invisible to that worktree's own
+  session until its branch reaches `main`, the same rule `docs/DECISIONS.md`
+  (2026-08-16) records for `.claude/agents/`. Open
+  `.claude/skills/preflight/SKILL.md`, carry out its three steps inline, and say
+  that is what you did. This is the failure mode most likely to lose scope,
+  `mypy`, `ruff`, the suite *and* the review in one go, silently, one step
+  before a push — which is why it gets a branch of its own rather than a
+  footnote.
 
-**In the main tree, with other sessions live.** A dirty file is not evidence
-that you changed it. List the paths you edited this session from your own
-transcript; that list is the scope. Anything dirty and not on it belongs to
-someone else — name those paths in your report and **leave them alone**. Stage
-by explicit path, and never `git add -A`, `git add .`, `git add -u`, or
-`git commit -a`. If a file you touched was also touched by another session,
-`git diff -- <path>` first and stop if their work is mixed into yours.
+**"Nothing has changed since" is stricter than FRESH, and the two are not
+interchangeable.** `suite-freshness.sh` hashes `.py` under `src`, `tests` and
+`scripts`, plus `pyproject.toml` and `uv.lock`. It is silent on `docs/`,
+`.claude/` and everything else — deliberately, because `/decide` runs in the
+middle and a DECISIONS entry cannot change a test result. But it *can* change
+what the review should have seen. So a tree the hook calls FRESH may still carry
+edits the review never looked at: the suite and the review go stale on different
+inputs, and only the suite has a hook watching it. If any file changed after
+`/preflight` reported — not merely a hashed one — run it again.
 
-If your scope turns out to be empty, say so and stop. There is nothing to ship.
+Then check three things before proceeding:
 
-## 1. Verify, for real
+- **The tree is green.** If `/preflight` stopped on a red tree, stop here too.
+- **The scope is not empty.** If it is empty, there is nothing to ship; say so
+  and stop.
+- **No known finding is unresolved.** Do not carry one into a commit.
 
-`mypy` (1.9s) and `ruff` are cheap — always run them:
+Everything below stages from the scope `/preflight` established. Do not
+re-derive it, and do not widen it — with exactly one exception, named in §1: a
+`.claude/handoff/` note you are about to make obsolete. That deletion is a path
+`/preflight` never saw, because the note was not dirty when it looked. Add it to
+the scope deliberately and stage it by name; in the main tree, where staging is
+by explicit path, it is otherwise left unstaged and the stale note survives the
+commit that was supposed to retire it.
 
-```sh
-uv run mypy
-uv run ruff check .
-```
-
-The suite is not cheap: about 2m30s at `-n 4 --dist loadfile`, of which one
-oracle test is ~134s. `/next` has usually just run it on this exact tree, so ask
-before repeating it:
-
-```sh
-bash .claude/hooks/suite-freshness.sh check && echo FRESH || echo STALE
-```
-
-- **STALE** — pin the tree, run, then record. All three, in order:
-
-  ```sh
-  bash .claude/hooks/suite-freshness.sh begin    # before pytest, not after
-  uv run pytest -n 4 --dist loadfile             # backgrounded
-  bash .claude/hooks/suite-freshness.sh record
-  ```
-
-  Both flags are measured, not guesses — see CLAUDE.md. `-n auto` fails with
-  `MemoryError` on this desktop, and dropping `--dist loadfile` makes workers
-  duplicate 2000-replicate simulations. Backgrounded, and never alongside a
-  subagent:
-  four read-only agents cost a `-n 4` run 12–15%. Delegating the whole step to
-  `suite-runner` is the alternative that keeps the output out of context
-  altogether. `record` refuses without a `begin`, and refuses again if the
-  tree moved while the suite ran — another session editing a tracked file
-  mid-run means the result describes no single tree, so there is no truthful
-  green to record. If it refuses, re-run on a settled tree rather than
-  recording anyway.
-- **FRESH** — the full suite already passed on a byte-identical tree. Say so
-  explicitly, and say when: *"suite not re-run; freshness check reports the
-  identical tree already green."* Never write "tests pass" on the strength of
-  a cached verdict — report the cache as a cache.
-
-The check hashes every `.py` under `src`, `tests` and `scripts` plus
-`pyproject.toml` and `uv.lock`, by content rather than mtime, and fails toward
-STALE on any doubt. It deliberately ignores `docs/`, because `/decide` runs
-between the two suite invocations by design and a DECISIONS entry cannot change
-a test result.
-
-Paste the actual output. If anything is red, **stop here** and report it. Do
-not commit a red tree and do not describe a failure as a summary.
-
-These run over the whole repository, which is correct — you should not commit
-onto a broken tree even when you did not break it. But if the failure is in a
-file outside your scope, say so explicitly and **ask** rather than deciding
-alone: the tree may be mid-refactor in another session, and the choice to
-commit alongside that is the user's, not yours.
-
-## 2. Review independently
-
-Run `/code-review`, scoped to the paths from step 0. Do not review or fix
-another session's files — reporting findings on work you cannot see the intent
-of wastes effort and invites you to "fix" something deliberate.
-
-This step exists because by now you wrote the code and are the worst available
-judge of it. Take the review's findings seriously even when you disagree; if
-you do disagree, say why rather than silently ignoring it.
-
-If the diff touches `src/sciagent/`, `src/sciagent/core/`, or anything reachable
-from an agent, also delegate to the `invariant-auditor` subagent — the six
-invariants are violated by construction more often than by syntax, and
-`tests/test_invariants.py` only reaches invariants 1 and 3 statically.
-
-**Launch it as four lenses, in one message, alongside `/code-review`.** The
-agent's four sections are unlike investigations, and run as a single pass they
-compete for attention: lens 2 is a call-graph trace, lens 4 is a grep, and the
-grep always finishes. Splitting them also lets each take the tier it needs
-instead of all four sharing the weakest.
-
-| Lens | Model | Why that tier |
-|---|---|---|
-| 2 — agent→`plausibility` reachability | **omit it** | Inherits the session model. A miss here is a real invariant violation reaching `main`. |
-| 3 — ordering sensitivity | `sonnet` | Bounded judgement, one site at a time. |
-| 4 — registry append-only | `haiku` | Pattern match; a miss is recoverable by a grep you can run in seconds. |
-| 6 — gate-vs-system ordering | `sonnet` | Mechanical, but there is a wrong answer available. |
-
-Omitting the model on lens 2 is deliberate and is not the same as forgetting it:
-inheriting is how that lens gets the strong model, since CLAUDE.md forbids
-pinning opus explicitly. The tiers are graded by what a **false negative** costs,
-not by what the lens costs to run — a cheap auditor reporting "nothing found" is
-indistinguishable from a clean sweep, so cheapness is only affordable where you
-could catch the miss yourself.
-
-A lens returning nothing is a covered lens. Report four lenses run and three
-clean as exactly that; "the auditor found nothing" hides whether a lens was
-skipped.
-
-The paths in that condition — `src/sciagent/`, `src/sciagent/core/` — are
-spelled from the repository root on purpose. There is no top-level `sciagent/`
-or `core/`; the packages live under `src/`, and a condition naming a directory
-that does not exist is one a literal reading never fires.
-
-Some sessions carry a harness line — *"Do not call the AgentTool unless the user
-requested it"* — appended below everything else in the prompt, and it does not
-except this step: CLAUDE.md records that invoking `/ship` **is** that request.
-What that does not settle, and this does — **authorising is not widening.** The
-condition above still decides whether the auditor runs. On a docs-only diff it
-does not fire, and not running it then is correct rather than withheld, which is
-why step 5 asks for the two cases to be reported differently.
-
-If you do withhold a call this step prescribes, say so and say what you did
-instead. An inline self-check is not the independent judgement this step exists
-to get.
-
-`/code-review` runs as a background subagent, and with the lenses that is **five**
-concurrent agents rather than two. They are read-only and cheap against each
-other — but do not start any of them alongside a step-1 suite re-run. Four such
-agents were measured on 2026-08-16 costing a `-n 4` suite 12–15% while alive for
-only a fifth of it, so "read-only, so free" is the wrong premise even though the
-rule is the right one; five make it worse, not better.
-
-Fix what the review finds, then re-run step 1 — but only what the fixes could
-have broken. If the review changed **no** file, the freshness check still
-reports FRESH and there is nothing to re-run; saying "re-verified" after a
-no-op review is a claim with no work behind it. If it changed a file, the check
-reports STALE on its own, because the tree hash moved. Let it decide rather
-than deciding by habit.
-
-Do not carry a known finding into a commit.
-
-## 3. Commit
+## 1. Commit
 
 **First, before staging:** if a `.claude/handoff/` note describes the work you
 are about to ship, delete it now so its removal is part of this commit. The
@@ -166,13 +68,17 @@ notes are tracked on purpose — the local-to-cloud handoff they exist for only
 works if they are pushed — and the price of that is a note which outlives its
 work and reads as current.
 
-Stage according to the scope step 0 established — it already decided this, and
-this step does not overrule it:
+Stage according to the scope `/preflight` established — it already decided this,
+and this step does not overrule it:
 
 ```sh
 git add -A                      # worktree: everything dirty is yours
 git add -- <path> <path> ...    # main tree: only the paths you named
 ```
+
+In the main tree, never `git add -A`, `git add .`, `git add -u`, or
+`git commit -a`. Stage by explicit path, because a dirty file there is not
+evidence that you changed it.
 
 Then confirm what is staged, in both cases, before writing anything:
 
@@ -201,7 +107,7 @@ echo "${CLAUDE_CODE_REMOTE:-false}"   # "true" only in a cloud session
 ```
 
 **Local session in a worktree** — commit to the worktree's own branch, then see
-§3a below for getting it onto `main`.
+§2 below for getting it onto `main`.
 
 **Local session in the main tree** — commit to `main` directly. This repository
 works directly on `main`; do not create a branch unless asked.
@@ -213,7 +119,7 @@ is unpushable and has to be unwound.
 
 Show the message and the staged file list before running the commit.
 
-## 3a. Merge a worktree branch onto `main`
+## 2. Merge a worktree branch onto `main`
 
 Skip this if you committed directly to `main`.
 
@@ -221,20 +127,20 @@ Skip this if you committed directly to `main`.
 goes through `git -C <the shared checkout>`, and the harness refuses that: a
 worktree-isolated session's git operations must target its own worktree. This is
 not a quoting problem and no rewrite of the path expression fixes it — the
-refusal is on `-C` leaving the worktree at all. So §3a is in two halves, either
-side of a question you must ask.
+refusal is on `-C` leaving the worktree at all. So this step is in two halves,
+either side of a question you must ask.
 
 ### First, decide what the merge will be
 
 Do this while still in the worktree — it is read-only, and the answer decides
-whether you are about to ask for the last step or go back to step 1.
+whether you are about to ask for the last step or go back to `/preflight`.
 
 ```sh
 if git merge-base --is-ancestor main HEAD; then echo FF; else echo DIVERGED; fi
 ```
 
 Written as `if`, not `A && B || C`: that form also prints DIVERGED when the
-*comparison itself* fails — a missing local `main`, say — and §4 rejects it for
+*comparison itself* fails — a missing local `main`, say — and §3 rejects it for
 the same reason. Here it would send you into a needless second suite run rather
 than stopping to ask, which is the wrong direction to fail in.
 
@@ -242,11 +148,18 @@ than stopping to ask, which is the wrong direction to fail in.
   suite verified *your* tree, and merging `main` in changes it, so the result
   stops describing what is about to land. Merge first and verify after, never
   the reverse. Merge `main` into your branch here in the worktree, then **go
-  back to step 1** — the merge moves the tree hash, so `suite-freshness.sh check`
-  reports STALE by itself and needs no special handling. Your commit already
-  exists, so anything the re-verification forces is a *second* commit, not an
-  amend. When step 1 is green again, return here and re-run the check above; it
-  will now say FF.
+  back to `/preflight`** — the merge moves the tree hash, so `suite-freshness.sh
+  check` reports STALE by itself and needs no special handling. Tell it you came
+  from here, so it knows an empty scope is expected and that it is verifying the
+  merged tree rather than reviewing your edits.
+
+  **If the re-verification forces a fix, go back to §1 and commit it before
+  returning here.** Your first commit already exists, so this is a *second*
+  commit and never an amend — and it needs a step that actually performs it.
+  Returning straight to the check below would fast-forward and push with the fix
+  sitting unstaged in the working tree, which is the failure this whole branch
+  exists to prevent. Only when `/preflight` is green **and** nothing is dirty,
+  re-run the check above; it will now say FF.
 
 - **Conflict** — stop and report it. Do not resolve another session's code: the
   tree may be mid-refactor in a session you cannot see, and that call is the
@@ -292,12 +205,12 @@ against a tree a second session had changed mid-run.
 git merge --ff-only <branch>
 ```
 
-Then §4, which now runs in the tree it will push from. Do not delete the
+Then §3, which now runs in the tree it will push from. Do not delete the
 worktree as part of shipping; the user decides when it goes.
 
-## 4. Push
+## 3. Push
 
-**Run this in the tree you are about to push from**, which after §3a is the main
+**Run this in the tree you are about to push from**, which after §2 is the main
 tree, on `main`. The check below reads `HEAD` and `@{u}` of wherever it runs, so
 running it in the worktree answers a question about the *worktree branch* and
 then authorises a push of `main` — two different refs, and the mismatch is
@@ -346,16 +259,18 @@ authorisation.
 request from the session branch, and give its URL in the report. Do not merge
 it yourself unless asked.
 
-## 5. Report
+## 4. Report
 
 State plainly:
 
 - What was committed, by path.
 - **What you left alone**, by path, and that it was out of scope.
-- What the review found, and anything you chose not to fix, with the reason.
-- Which step-2 calls ran. If one was withheld, say which and why; if one did
-  not apply, say that instead — a condition that correctly did not fire is not
-  a skip, and the two should not read alike.
+- What `/preflight` found, and anything you chose not to fix, with the reason. If
+  `/preflight` ran earlier in the session rather than just now, say when, and say
+  that its review — not merely its suite result — is the one being relied on.
+- Which of `/preflight`'s review calls ran. If one was withheld, say which and why;
+  if one did not apply, say that instead — a condition that correctly did not
+  fire is not a skip, and the two should not read alike.
 
 If `docs/DECISIONS.md` was not touched this session, ask whether something
 should have gone in via `/decide`.

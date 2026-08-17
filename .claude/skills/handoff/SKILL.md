@@ -20,11 +20,11 @@ better.
 ## Why a note at all
 
 Sessions here end by context exhaustion or a closed laptop, neither of which
-offers a chance to write anything down. And `/ship` will not rescue the work
-afterwards: its step 0 requires naming the paths *you* edited from *your own*
-transcript, and explicitly leaves everything else alone, because other sessions
-work this repository concurrently. A path nobody can claim is a path nobody can
-ship.
+offers a chance to write anything down. And shipping will not rescue the work
+afterwards: `/preflight` step 0 requires naming the paths *you* edited from
+*your own* transcript, and explicitly leaves everything else alone, because
+other sessions work this repository concurrently. A path nobody can claim is a
+path nobody can ship.
 
 ## Write it
 
@@ -43,8 +43,8 @@ Write `.claude/handoff/<stamp>.md`:
 **Item.** SPEC §11 item N, or "infrastructure", or what it was.
 
 **Paths I touched.** Explicit list. This is the file's whole reason to exist —
-it is what lets a later session claim the work under /ship step 0. Name every
-path, and mark each as new / modified.
+it is what lets a later session claim the work under /preflight step 0. Name
+every path, and mark each as new / modified.
 
 **State.** What is done, what is half-done, and what has not been started.
 Be specific about half-done: "the A-test is written and failing as intended,

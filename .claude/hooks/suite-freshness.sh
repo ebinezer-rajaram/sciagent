@@ -10,10 +10,12 @@
 #
 # WHY
 #
-# `/next` runs the suite, hands to `/ship`, which runs it again, and `/ship`
-# then re-runs it after the review. Three full runs per backlog item, at a
+# `/next` runs the suite, hands to `/preflight`, which would run it again, and
+# would re-run it after the review. Three full runs per backlog item, at a
 # measured 6m50s each, and the first two are routinely on a byte-identical tree.
 # That is ~14 minutes of the ~21 spent re-answering a question already answered.
+# (Those three runs were `/next` plus `/ship` steps 1-2 when this was measured.
+# The verify/ship split moved where the runs live, not how many there are.)
 #
 # WHY IT FAILS TOWARD RUNNING
 #

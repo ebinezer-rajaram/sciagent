@@ -5270,3 +5270,132 @@ with different payload bits (`0x7ff8…01`, `0x7ff8…02`) both render `'nan'` u
 construction. Lens 6 confirmed §9's contrast and its comparator B4 date to the
 initial commit `7f69717`, three days before V7 existed at `a380a21` — the
 ordering confound does not reopen.
+
+## 2026-08-17 — infrastructure: the ship split, and two facts about the skill namespace
+
+**Decision.** `/ship` is two skills now. `/preflight` scopes, verifies and
+reviews; `/ship` commits, merges and pushes. The agent runs `/preflight` on its
+own initiative at the end of `/next`; only the user invokes `/ship`. The
+principle written into both, replacing "invoking `/ship` is the authorisation
+for its step 2 subagents": **read-only review is authorised by the work,
+irreversible action only by the user.**
+
+**Why the guarantee is "lands nothing", not "read-only".** The first draft said
+`/preflight` "is read-only and changes nothing", and used that to license
+running it unprompted. The pre-commit review caught the contradiction: the same
+skill tells you to fix what the review finds, and fixing edits files. Both
+claims cannot hold, and the authorisation rests on the one that is false. The
+line the split actually draws is *reversible* against *published*: working-tree
+edits are the work already asked for, and nothing in `/preflight` touches
+history. Getting this wrong would have been an overstatement doing real work.
+
+**`verify` is a reserved name. Do not use it for a project skill.** A built-in
+skill of that name exists and is marked `disable-model-invocation`, so
+`Skill(verify)` returns *"cannot be used with Skill tool"* and the project file
+is never consulted. It is **invisible** in the session's available-skills
+listing — precisely because a skill the model cannot invoke is not listed as one
+it can — so the collision cannot be found by looking. Renamed to `/preflight`.
+Nothing in `.claude/settings*.json` or the global config mentions it; searching
+those is what wasted the time, and the symptom is the only evidence there is.
+
+**Skills resolve from the shared checkout, exactly as agents do.** The
+2026-08-16 entry settled this for `.claude/agents/` and left skills open. They
+behave identically: `Skill(preflight)` returns `Unknown skill` from the worktree
+that wrote the file. The two errors are worth telling apart — *"cannot be used"*
+means the name resolved to something else, *"Unknown skill"* means it did not
+resolve at all. Reading the first as the second cost an hour and produced a
+confident wrong diagnosis ("the harness froze its skill list at session start")
+that the rename disproved in one call.
+
+**A hazard the auto-trigger introduced, which the manual flow did not have.**
+`/next` backgrounds the suite, then closes out. While `/ship` was user-invoked,
+the turn boundary guaranteed the run had finished — you could not type it
+sooner. Triggering `/preflight` automatically removes that guarantee and puts
+five review subagents beside a live `-n 4` suite, the contention measured at
+12–15% on 2026-08-16. The wait is now written down. This is the general shape of
+the risk in automating a step: the protection that goes missing is the one
+nobody wrote down, because nothing was enforcing it.
+
+**Left open, and what it waits on.** Neither `/preflight` resolving nor the
+auto-invocation from `/next` has been exercised, and neither can be from the
+worktree that wrote them — they wait on the merge. `/ship` §0 therefore carries
+an explicit `Unknown skill` branch telling the session to perform the three
+steps inline rather than skip them; without it a worktree ship would lose scope,
+`mypy`, `ruff`, the suite and the review at once, silently, one step before a
+push.
+
+## 2026-08-17 — infrastructure: the A-test lens, and the question that made it fire on everything
+
+**Decision.** `/next` step 3 now reviews the A-test before the implementation is
+built to it — one `evidence-checker` per gate, model omitted so it inherits the
+session. Nothing else covers this: `/gate` guards *no test written* and *test
+skipped*, `suite-runner` is forbidden from acting on a test it believes is
+wrong, and a vacuous `test_aN_` still counts as a covered gate in
+`scripts/status.py`, which derives coverage from the name.
+
+**The agent choice moved twice during review, and the second move is the
+instructive one.** It was drafted as `general-purpose`, which the review
+rejected: CLAUDE.md licenses these unprompted subagents on the grounds that
+review is read-only, and `general-purpose` holds `Edit` and `Write` restrained
+only by prose. Swapping to `evidence-checker` was then rejected *on its own
+argument* — it is `Read, Glob, Grep, Bash`, and `Bash` writes files. Checked
+across the fleet: `evidence-checker` and `invariant-auditor` are both
+`Read, Glob, Grep, Bash`, and `decisions-sweeper` (`Read, Grep`) is the only
+agent here that is mechanically write-incapable. **So every read-only guarantee
+this repository runs on — `/preflight`'s four lenses included — is contractual,
+not mechanical.** `evidence-checker` stayed, for its contract fit and its
+narrower toolset; what changed is that the skill no longer claims a guarantee
+nothing enforces. Worth knowing before the next authorisation argument is
+written on the same false premise.
+
+**An approach that failed, and the reason it would have been worse than
+nothing.** The lens first asked: *name one plausible wrong implementation this
+test would pass; if you can, the test is too weak.* That makes the verdict a
+function of the reviewer's imagination rather than of the test, and a competent
+reviewer can always name something. Probed against A7 — the shipped test, and a
+copy with its `0.93` threshold relaxed to `0.50` — it returned **TOO WEAK on
+both**. A lens that fires on everything reports nothing.
+
+Rewritten to ask for an implementation the test **accepts and the criterion
+rejects**, with the arithmetic shown, and to say explicitly that an
+implementation the criterion also accepts is out of scope however unsatisfying
+it looks. Re-probed:
+
+| case | verdict |
+|---|---|
+| A7 as shipped, judged in its module | **SOUND** |
+| same, threshold `0.93` → `0.50` | **TOO WEAK** |
+| assertion correct, but fails at collection | **TOO WEAK** (question 1) |
+
+Five subagent runs, ~292k tokens, which is why this is recorded rather than
+re-derived. The separating arithmetic is the agents' own closed-form work and
+**was not independently checked**: the candidates that made the shipped test
+look weak land near 96–100% coverage, which A7 accepts, while the threshold
+change admits an SE understated by √2 at roughly 82%, which it rejects. The
+repo's own measured table in the 2026-08-03 A6/A7 entry gives 0.948–0.950 for a
+correct implementation; treat the third digit of anything above as the agents',
+not as measured here.
+
+**Excerpting a test changes the answer, so pass the path.** Judged as a 40-line
+extract, the shipped A7 came back TOO WEAK on a denominator gap that does not
+exist in the module — the guard closing it (`assert len(rows) == TRIALS`) lives
+in a *sibling criterion's* test over the same `lru_cache`d fixture. The module
+is the unit; the excerpt was a different, worse test.
+
+**It will rediscover settled decisions and argue with them.** The lens reported
+A6 and A7 measuring one statistic as an invariant 5 defect, having read and then
+argued against the very module comment encoding the 2026-08-03 decision that
+resolved it. It cannot see `docs/DECISIONS.md`, and cannot tell a defect from a
+choice. The skill now says to check a finding against `/recall` before acting —
+the same guard lens 6 of `invariant-auditor` already carries, for the same
+reason.
+
+**Two findings about `tests/acceptance/test_a06_a11.py`, raised and not fixed.**
+The comment at `:240-243` calls `TRIAL_REPLICATES = 200` "a fifth of the slice's
+replicate count"; `REPLICATES = 2000`, so it is a tenth — **verified here**. The
+same comment's rationale, that a lower replicate count is "the demanding
+direction" because coverage is harder when Monte Carlo error is large, was
+claimed to have its sign backwards on the grounds that coverage is scale-free.
+**That claim is unverified** and needs its own check. Both are commentary rather
+than behaviour; the test passes either way, and neither was fixed because the
+change they sit in touches no Python.

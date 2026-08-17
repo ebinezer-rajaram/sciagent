@@ -11,7 +11,7 @@
 # bypasses the `extend-exclude = ["docs"]` in pyproject.toml, which exists to
 # stop ruff reformatting the Python blocks inside the frozen docs/SPEC.md.
 #
-# Always exits 0. This hook is a convenience, not a gate; `/ship` runs
+# Always exits 0. This hook is a convenience, not a gate; `/preflight` runs
 # `ruff check .` as the real check and is where an unfixable finding surfaces.
 
 . "$(dirname "$0")/lib.sh"

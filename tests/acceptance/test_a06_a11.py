@@ -239,7 +239,10 @@ TRIALS = 500
 
 #: Replicates per trial table. Small on purpose: the coverage claim A7 makes is
 #: hardest to satisfy when the Monte Carlo error is large, so testing it at a
-#: fifth of the slice's replicate count is the demanding direction.
+#: tenth of the slice's replicate count is the demanding direction.
+#: (`tests/slice_tables.py` sets REPLICATES = 2000. The "demanding direction"
+#: reasoning has been questioned on the grounds that coverage is scale-free --
+#: deviation and SE both shrink as 1/sqrt(M) -- and is unverified either way.)
 TRIAL_REPLICATES = 200
 
 #: Cells per analytic outcome space, placed at the exact octiles of the law under

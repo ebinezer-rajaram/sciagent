@@ -408,7 +408,32 @@ measured.
 
 ---
 
-## A resumable campaign driver, which item 15 needs and does not have
+## DONE (2026-08-17, item 15) — A resumable campaign driver, which item 15
+## needed and did not have
+
+**Done, with one departure from what this entry asked for.** The driver is
+`sciagent/eval/matrix.py`; §9's 56 cells are `environments/pointproc/matrix.py`,
+beside the environment rather than in the framework, since invariant 1 means
+`sciagent` may not name `V7` or `S11`. Both properties this entry demanded hold
+and are tested: resume means *skip what is addressed*, and seeds come from
+`(scenario seed, replicate index)` rather than from iteration order. The trap it
+asked to be written down — a re-run with changed inputs being a new address with
+the old row still present — is `test_a_metric_version_bump_is_a_new_address`.
+
+**The departure.** This entry said "keyed on the registry's content addresses",
+which reads as *rows in `ExperimentStore`*. Cells go in a **sibling** store
+instead, `registry/ledger.py::CampaignLedger`, on the same `ExperimentKey`
+address and the same three append-only enforcement layers. The reason is that
+`ExperimentStore.append` refuses non-finite results, and `-inf` is an ordinary
+cell reading — D2 when the candidate ruled out something that happens, and
+`log_score` whenever the truth got zero mass, which is B1's every run.
+`docs/DECISIONS.md` carries the argument and the rejected alternative.
+
+**Not closed by this**, and none of it is waiting on the driver: the platform
+precondition, the unmeasured subscription rate limits, and the D1–D6 report
+layer, which is the next entry below and stays open. The original entry follows,
+unedited.
+
 
 **Idea.** A driver that runs SPEC §9's matrix cell by cell, keyed on the
 registry's content addresses: before running a cell, ask whether its address is

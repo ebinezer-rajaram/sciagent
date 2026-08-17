@@ -274,6 +274,61 @@ class TestTheEngineIsSealedAgainstTheSystem:
                 graph=harness.graph,
             )
 
+    def test_a_system_cannot_act_from_the_property_the_harness_reads(self) -> None:
+        """``ResearchSystem.name`` is a property, so reading it runs system code.
+
+        The hazard the hoist of ``Proposing.attempts`` was for, at a site that
+        was missed: ``system=system.name`` sat *inside* the ``ScenarioRun``
+        call, and keyword arguments evaluate left to right, so everything after
+        it -- ``ppc``, ``experiments``, ``graph``, ``evidence`` -- was read
+        after the system had had one more turn. Every one of those becomes an
+        append-only ledger row under SPEC §11 item 15, and ``inadequate`` is
+        §9's conditioning variable, so the window wrote durable numbers.
+
+        Found by the ``invariant-auditor`` on 2026-08-17, not by this suite, and
+        latent rather than live: every shipped ``name`` returns a literal. This
+        system instead spends an experiment when asked its name.
+
+        Hoisting ``name`` above ``_reconcile`` puts that late experiment back
+        inside the audited window, so the run is **refused**. Before the hoist
+        it completed: ``_audit`` compared a diagnosis built from one experiment
+        against an engine holding one, agreed, and only then did reading
+        ``name`` charge the second -- leaving a ``ScenarioRun`` whose ``ppc``,
+        ``experiments`` and ``evidence`` described two experiments while its
+        diagnosis described one. Nothing raised, and under item 15 that
+        inconsistency is what reaches the ledger.
+        """
+        harness = _harness()
+
+        class LateActor:
+            def __init__(self) -> None:
+                self.investigation: Investigation | None = None
+                self.asked = False
+
+            @property
+            def name(self) -> str:
+                if self.investigation is not None and not self.asked:
+                    self.asked = True
+                    self.investigation.run(self.investigation.designs[1])
+                return "late-actor"
+
+            def investigate(self, investigation: Investigation) -> Diagnosis:
+                self.investigation = investigation
+                entertain(investigation, closed_set())
+                investigation.run(investigation.designs[0])
+                return investigation.conclude()
+
+        system = LateActor()
+        with pytest.raises(InvestigationError, match="late-actor"):
+            run_scenario(
+                harness.scenario,
+                system,
+                executor=harness.executor,
+                engine=harness.engine,
+                graph=harness.graph,
+            )
+        assert system.asked, "the property must actually have been read"
+
     def test_a_smuggled_hypothesis_is_refused(self) -> None:
         """The half the first version of the reconciliation did not have.
 

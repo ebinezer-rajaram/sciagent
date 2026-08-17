@@ -5068,3 +5068,205 @@ because the placement looks like carelessness and is not.
 (1138 passed, 7 skipped) against the ~6m44s warm baseline, versus the 31m45s that
 the mark-arrival diagnostic's re-addressing would cost. The seal can land before
 the matrix without paying for it.
+
+## 2026-08-17 — item 15: the campaign ledger is a sibling store, because a score is not an experiment
+
+**Decision.** SPEC §9's matrix records completed cells in a new
+`sciagent/registry/ledger.py::CampaignLedger`, addressed by the same
+`ExperimentKey` the registry uses, and *not* in `ExperimentStore`. The sqlite
+machinery both need — the authorizer allowlist, the aborting UPDATE/DELETE
+triggers, the statement-cache disable, the canonical length-prefixed encoding —
+moved to `sciagent/registry/backing.py` and is now shared rather than
+duplicated.
+
+**Why, and it is not a matter of taste.** `ExperimentStore.append` refuses any
+non-finite result: *"a diagnostic that cannot produce a number must fail, not
+register one."* That is right for an experiment and wrong for a score, and the
+matrix would hit it on ordinary cells rather than on edge cases:
+
+| field | when it is non-finite |
+|---|---|
+| `d2_held_out_predictive` | `-inf` when the candidate ruled out something that happens |
+| `d2`, `d3` | `nan` on an empty held-out battery |
+| `ClosedWorldScore.log_score` | `-inf` whenever the truth got zero mass — **B1's ordinary case**, since it holds only the null |
+
+So the two stores disagree about what a valid payload *is*, and one class
+serving both would mean relaxing a guard that is load-bearing on the other side
+of it. The alternative considered and rejected was encoding the non-finite cases
+as a value plus a sentinel code, which is lossless but puts an encoding trick
+between the matrix and its own numbers.
+
+**The extraction was the price, and it was worth paying.** Duplicating ~25 lines
+of authorizer and trigger code across two stores would have left A12's three
+enforcement layers checked on one of them and merely *resembled* on the other.
+A12–A15 pass unchanged against the extracted version (26 tests), verified before
+anything was built on top of it.
+
+**Digested over `float.hex()`, not over the packed double.** Two `nan`s are then
+the same reading. That is what a resumed campaign needs — `nan != nan`, so a
+value comparison would make an honest rerun of a cell *raise* — and it keeps a
+platform's choice of nan payload bits out of the address, which the 2026-08-15
+cross-platform entry is the standing reason to care about.
+
+**The payload is named, not a positional vector.** A fixed-width vector that
+gains a field silently re-reads every stored row against the wrong names, and a
+matrix is exactly the artefact where that goes unnoticed: the numbers are
+expensive, so nobody recomputes one to check it. `test_ledger.py` pins that a
+reading which gained a field is a *conflict*, not a match.
+
+**Closes off.** The partition is in the cell's `config` — part of the address —
+rather than a ledger column. A cell run on DEV and the same cell on TEST are two
+readings and must not collide; a column would instead ask this store to
+reimplement A14's sealed-read boundary, and it has no sealed-read path to
+protect.
+
+## 2026-08-17 — item 15: matrix seeds are paired across arms, and never come from iteration order
+
+**Decision.** `replicate_seeds(scenario_seed, replicates)` derives the twenty
+seeds of a cell from the **scenario's seed and the replicate index alone** —
+never from the system, and never from the order the driver visits cells in. It
+is a prefix stream: `replicate_seeds(s, 5) == replicate_seeds(s, 20)[:5]`.
+
+**Why each of the three properties is load-bearing.**
+
+- **Paired across systems.** §9's preregistered contrast asks whether V7 exceeds
+  B4 on S11. With per-system seeds that comparison would be partly a comparison
+  of *worlds*, at twenty draws an arm — a variance cost paid for nothing, on the
+  one contrast the slice is built around.
+- **Not from iteration order.** Invariant 3 routes randomness through explicitly
+  passed generators, and a seed taken from a loop counter is neither. The failure
+  it prevents is specific and silent: resuming a campaign that stopped halfway
+  would change which world a cell ran in *while its address stayed the same*.
+- **A prefix stream.** Raising a campaign's replicate count reuses the seeds
+  already spent. A re-draw would, under invariant 4, strand every recorded cell
+  at an address nothing asks for again — the rows would survive and be useless.
+
+**A judgement call worth flagging, since nothing forces it.** A scenario's
+Stage A probe design stays *in* the held-out battery. `_run_stage_a` measures
+rather than runs it, so it never enters `run.evidence` and no system could cite
+it; it is identical across arms, so it biases no comparison. But it is a design
+the posterior predictive check has already seen, which is an argument for
+excluding it that I did not find decisive. Recorded rather than buried.
+
+**Closes off.** `reading_of` *derives* the held-out battery from the run's
+evidence index instead of accepting it as an argument.
+`scoring.dimension_vector` says it cannot check that the battery excludes what
+was run — "the caller holds the history and it is the caller's to honour" — and
+that is true of it and false of `reading_of`, which has the run. One way to get
+a whole matrix quietly wrong, removed.
+
+## 2026-08-17 — item 15: the driver is built and deliberately not run
+
+**Work left incomplete, and what each part waits on.** The resumable campaign
+driver exists (`sciagent/eval/matrix.py`, `environments/pointproc/matrix.py`,
+1,120 replicates over §9's 56 cells) and **no cell has been run**. Three
+separate things block that, and only the third is a matter of time:
+
+1. **The platform precondition, unsettled.** The 2026-08-15 entry measured a
+   real Windows/Ubuntu divergence and recorded that the registry
+   content-addresses with no platform term. A matrix built partly on each would
+   be internally incomparable with nothing in the registry to report it. This is
+   the `/matrix` skill's stop condition and it has not moved.
+2. **Subscription rate limits across a recording run, still unmeasured** — open
+   item (2) of the 2026-08-15 Agent SDK entry. A concurrent session was working
+   this in `.claude/worktrees/rate-limit-pilot` with uncommitted
+   `scripts/rate_limit_pilot.py` and `scripts/stage_a_seed_sweep.py`; this
+   session stayed off it deliberately rather than duplicating the work.
+3. **The D1–D6 report layer**, which stays its own `docs/BACKLOG.md` entry. §8
+   forbids collapsing the six into one number, and that entry argues the report
+   layer is where the prohibition either holds or quietly fails — not something
+   to improvise while shipping a driver.
+
+**What the driver does guarantee, since it is not obvious from the diff.** An
+exception from `execute` propagates with every completed cell already in the
+ledger; there is no separate progress file to fall out of step with what was
+recorded. `skip_recorded=False` re-executes every cell and lets the ledger's
+conflict check compare each fresh reading against the stored one — invariant 3
+audited at matrix scale, and the instrument that would catch the platform
+divergence reaching a cell.
+
+**Measured.** Full suite green at `-n 4 --dist loadfile`: **204.17s**, 1202
+passed, 7 skipped. `mypy` clean over 116 source files. Note this is *slower* than
+the 151.30s recorded on 2026-08-16 for the same invocation on this machine; the
+suite has grown by several backlog items since, so the two figures are not a
+regression pair.
+
+**Closes off.** Nothing about which backend records the matrix — that still needs
+(2) above answered, exactly as the 2026-08-15 entry left it.
+
+## 2026-08-17 — item 15: what the pre-commit review and the four invariant lenses caught
+
+**A real invariant 2 gap, in code this change did not write.** `run_scenario`
+read `system=system.name` *inside* the `ScenarioRun(...)` call.
+`ResearchSystem.name` is a **property**, so reading it runs system code, and
+Python evaluates keyword arguments left to right — so `ppc`, `experiments`,
+`graph` and `evidence` were all read *after* the system had had one more turn,
+with `_reconcile` and `_audit` already passed.
+
+This is the exact hazard `campaign.py` already documents and had already fixed
+for `Proposing.attempts`, which was hoisted above `_reconcile` for it. `name`
+was missed, and sits **earlier in the same call**, so its window was strictly
+larger than the one that was closed.
+
+Latent, not live: all five shipped baselines return a string literal. But item
+15 is what makes the consequence durable — every field in that window becomes an
+append-only ledger row, and `inadequate` is SPEC §9's *conditioning variable* for
+the preregistered contrast.
+
+**Fixed by hoisting `name = system.name` beside `attempts`, and the regression
+test was checked against the unfixed code.** `test_a_system_cannot_act_from_the_
+property_the_harness_reads` in `tests/test_systems.py` runs a system that spends
+an experiment when asked its name. With the hoist the run is **refused**
+(`InvestigationError`); with the hoist reverted the same test reports `DID NOT
+RAISE` and the run completes, yielding a `ScenarioRun` whose `ppc`,
+`experiments` and `evidence` describe two experiments while its diagnosis
+describes one. That asymmetry is what would have reached the ledger.
+
+**The reason it took an auditor and not the suite.** Nothing static can see it:
+the bug is *evaluation order of keyword arguments*, and both the fixed and the
+unfixed forms type-check, lint clean, and pass every existing test.
+
+**Three more, fixed.**
+
+- **`execute` took `Mapping[str, float]`**, with a docstring asserting that only
+  `reading_of` should author one. That is prose holding an invariant CLAUDE.md
+  says to hold with assertions. It now takes a `CellReading`, which only
+  `reading_of` constructs, and `run_matrix` calls `as_payload()` itself.
+- **`CampaignAddress.metric_version` was declared, not derived**, and the
+  failure mode is specific to `skip_recorded=True` being the default: a metric
+  change nobody reflected in the declared version does not raise — the cell is
+  *skipped*, the stale reading is reported as the matrix's, and the ledger's
+  conflict check cannot fire because nothing executed. `CampaignAddress.of(executor)`
+  reads all four fields off the executor; `MetricRegistry.version` is a content
+  hash, so a metric change moves it whether or not anybody remembered.
+- **`partition` was a bare `str`** — `"dev"`, `"DEV"` and `"dev "` were three
+  addresses for one campaign — and is now `DataPartition`.
+
+**Two declined, with reasons, since both are defensible the other way.**
+
+- **The ledger's `entries()`/`count()` return every row regardless of
+  partition**, the reverse of `ExperimentStore.records()`, whose `None` means
+  *agent-reachable partitions* rather than *all*. Filtering would mean
+  interpreting `config`, and holding `config` as opaque text is the whole of
+  what keeps the store domain-independent. Recorded as a stated limitation in
+  the module docstring; selection by partition belongs to the report layer,
+  which must select by address anyway.
+- **`_audit` compares `mine != theirs` where `mine` is the system's own
+  object.** `Diagnosis.distribution` is *annotated* `FrozenDict` but a dataclass
+  does not enforce it, so a hostile `Mapping` subclass with a lying `__eq__`
+  passes the audit and is then read by `closed_world_score` and — new with this
+  change — by `leading_structure` and as D5's `posterior`. Pre-existing, and it
+  needs deliberately hostile code. Not fixed here because the loop compares five
+  fields of mixed types (two floats among three mappings), so `dict(mine) !=
+  dict(theirs)` is not a uniform substitution, and surgery inside `_audit` at
+  ship time is how the defects this very review exists to catch get written.
+  **Open, and this is the record of it.**
+
+**Closes off.** Four lenses were run — 2, 3, 4 and 6 — and three came back
+clean. Lens 3 independently confirmed the two claims most worth doubting:
+`stable_key` is invariant across `PYTHONHASHSEED` 0, 42 and unset, and two NaNs
+with different payload bits (`0x7ff8…01`, `0x7ff8…02`) both render `'nan'` under
+`float.hex()`, so the ledger's digest treats them as one reading by
+construction. Lens 6 confirmed §9's contrast and its comparator B4 date to the
+initial commit `7f69717`, three days before V7 existed at `a380a21` — the
+ordering confound does not reopen.

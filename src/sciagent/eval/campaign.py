@@ -231,12 +231,20 @@ def run_scenario(
     )
     _run_stage_a(scenario, executor=executor, engine=engine)
     reported = system.investigate(investigation)
-    # Read before reconciling, not in the call below. ``Proposing.attempts`` is a
-    # property, so reading it runs system code -- and every keyword argument
-    # after it in ``ScenarioRun`` is evaluated later still, which would let a
-    # system that kept its ``Investigation`` add an experiment to ``evidence``
-    # or a node to ``graph`` after the check had already passed.
+    # Read before reconciling, not in the call below. ``Proposing.attempts`` and
+    # ``ResearchSystem.name`` are both *properties*, so reading either runs
+    # system code -- and every keyword argument after it in ``ScenarioRun`` is
+    # evaluated later still, which would let a system that kept its
+    # ``Investigation`` add an experiment to ``evidence`` or a node to ``graph``
+    # after the check had already passed.
+    #
+    # ``name`` was missed when ``attempts`` was hoisted for this reason, and it
+    # sits *earlier* in the same call -- so the window it opened covered
+    # ``ppc``, ``experiments``, ``graph`` and ``evidence``, which is every field
+    # a system could still move. Found by the invariant auditor on 2026-08-17.
+    # No shipped system exploits it: all five baselines return a string literal.
     attempts = _attempts_of(system)
+    name = system.name
     _reconcile(system, investigation, engine)
 
     expected = diagnose(
@@ -250,7 +258,7 @@ def run_scenario(
     edits = engine_edits(engine)
     return ScenarioRun(
         scenario=scenario,
-        system=system.name,
+        system=name,
         diagnosis=reported,
         score=closed_world_score(reported, scenario.truth, edits),
         ppc=engine.ppc(),

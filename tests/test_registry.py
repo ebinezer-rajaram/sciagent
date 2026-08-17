@@ -125,8 +125,10 @@ class TestTheConnectionIsReleasedByRefcountingAlone:
     handle outlived its last reference and waited on the cyclic collector.
     Nothing was wrong with the append-only guarantee; what suffered was release
     timing, and on Windows a still-open handle is what makes a temporary
-    directory refuse to go away. :class:`~sciagent.registry.store._AppendGrant`
-    exists to break that edge.
+    directory refuse to go away.
+    :class:`~sciagent.registry.backing.AppendGrant` exists to break that edge,
+    and lives there rather than in ``store`` because
+    :class:`~sciagent.registry.ledger.CampaignLedger` needs the same edge broken.
     """
 
     def test_the_authorizer_does_not_keep_the_store_alive(self) -> None:

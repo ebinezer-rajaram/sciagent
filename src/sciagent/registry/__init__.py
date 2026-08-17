@@ -8,6 +8,7 @@ opaque text, so nothing here knows what an arrival process is.
 from __future__ import annotations
 
 from sciagent.registry.budget import Budget
+from sciagent.registry.ledger import CampaignLedger, LedgerEntry
 from sciagent.registry.metrics import MetricRef, MetricRegistry, MetricSpec
 from sciagent.registry.partitions import (
     AGENT_REACHABLE,
@@ -26,10 +27,12 @@ __all__ = [
     "SEALED",
     "SEALED_SYMBOLS",
     "Budget",
+    "CampaignLedger",
     "DataPartition",
     "ExperimentKey",
     "ExperimentRecord",
     "ExperimentStore",
+    "LedgerEntry",
     "MetricRef",
     "MetricRegistry",
     "MetricSpec",

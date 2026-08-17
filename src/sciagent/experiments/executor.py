@@ -228,6 +228,22 @@ class Executor:
         return self._partition
 
     @property
+    def data_version(self) -> DataVersion:
+        """Return the data version every experiment here is addressed under.
+
+        Read-only, and safe to hand out: it is a version string, not evidence.
+        Exposed so that a campaign address can be *derived* from the executor
+        that will produce the evidence rather than declared alongside it --
+        see :meth:`~sciagent.eval.matrix.CampaignAddress.of`. ``env_version``
+        and ``metric_version`` are already on :meth:`scope`; this was the one
+        third of the triple with no public reader.
+
+        Not agent-reachable: :class:`~sciagent.systems.base.Investigation` does
+        not expose its executor.
+        """
+        return self._data_version
+
+    @property
     def grammar(self) -> EditGrammar:
         """Return the grammar this executor applies defects under.
 

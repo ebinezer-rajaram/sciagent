@@ -30,9 +30,14 @@ and acceptance test A12 checks all three:
 resolution deletes the conflicting row *without* firing delete triggers, which
 would leave a supported SQL statement able to overwrite a registered result.
 
+Layers 2 and 3 live in :mod:`sciagent.registry.backing`, which
+:class:`~sciagent.registry.ledger.CampaignLedger` shares, so both stores are
+covered by one implementation rather than by two that happen to agree. Layer 1 is
+a property of this class's own surface and stays here.
+
 The connection also disables sqlite3's prepared-statement cache; see
-:func:`_connect` for why that is a correctness requirement and not a tuning
-choice.
+:func:`~sciagent.registry.backing.connect` for why that is a correctness
+requirement and not a tuning choice.
 
 What is not stored
 ------------------
@@ -44,11 +49,10 @@ comes from a monotonic sequence number instead.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import sqlite3
 import struct
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
@@ -67,16 +71,22 @@ from sciagent.core.types import (
     MetricVersion,
     Seed,
 )
+from sciagent.registry.backing import (
+    AppendGrant,
+    append_only_triggers,
+    authorizer,
+    connect,
+    digest_of_bytes,
+    encode_mapping,
+    field,
+    is_append_only_refusal,
+)
 from sciagent.registry.partitions import (
     AGENT_REACHABLE,
     DataPartition,
     SealedAccess,
     require_sealed,
 )
-
-#: Bytes of digest. 256 bits: content addresses are compared across campaigns and
-#: machines, and a collision would silently merge two different experiments.
-DIGEST_BYTES: Final = 32
 
 #: Prefix tying a digest to this encoding. Changing the encoding without changing
 #: this string would let two incompatible schemes produce the same address.
@@ -99,68 +109,6 @@ CREATE TABLE IF NOT EXISTS {_TABLE} (
     result_digest  TEXT    NOT NULL
 )
 """
-
-_ABORT_MESSAGE: Final = "the registry is append-only"
-
-#: sqlite authorizer actions the store permits unconditionally. An allowlist
-#: rather than a denylist: a future sqlite action that this code has never heard
-#: of should be refused, not admitted by omission.
-#:
-#: ``SQLITE_INSERT`` is deliberately absent. It is the one action the store needs
-#: but must not offer on every path: an authorizer is per *connection*, so
-#: admitting it outright would let :meth:`ExperimentStore.query` -- which exists
-#: to read -- write a row that never passed :meth:`ExperimentStore.append`'s
-#: checks. It is granted only for the duration of an append, by
-#: :class:`_AppendGrant`.
-_PERMITTED_ACTIONS: Final[frozenset[int]] = frozenset(
-    {
-        sqlite3.SQLITE_SELECT,
-        sqlite3.SQLITE_READ,
-        sqlite3.SQLITE_FUNCTION,
-        sqlite3.SQLITE_TRANSACTION,
-    }
-)
-
-
-def _append_only_triggers(table: str) -> tuple[str, ...]:
-    """Return the aborting update and delete triggers for one table."""
-    return tuple(
-        f"CREATE TRIGGER IF NOT EXISTS {table}_no_{event.lower()} "
-        f"BEFORE {event} ON {table} "
-        f"BEGIN SELECT RAISE(ABORT, '{_ABORT_MESSAGE}'); END"
-        for event in ("UPDATE", "DELETE")
-    )
-
-
-# --------------------------------------------------------------------------
-# Canonical encoding
-# --------------------------------------------------------------------------
-
-
-def _field(name: str, value: str) -> bytes:
-    """Return one length-prefixed field.
-
-    Length-prefixing rather than delimiting is what makes the encoding
-    injective: joined-with-a-separator encodings collide as soon as a value
-    contains the separator, and config values are arbitrary strings.
-    """
-    payload = value.encode("utf-8")
-    return f"{name}={len(payload)}:".encode("ascii") + payload
-
-
-def _encode_mapping(name: str, mapping: Mapping[str, str]) -> bytes:
-    """Return a length-prefixed encoding of a string mapping, order-independent."""
-    items = sorted(mapping.items())
-    chunks = [f"{name}#{len(items)}:".encode("ascii")]
-    for key, value in items:
-        chunks.append(_field(f"{name}.k", key))
-        chunks.append(_field(f"{name}.v", value))
-    return b"".join(chunks)
-
-
-def _digest(payload: bytes) -> Digest:
-    return Digest(hashlib.blake2b(payload, digest_size=DIGEST_BYTES).hexdigest())
-
 
 # --------------------------------------------------------------------------
 # Key and record
@@ -193,18 +141,18 @@ class ExperimentKey:
         return b"".join(
             (
                 _KEY_ENCODING,
-                _field("env_version", str(self.env_version)),
-                _encode_mapping("config", self.config),
-                _field("data_version", str(self.data_version)),
-                _field("metric_version", str(self.metric_version)),
-                _field("seed", str(int(self.seed))),
+                field("env_version", str(self.env_version)),
+                encode_mapping("config", self.config),
+                field("data_version", str(self.data_version)),
+                field("metric_version", str(self.metric_version)),
+                field("seed", str(int(self.seed))),
             )
         )
 
     @property
     def digest(self) -> Digest:
         """Return the content address of this key."""
-        return _digest(self.to_bytes())
+        return digest_of_bytes(self.to_bytes())
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,74 +185,12 @@ class ExperimentRecord:
         """
         chunks = [_RESULT_ENCODING, struct.pack("<Q", len(result))]
         chunks.extend(struct.pack("<d", float(value)) for value in result)
-        return _digest(b"".join(chunks))
+        return digest_of_bytes(b"".join(chunks))
 
 
 # --------------------------------------------------------------------------
 # Store
 # --------------------------------------------------------------------------
-
-
-@dataclass(slots=True)
-class _AppendGrant:
-    """Whether the store's own ``INSERT`` is authorised at this instant.
-
-    A separate object rather than a flag on the store, because the authorizer
-    closure has to read it and the connection holds the closure. Capturing the
-    *store* would make ``connection -> closure -> store -> connection`` a
-    reference cycle, so releasing the sqlite handle would wait on the cyclic
-    collector; on Windows that is long enough for a temporary-directory teardown
-    to fail on a file still open. This object references neither the store nor
-    the connection, so refcounting alone still frees both.
-    """
-
-    open: bool = False
-
-
-def _authorizer(grant: _AppendGrant) -> Callable[..., int]:
-    """Return the connection's authorizer. Allowlist; default deny.
-
-    ``INSERT`` is admitted only while ``grant.open`` is true, which is only
-    inside :meth:`ExperimentStore.append`. Every other statement reaching the
-    connection -- including one through :meth:`ExperimentStore.query` -- is
-    refused, so the store's own validation cannot be routed around.
-    """
-
-    def authorize(action: int, *_: object) -> int:
-        if action == sqlite3.SQLITE_INSERT:
-            return sqlite3.SQLITE_OK if grant.open else sqlite3.SQLITE_DENY
-        return (
-            sqlite3.SQLITE_OK if action in _PERMITTED_ACTIONS else sqlite3.SQLITE_DENY
-        )
-
-    return authorize
-
-
-def _connect(target: Path | str) -> sqlite3.Connection:
-    """Return a connection whose every statement reaches the authorizer.
-
-    ``cached_statements=0`` is load-bearing, not a tuning knob. Python's sqlite3
-    caches prepared statements by SQL text, and a cache hit **skips the
-    authorizer**, which runs at prepare time. With the cache on, re-issuing the
-    exact text of :meth:`ExperimentStore.append`'s own ``INSERT`` through
-    :meth:`ExperimentStore.query` is authorised by the prepare that happened
-    during an earlier append -- measured, not feared. Disabling the cache is what
-    makes the write-scoped grant in :func:`_authorizer` actually hold.
-
-    ``check_same_thread=True`` is passed explicitly although it is the default,
-    because it is the whole of the argument that :class:`_AppendGrant` may be a
-    plain flag rather than a per-statement grant: a second thread reaching this
-    connection is refused before the authorizer is consulted at all. Leaving it
-    to the default meant that argument lived only in a docstring, and CLAUDE.md's
-    second invariant asks for the assertion instead. Turning it off silently
-    widens the append window to anything another thread can issue.
-    """
-    return sqlite3.connect(target, cached_statements=0, check_same_thread=True)
-
-
-def _is_append_only_refusal(error: sqlite3.Error) -> bool:
-    text = str(error).lower()
-    return "not authorized" in text or _ABORT_MESSAGE in text
 
 
 class ExperimentStore:
@@ -333,7 +219,7 @@ class ExperimentStore:
         """
         self._connection = connection
         self._path = path
-        self._grant = _AppendGrant()
+        self._grant = AppendGrant()
         """Open only inside :meth:`append`. The authorizer reads it to decide
         whether an ``INSERT`` is the store's own or somebody else's.
 
@@ -351,7 +237,7 @@ class ExperimentStore:
     def open(cls, path: Path) -> ExperimentStore:
         """Open (creating if absent) the registry stored at ``path``."""
         path.parent.mkdir(parents=True, exist_ok=True)
-        return cls._prepare(_connect(path), path)
+        return cls._prepare(connect(path), path)
 
     @classmethod
     def in_memory(cls) -> ExperimentStore:
@@ -360,7 +246,7 @@ class ExperimentStore:
         For tests of registry behaviour itself. Anything whose results are to be
         cited must use :meth:`open`.
         """
-        return cls._prepare(_connect(":memory:"), None)
+        return cls._prepare(connect(":memory:"), None)
 
     @classmethod
     def _prepare(
@@ -371,11 +257,11 @@ class ExperimentStore:
         connection.execute("PRAGMA recursive_triggers = ON")
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute(_CREATE_TABLE)
-        for statement in _append_only_triggers(_TABLE):
+        for statement in append_only_triggers(_TABLE):
             connection.execute(statement)
         connection.commit()
         store = cls(connection, path)
-        connection.set_authorizer(_authorizer(store._grant))
+        connection.set_authorizer(authorizer(store._grant))
         return store
 
     def __enter__(self) -> ExperimentStore:
@@ -556,7 +442,7 @@ class ExperimentStore:
         try:
             return self._connection.execute(sql, tuple(parameters))
         except sqlite3.Error as error:
-            if _is_append_only_refusal(error):
+            if is_append_only_refusal(error):
                 raise AppendOnlyViolationError(
                     f"refused: {sql.strip().splitlines()[0]} -- the registry is "
                     f"append-only (SPEC §6.3 A12)"

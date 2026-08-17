@@ -5810,3 +5810,238 @@ The platform measurement itself is untouched and still stands — S12's final PP
 p-value is `0.101100` on Windows and `0.1009` on Ubuntu, from one commit and one
 seed. If the pin is ever lifted, that is the entry to return to. This one says
 only that nobody needs to.
+
+## 2026-08-17 — item 15: the matrix had a driver, a ledger and a report, and no way to run a cell
+
+**Decision.** `run_matrix` has taken an `execute: Callable[[CellTask], CellReading]`
+callback since the driver landed, and nothing outside a test supplied one:
+`reading_of` was called only from `tests/test_matrix.py`, and `SPEC9_CELLS` was
+consumed only there. `environments/pointproc/runner.py` is that callback —
+`system_for` for all seven arms, `MatrixRunner` holding the threaded table, and
+`scripts/run_matrix.py` in front. Environment-side, for the reason `SPEC9_CELLS`
+is: it names `V7` and `S11`.
+
+This gap was never written down as a blocker. The 2026-08-17 driver entry lists
+three, and the Windows pin entry narrows them to one — the rate limits — which is
+true of the *LLM* arms and was read as true of the matrix. **38 of 56 cells need
+no provider at all**, and nothing was stopping them.
+
+**Why.** Table acquisition had to move out of `tests/` first. `_cache_root`,
+`_cache_key`, `cached_table`, `slice_table` and `search_table` lived in
+`tests/slice_tables.py`; a script cannot import that, since the bare
+`import slice_tables` resolves only under pytest's prepend mode, `tests/` having
+no `__init__.py`. They are now `environments/pointproc/tables.py`, re-exported
+from where they were. The alternative — a second implementation beside the first
+— is the bug this file already records twice: two ways of finding the cache, one
+silently wrong, **3m11s cold against 1.055s warm**.
+`test_the_tests_and_the_runner_resolve_the_same_directory` asserts the two agree,
+and the anchor moved with the file (`parents[1]` from `tests/` is `parents[3]`
+from `src/environments/pointproc/`; wrong is invisible except as time).
+
+The gate table **stayed** in `tests/`: it is the suite's artefact, grown by the
+suite, and nothing in `src/` reads it. The campaign got its own `matrix-*.json`
+for the mirror reason — a matrix run that grew the gate table in place would
+change what a later suite run starts from.
+
+**Measured, and expensive to reproduce.** Per replicate on this desktop, warm
+tables: V1, B4 and B1 all under 0.2s; **B5 is the entire cost of the matrix.**
+B5 on S1, replicates 00 through 04: **33.8s, 0.6s, 77.0s, 0.6s, 94.3s** — it
+alternates, because a replicate is cheap exactly when the beam's picks are
+already in the threaded table. The first replicate simulates **12,000 rows**; the
+same task repeated on a threading runner simulates **0**, in 0.6s. Do not
+extrapolate a total from the cheap ones.
+
+Full suite green at `-n 4 --dist loadfile`: **144.73s**, then **145.70s** after
+the review fixes, both `1329 passed, 7 skipped`. `mypy` clean over 123 source
+files.
+
+**Two tests were killed by the A-test lens before any implementation existed, and
+both would have passed.** Recorded because the second is the kind nobody finds
+later.
+
+1. A seed test asserted a replicate reproduces `run_scenario` on the *untouched*
+   scenario, on the premise that `replicate_seeds` puts the scenario's own seed
+   first. **It does not** — `eval/matrix.py:293` hashes `matrix/{seed}/{index}`,
+   so S9's `20260909` becomes `3756393230493447090`. The test passed anyway,
+   because its three asserted quantities happened not to move on B1/S9: measured
+   over the first four replicate seeds, all four give `(1.0, 8, 0.0)`. The
+   explanation first offered here — that `ppc.py`'s `1 + ln(n)` scale saturates
+   the null scenario under the null hypothesis at exactly 1.0 — is **too strong**,
+   and the campaign says so: over 20 seeds, `experiments` and
+   `structural_distance` really are invariant, but `ppc_p_value` is 1.0 on only
+   **15 of 20**, the rest falling between 0.525 and 0.597. The first four seeds
+   were among the fifteen. So the test was hidden by luck as much as by
+   saturation, which is a worse defect than the one originally written down, not a
+   better one. Its sibling — *two replicates differ* — was still **red for a
+   correct implementation** on replicates 0 and 1, which are both 1.0. A runner at
+   `task.seed + 7` passed both. Replaced by
+   a byte-equality test against an independently built run at `task.seed`, **on
+   V1/S1**, where 7 of 16 payload fields move at `seed + 7` (on S9 only
+   `ppc_p_value` moves), plus a test asserting that difference so the instrument
+   cannot go vacuous unnoticed.
+2. A threading test compared `table.structures` as a set under `>=`. A runner
+   rebuilding from `gate_table()` every replicate re-grew the same structure and
+   passed. Replaced by the simulation count above.
+
+**An injection seam was built and then removed.** `MatrixRunner` took a
+`simulate` argument so that test could count calls. The invariant-2 audit was
+right that it was wider than its purpose: a caller-supplied simulator changes what
+gets **scored**, not merely what gets counted, and `execute` persists the grown
+table into a shared content-addressed cache whose key covers templates, replicate
+count and seed — **but not the simulator**. Poisoned rows would be
+byte-indistinguishable from faithful ones and read by every later campaign, and
+the ledger's conflict check would not catch it either, since two passes with the
+same doctored simulator agree. Counting was what was wanted, so the runner counts
+itself (`MatrixRunner.simulations`). Not an invariant-2 violation as written — no
+agent can reach it — which is exactly why it would have survived.
+
+`--provider` offers the two live backends and deliberately **not** `scripted`. A
+scripted provider's answers are fixtures and the ledger has no field saying so.
+
+**The ordering question, asked and closed.** The runner threads a growing table
+across replicates, so resuming a campaign visits cells in a different order than
+one pass does. Invariant 3 would be violated if that moved a number. It does not:
+a row is a pure function of `(seed, replicates, structure, template)`, so a table
+holding more when a later cell runs changes what the cell **costs** and never what
+it scores. `ExpansionCost.simulator_calls` is the one order-dependent figure, and
+every call site discards it; no cost field reaches `CellReading`.
+
+**Closes off.** Work left incomplete: the 18 LLM cells — V7 on twelve scenarios,
+V3 and V4 on three each, 360 investigations — are not run. The unmeasured
+subscription rate limits are the only thing in the way, and a concurrent session
+holds that work. `system_for` builds those arms today and refuses without a
+provider, so nothing structural is owed.
+
+One consequence worth stating plainly: **no LLM arm has ever been run in this
+tree.** The invariant-2 audit traced statically that an LLM arm's numbers can come
+only from `reading_of` — the parameter channel is a grid *index*, not a value
+(`encoding.py:258`), and `draft_from_payload` refuses an unknown key by name — but
+traced is not measured. `tests/test_matrix_runner.py` pins a runner replicate
+against an independent run for **V1 on S1 only**.
+
+Nothing here settles which backend records the LLM cells. It does close the claim
+that item 15 was blocked: the conventional two-thirds of the matrix was runnable
+throughout.
+
+## 2026-08-17 — item 15: the first 38 cells are run, and the cost estimate was wrong by eightfold
+
+**Decision.** The conventional two-thirds of SPEC §9's matrix is recorded:
+**38 cells, 760 replicates, 20 per cell, no skips**, in `.cache/campaign/spec9.db`
+on the Windows desktop, at address
+`pointproc/pointproc/1.1.0+1.2.0+1.1.0` / `pointproc/generated/1.0.0` /
+`metrics/9b1c54c9d49f49f656c30e32d21d4a7b`, partition `dev`. **Exploratory by
+construction** — §9 says slice results inform the frozen campaign and are not
+reportable as confirmatory findings.
+
+**353,724 rows simulated** — read off the run's stdout, which nothing persists;
+the ledger does not carry it and it is not reproducible from the artefacts.
+**20m19s** between the ledger's first and last write, which is what "about
+twenty minutes" below rests on; no timer bracketed the process.
+
+Not the first cells ever *run*: `.cache/campaign/smoke.db` holds eleven at the
+same content addresses, from the smoke test twenty minutes earlier. The first
+recorded in the §9 campaign ledger. That overlap turned out to be worth more than
+the tidier claim — **all eleven shared addresses carry equal reading digests
+across the two runs**, which is invariant 3 checked across two processes whose
+tables were in different states, and it was free.
+
+**The projection this entry's title refers to was made in conversation, not in
+the entry above** — that entry says only "do not extrapolate a total from the
+cheap ones", and it is worth being exact about which of the two erred. The
+projection took the mean of B5's five quoted S1 timings across its 240
+replicates, reached about 2.75 hours, and predicted a run needing relaunching.
+The campaign took about twenty minutes, roughly eightfold less. The error was
+extrapolating from the *expensive* replicates immediately after warning against
+extrapolating from the cheap ones. Measured: B5's early replicates on S1 cost
+33.8s to 94.3s, its final ones **0.5s median** with an occasional 7.2s. The cost
+is not a per-replicate rate at all — it is the one-off price of each new
+structure, and the threaded table pays it once. Threading is therefore not an
+optimisation on this matrix; it is the difference between twenty minutes and a
+campaign nobody runs. A future estimate should model *distinct structures*, not
+replicates.
+
+**Measured: correct rate, 20 seeds per cell.** Dot means the cell is not in §9.
+
+```
+         S1    S2    S3    S4    S5    S6    S7    S8    S9   S10   S11   S12
+  V1   1.00  1.00  1.00  1.00  1.00  1.00  1.00  0.00  1.00  0.00  0.00  0.15
+  B4   1.00  0.00  1.00  1.00  1.00  1.00  0.00  0.00  1.00  0.00  0.00  0.00
+  B5   0.00  0.00  0.00  0.00  0.00  0.00  0.00  0.00  1.00  0.00  0.00  0.00
+  B1      .     .     .     .     .     .     .     .  1.00     .  0.00     .
+```
+
+**B5 scores zero everywhere but S9, and that is expected behaviour rather than a
+defect.** The support is *mechanical*, and this matters because the obvious
+citation does not bear the weight: `tests/test_baselines_slice.py:196` explains
+the zeros in a docstring but **asserts nothing about them** — its two assertions
+are `mean_b5 < mean_b1` and `len(inside) >= 3`. The mechanism is that B5
+enumerates single-edit candidates at *corner* resolution and every slice truth is
+an interior point of the same grids, so exact match by proposal is impossible
+rather than merely unlikely. S9 is the exception in the campaign and at the gate
+alike, because the null is seeded rather than proposed.
+
+The figure with content is structural distance: **0.917**, over the nine non-null
+closed-world scenarios, averaging per scenario then across, at 20 seeds.
+
+**Do not compare that to the 0.775 in that docstring.** It is attributed there to
+*item 11*, the docstring says outright "the assertion is the comparison, not those
+figures", and a Stage A probe defect has moved B5's structural recovery since it
+was written; re-running the gate's own computation now gives about 0.812. Nor to
+its `>= 3` bar: the gate's "inside the right cell" is a *single run's* distance
+below 1.0, and a per-scenario mean over 20 seeds is a different quantity. Per
+replicate the campaign puts **2.55 of 9** scenarios inside, which is at or under
+that bar rather than comfortably past it — most scenarios sit at exactly 1.0 for
+most seeds and the mean dips below only because a minority land near 0.44.
+
+This was worth checking because two independent reviews flagged that `runner.py`'s
+`_beam()` pairs the search table with `simulator(GRAMMAR)` while
+`tests/test_baselines_slice.py:78` uses `simulator(agent_grammar())`. That
+discrepancy has since been **measured directly** rather than argued from: all 48
+single-edit agent-grammar candidates by 6 templates by 2 seeds, plus the 5
+closed-set defects by 6 templates by 3 seeds — 666 comparisons, **zero
+differences**, including identical refusals on the 22 degenerate corners. It does
+not reach a number on the space the beam searches.
+
+**Measured: inadequacy rate — the whole-record posterior predictive check.**
+**This is not Stage A**, and the distinction is the one that makes SPEC §12
+criterion 4 incoherent, so it is worth stating rather than assuming. The field is
+`CellReading.inadequate`, which is `ScenarioRun.ppc.inadequate`, documented at
+`eval/campaign.py:104` as "**Not** the verdict a system acted on where a scenario
+declares a Stage A probe". It covers the run's recorded experiments and no probe.
+
+```
+         S1    S2    S3    S4    S5    S6    S7    S8    S9   S10   S11   S12
+  V1   0.05  0.00  0.00  0.00  0.00  0.00  0.00  0.00  0.00  0.35  0.00  0.00
+  B4   0.00  0.00  0.00  0.00  0.00  0.00  0.00  1.00  0.00  0.20  0.05  0.35
+  B5   0.35  0.35  0.00  0.15  0.20  0.00  0.40  0.55  0.00  0.95  0.30  0.00
+  B1      .     .     .     .     .     .     .     .  0.00     .  1.00     .
+```
+
+**`B1` on `S11` fires 20 of 20 on that check, and 0 of 20 on `S9`.** At 20 seeds
+this corroborates the S11 and S9 entries of the full-record row in
+`docs/BACKLOG.md`'s criterion-4 table, which was a single seed; §9 gives B1 only
+those two scenarios, so the campaign says nothing about the other three that row
+names.
+
+**It does not set criterion 4's bar, and an earlier draft of this entry said it
+did.** That draft read "the bar criterion 4 names is 1.00, not the 0.0294
+single-seed p-value that entry quotes" — setting a full-record *firing rate*
+against a Stage A *p-value*. Those are the two different checks whose
+disagreement is the first of the three reasons `docs/BACKLOG.md` gives for
+calling the criterion incoherent, so the sentence was a fresh instance of the
+confusion it was citing. Caught by an independent check of this entry before it
+was committed. Recorded because the mistake is easy and the two numbers look
+comparable.
+
+What stands: a measurement of the full-record check, at 20 seeds, on B1's two
+scenarios. The re-specification is still owed, and `docs/BACKLOG.md` still says
+it "must not be decided in a session that has just measured V7 against the
+candidate wording" — this session measured B1's side, which is the same hazard
+from the other direction, so nothing is concluded here.
+
+**Closes off.** The 18 LLM cells still wait on the rate-limit measurement, and
+`.cache/campaign/spec9.db` is a partial campaign by design — `run_matrix` skips
+what is addressed, so adding them later is a resume and not a re-run. The
+preregistered contrast (V7 vs B4 on S11, D3, conditional on inadequacy detection)
+is **unanswerable** until they land, which is why `scripts/report_matrix.py` keeps
+`--contrast` off by default.

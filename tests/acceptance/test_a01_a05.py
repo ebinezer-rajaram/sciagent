@@ -119,14 +119,20 @@ class TestA1Determinism:
         """The cross-platform instrument must reach below the event log.
 
         ``docs/DECISIONS.md`` nominates ``determinism_child.py`` as the thing to
-        run on Windows and on Ubuntu and diff before trusting a cloud-produced
-        artefact, and separately records the suspected cause of a platform split
-        as ``np.dot`` inside ``diagnostics.py`` under a ``DYNAMIC_ARCH``
-        OpenBLAS. That call is downstream of the log, so a child that digested
-        only ``execute`` would diff clean on both platforms while saying nothing
-        about the layer the registry content-addresses over.
+        run on Windows and on Ubuntu and diff, and separately records the
+        suspected cause of a platform split as ``np.dot`` inside
+        ``diagnostics.py`` under a ``DYNAMIC_ARCH`` OpenBLAS. That call is
+        downstream of the log, so a child that digested only ``execute`` would
+        diff clean on both platforms while saying nothing about the layer the
+        registry content-addresses over.
 
-        This asserts the second layer exists. It is not an assertion about any
+        The project is pinned to Windows, so **nobody is waiting on that diff**
+        -- this is not a blocker on anything, and the 2026-08-17 entry discharged
+        the instruction that once made it read like one. What survives the pin is
+        the requirement that the instrument stay *able* to answer the question,
+        against the day somebody lifts the pin and needs it.
+
+        So this asserts the second layer exists. It is not an assertion about any
         particular value -- the cross-platform claim is settled by diffing two
         runs, not by a number written down here -- but a refactor that dropped
         the metric lines would silently return the instrument to being unable to

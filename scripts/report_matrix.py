@@ -8,16 +8,18 @@ Thin by intent. Everything that decides a number lives in
 ledger read-only and prints. A script is not where a reporting rule should live,
 because a script is the one part of this nobody runs under pytest.
 
-``--platform`` and ``--grammar`` have **no defaults**, and that is the point.
-``docs/DECISIONS.md`` records a measured Windows/Ubuntu divergence in a reported
-number, and the registry content-addresses with no platform term -- so the ledger
-cannot say which machine filled it and a default here would invent an answer.
+``--platform`` and ``--grammar`` have **no defaults**, and that is the point. The
+registry content-addresses with no platform term, so the ledger cannot say which
+machine filled it and a default here would invent an answer.
 :func:`~sciagent.eval.report.summarise` refuses an unlabelled report; this just
-declines to paper over that with a plausible guess.
+declines to paper over that with a plausible guess. The project is pinned to
+Windows, so in practice the value is always the same one -- which is the reason to
+type it rather than to assume it, since a constant is what stops being written
+down.
 
 Nothing here has run against a real campaign, because no cell of the matrix has
-been run: ``docs/DECISIONS.md`` records the platform precondition that blocks
-that, and it is unchanged. What this is for is the moment the first cells land.
+been run -- that waits on the unmeasured subscription rate limits. What this is
+for is the moment the first cells land.
 
 **Do not hash this script's redirected output as an artefact.**
 :func:`~sciagent.eval.report.render` returns LF-only text and every byte of it is

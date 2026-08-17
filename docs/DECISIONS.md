@@ -5723,3 +5723,90 @@ two payload fields. And nothing in this layer can detect an `execute` callback t
 took a number from an LLM response — `summarise` cannot distinguish a fabricated
 payload from a derived one, which is invariant 2's problem upstream and not this
 module's.
+
+## 2026-08-17 — Windows is the reference platform; the divergence is closed by pinning, not by fixing
+
+**Decision.** The project is pinned to **Windows**. Every registry entry, cached
+table and reported number comes from the desktop. Cloud sessions are for writing
+code, reviewing it, running the suite and shipping — they do not produce results.
+
+This supersedes the standing instruction in the 2026-08-15 entry *"the
+cross-platform divergence is real, and it has been measured"* (line ~2957): *no
+further cloud-produced number should be trusted until this is settled.* That
+instruction is **discharged, not satisfied**. The divergence was never localised.
+No cloud-produced number is trusted because none is produced.
+
+**Why.** That entry deliberately left three remedies open and declined to choose:
+put a platform term in the content address, scope `.cache/tables/` by platform, or
+run the whole matrix on one platform and say which. The first two retire every
+stored artefact; the third costs nothing. The user's position is that the desktop
+is the only machine that runs anything, so the second platform whose disagreement
+the first two remedies would price in does not exist. Paying to make two platforms
+comparable when only one produces numbers is paying for an option nobody holds.
+
+It also removes a false blocker. `/matrix` opened with *"Stop. Check the platform
+precondition first"* and `docs/BACKLOG.md` twice listed the precondition among what
+stands in item 15's way. Neither was ever true in the sense that mattered — running
+the matrix locally always satisfied it — but both read as work owed before a cell
+could run, which is the opposite of what the pin means.
+
+**What was not weakened, and why it looked like it might be.** The exact-fold
+reductions in `core/reductions.py` and the `reductions.total` call inside the
+Hawkes intensity are **kept and rejustified**, not relaxed. Their docstrings argued
+entirely from portability across machines, which the pin makes moot — but invariant
+3 is a same-machine requirement first: byte-identical output across processes,
+across runs, and across a numpy upgrade that changes kernel selection underneath
+you. Exact folds buy that on one machine and get the cross-platform class for free.
+The prose now says so; the code is untouched.
+
+`summarise()` keeps its **required** `platform` argument. Under a pin the value is
+a constant, and a constant is exactly the kind of fact that stops being written
+down — which is the argument for holding it by construction. A report that names
+its platform stays readable if the pin is ever lifted; one that assumed it does
+not. This was offered as removable and declined.
+
+**Closes off.** `/platform-check` and `tests/acceptance/determinism_child.py` stay
+in the repository, correct and dormant. They are the instrument for lifting the
+pin, not a blocker on anything, and nothing routine should invoke them. Two
+situations reopen this: a decision to run results on a second machine, or a
+comparison of a number from one platform with a number from another. Neither is
+on the horizon.
+
+Item 15 now waits on **one** thing, not two: the unmeasured subscription rate
+limits.
+
+**A second axis, found by the review of this very entry, and left open.** The
+rejustification above was first written as *"exact folds deliver byte-identical
+output across processes, across runs, and across a numpy upgrade that changes a
+kernel selection."* The third clause is **false**, and `reductions.py`'s own
+unchanged text says why: `math.fsum` fixes the *order* addends are summed in,
+never the addends themselves, and `math.exp` disagrees with the correctly-rounded
+double for **17694 of 20000** inputs across `[-40, 0]`. The Hawkes kernels hand
+`np.exp(...)` terms straight to `total`. A numpy upgrade is free to move those
+addends exactly as a change of platform is. The sentence was corrected before
+this shipped; the comment at `components.py:128` had it right all along, scoping
+its claim to the order.
+
+What the correction exposed is worth more than the error. **Nothing in the content
+address names the numpy that computed the numbers.** `pyproject.toml` requires
+`numpy>=2.1` and `uv.lock` pins `2.5.1`, so `uv lock --upgrade` can move it
+inside the existing constraint, and `(env version, config, data version, metric
+version, seed)` does not shift. `docs/DECISIONS.md` 2026-08-15 records
+`METRIC_VERSION` and `LIBRARY_VERSION` being bumped **by hand** when a fold
+implementation changed — there is no automatic term. So this is the 2026-08-15
+shape of problem on a different axis: two entries sharing an address while
+holding different numbers, with nothing positioned to notice.
+
+**Deliberately not fixed here, and not a reason to hold the pin.** It is
+orthogonal — pinning the platform never claimed to close it, and the axis was
+open before this entry and is no wider after. Settling it would mean either a
+numpy term in the address (retiring every stored row) or a two-version diff of
+`determinism_child.py` of the kind the platform question got. Neither is this
+change's business. What is recorded here is that the second axis exists, that it
+is unmeasured, and that `uv lock --upgrade` is the action that would trip it.
+Do not read the Windows pin as covering it.
+
+The platform measurement itself is untouched and still stands — S12's final PPC
+p-value is `0.101100` on Windows and `0.1009` on Ubuntu, from one commit and one
+seed. If the pin is ever lifted, that is the entry to return to. This one says
+only that nobody needs to.

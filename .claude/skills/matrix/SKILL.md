@@ -1,34 +1,34 @@
 ---
 name: matrix
-description: Drive SPEC §11 item 15, the first experiment matrix — 56 cells over twelve slice scenarios at twenty seeds each. Invoke as /matrix to plan, run, or resume it. Covers the platform precondition, the preregistered contrast, and the rule against collapsing D1–D6.
+description: Drive SPEC §11 item 15, the first experiment matrix — 56 cells over twelve slice scenarios at twenty seeds each. Invoke as /matrix to plan, run, or resume it. Covers running it all on the one reference platform, the preregistered contrast, and the rule against collapsing D1–D6.
 allowed-tools: Bash, Read, Grep, Write, Edit
 ---
 
 # First experiment matrix — SPEC §11 item 15
 
-## Stop. Check the platform precondition first
+## Run every cell on the one reference platform
 
-`docs/DECISIONS.md` 2026-08-15 records a **measured** Windows/Ubuntu divergence
-in a reported number, and that the registry content-addresses over (env version,
-config, data version, metric version, seed) **with no platform term**. Its
-standing instruction: *no further cloud-produced number should be trusted until
-it is settled.*
+**Windows — the desktop.** Not a precaution to weigh up; a settled constraint,
+and the only thing about platforms this skill asks of you.
 
-This matrix is days of compute over ~1,120 investigations, which makes splitting
-it across a local machine and cloud sessions the obvious move and **the wrong
-one**. A matrix built partly on each platform would be internally incomparable,
-and nothing in the registry would report it — two cells could share a content
-address holding different numbers.
+The temptation it forecloses is worth naming, because it looks like good sense.
+This matrix is days of compute over ~1,120 investigations, so splitting it across
+the desktop and a few cloud sessions is the obvious way to finish it sooner. It
+is the wrong one. `docs/DECISIONS.md` 2026-08-15 measured a Windows/Ubuntu
+divergence in a reported number, and the registry content-addresses over (env
+version, config, data version, metric version, seed) **with no platform term** —
+so a matrix built partly on each would be internally incomparable and nothing in
+the registry would say so. Two cells could share a content address while holding
+different numbers.
 
-Before any cell is run:
+Running it all in one place makes that impossible rather than unlikely, which is
+why the pin is the remedy the project took. `.cache/tables/` inherits the same
+rule for the same reason: it is keyed on replicates, seed and design set, not on
+the machine that filled it, so use the desktop's cache and do not import one
+built elsewhere.
 
-1. `/platform-check` — localise the divergence.
-2. Either settle it, or **run the entire matrix on one platform** and record
-   which, in the entry that reports it.
-
-`.cache/tables/` is caught by this too: it is keyed on replicates, seed and
-design set, not on the machine that filled it. A table carried between platforms
-carries the divergence with it.
+Record the platform in the entry that reports the results — `summarise()`
+requires it, so this is a field to fill rather than a discipline to remember.
 
 ## The matrix — §9, exactly
 

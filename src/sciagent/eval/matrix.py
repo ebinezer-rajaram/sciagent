@@ -46,11 +46,12 @@ for again.
 What is not here
 ----------------
 
-Running the matrix. ``docs/DECISIONS.md`` records a measured Windows/Ubuntu
-divergence in a reported number, and that the registry content-addresses with no
-platform term; until that is settled, or the whole matrix is pinned to one
-platform and said to be, a matrix built partly on each would be internally
-incomparable with nothing in the registry to report it.
+Running the matrix. When it is run, it is run entirely on the project's reference
+platform -- Windows -- and the report says so. ``docs/DECISIONS.md`` records a
+measured Windows/Ubuntu divergence in a reported number, and the registry
+content-addresses with no platform term, so a matrix built partly on each would
+be internally incomparable with nothing in the registry to report it. Pinning is
+the remedy the project took; it is settled, not pending.
 
 Rendering the matrix. SPEC §8 forbids collapsing D1-D6 into one number, so the
 report layer is where that prohibition either holds or quietly fails, which is

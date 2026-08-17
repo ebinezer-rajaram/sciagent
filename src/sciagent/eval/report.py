@@ -32,13 +32,19 @@ What a report must say, and therefore cannot default
 Two things have to appear wherever these numbers appear, and neither can be
 recovered from the ledger:
 
-**Which platform every cell ran on.** ``docs/DECISIONS.md`` records a measured
-Windows/Ubuntu divergence in a reported number, and that the registry
-content-addresses over (env version, config, data version, metric version, seed)
-with **no platform term**. The ledger therefore has no platform column and cannot
-grow one without retiring every stored row. So :func:`summarise` takes the
-platform and *refuses to build a report without it* -- the requirement held by
-construction rather than by whoever writes the caption remembering it.
+**Which platform every cell ran on.** The project is pinned to one platform --
+Windows -- precisely so that this answer is always the same one, and the
+registry content-addresses over (env version, config, data version, metric
+version, seed) with **no platform term**. The ledger therefore has no platform
+column and cannot grow one without retiring every stored row. So :func:`summarise`
+takes the platform and *refuses to build a report without it*.
+
+A constant is exactly the kind of fact that stops being written down, which is
+the argument for holding it by construction rather than by whoever writes the
+caption remembering. The pin is a present choice, recorded in
+``docs/DECISIONS.md`` alongside the measured Windows/Ubuntu divergence that
+motivated it; a report that states its platform stays readable if that choice is
+ever revisited, and one that assumed it does not.
 
 **Which grammar produced D1 and D6.** Both are grammar-relative --
 :attr:`~sciagent.eval.scoring.DimensionVector.d6_complexity` says so in as many

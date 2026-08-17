@@ -127,8 +127,10 @@ def _hawkes_intensity(
         return base_rate
     # `reductions.total`, not `np.sum`: this fold is inside the *simulation*, so
     # a summation order chosen by the CPU changes the intensity, which changes
-    # the next arrival time, which changes the event log itself. Of everything
-    # the platform split reaches, this is the layer that reaches furthest.
+    # the next arrival time, which changes the event log itself. Every metric is
+    # computed downstream of that log, so a wobble here is the one that reaches
+    # furthest -- which is why it is worth an exact fold even on one machine,
+    # where the order can still move under a numpy upgrade.
     return base_rate + branching * decay * reductions.total(
         np.exp(-decay * (time - recent))
     )

@@ -429,10 +429,11 @@ cell reading — D2 when the candidate ruled out something that happens, and
 `log_score` whenever the truth got zero mass, which is B1's every run.
 `docs/DECISIONS.md` carries the argument and the rejected alternative.
 
-**Not closed by this**, and none of it is waiting on the driver: the platform
-precondition and the unmeasured subscription rate limits. The D1–D6 report layer
-was the third, and is now done — see the entry below. The original entry follows,
-unedited.
+**Not closed by this**, and none of it is waiting on the driver: the unmeasured
+subscription rate limits. The D1–D6 report layer was the second, and is now done
+— see the entry below. The platform precondition was the third and is
+**discharged**: the project is pinned to Windows, so the matrix runs there in
+full and the report states it. The original entry follows, unedited.
 
 
 **Idea.** A driver that runs SPEC §9's matrix cell by cell, keyed on the
@@ -501,9 +502,10 @@ measurement.
 whoever computes it. `Preregistration` (the type) is in the framework and the
 instance is beside the environment — the same split as `Cell`/`SPEC9_CELLS`.
 
-**Not closed by this.** No cell of the matrix has been run: the platform
-precondition and the unmeasured subscription rate limits both stand, and neither
-was ever waiting on this. The original entry follows, unedited.
+**Not closed by this.** No cell of the matrix has been run: the unmeasured
+subscription rate limits stand, and were never waiting on this. The platform
+precondition no longer stands — the project is pinned to Windows. The original
+entry follows, unedited.
 
 
 **Idea.** Render the matrix as a vector table: D1 through D6 per system per

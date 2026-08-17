@@ -275,7 +275,8 @@ eight. Anything new that reads a cached artefact should go through the same door
 - `/recall <topic>` — find what was already decided, without reading 190KB.
 - `/handoff` — write a note so a session ending badly does not strand its work.
   Prefer `claude --resume`; this is the fallback when resuming is impossible.
-- `/platform-check` — localise the measured Windows/Ubuntu divergence.
+- `/platform-check` — dormant. The instrument for lifting the Windows pin, kept
+  against the day that matters; not part of ordinary work.
 - `/matrix` — drive item 15, the first experiment matrix.
 
 The SessionStart hook prints `scripts/status.py`, but only in full when the
@@ -322,16 +323,21 @@ Three differences from a local session actually change behaviour:
   subagent together and then read the timing as the suite's. Do not use the test
   count as a health check either — it moves with every backlog item — read the
   tail of the pytest output instead.
-- **Cross-platform determinism is unverified.** Invariant 3 demands byte-identical
-  output, and the registry content-addresses over (env version, config, data
-  version, metric version, seed) with no platform term. Local runs are Windows;
-  cloud runs are Ubuntu on x86-64. If BLAS resolution differs, two registry
-  entries could share an address while holding different numbers.
+- **Cloud sessions edit code; they do not produce numbers.** Windows is this
+  project's reference platform. Every registry entry, cached table and reported
+  figure comes from the desktop, and a cloud session is for writing and reviewing
+  code, running the suite and shipping — not for generating results.
 
-  Do not try to settle this with A1 and A15 as a whole: both are self-referential
-  within one process — they rebuild the expected value in-process and compare
-  against it, so they pass on any platform. What yields comparable evidence is
-  `tests/acceptance/determinism_child.py`, which writes `name sha256` lines to
-  stdout (see `test_a1_byte_identical_across_processes`). Run it on both
-  platforms and diff the output **before** trusting any cloud-produced registry
-  entry.
+  This is a deliberate pin, not an open problem. `docs/DECISIONS.md` 2026-08-15
+  records a *measured* Windows/Ubuntu divergence and left three remedies open:
+  put a platform term in the content address, scope tables by platform, or run
+  everything on one platform and say which. The third is chosen. It costs
+  nothing, because no second platform produces numbers to be incomparable with.
+
+  So do not gate work on settling the divergence, and do not read a
+  single-platform result as provisional — one platform is the design. The pin
+  asks one thing in return: if a number, registry entry or `.cache/tables/`
+  artefact is ever produced in a cloud session, discard it rather than comparing
+  it with a local one. `/platform-check` and
+  `tests/acceptance/determinism_child.py` stay in the repository as the
+  instrument for lifting the pin, if that ever becomes worth doing.

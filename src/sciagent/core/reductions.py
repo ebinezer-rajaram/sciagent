@@ -64,9 +64,25 @@ expectation, not a measurement.
 So what is this worth? It closes the class that was *demonstrated*: two machines
 computing different numbers because BLAS and numpy's pairwise summation choose
 their kernels from CPU features. It also makes every remaining suspect a
-narrower and more testable one. What it does not do is let anybody conclude the
-platforms agree -- only the two-platform diff described in ``docs/DECISIONS.md``
-can say that, and it is still outstanding.
+narrower and more testable one.
+
+Note what it is *not* for. The project is pinned to one platform -- Windows --
+so portability across machines is not what these functions earn their keep on
+day to day. What they still earn it on is the same machine. Invariant 3 asks
+for byte-identical output across processes and across runs, and summation order
+is one thing that can move underneath you without leaving the machine:
+``np.sum`` picks its pairwise dispatch from CPU features, and a numpy upgrade
+can change that pick while every version term in a content address stays put.
+
+Read that as narrowly as the section above, because it is the same limit
+restated on a second axis. What is nailed down is the *order*, never the
+addends. The ``np.exp`` terms the Hawkes kernels hand to :func:`total` are as
+free to move under a numpy upgrade as under a change of platform, for the
+reason given three paragraphs up, and nothing in ``(env version, config, data
+version, metric version, seed)`` names the numpy that computed them. So no
+diff of the kind described in ``docs/DECISIONS.md`` is dispensable here --
+the pin retires the platform half of that question and leaves the rest
+standing.
 """
 
 from __future__ import annotations

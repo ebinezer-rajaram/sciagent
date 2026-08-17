@@ -14,10 +14,8 @@ is checked instead:
 - A cell whose inputs changed is a *new* address with the old row still
   present.
 
-The driver is exercised against a stand-in ``execute``. Running real cells is
-blocked on the platform precondition in ``docs/DECISIONS.md`` -- the measured
-Windows/Ubuntu divergence -- and a test that ran them would be minutes of
-simulation asserting nothing this file is about.
+The driver is exercised against a stand-in ``execute``. A test that ran real
+cells would be minutes of simulation asserting nothing this file is about.
 """
 
 from __future__ import annotations

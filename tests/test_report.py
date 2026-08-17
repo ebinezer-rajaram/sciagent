@@ -23,9 +23,8 @@ What is checked instead, in the order the module's risks run:
 - **The preregistered contrast is the one §9 states**, conditional on inadequacy
   detection, and it names its comparator.
 
-The ledger rows are synthesised. Running real cells is blocked on the platform
-precondition in ``docs/DECISIONS.md``, and a test that ran them would be minutes
-of simulation asserting nothing this file is about.
+The ledger rows are synthesised. A test that ran real cells would be minutes of
+simulation asserting nothing this file is about.
 """
 
 from __future__ import annotations

@@ -1,10 +1,29 @@
 ---
 name: platform-check
-description: Run the cross-platform determinism instrument and diff it against the other platform's baseline, to localise the measured Windows/Ubuntu divergence to either the event loop or the metric layer. Invoke as /platform-check before trusting any cloud-produced registry entry or shared table, and whenever a number produced on one platform is about to be compared with one produced on the other.
+description: Dormant. Run the cross-platform determinism instrument and diff it against the other platform's baseline, to localise the measured Windows/Ubuntu divergence to either the event loop or the metric layer. The project is pinned to Windows and this is not part of ordinary work — invoke it only when deliberately lifting that pin, or when a number produced on one platform is about to be compared with one produced on the other.
 allowed-tools: Bash, Read, Grep
 ---
 
 # Cross-platform determinism check
+
+## This skill is dormant. Check that you want it
+
+The project is **pinned to Windows**: every registry entry, cached table and
+reported number comes from the desktop, and cloud sessions edit code without
+producing results. Under that pin the divergence below cannot bite, because
+nothing else produces a number to disagree with. See CLAUDE.md, "Cloud sessions".
+
+So this is not a precondition on anything, and nothing routine should invoke it.
+It is the instrument for two situations only:
+
+1. Somebody wants to **lift the pin** — run results on a second platform, or
+   accept a cloud-produced artefact.
+2. A number from one platform is **about to be compared** with one from another,
+   knowingly.
+
+If neither is true, stop here and say the pin makes the check unnecessary. The
+material below is preserved because it is expensive to re-derive, not because it
+is waiting on somebody.
 
 ## What is already settled — do not re-derive it
 
@@ -24,8 +43,10 @@ while holding different numbers. `.cache/tables/` is keyed on replicates, seed
 and design set — not on the machine that filled it — so a table shared between
 platforms is suspect too.
 
-**Standing instruction from that entry: no further cloud-produced number should
-be trusted until this is settled.**
+That entry's standing instruction — *no further cloud-produced number should be
+trusted until this is settled* — has been **discharged by the Windows pin**
+rather than by settling the divergence. No cloud-produced number is trusted
+because none is produced. Do not quote it as a live blocker.
 
 ## The one open question
 

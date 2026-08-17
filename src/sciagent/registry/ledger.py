@@ -42,9 +42,9 @@ expensive, so nobody recomputes one to check it.
 Digested over ``float.hex()`` rather than over the packed double. Two ``nan``s
 are then the same reading, which is what a resumed campaign needs -- ``nan !=
 nan``, so a value comparison would make an honest rerun raise -- and it keeps a
-platform's choice of nan payload bits out of the address, which the measured
-Windows/Ubuntu divergence in ``docs/DECISIONS.md`` is the standing reason to
-care about.
+platform's choice of nan payload bits out of the address. That last part is
+belt-and-braces under the Windows pin rather than a live concern, but it costs
+nothing and the resumed-campaign argument above carries it on its own.
 
 What is not stored
 ------------------

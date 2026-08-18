@@ -40,7 +40,16 @@ Failure is an outcome, not a crash
 
 A provider that refuses, or a draft that does not decode, leaves V7 with a budget
 still to spend and a diagnosis still to give, so both are recorded and the
-investigation continues. A :class:`~sciagent.core.errors.TranscriptMissError` is
+investigation continues. So does a third case, which only an arm that proposes
+outside the library can reach: a candidate that is well-formed and executes, but
+that some design in the table's set cannot be measured on
+(:class:`~sciagent.core.errors.StructureNotMeasurableError`). It is recorded as
+``"unmeasurable"`` and costs the proposal, matching
+``BeamSearch``'s ``_UNSCORABLE``, which costs an unscorable candidate its rank
+rather than the search. Until 2026-08-18 it was uncaught, and it stopped item
+15's first LLM cells mid-campaign.
+
+A :class:`~sciagent.core.errors.TranscriptMissError` is
 **not** caught: that one means the harness was asked to replay a call nobody
 recorded, which is a configuration fault rather than a scientific event, and
 swallowing it would turn a broken replay into a quietly worse result.
@@ -56,6 +65,7 @@ from sciagent.core.errors import (
     BudgetExhaustedError,
     MalformedProposalError,
     ProviderError,
+    StructureNotMeasurableError,
     SystemConfigurationError,
 )
 from sciagent.core.types import Diagnosis, ExperimentTemplateId, HypothesisId
@@ -85,7 +95,14 @@ class ProposalAttempt:
     """The hypothesis admitted, or ``None`` if nothing was."""
 
     outcome: str
-    """``"admitted"``, ``"duplicate"``, ``"refused"`` or ``"malformed"``."""
+    """``"admitted"``, ``"duplicate"``, ``"refused"``, ``"malformed"`` or
+    ``"unmeasurable"``.
+
+    The tiers are not free-form: :data:`sciagent.eval.agency.PROPOSAL_OUTCOMES`
+    is derived from :class:`~sciagent.eval.agency.ProposalRecord`'s fields and
+    :func:`~sciagent.eval.agency.proposal_record` raises on anything outside it,
+    so a new outcome here needs a field there in the same change.
+    """
 
     detail: str
     """The rationale for an admitted proposal, or the reason it failed."""
@@ -276,6 +293,15 @@ class Hybrid:
             )
         except BudgetExhaustedError as error:
             return ProposalAttempt(proposal.address, None, "refused", str(error))
+        except StructureNotMeasurableError as error:
+            # The candidate is well-formed, on-grid and executes; what fails is
+            # a *design* in the table's set, which yields no row on it. That is
+            # a fact about the pair, not about the model, so it costs the
+            # proposal rather than the run -- exactly as
+            # ``BeamSearch._UNSCORABLE`` costs a candidate its rank. Counted in
+            # its own tier because folding it into "refused" would attribute a
+            # measurement limit to a provider that declined nothing.
+            return ProposalAttempt(proposal.address, None, "unmeasurable", str(error))
         return ProposalAttempt(
             proposal.address, node_id, "admitted", proposal.rationale
         )

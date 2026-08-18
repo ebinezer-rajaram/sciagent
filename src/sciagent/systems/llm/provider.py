@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from sciagent.core.edits import Defect, EditGrammar
+from sciagent.core.errors import InvalidEditError, MalformedProposalError
 from sciagent.systems.base import Investigation
 from sciagent.systems.llm.encoding import (
     Memory,
@@ -218,9 +219,24 @@ class ProposalLayer:
         return self._build(draft, address)
 
     def _build(self, draft: ProposalDraft, address: str) -> Proposal:
-        """Decode a draft and check it against the grammar."""
+        """Decode a draft and check it against the grammar.
+
+        ``validate_defect`` raises :class:`~sciagent.core.errors.InvalidEditError`,
+        a ``GrammarError``, for a defect whose edits are each licensed but which
+        conflict -- two on one target, whose compiled family would be ambiguous.
+        ``decode`` has already refused everything else it checks, so this is the
+        one way a draft reaches here licensed edit by edit and invalid as a
+        whole. It is re-raised as the error this method's caller documents,
+        because "does not denote a structure the grammar licenses" is precisely
+        what it is, and because ``Hybrid._propose_once`` catches that and not
+        ``GrammarError``. Until 2026-08-18 it escaped and stopped item 15's
+        V3/S11 mid-cell.
+        """
         program_edit = decode(self._grammar, self._menu, draft)
-        self._grammar.validate_defect(program_edit)
+        try:
+            self._grammar.validate_defect(program_edit)
+        except InvalidEditError as error:
+            raise MalformedProposalError(str(error)) from error
         return Proposal(
             program_edit=program_edit,
             name=_slug(draft.name),

@@ -126,10 +126,30 @@ class ProposalRecord:
     malformed: int
     """Drafts that did not decode to a structure the grammar licenses."""
 
+    unmeasurable: int
+    """Structures that decode and execute, but that a design cannot measure.
+
+    Kept apart from ``malformed`` because the draft was faultless: it named a
+    licensed structure at on-grid parameters, and the table refused it only
+    because some design in its set yields no row on that structure
+    (:class:`~sciagent.core.errors.StructureNotMeasurableError`). Counting it as
+    malformed would blame the model for a limit of the measurement set, and
+    counting it as refused would blame a provider that declined nothing.
+
+    Reachable only by an arm that proposes structure outside the library, so it
+    is always zero for V1, B1, B4 and B5.
+    """
+
     @property
     def requested(self) -> int:
         """Return how many times the layer was asked, whatever came back."""
-        return self.admitted + self.duplicate + self.refused + self.malformed
+        return (
+            self.admitted
+            + self.duplicate
+            + self.refused
+            + self.malformed
+            + self.unmeasurable
+        )
 
     @property
     def yield_fraction(self) -> float | None:
@@ -254,6 +274,7 @@ def proposal_record(attempts: Sequence[ProposalAttempt]) -> ProposalRecord:
         duplicate=counts["duplicate"],
         refused=counts["refused"],
         malformed=counts["malformed"],
+        unmeasurable=counts["unmeasurable"],
     )
 
 
@@ -317,6 +338,7 @@ def _pool(system: str, items: Sequence[AgencyMetrics]) -> AgencyReport:
             duplicate=sum(record.duplicate for record in records),
             refused=sum(record.refused for record in records),
             malformed=sum(record.malformed for record in records),
+            unmeasurable=sum(record.unmeasurable for record in records),
         )
         if records
         else None

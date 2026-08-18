@@ -221,6 +221,73 @@ class TestProposalIsGatedOnDetection:
         run = _run("S11", _layer(script=(broken,)))
         assert run.experiments > 0
 
+    def test_an_unmeasurable_proposal_leaves_a_usable_investigation(self) -> None:
+        """A structure that executes but cannot be measured costs a proposal.
+
+        The third way a proposal can fail, and the one V7 had no outcome for.
+        ``StructureNotMeasurableError`` is raised when a candidate runs but some
+        design in the table's set yields no row on it -- here a latent regime
+        whose logs leave a phase bin of ``query:phase_conditioned_dispersion``
+        holding one window. Only an arm that proposes structure outside the
+        library can reach it, which is why 38 conventional cells never did.
+
+        ``BeamSearch`` has held this exact guard since it existed
+        (``_UNSCORABLE``, ``beam_search.py``): an unscorable candidate costs B5
+        a rank, not the search. V7 instead let it escape ``investigate``, which
+        stopped the first LLM cells of item 15's matrix at V7/S2 replicate 07.
+
+        The parameters are the ones that stopped that run, recovered from the
+        error by inverting the grids: structure 1 at indices
+        ``(32, 55, 29, 22)`` is ``mult_low=0.1459``, ``mult_high=30.42``,
+        ``switch_rate=0.0504``, ``p_high=0.3552``. See ``docs/DECISIONS.md``.
+        """
+        payload = fixed_payload(1, (32, 55, 29, 22), name="unmeasurable_regime")
+        system = Hybrid(closed_set(), _layer(script=(payload,)))
+        run = _run("S11", system=system)
+        assert run.experiments > 0
+        total = sum(
+            float(run.diagnosis.distribution[h]) for h in run.diagnosis.distribution
+        )
+        assert pytest.approx(total, abs=1e-9) == 1.0
+
+        # The tier, and the fact the loop did not stop on it. Asserting only
+        # that the run survived would pass just as well if this were filed under
+        # "refused", which breaks `_extend` at the first attempt -- so the
+        # surviving-run assertion above cannot distinguish the fix from the bug
+        # it replaces. The second attempt is "refused" because a one-payload
+        # script is exhausted by then, which is what shows the loop continued.
+        assert tuple(a.outcome for a in system.attempts) == (
+            "unmeasurable",
+            "refused",
+        )
+
+    def test_two_edits_on_one_target_leave_a_usable_investigation(self) -> None:
+        """A draft can be licensed edit by edit and invalid as a defect.
+
+        ``EditGrammar.validate_defect`` refuses two edits on one target -- the
+        compiled family would be ambiguous -- and raises ``InvalidEditError``,
+        which is a ``GrammarError``. ``ProposalLayer.propose`` documents itself
+        as raising ``MalformedProposalError`` "when the payload does not denote
+        a structure the grammar licenses", and this is that case, so the layer
+        was not honouring its own contract: ``_propose_once`` catches
+        ``MalformedProposalError`` and the ``InvalidEditError`` went past it.
+
+        Structures 0 and 1 both target ``arrival`` (``AddDependency`` and
+        ``AddLatentVariable``), which is the pair that stopped V3/S11 replicate
+        09 of item 15's matrix. See ``docs/DECISIONS.md``.
+        """
+        clashing = dict(fixed_payload(0, (10, 20, 30)))
+        clashing["edits"] = [
+            {"structure": 0, "parameters": [10, 20, 30]},
+            {"structure": 1, "parameters": [10, 20, 30, 40]},
+        ]
+        system = Hybrid(closed_set(), _layer(script=(clashing,)))
+        run = _run("S11", system=system)
+        assert run.experiments > 0
+        # "malformed", not "refused": the draft is at fault, not the provider,
+        # and the two tiers are what `ProposalRecord` reports separately.
+        assert tuple(a.outcome for a in system.attempts) == ("malformed", "refused")
+
     def test_a_missing_transcript_is_not_swallowed(self) -> None:
         """A broken replay is a configuration fault, and must not degrade quietly.
 

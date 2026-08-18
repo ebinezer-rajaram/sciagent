@@ -356,7 +356,9 @@ class TestTheProposalRecord:
         constant is derived from the record's fields to make that
         unrepresentable; this asserts the derivation still holds.
         """
-        record = ProposalRecord(admitted=1, duplicate=2, refused=3, malformed=4)
+        record = ProposalRecord(
+            admitted=1, duplicate=2, refused=3, malformed=4, unmeasurable=5
+        )
         assert set(PROPOSAL_OUTCOMES) == {
             field.name for field in fields(ProposalRecord)
         }

@@ -5069,6 +5069,179 @@ because the placement looks like carelessness and is not.
 the mark-arrival diagnostic's re-addressing would cost. The seal can land before
 the matrix without paying for it.
 
+## 2026-08-16 — the rate-limit pilot: what a proposal costs, and the denominator was wrong
+
+**Measured**, twenty real proposals through `AgentSdkProvider` on
+`claude-opus-5` at `effort=high`, subscription auth, `scripts/rate_limit_pilot.py`.
+Twelve scenarios under `Memory.BOTH` then eight under `Memory.RAW`, so no two
+calls shared a brief. **20/20 succeeded and no rate limit was reached.**
+
+| per proposal | median | mean | min | max |
+|---|---|---|---|---|
+| wall-clock | **37.4s** | 41.5s | 30.2s | 63.9s |
+| cost as the SDK reports it | **$0.0980** | $0.1037 | $0.0792 | $0.1408 |
+| output tokens | 2,508 | 2,777 | 1,998 | 4,409 |
+| brief | 4,422 chars | 4,413 | 4,082 | 4,556 |
+
+Total 830.8s and $2.0734 for twenty. **86.7 proposals/hour** run serially.
+
+**The cost is not a bill and must not be read as one.** `apiKeySource` is
+`"none"`; `total_cost_usd` is the SDK valuing the turn at API rates. It is a
+proxy for quota consumed, which is the thing the caps are denominated in, and
+that is the only sense in which the dollar figures here mean anything.
+
+**It is 2x to 12x the figure this file already carries, and the old one should
+not be quoted again.** The 2026-08-15 entry records "a full proposal costs
+roughly $0.008–0.05". A full proposal at high effort costs $0.098 at the median.
+The gap is thinking: 1,998 to 4,409 output tokens per call, billed as output.
+Whatever the earlier range was measured on, it was not this.
+
+**The denominator in the open item is wrong, and correcting it is worth more
+than the cost measurement.** The 2026-08-15 entry says "Item 15 is ~1120
+proposals". 1,120 is 56 cells x 20 seeds, which is an **investigation** count.
+Two facts cut it down:
+
+* Only `Hybrid` holds a proposal layer. Outside `llm/`, which defines it,
+  `ProposalLayer` appears in `hybrid.py` and in `ablation.py` -- and the
+  ablation's two arms *are* `Hybrid`, under the names V3 and V4. V1, B1, B4 and
+  B5 have no layer and never call a model. Of the 56 cells, the model-bearing
+  ones are V7's twelve plus V3/V4's six: **18 cells, 360 investigations.**
+* Of those, the entry "the gate is threaded" measures the scoped Stage A gate
+  opening on **S11 and nowhere else** in twelve scenarios. The cells that ask
+  are V7/S11, V3/S11 and V4/S11 -- **three**, at twenty seeds, at
+  `max_proposals=2`.
+
+| basis | calls | cost | model time |
+|---|---|---|---|
+| **S11 alone fires** | **120** | **$11.76** | **1.2h** |
+| every model-bearing cell fires at every seed | 720 | $70.56 | 7.5h |
+| the ~1120 the open item is written in | 1,120 | $109.77 | 11.6h |
+
+**So the open item is probably answerable without measuring the cap at all.**
+A recording run of 120 calls over 1.2h is not a thing a 5-hour window plausibly
+refuses. That reasoning is only as good as the row it rests on, and the floor
+rests on a gate measurement taken at **one seed per scenario**: S11's probe reads
+0.0112 against alpha 0.05 and the nearest in-library miss is 0.0595, so seeds
+can move a cell either way. What is now cheap is bounding it -- run the gate
+across twenty seeds with a scripted provider and count the cells that fire. That
+costs no quota at all, and it is the measurement that closes this, not a burn.
+
+**Three observations from the run that nothing else records.**
+
+* **Every call was served by two models.** `served_models` reads
+  `claude-haiku-4-5,claude-opus-5` on all twenty.
+  `_refuse_a_substitute_model` passes because it asks whether the pinned model is
+  **among** those that served, not whether it was the only one -- which is the
+  right rule, since Claude Code uses a small model for its own auxiliary work and
+  a stricter test would refuse every real call. Worth knowing anyway: the
+  module's docstring reads as the stricter promise, and haiku usage draws on the
+  same subscription during a recording run.
+* **The prompt is ~3,600 tokens and about three quarters of it is cache
+  *creation*.** Median 2,677 created against 969 read, with `input_tokens` at 2
+  to 4. The 969 is the constant head; the created part is the brief, which is
+  unique per call and therefore written to a cache nothing ever reads back. A
+  recording run pays the write premium on every call by construction.
+* **`num_turns` was 2 or 3.** `MAX_TURNS = 4` and the constant's comment says a
+  real brief "measured two turns consistently". Three happens. The headroom is
+  load-bearing, not decorative.
+
+**A version fact that vindicates a decision made hours earlier.** The spawned
+binary reported `claude_code_version` **2.1.233** while `claude --version` on
+PATH reported **2.1.221** in the same session. Whichever way that resolves --
+auto-update mid-session, or the SDK resolving a different install -- it is
+exactly the drift the entry "the call address excludes the binary version"
+refused to hash into an address. Had `ADDRESS_VERSION` covered it, this pilot's
+twenty transcripts would already be split across two address spaces.
+
+**What was deliberately not done.** No registry entry, no committed corpus. The
+twenty transcripts are under `.cache/`, gitignored: the brief depends on the
+structural menu, `METRIC_VERSION` and the Stage A allocation, all of which moved
+today, so these addresses would go stale before item 15 recorded against them.
+The script drives `ProposalLayer.propose` directly rather than running V7,
+because the gate opens on S11 alone and a run through `investigate` would have
+priced one scenario's brief twenty times.
+
+**Closes off.** It does **not** measure the 5-hour or weekly cap. Nothing here
+says how many proposals fit in a window; it says what one costs, which is the
+other half of that division. Item (2) of the 2026-08-15 entry stays open on
+paper, and the cheapest route to closing it is now the scripted seed sweep above
+rather than a burn.
+
+## 2026-08-16 — the seed sweep: 142 calls, not 120, and S11 fires at every seed
+
+**Supersedes the call count in "the rate-limit pilot: what a proposal costs, and
+the denominator was wrong"**, earlier today. That entry derived **120** calls from
+the gate firing on S11 alone, flagged that the derivation rested on one seed per
+scenario, and named the sweep that would settle it. The sweep was run. The figure
+is **142**, and the reason it moved is worth more than the number.
+
+**Measured**, `scripts/stage_a_seed_sweep.py`, the eighteen model-bearing cells at
+twenty seeds each, scripted provider, `max_proposals=2`. Seed `k` is
+`scenario.seed + 1_000_000 * k`, so `k = 0` is the recorded seed and the first
+column is a control on the harness: it reproduced the recorded table exactly --
+V7, V3 and V4 firing on S11, all fifteen other cells shut.
+
+| cell | fired | asks |
+|---|---|---|
+| V7/S11 | **20/20** | 40 |
+| V3/S11 | **20/20** | 40 |
+| V4/S11 | *not measured -- see below* | *40* |
+| V7/S3 | 2/20 | 4 |
+| V7/S12, V3/S12, V4/S12 | 2/20 each, seeds `[5, 7]` | 12 |
+| V7/S5, V7/S6, V7/S9 | 1/20 each | 6 |
+| V7/S1,S2,S4,S7,S8,S10; V3/S8, V4/S8 | 0/20 | 0 |
+| **total** | | **142** |
+
+**S11 fires at every seed, and that is the result the matrix depends on.** SPEC
+§9's preregistered contrast conditions on detection; item 12 measured that event
+occurring zero times in twelve, and the entry "the gate is threaded" got it firing
+at the recorded seed. It now fires at **twenty of twenty** on both arms measured.
+The contrast is not a knife-edge on one seed.
+
+**In-library scenarios fire too, and that is the check working rather than
+failing.** Six firings across 220 V7 seed-runs on scenarios whose truth is in the
+library -- **2.7%**, against an alpha of 0.05. A gate with a 5% false-positive
+rate that produced none at all over 220 draws would be the surprising outcome.
+Nothing needs fixing; what needed correcting was the arithmetic that assumed
+zero.
+
+**V4/S11 is deduced rather than measured, and the deduction is sound.**
+`Hybrid.investigate` consults `investigation.ppc()` *before* calling `_extend`,
+and `Memory` enters only through `render_brief` inside `ProposalLayer.propose`,
+which runs after. The gate is therefore provably independent of the memory arm,
+so V3 and V4 must fire identically on one scenario and seed. Corroborated twice:
+both S12 arms fired at exactly seeds `[5, 7]`, and both S8 arms fired zero. It is
+recorded as a deduction anyway, because the cell was not run.
+
+**What this does to the recording run.** At the pilot's median of $0.098 and
+37.4s: **142 calls, ~$14 of quota, ~1.5h of model time.** 142 is also a *ceiling*
+-- `_extend` breaks only on a refusal, a scripted provider never refuses, and a
+live model refusing its first call would stop the loop at one.
+
+**The rate caps can therefore be closed without measuring them.** A run of ~1.5h
+and ~$14 is not something a 5-hour window plausibly refuses. Item (2) of the
+2026-08-15 entry is answered by making the numerator small enough that the
+denominator stops mattering, which is a better outcome than a burn would have
+bought: a burn measures the cap on the day it is run, and Anthropic has already
+changed subscription terms once (2026-05-14, paused on the day of effect).
+
+**A machine constraint that cost two crashed runs and one crashed session.** The
+sweep is ~300 investigations and the three S11 cells dominate it at ~30 minutes
+each; the rest finish in seconds. Run on a 15.9 GB Windows desktop with VS Code,
+Firefox and eleven `claude` processes resident, free memory reached **1.0 GB** and
+numpy began failing 193 KiB allocations. One failure took the editor's Claude Code
+process down with `0xC0000409`, with `majflt` in the hundreds at `cpu=0ms` -- the
+machine was thrashing, not computing. **Do not run this sweep alongside a full
+desktop.** Cells are independent, which is why `--only SYSTEM/SCENARIO` exists;
+run the three S11 cells one process at a time.
+
+**Closes off.** It does not measure the 5-hour or weekly cap, and after this it is
+not worth measuring them: the question was whether the matrix fits, and the answer
+is that it fits with an order of magnitude to spare. V4/S11 remains the one
+model-bearing cell never executed. Nothing here is a live-model measurement -- the
+sweep is scripted throughout, because the gate is conventional (SPEC F5) and
+cannot see which backend would have answered.
+
 ## 2026-08-17 — item 15: the campaign ledger is a sibling store, because a score is not an experiment
 
 **Decision.** SPEC §9's matrix records completed cells in a new
@@ -6045,3 +6218,380 @@ what is addressed, so adding them later is a resume and not a re-run. The
 preregistered contrast (V7 vs B4 on S11, D3, conditional on inadequacy detection)
 is **unanswerable** until they land, which is why `scripts/report_matrix.py` keeps
 `--contrast` off by default.
+
+## 2026-08-18 — item 15: the rate-limit measurement was taken on 2026-08-16 and nobody could see it
+
+**Decision.** The two 2026-08-16 entries — "the rate-limit pilot: what a proposal
+costs, and the denominator was wrong" and "the seed sweep: 142 calls, not 120,
+and S11 fires at every seed" — are landed **verbatim, at their chronological
+position** (now lines 5072 and 5170), together with `scripts/rate_limit_pilot.py`,
+`scripts/stage_a_seed_sweep.py` and the `docs/BACKLOG.md` entry "Finish the Stage
+A seed sweep, and give it somewhere to run". 173 and 33 insertions, no deletions,
+byte-identical to what the stranded session wrote.
+
+**The file now contradicts itself and that is deliberate.** At line 5221 it says
+the rate caps "can therefore be closed without measuring them"; at 6215 it says
+"the 18 LLM cells still wait on the rate-limit measurement". Both are what was
+believed when written. Editing either would be the one thing this file forbids,
+and the contradiction is the evidence for what follows.
+
+**Why it happened, which is the part worth having.** The work was complete and
+uncommitted in `.claude/worktrees/rate-limit-pilot`, on a branch 12 commits behind
+`main`. Uncommitted work in a worktree is invisible to `git log`, to
+`git status` in every other tree, to `scripts/status.py`, and to `/recall` —
+which greps `docs/DECISIONS.md`, and the entries were sitting in that worktree's
+*copy* of it. Every instrument this project uses to orient reported the blocker
+as open, correctly, because none of them can see a file that was never committed.
+
+**The record named the path and it still did not help.** Lines 5343-5347 read:
+"A concurrent session was working this in `.claude/worktrees/rate-limit-pilot`
+with uncommitted `scripts/rate_limit_pilot.py` and `scripts/stage_a_seed_sweep.py`;
+this session stayed off it deliberately rather than duplicating the work." That
+was the right call at the time. What no session then did was go back and ask
+whether the concurrent work had *finished* — three later entries (5343, 5655,
+6215) restate "still unmeasured" without checking a location one of them had
+itself written down. The habit that would have caught it is cheap: when an entry
+defers to a concurrent session by path, that path is a thing to re-check before
+repeating the deferral, not a citation.
+
+**Cost.** Two days of item 15 reported as blocked on a question already answered,
+and a 38-cell campaign run and written up under that belief. Nothing was
+recomputed twice and no number is wrong — the conventional cells never needed a
+provider, as `main`'s own entry at 5999 works out. The cost was in what did not
+get started.
+
+**Measured, and it qualifies the pilot's cost figure rather than restating it.**
+`rate_limit_pilot.py --dry-run` on today's tree gives a **4221.5-char median
+brief** against the **4422** the pilot recorded on 2026-08-16. The brief moved
+because the structural menu, `METRIC_VERSION` and the Stage A allocation all did,
+exactly as that entry predicted when it declined to commit a corpus. So the
+$0.098 median is a measurement against a 4422-char brief, and today's calls are
+~4.5% shorter on input. The output tokens are the cost driver, so this does not
+move the projection much — but the $0.098 should not be quoted as though it were
+taken against the brief now being sent.
+
+**Closes off.** It does not measure the 5-hour or weekly cap, and after the seed
+sweep that is still not worth doing. `.cache/campaign/spec9.db` — the 38 recorded
+cells, 760 rows — is copied from `.claude/worktrees/matrix-runner/` to the main
+tree's `.cache/`, verified identical by row count and by a digest over every
+`reading_digest` in `sequence` order, with the original left in place. It was
+reachable only from inside that worktree, and `run_matrix.py` takes the ledger as
+a path resolved against the working directory, so a resume from anywhere else
+would have silently re-run all 38 rather than skipping them. Nothing about the
+LLM cells is settled here; they are running as this is written.
+
+## 2026-08-18 — item 15: the seed sweep measured a seed set the matrix never runs, and the LLM arm has no outcome for an unmeasurable proposal
+
+**Supersedes the call-count projection in "the seed sweep: 142 calls, not 120,
+and S11 fires at every seed"**, which was landed earlier today and is the entry
+that unblocked the recording run. Its measurements stand; what does not is the
+inference from them to the matrix's budget.
+
+**Measured: the two seed sets are disjoint.** The sweep uses an arithmetic grid,
+`scenario.seed + 1_000_000 * k` (`scripts/stage_a_seed_sweep.py`, `STRIDE`). The
+matrix hashes: `replicate_seeds` returns
+`stable_key(f"matrix/{scenario_seed}/{index}") % _SEED_MODULUS`
+(`sciagent/eval/matrix.py:292-295`). Computed over 20 replicates:
+
+| scenario | sweep seeds [:3] | matrix seeds [:3] | overlap |
+|---|---|---|---|
+| S2 | 20260902, 21260902, 22260902 | 5970087448106719972, … | **0 of 20** |
+| S11 | 20260911, 21260911, 22260911 | 4320392470714962927, … | **0 of 20** |
+
+So **142 is not the matrix's call count**, and the ~$14 and ~1.5h that follow
+from it are not the matrix's budget. The sweep's control — "`k = 0` is the
+scenario's own seed, so the first column must reproduce the recorded table" — is
+sound for what it checked, item 12's single-seed runs at `scenario.seed`. The
+matrix uses none of those seeds either.
+
+**What the sweep still supports.** S11 firing 20/20 on an arbitrary 20-seed grid
+is evidence the Stage A gate is not a knife-edge on one seed, which is the claim
+SPEC §9's conditioned contrast actually rests on. That survives. The arithmetic
+that turned a firing table into a call count does not.
+
+**Corroborated by the run rather than by argument.** The campaign proposed on
+**V7/S2 replicate 07**, and the sweep records V7/S2 firing **0/20**. A cell the
+sweep says never fires, firing on the matrix's seeds, is the disjointness showing
+up in behaviour within 27 replicates.
+
+**A real gap: an unmeasurable proposal has no outcome, so it kills the
+campaign.** The run stopped with
+`StructureNotMeasurableError`: structure
+`AddLatentVariable(arrival|two_state_markov|…)` executes, but design
+`query:phase_conditioned_dispersion` cannot be measured on it — `phase bin 6
+holds 1 window(s)` (`environments/pointproc/diagnostics.py:225`, raised through
+`inference/empirical.py:435`).
+
+`Hybrid._propose_once` converts `ProviderError` into `"refused"` and
+`MalformedProposalError` into `"malformed"`; there is no third case, so this
+escapes through `_admit` and out of `investigate`. The precedent is one file
+away and points the other way: `beam_search.py:66` defines
+`_UNSCORABLE = (ExecutionError, OutOfRangeError, StructureNotMeasurableError)`
+and line 167 catches it, so an unmeasurable candidate costs B5 a rank rather than
+the search. The comment at `empirical.py:445-452` records that this was learned
+once already, when an `OutOfRangeError` escaping the same boundary aborted a beam
+search.
+
+This is reachable only by an arm that proposes structure outside the library:
+V1, B1, B4 and B5 never expand the table with a new structure, which is why 38
+conventional cells ran clean and why the defect surfaced on the first LLM cells
+ever run in this tree.
+
+**Work left incomplete, and what it waits on — a decision that is not mine.**
+Giving the proposal taxonomy a fourth outcome would change what V7 scores: a run
+that currently dies would instead record a non-admission and carry on. That is
+evaluation apparatus, and CLAUDE.md's invariant 6 survives precisely as the rule
+that such apparatus must not be shaped after watching the system it grades fail
+against it. B5's handling is a strong precedent for what the answer should be,
+and the precedent is not the same thing as the decision. **Stopped here and
+asked.**
+
+**State banked.** `.cache/campaign/spec9.db` holds **787 rows** — the 38
+conventional cells' 760, plus 27 LLM replicates (V7/S1 complete at 20, V7/S2
+through replicate 06). `run_matrix` skips what it holds, so this is a resume.
+The live backend is validated end to end and was never the problem: one V7/S11
+replicate through `AgentSdkProvider` took **113.0s** and recorded **2 calls**, at
+`max_proposals=2`, into a separate `llm_smoke.db` so the smoke does not sit in
+the campaign.
+
+**Closes off.** It does not touch the 5-hour or weekly caps, which remain
+unmeasured and — the one part of the superseded arithmetic that does survive —
+still look far from binding. It says nothing about what the matrix's true call
+count is; measuring that needs the sweep re-run over `replicate_seeds`, which
+costs no quota and has not been done.
+
+## 2026-08-18 — item 15: an unmeasurable proposal is a fifth outcome, not a crash
+
+**Decision.** `Hybrid._admit` catches
+:class:`StructureNotMeasurableError` and returns
+`ProposalAttempt(..., "unmeasurable", ...)`, and `ProposalRecord` gains a fifth
+required field to count it. An unmeasurable proposal now costs V7 a proposal and
+the run continues, exactly as `BeamSearch._UNSCORABLE` costs B5 a candidate its
+rank rather than the search. `_extend` does not break on it — only `"refused"`
+breaks — so the second of `max_proposals=2` is still attempted.
+
+**Why a fifth tier rather than reusing one.** Folding it into `"malformed"`
+would blame the model for a faultless draft: the structure is licensed, on-grid
+and executes. Folding it into `"refused"` would blame a provider that declined
+nothing. Both would be recorded as facts about the proposal layer when the fact
+is about the *pair* — this structure against this design set. `ProposalRecord`'s
+existing docstring already makes exactly this complaint about `refused` carrying
+two causes, so adding a third would have compounded a wart the file names.
+
+**The taxonomy could not drift silently, and that is by prior design rather than
+by care taken here.** `PROPOSAL_OUTCOMES` is derived from
+`fields(ProposalRecord)`, and `proposal_record` raises
+`InvestigationError` on an outcome outside it — "counting it would need a tier it
+has not been given". So the new outcome could not have been silently dropped; it
+would have crashed the agency metrics instead. Two existing tests
+(`test_agency.py:297` and `:365`) assert `requested` equals the sum over
+`PROPOSAL_OUTCOMES`, and both picked the fifth tier up with no edit.
+
+**This is evaluation apparatus shaped after watching the system it grades fail
+against it, and the user took that decision explicitly** when the alternative —
+leaving item 15's LLM cells unrunnable and deciding cold later, as §12 criterion
+4 and the withdrawn `ScenarioRun.adequacy` field were both handled — was put
+beside it. Three things bound how far the hazard reaches, and none of them is
+that the change is small:
+
+* **The precedent predates the failure.** `_UNSCORABLE` has held this exact rule
+  in `beam_search.py` since it existed, and `empirical.py`'s own comment records
+  the lesson being learned once already, when an `OutOfRangeError` escaping the
+  same boundary aborted a beam search. The rule was not invented to let V7 past.
+* **No recorded number moves.** `CellReading` carries dimensions, score,
+  `ppc_p_value`, `inadequate`, `experiments` and `structural_distance` — no
+  agency metric — so the 760 conventional rows keep their readings and their
+  content addresses. Nothing needed re-running.
+* **It cannot flatter V7 against its comparators.** The tier is reachable only by
+  an arm that expands the table with a structure outside the library, so V1, B1,
+  B4 and B5 score zero there by construction, and the preregistered contrast
+  (V7 vs B4 on S11, D3) reads none of these fields.
+
+What it does change is what a V7 run *does*: a replicate that previously killed
+the campaign now completes with one proposal spent and nothing admitted. That is
+a different D1–D6 vector than the crash produced, which was no vector at all.
+
+**Measured.** The failing structure was recovered from the error text by
+inverting the parameter grids —
+`fixed_payload(1, (32, 55, 29, 22))`, being `mult_low=0.1459`,
+`mult_high=30.42`, `switch_rate=0.0504`, `p_high=0.3552` — and pinned as
+`test_an_unmeasurable_proposal_leaves_a_usable_investigation`. It reproduced the
+campaign stop exactly, through the same chain (`hybrid.py` -> `base.py:297` ->
+`empirical.py:904` -> `:435`), failed before the fix and passes after. Full suite
+green at `-n 4 --dist loadfile`: **1336 passed, 7 skipped, 150.00s**; `mypy`
+clean over 125 source files; `ruff check` and `ruff format --check` clean.
+
+**Closes off.** It says nothing about whether
+`query:phase_conditioned_dispersion`'s eight-bin default is the right design —
+widening the window or lowering the bin count would make more structures
+measurable, and would move `METRIC_VERSION` and every address with it, which is
+why it was not touched. It does not touch the diagnostic itself, so the same
+structures remain unmeasurable; they are now merely survivable.
+
+## 2026-08-18 — item 15: the proposal layer did not honour its own documented contract, and that is the second escape found by running
+
+**Decision.** `ProposalLayer._build` re-raises `InvalidEditError` from
+`EditGrammar.validate_defect` as `MalformedProposalError`. No new outcome tier:
+`"malformed"` already exists, and `ProposalLayer.propose`'s docstring already
+promised this exact error "when the payload does not denote a structure the
+grammar licenses". The layer simply was not doing it.
+
+**Why this one is not a taxonomy judgement.** `decode` refuses a menu index off
+the menu, a parameter count that disagrees with the grids, and a grid index past
+the end of its grid. What it does not check is the *pairwise* constraint, so a
+draft whose edits are each licensed can still be invalid as a defect — two edits
+on one target, whose compiled family would be ambiguous. `InvalidEditError` is a
+`GrammarError` and its own docstring says "or conflicts with another edit in the
+defect"; `MalformedProposalError` is a `ProposalError` and says "does not denote
+a structure the grammar licenses". The second is the accurate description of what
+happened, `_propose_once` catches it, and the contract said so before any of this
+was measured. Changing which exception crosses that boundary makes the code match
+a promise that predates the failure, rather than inventing a category to survive
+one.
+
+**Measured.** Stopped `V3/S11` after **9** replicates, on replicate 09. Pinned as
+`test_two_edits_on_one_target_leave_a_usable_investigation`: structures 0 and 1
+both target `arrival`, which is the clash the model produced. Failed before the
+change through `provider.py:223`, passes after. `mypy` clean over 125 source
+files; `ruff check` clean.
+
+**The pattern is worth more than either fix, and it is not reassuring.** These are
+**two distinct escapes in one afternoon**, both in the same place — a proposal
+that fails in a way `Hybrid._propose_once` has no case for — and both found by a
+live campaign stopping, not by a test. `StructureNotMeasurableError` came from the
+*table* refusing a structure; `InvalidEditError` came from the *grammar* refusing
+a defect. They share only that the LLM arm is the sole way to reach them: every
+conventional arm proposes from a fixed library that was validated once, so 38
+conventional cells over 760 replicates could not have found either.
+
+What that suggests, and what this entry does **not** do: the proposal path's
+failure taxonomy should be audited against the set of errors reachable from
+`ProposalLayer.propose` and `Investigation.propose`, rather than extended one
+crash at a time on a run that costs quota. Two data points do not establish that a
+third exists; they do establish that neither was anticipated, and that the
+instrument that finds them is expensive. That audit is a `docs/BACKLOG.md` entry,
+not something to improvise while a campaign is mid-flight.
+
+**Closes off.** It does not touch `decode`, which still checks what it checked;
+the pairwise constraint stays where it is, in the grammar, and is merely reported
+as the layer said it would be. It says nothing about whether a model proposing two
+edits on one target is a prompting problem — the brief does not currently say the
+targets must differ, and whether it should is a question about the brief, which
+`METRIC_VERSION` does not cover but the call address does.
+
+## 2026-08-18 — item 15: the matrix is complete at 56 cells, and V7's extension changes almost nothing it is scored on
+
+**Decision.** SPEC §9's matrix is recorded in full: **56 cells, 1120 replicates,
+20 per cell, no skips**, in `.cache/campaign/spec9.db` on the Windows desktop, at
+`pointproc/pointproc/1.1.0+1.2.0+1.1.0` / `pointproc/generated/1.0.0` /
+`metrics/9b1c54c9d49f49f656c30e32d21d4a7b`, partition `dev`. The 18 LLM cells —
+V7 on twelve, V3 and V4 on three each — join the 38 conventional ones recorded
+2026-08-17. **Exploratory by construction**, per §9.
+
+**Measured: 112 live model calls**, against the **142** the superseded seed-sweep
+arithmetic projected. The count decomposes exactly, which is the check that it is
+not a coincidence: **56 firings x 2 proposals**. V7/S11, V3/S11 and V4/S11 each
+fired **17 of 20**; V7 fired **5 times** across the other eleven scenarios (S2
+once, S4 twice, S5 once, S6 once); V3 and V4 fired **0** on S8 and S12.
+
+**The three arms firing identically at 17/20 is the 2026-08-16 deduction holding,
+and it now covers V7 as well.** That entry argued V3 and V4 must fire alike
+because `Hybrid` consults the gate before `_extend` and `Memory` enters only
+inside `propose`. The same argument covers any two `Hybrid`s differing solely in
+memory, so V7 belongs in it. Three arms, same 17 seeds, is that reasoning
+measured rather than deduced.
+
+**The sweep's firing table does not transfer, as the disjoint-seeds entry
+predicted.** It said S11 fires 20/20 and named S3, S12, S5, S6 and S9 as the
+others; the matrix fires 17/20 on S11, nothing on S3, S12 or S9, and fires on S2
+and S4, which the sweep had at zero.
+
+### The preregistered contrast has no answer, and that is the finding
+
+```
+contrast unavailable: no replicate of V7 on S11 detected inadequacy, so a
+contrast conditional on inadequacy detection has no answer on this matrix.
+That is a finding to report, not a number to compute
+```
+
+`report_matrix.py --contrast` exits 3. **V7/S11 records `inadequate` 0 of 20**
+while V7 *acted* on the Stage A gate in 17 of those same 20 runs. Those are two
+different checks — `CellReading.inadequate` is the whole-record posterior
+predictive check, documented at `eval/campaign.py:104` as "**Not** the verdict a
+system acted on where a scenario declares a Stage A probe" — and §9's contrast
+conditions on the first while V7 is driven by the second.
+
+This is the incoherence `docs/BACKLOG.md` records for SPEC §12 criterion 4,
+reaching §9's primary contrast by the same route: the specification names
+"inadequacy detection" and two checks answer to that name. **Nothing was changed
+to make the contrast compute.** Switching the conditioning field is exactly the
+decision that entry says must not be taken in a session that has just measured
+V7, and this session has done nothing but measure V7.
+
+### V7 is V1, to six decimals, everywhere it is scored
+
+The result that most wants stating plainly. Comparing readings replicate by
+replicate, V7 differs from V1 on **21 of 240** — precisely the 21 where it
+proposed — and on S11 the differences are:
+
+| field | largest \|V7 - V1\| over 20 replicates |
+|---|---|
+| `ppc_p_value` | 9.564e-03 |
+| `d5_enabled_experiment_value` | 1.099e-04 |
+| `leading_mass` | 8.757e-05 |
+
+**D1, D2, D3, D4, D6, `correct`, `identified`, `truth_mass`, `log_score` and
+`structural_distance` are bit-identical.** Seventeen proposals per S11 cell, and
+the leading hypothesis never moved: D1 stays at **1.5000** for V1, V7, V3 and V4
+alike, which is the plain-Hawkes library member that `docs/BACKLOG.md`'s grammar
+sensitivity entry already flags as scoring *worse* than the null on S11.
+
+**Correct rate, 20 seeds.** V7's row is V1's row.
+
+```
+         S1    S2    S3    S4    S5    S6    S7    S8    S9   S10   S11   S12
+  V1   1.00  1.00  1.00  1.00  1.00  1.00  1.00  0.00  1.00  0.00  0.00  0.15
+  V7   1.00  1.00  1.00  1.00  1.00  1.00  1.00  0.00  1.00  0.00  0.00  0.15
+  B4   1.00  0.00  1.00  1.00  1.00  1.00  0.00  0.00  1.00  0.00  0.00  0.00
+  B5   0.00  0.00  0.00  0.00  0.00  0.00  0.00  0.00  1.00  0.00  0.00  0.00
+  B1      .     .     .     .     .     .     .     .  1.00     .  0.00     .
+  V3      .     .     .     .     .     .     .  0.00     .     .  0.00  0.15
+  V4      .     .     .     .     .     .     .  0.00     .     .  0.00  0.15
+```
+
+**On D3 unconditioned, V7/S11 is 0.6662 and B4/S11 is 0.5464.** Do **not** read
+that as the preregistered contrast, which is conditional and has no answer here.
+It is also not evidence about proposal quality: V7's 0.6662 is V1's 0.6662 to
+four decimals, so what it measures is BOED with a library, not extension. V3 is
+0.6652 and V4 is 0.6662 — the memory arms differ from each other by 1e-3, which is
+the only number in this matrix that is about memory at all.
+
+**Cost and duration.** 112 calls. The per-call cost was not re-measured here and
+the pilot's $0.098 median was taken against a 4422-character brief where today's
+is ~4222, so it should be quoted as an estimate rather than a bill. Wall clock,
+summed from the runner's per-replicate lines: the three S11 cells dominate at
+**34.8, 47.1 and 29.1 minutes** for V7, V3 and V4 — **110.9 minutes** between
+them, for 60 of the 1120 replicates. The 15 other cells took 273 replicates, of
+which 268 ran in 0.1-0.2s and five cost 90-215s apiece; those five are exactly
+V7's five non-S11 firings. Cost tracks distinct structures, not replicates,
+exactly as the 2026-08-17 entry concluded from the conventional cells.
+
+**Three stoppages, none of them a rate limit.** Two were proposal-path escapes,
+each recorded in its own entry above and each fixed before resuming. The third,
+on V4/S11 replicate 13, was `Exception: Claude Code returned an error result:
+success` — a bare exception out of the Agent SDK, past `run_matrix.py`'s
+`except SciAgentError` and so printed as a traceback rather than the designed
+"stopped after N replicate(s)". **It did not recur**: a plain resume completed
+replicate 13 in 49.5s and the remaining six after it. Recorded as transient on
+one observation, which is all the evidence there is. The checkpointing behaved as
+its docstring promises through all three — every completed replicate was already
+in the ledger, and no work was repeated.
+
+**Closes off.** The subscription caps are still unmeasured and were never
+approached: 112 calls over an afternoon. Nothing here re-specifies §12 criterion
+4, and nothing here answers §9's contrast. What item 15 now has is the matrix
+itself, and one result worth carrying into the frozen campaign: **on this slice,
+the proposal layer does not move the dimensions it is scored on.** Whether that
+is the grammar's distance being the wrong instrument (the R5 entry), the gate
+conditioning on the wrong check (the criterion-4 entry), or V7 genuinely adding
+nothing, this matrix cannot say — and those are three different follow-ups.

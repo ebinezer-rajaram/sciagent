@@ -702,3 +702,130 @@ on at the end of an unrelated session is how the three defects that same review
 caught got written in the first place. Sequencing: before item 15, since the
 matrix is the first time these systems run at scale and a fabricated posterior
 would be indistinguishable from a real one in the report.
+
+## DONE (2026-08-18) — Finish the Stage A seed sweep, and give it somewhere
+## to run
+
+**Closed.** `scripts/stage_a_seed_sweep.py --only V4/S11 --seeds 20` ran on the
+Windows desktop in **1243.2s**: **fired 20/20, 40 asks**, exactly the figure the
+entry below deduced from V3. The seed sweep's 142 is now 142 measured rather
+than 102 measured plus 40 derived, and the deduction's reasoning is corroborated
+rather than merely sound.
+
+**The second half is answered by the run rather than by a decision.** The entry
+argues this class of work needs "a quiet machine, or a cloud session". It ran
+here with VS Code, a browser and five `claude` processes resident, at **6.1 GB
+free of 15.93** throughout and a 0.07 GB working set. So what defeated the three
+earlier attempts was the specific 11-process / 1.0 GB condition, not the sweep's
+intrinsic appetite — the cell needs headroom, not a dedicated machine, and
+`--only` running one cell per process is what supplies it. No cloud session is
+needed and none should be used: that route was already foreclosed, see below.
+
+**One sentence of the entry below is stale and is left standing.** It says the
+cloud route "collides with the platform precondition in `/matrix` —
+cross-platform determinism is unverified". That was true when written on
+2026-08-16. `40fd351` then pinned the project to Windows and `docs/DECISIONS.md`
+2026-08-17 records the divergence as closed by pinning rather than by fixing, so
+the collision is no longer a live tension but a settled prohibition. The original
+entry follows, unedited.
+
+**Idea.** Run `scripts/stage_a_seed_sweep.py --only V4/S11`, the one
+model-bearing cell of eighteen that has never been executed, and while there,
+decide where this class of run belongs. The sweep is ~300 investigations; the
+three S11 cells are ~30 minutes each and the other fifteen finish in seconds.
+
+**Rationale.** The call count that unblocked item 15's recording run — 142, in
+`docs/DECISIONS.md` 2026-08-16 "the seed sweep" — is 102 measured plus 40
+*deduced* for V4/S11. The deduction is sound and is argued there: `Hybrid`
+consults the gate before `_extend` runs, `Memory` enters only through
+`render_brief` inside `propose`, so V3 and V4 cannot fire differently on one
+scenario and seed; both S12 arms fired at exactly seeds `[5, 7]` and both S8 arms
+fired zero. So this is not a hole in the reasoning. It is the difference between
+a number that was measured and a number that was derived, in a figure that is
+about to authorise a recording run, and the file should not have to explain that
+distinction twice.
+
+The second half is the part with teeth. The sweep was attempted three times on a
+15.9 GB Windows desktop with VS Code, Firefox and eleven `claude` processes
+resident. Free memory reached 1.0 GB, numpy began failing 193 KiB allocations,
+and one failure took the editor's own Claude Code process down with
+`0xC0000409` — `majflt` in the hundreds at `cpu=0ms`, a machine thrashing rather
+than computing. That is not a bug in the sweep and no amount of tuning it will
+help: the work genuinely needs memory the desktop did not have. The options are
+a quiet machine, or a cloud session, and the cloud route collides with the
+platform precondition in `/matrix` — cross-platform determinism is unverified,
+and `.cache/tables/` carries the divergence between machines. Worth settling
+deliberately rather than at the moment somebody needs the answer.
+
+**Touches.** No frozen decision. Completing a measurement and choosing where to
+run it; neither changes what item 15 is.
+
+## Audit the proposal path's failure taxonomy, rather than extending it one
+## crash at a time
+
+**Idea.** Enumerate the exceptions reachable from `ProposalLayer.propose` and
+`Investigation.propose`, decide for each whether it is a proposal *outcome* or a
+fault that should stop a run, and pin the decision in tests. Then check
+`Hybrid._propose_once` and `_admit` handle exactly that set.
+
+**Rationale.** 2026-08-18 found **two** distinct escapes in one afternoon, both
+at that seam, both discovered by a live campaign stopping rather than by a test:
+`StructureNotMeasurableError` from the table refusing a structure (V7/S2/07), and
+`InvalidEditError` from the grammar refusing a defect (V3/S11/09). Each was fixed
+in its own entry in `docs/DECISIONS.md`. Neither was anticipated.
+
+The instrument that finds them is the expensive one. Only an arm that proposes
+structure outside the library can reach either, so 38 conventional cells over 760
+replicates could not have; it took live LLM cells costing quota and roughly two
+hours of compute. Two data points do not prove a third exists, but they do show
+that the set was never enumerated and that discovery costs a stopped campaign
+each time.
+
+Two specific inputs the audit already has, from the `invariant-auditor` lenses
+run on that change:
+
+* `ProposalRecord.refused` conflates a model declining with a *transport* failure
+  — `AgentSdkProvider` raises `ProviderError` for a refusal, for `max_tokens`,
+  and for any failed session including an API error status, and all three break
+  `_extend`. That is the same misattribution the `unmeasurable` tier was carved
+  out to avoid, applied to quota state rather than to measurement limits.
+* The break asymmetry is now four continuing outcomes against one breaking one,
+  so `yield_fraction`'s denominator depends on which outcome arrives. Harmless at
+  `max_proposals = 2`, where declining can only lower the ratio; at 3 or more a
+  model unable to produce a second admission would score strictly higher by
+  declining. Raising `max_proposals` is therefore a sharper change than it looks.
+
+**Touches.** No frozen decision. It is enumeration and test coverage over an
+existing boundary. Sequencing: **not** mid-campaign, and not in a session that
+has just watched a particular arm fail against a particular tier — the same
+hazard the `unmeasurable` entry names and the §12 criterion 4 entry insists on.
+
+## Four defects in `scripts/rate_limit_pilot.py`'s reporting, found by review
+## after its measurements were already taken
+
+**Idea.** Fix four things `/code-review` found in the pilot on 2026-08-18, none
+of which affects the numbers it already produced:
+
+* `ok` gates on `cost_usd > 0.0`, so a session that reports no cost discards the
+  whole measurement *after* the quota was spent. Latent rather than theoretical —
+  the measured median is \$0.098, but `apiKeySource` is `"none"` and the SDK's
+  costing is what would return zero.
+* Rejected calls are recorded with `address=""` although the transcript *was*
+  stored, so the report's "inspect these" rows cannot be joined to the saved
+  corpus — which is the one thing that listing is for.
+* Exit 1 on any malformed draft is indistinguishable from the provider-failure
+  stop the script exists to detect. Two very different events, one status.
+* `work_list`'s docstring calls the screening "cheap: a gate evaluation per
+  candidate". `at_proposal_time` spends half the scenario budget through BOED,
+  so a 20-call run screens ~240 half-investigations in one process — on a
+  machine `docs/DECISIONS.md` records dying at around 300.
+
+**Rationale.** Recorded rather than fixed, deliberately. The script landed on
+2026-08-18 as the artefact that produced the pilot's measurements, and the reason
+it landed unmodified is that rewriting it changes what those numbers were
+produced by. Only statements the same day's changes made *false* were corrected,
+plus the seed-grid misdescription. These four are logic, and re-testing logic
+here costs live model calls, so a session that is not mid-campaign should do it
+and re-run the pilot to confirm.
+
+**Touches.** No frozen decision. A script, not the framework.

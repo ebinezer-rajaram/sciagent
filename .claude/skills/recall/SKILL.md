@@ -1,16 +1,17 @@
 ---
 name: recall
-description: Search docs/DECISIONS.md for a decision, measurement or abandoned approach already recorded there, rather than re-deriving it. Use proactively before answering why the project is the way it is, whether something was already tried or measured, how long something takes, or why work was skipped or deferred — even when the user never mentions decisions or history. Questions shaped like "why does X work this way", "did we already try Y", "was that already measured", "has this been proposed before", or "before I redo Z" are answered from that file. It is over 220KB; this greps headers and reads only what matches, and fans out across slices when the question spans the corpus.
+description: Search docs/DECISIONS.md for a decision, measurement or abandoned approach already recorded there, rather than re-deriving it. Use proactively before answering why the project is the way it is, whether something was already tried or measured, how long something takes, or why work was skipped or deferred — even when the user never mentions decisions or history. Questions shaped like "why does X work this way", "did we already try Y", "was that already measured", "has this been proposed before", or "before I redo Z" are answered from that file. It is over 360KB; this greps headers and reads only what matches, and fans out across slices when the question spans the corpus.
 allowed-tools: Bash, Read, Grep, Agent
 ---
 
 # Recall a decision
 
 `docs/DECISIONS.md` is the only place holding what the repository cannot tell
-you. It is also **over 220KB across more than 100 entries** and grows by roughly
-40 lines a session, so reading it whole costs upwards of 55k tokens and will only
+you. It is also **over 360KB across more than 130 entries** and grows by roughly
+170 lines per commit that touches it, so reading it whole costs upwards of 90k
+tokens and will only
 get worse. Append-only means it never shrinks, so treat every figure here as a
-floor rather than a measurement — they were taken on 2026-08-16 and move one way.
+floor rather than a measurement — they were taken on 2026-08-18 and move one way.
 Do not restate them as exact: a session that appends three entries falsifies its
 own copy of the number.
 
@@ -26,9 +27,12 @@ grep -n '^## ' docs/DECISIONS.md
 ```
 
 Most entries are `## YYYY-MM-DD — <scope>: <title>`, but **the scope is optional
-and a handful of entries have none** — seven as of 2026-08-16. The date is the
+and a handful of entries have none** — sixteen as of 2026-08-18. The date is the
 only part you can rely on, so never filter on the scope alone. A hundred of those
-is a page; a hundred entries is a book. Scan the titles.
+is a page; a hundred entries is a book, and there are more than that. Scan the
+titles. One `^## ` hit is not an entry: the preamble's fenced entry-format
+template matches the same pattern, so `grep -c` overcounts by one and a §3 read
+can land on the template instead of a decision.
 
 ### 2. Narrow by whichever axis the question has
 
@@ -50,8 +54,9 @@ Note the scope word is not always `item N`. Entries are also filed under
 ### 3. Read only what matched
 
 Get the line number from the header grep, find the next `^## ` after it, and
-read that range with `Read` using `offset` and `limit`. One entry averages 36
-lines; the longest is 163.
+read that range with `Read` using `offset` and `limit`. Most entries run under 60
+lines, but the tail is long: one in ten exceeds 80 and the longest is 185, so
+size the limit off the tail, not the typical entry.
 
 ## When the question is corpus-shaped, sweep instead
 
@@ -75,7 +80,7 @@ answers is waste, and the narrow path is the common case.
 
 §1 already produced what you need: `grep -n '^## '` gives every header's line
 number. Cut that list into **four contiguous ranges at entry boundaries** —
-roughly 25 entries and 950 lines each — so every line is covered exactly once,
+roughly 34 entries and 1,540 lines each — so every line is covered exactly once,
 with no overlap and no gap. Range four ends at the end of the file.
 
 Launch four `decisions-sweeper` agents **in a single message** so they run

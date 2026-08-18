@@ -46,7 +46,7 @@ from environments.pointproc.outcomes import (
     slice_templates,
 )
 from sciagent.core.edits import Defect, EditGrammar
-from sciagent.core.errors import ExecutionError, OutOfRangeError, TableError
+from sciagent.core.errors import StructureNotMeasurableError, TableError
 from sciagent.core.program import stable_key
 from sciagent.core.types import ExperimentTemplateId, FrozenDict, Seed
 from sciagent.inference.empirical import (
@@ -324,7 +324,15 @@ def search_table() -> EmpiricalTable:
             continue
         try:
             table, _ = table.with_structure(defect, simulate)
-        except (ExecutionError, OutOfRangeError):
+        except StructureNotMeasurableError:
+            # The class ``with_structure`` actually raises. It converts every
+            # ``ExecutionError`` from ``simulate`` and every ``OutOfRangeError``
+            # from ``cell_of`` into this before either can escape, so the two
+            # names this clause used to hold could never arrive and the docstring
+            # promise above -- unmeasurable candidates are skipped, not fatal --
+            # was not being kept by any code. Predates 2026-08-18 and is the same
+            # shape as the guards fixed that day: a clause naming the exception
+            # somebody had in mind rather than the one the boundary raises.
             continue
     publish(table, path)
     return table

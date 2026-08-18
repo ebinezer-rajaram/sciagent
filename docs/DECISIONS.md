@@ -6727,3 +6727,327 @@ saving was 6.5% if the stripping happens and 0.4% if it does not. With the trim
 reverted nothing depends on it, but the next audit that reaches for the
 mechanism should measure it with `/context` first rather than inherit the
 assumption.
+
+## 2026-08-18 — infrastructure: the three-file plan gate is in force, in both files
+
+**Decision.** The rule binds `/next` as well as ad-hoc work, and it now exists in
+the repository rather than as an intention. `CLAUDE.md`'s working-defaults bullet
+and `.claude/skills/next/SKILL.md` §3 both carry it. This discharges the first of
+the two items the CLAUDE.md-trim entry above left incomplete.
+
+**Why.** The entry above records the wording that was drafted and reverted with
+the trim, and its defect: *"once an item is clearly spanning more than three
+files, stop"* licenses editing until the count becomes clear, against a base rule
+that says *before editing anything*. Both files now gate on the **estimate**,
+made before starting. The formulation that carries the point is that a §11
+backlog row authorises the *work* and not the edits — and that step 1's A-test is
+an edit like any other, which is the case a `/next` session would otherwise treat
+as exempt.
+
+**Closes off.** Nothing further. The second item that entry left open — whether
+block-level HTML comments are stripped from `CLAUDE.md` before injection — is
+untouched and still unmeasured.
+
+## 2026-08-18 — item 15: the proposal path's escapes are a class, and the third stoppage was not transient
+
+**Decision.** Four guards on the proposal path were narrower than the errors
+behind them. All four are widened, each to a boundary named explicitly rather
+than to the enclosing family. The code and its reasoning are in the diff; what
+follows is what the diff does not carry.
+
+**The third stoppage was this defect, not a transient.** The entry above records
+item 15's V4/S11 replicate 13 dying with `Exception: Claude Code returned an
+error result: success`, and concludes "recorded as transient on one observation,
+which is all the evidence there is". There is more evidence now.
+`claude_agent_sdk` raises **bare `Exception` from seven sites** in
+`_internal/query.py` (`:441 :496 :512 :524 :563 :598 :965`), and `:965` is
+`raise Exception(message.get("error", "Unknown error"))` — the shape of that
+message exactly. It did not recur because a resume drew a different session, not
+because the cause had cleared. **Supersedes the transient reading**; it was an
+unguarded seam, and it would have recurred.
+
+**529 is `OverloadedError`, not `InternalServerError`.** The fact that decided
+where the Messages API guard goes, and the one most likely to be got wrong again.
+Measured against the installed SDK via `_make_status_error_from_response`:
+
+| status | class |
+|---|---|
+| 400 | `BadRequestError` |
+| 401 | `AuthenticationError` |
+| 404 | `NotFoundError` |
+| 429 | `RateLimitError` |
+| 500 | `InternalServerError` |
+| 529 | `OverloadedError` |
+
+`OverloadedError` is a **sibling** of `InternalServerError` under `APIStatusError`,
+not a subclass. A guard reasoning from "5xx" therefore misses the 529 that a long
+recording run is likeliest to meet. The guard is written at `AnthropicError`, the
+SDK root, for that reason — and the root is both floor and ceiling there because
+that SDK raises nothing bare.
+
+**A deliberate, single exception to "never catch bare `Exception`".** The Agent
+SDK guard catches it, preceded by `except SciAgentError: raise`. It cannot be
+narrowed to `ClaudeSDKError`, which converts none of the seven sites above. It is
+not suppression: the original is chained on `__cause__`, its type name is in the
+message, and the `SciAgentError` clause makes it impossible for a framework error
+to enter the broad clause at all.
+
+The reason that clause is load-bearing is worth stating, because it is the
+opposite of the obvious worry. A `ProviderError` is caught by
+`Hybrid._propose_once` and recorded as `"refused"` — so a framework fault
+converted here would **not** stop a campaign, it would let one continue and write
+a scientific outcome for a bug. That is strictly worse than the crash the guard
+exists to prevent, and it is why `DeterminismError` is excluded from
+`empirical.py`'s new `CANDIDATE_FAULTS` by the same argument: an invariant-3
+violation filed as `"unmeasurable"` is a campaign carrying on past a failed
+determinism guarantee.
+
+**This is an override of `.claude/rules/python.md` and of CLAUDE.md's own
+working default, taken in one place and recorded so it can be reversed.** If it
+is reversed, the seven sites are what has to be answered instead.
+
+**The abandoned test design, which `/test-review` caught and was right about.**
+The first draft of the transport tests asserted five and three **leaf** exception
+instances while claiming to establish coverage of two hierarchies. A guard
+enumerating exactly those leaves would have passed every one of them. The
+docstring defending the choice had the reasoning inverted: converting a *base*
+implies its subclasses, while converting subclasses implies nothing about the
+base, so the draft picked the weaker direction for the very property it named.
+
+Sharpest instance, and the reason this is recorded rather than merely fixed: the
+draft hand-built `InternalServerError` with a 529 response to represent an
+overloaded API. Since the SDK maps 529 to `OverloadedError`, **the scenario the
+test named was the one it did not cover**, and it would have gone green against a
+guard that let exactly that failure escape. Fixed by parametrising over the base
+classes as well, and by adding bare `Exception` for the Agent SDK.
+
+**A watched failure that proved nothing, for the record.** The first run of the
+`CANDIDATE_FAULTS` test failed on all five cases including the control — because
+`with_structure` returns early at zero cost for a structure the table already
+holds, so `closed_set()["null"]` never reached the guard under test. A red from a
+fixture that never entered the code under test is indistinguishable from a real
+one in the summary line. The helper now asserts the candidate is off-table before
+using it.
+
+**Closes off.** It does not close `docs/BACKLOG.md`'s proposal-taxonomy entry:
+`ProposalRecord.refused` still conflates a decline with a transport failure in
+its **count**, and only the `detail` string now separates them. Changing the
+count means adding a field, which moves `yield_fraction`'s denominator and so
+touches what SPEC §12 criterion 11 reads — invariant 6 territory, deliberately
+left for a cold decision.
+
+## 2026-08-18 — the pilot's four reporting defects are fixed, and its numbers still describe the old script
+
+**Decision.** `scripts/rate_limit_pilot.py`'s four `/code-review` findings are
+fixed. Three are in the diff and need nothing here. The fourth is worth a line
+because the fix is not the obvious one: `ok` no longer gates on
+`cost_usd > 0.0` but on `outcome != "ProviderError"`, because served-ness is a
+property of the outcome and the cost is exactly the field that cannot be trusted
+here — this backend authenticates by subscription with `apiKeySource` of
+`"none"`, so a zero from the SDK's costing is the case to expect. The old
+predicate discarded the whole measurement *after* the quota had been spent.
+
+**Left incomplete, and what it is waiting on.** The confirming re-run.
+`docs/BACKLOG.md` says a session not mid-campaign should fix these *and* re-run
+the pilot, and only the first half is done: re-running costs live calls. So the
+pilot's recorded numbers — the $0.098 median in particular — describe the script
+**as it was**, and the fixes are unverified against a live session. The
+`--dry-run` path was exercised and still completes, which establishes no
+regression and nothing about the zero-cost predicate, since a scripted backend
+reports zero cost and the old code special-cased dry runs to compensate.
+
+**Closes off.** Nothing depends on it. The exit codes now separate the two
+events the script exists to tell apart — 1 for a provider failure that stopped
+the run, 3 for a completed run with rejected drafts — so a caller can finally
+distinguish them, which nothing could before.
+
+## 2026-08-18 — two open decisions are written up cold, and neither is taken
+
+**Decision.** `docs/OPEN-DECISIONS.md` is new and states two decisions this
+repository has deliberately not taken: SPEC §12 criterion 4's re-specification,
+and the proposal outcome taxonomy. It changes no SPEC text and no code. Both
+`docs/BACKLOG.md` entries now point at it.
+
+**Why a document rather than the decisions themselves.** Invariant 6. Both touch
+apparatus that scores a system already measured, and this file records the
+repository paying twice for taking such a decision warm. The write-up is the part
+that *can* be done cold-safely, because it is the enumeration of options rather
+than a choice among them; separating the two is what lets a later session decide
+without first re-deriving the measurements.
+
+**One finding from writing it, which is not in either §.** The two decisions are
+**coupled, and in a specific order**. Retiering `"refused"` requires a metric
+version bump if it moves `yield_fraction`'s denominator — but that bump is free
+if the matrix is being re-scored anyway, which is exactly what R5's
+distance-grammar variant would do. So the taxonomy decision should be taken
+*after* the R5 re-scoring question and not before it, and taking it first would
+buy a parallel reporting structure that a re-run would immediately make
+redundant.
+
+**Closes off.** It does not close either backlog entry: both remain open, with
+the write-up done and the decision outstanding. It rules out re-deriving the
+criterion 4 measurements, which are now in one place rather than spread across
+three `docs/DECISIONS.md` entries.
+
+## 2026-08-18 — the transport guard was wrong in its first form, and the review caught it
+
+**Supersedes** the transport half of "the proposal path's escapes are a class",
+above. The defect and the fix both matter; the entry above describes the fix
+that was reviewed and rejected.
+
+**Decision.** A transport failure raises the new
+`ProviderUnavailableError`, **not** `ProviderError`. Both are `ProposalError`s
+and both are `SciAgentError`s; the difference is that `Hybrid._propose_once`
+catches the second and not the first.
+
+**Why the first form was worse than the crash it replaced.** `ProviderError` is
+caught and recorded as `"refused"`, so `_extend` broke, `investigate`
+**completed**, and `run_matrix` checkpointed a scored reading into the ledger for
+a replicate whose model was never reached. Three things follow, and none of them
+followed from the crash:
+
+- The reading is **permanent**. Invariant 4: the ledger has no update path.
+- It is **unreproducible**. `TranscriptStore.resolve` stores nothing when the
+  call raises, so a replay recomputes the same address, misses, and raises
+  `TranscriptMissError`.
+- A `--verify` pass on a healthy network re-runs the cell, gets a different
+  reading, and raises `RegistryConflictError` — whose own docstring reads *"that
+  is a framework bug and never a finding"*. It would have been neither.
+
+So the first form traded "loses transcripts, records nothing" for "keeps
+transcripts, records a wrong number that cannot be re-earned". Propagating gets
+both halves: still a `SciAgentError`, so `run_matrix` stops cleanly with every
+completed replicate already checkpointed — which is all the guard was ever for.
+
+**The reasoning was available and I did not apply it.** The same change's own
+ceiling argument — *a `ProviderError` is caught, so a fault converted here would
+let a campaign continue and write a scientific outcome for a bug* — is written
+into `agent_sdk_provider.py` and into the entry above, and a test was written to
+pin it. It was applied to framework faults and not to transport, though a 429 is
+no more a statement about a model's proposals than a `TypeError` is. Two
+independent reviewers found it; neither was told to look for it.
+
+**`MemoryError` joins the pass-through clause.** Not a `SciAgentError`, so the
+typed clause missed it, and this machine is recorded dying at around 300
+half-investigations in one process. It would have been scored as `"refused"`.
+
+**Left open deliberately, and recorded in `docs/BACKLOG.md`.**
+`CANDIDATE_FAULTS` still misses `EditNotInGrammarError` from `EditGrammar.apply`
+(`core/edits.py:483`, `:487`). Unreachable while `agent_grammar() ⊆
+edit_grammar()` — which is the wiring argument this very session rejected as a
+reason to leave a guard narrow, so it is inconsistent to leave and is left
+anyway: whether a grammar refusal at *apply* time is a candidate property or a
+grammar divergence decides which class it takes, and that is a decision to make
+with the retiering rather than by widening a tuple in passing.
+
+**Closes off.** It makes the transport class a *third* standing of proposal
+outcome, beside "recorded and scored" and "stops the run as a configuration
+fault" — and `docs/OPEN-DECISIONS.md` §2 now lists T1a, moving further
+conditions out of `"refused"` rather than recounting them within it, which did
+not exist as an option before this fix demonstrated it.
+
+## 2026-08-18 — a sibling class is not a subclass, and three comparisons quietly stopped matching
+
+**Decision.** `scripts/rate_limit_pilot.py` names `ProviderUnavailableError`
+explicitly everywhere it names `ProviderError`, through a `STOPPED_OUTCOMES`
+constant rather than by repeating the pair.
+
+**Why it is worth an entry.** Making the transport class a *sibling* of
+`ProviderError` rather than a subclass is what makes `Hybrid` not catch it — the
+whole point of the previous entry. The cost is that **every existing site keyed to
+`ProviderError` silently stopped covering transport**, and the compiler cannot
+see it because two of the three sites compare *strings*: `CallRecord.outcome`
+holds `type(error).__name__`.
+
+The three, all in the pilot's `report`/`main`:
+
+| was | consequence if left |
+|---|---|
+| `outcome != "ProviderError"` | a stopped run counted as **billed**, inflating the cost table's denominator |
+| `outcome == "ProviderError"` | the **"THE RUN STOPPED"** block never printed |
+| `outcome == "ProviderError"` | exit code 0 on a run that stopped |
+
+And the `except` clause itself, which is the sharp one: a rate cap would have
+propagated out of `run_pilot`, past a `main` with no handler around it, so
+`report` and `_save_transcripts` never ran and **every call already billed in
+that process was lost** — in the one script whose stated purpose is to be
+running when a cap bites. Found by the determinism lens, which flagged it as
+tangential to its own question and was right to report it anyway.
+
+**Closes off.** It is the general hazard of the sibling design, and the pilot was
+only the first place it landed. Anything added later that keys on `ProviderError`
+— a catch clause, a string comparison, a report filter — has to decide about the
+transport class deliberately, and `grep -rn 'ProviderError'` is the check. The
+constant exists so that the decision is recorded in one place rather than
+re-derived at each site.
+
+## 2026-08-18 — the third review round, and the enumerate-versus-family rule that was missing
+
+**Decision.** Five more defects fixed, and one principle written down that the
+change had been applying inconsistently without stating.
+
+**The principle, because two guards in one change were fixed two different ways
+and nothing said why.** `ProposalLayer._build` catches `GrammarError` whole;
+`EmpiricalTable.with_structure` enumerates four `ProgramError` members. The rule
+distinguishing them: **catch the family when every member means the same thing;
+enumerate when the family contains a framework fault.** Every `GrammarError`
+reaching `_build` says "the grammar refuses this defect". `ProgramError` contains
+`DeterminismError`, which says the framework is broken.
+
+The reviewers split on this, which is why it is worth recording. One argued for
+`except DeterminismError: raise` before `except ProgramError`, since that covers
+every future sibling automatically and needs nobody to remember. The other argued
+enumeration fails safe. Enumeration wins on the direction of the failure: catching
+the family absorbs the *next* sibling silently as `"unmeasurable"`, and if that
+sibling is another framework fault the result is a campaign scoring a bug — the
+failure this whole class of change exists to prevent. Enumeration lets it escape
+and stop the run, which is loud and recoverable. Recorded in the constant's own
+docstring.
+
+**Four defects, all of the same shape as the ones the change was fixing.**
+
+- **A missing `claude_agent_sdk` raised the recorded class.** The Messages
+  backend's sibling guard was moved to `ProviderUnavailableError` and this one was
+  not, so an absent *package* would have been scored as `"refused"`. The
+  asymmetry existed because the two backends translate exceptions independently
+  with no shared helper — which is the reviewers' structural point, and this was
+  its concrete cost.
+- **A dead duplicated guard, raising a different class for the same condition.**
+  Adding an `ImportError` guard to `AnthropicProvider.complete` made
+  `_messages`'s unreachable, and the two disagreed about which class "SDK
+  missing" takes. One guard now, in `complete`.
+- **`environments/pointproc/tables.py`'s `search_table` caught two exceptions
+  that cannot arrive.** `except (ExecutionError, OutOfRangeError)` — both of
+  which `with_structure` converts to `StructureNotMeasurableError` before either
+  escapes. So its docstring's promise, that unmeasurable candidates are skipped
+  rather than fatal, was kept by no code at all. **Predates this change** and is
+  the oldest instance of the pattern found: a clause naming the exception
+  somebody had in mind rather than the one the boundary raises.
+- **Two test names asserted the opposite of what they said.**
+  `test_a_transport_failure_becomes_a_provider_error` asserts
+  `ProviderUnavailableError`. Cosmetic in effect, and not cosmetic in kind: the
+  entry above nominates `grep -rn 'ProviderError'` as *the* check for this class
+  of gap, and a misleading name defeats exactly that.
+
+**A miscount, in a file where figures are load-bearing.** Two docstrings said
+`validate_defect` can raise "six" `GrammarError` subclasses and that "five" are
+unreachable. There are **four** (`EditNotInGrammarError`, `InvalidEditError`,
+`OffGridParameterError`, `UnknownParameterError`), so three are unreachable.
+Measured with `GrammarError.__subclasses__()`.
+
+**Declined, with reasons.** Two suggestions were not taken.
+`_stored_address`'s before/after store diff could be `call_address` recomputed
+from inputs the script already holds — but the diff encodes *an address exists
+iff a transcript was stored*, which is precisely the joinability property the fix
+needed, whereas recomputing would hand out addresses for calls that stored
+nothing. And the broad `except` in `agent_sdk_provider` still spans `drain`'s own
+two `isinstance` checks rather than only the SDK's iterator; scoping it tighter
+means a manual `__anext__` loop, and the consequence of a local bug landing there
+dropped from "scored as refused" to "stops the run with a wrong message" the
+moment the class began propagating.
+
+**Closes off.** Three review rounds found defects in this change; every round
+found at least one, and the last found the oldest instance of the pattern in code
+the change did not touch. The rate is the finding worth carrying: a guard whose
+`except` clause was written from memory of a failure rather than from the
+boundary's contract is a recurring defect in this repository, not an incident.

@@ -75,8 +75,12 @@ personal config file because cloud sessions clone the repo and see nothing from
   command you ran and its output.
 - Fix root causes. Never suppress an error to make a check pass: no bare
   `except`, no `# type: ignore`, no `# noqa`, no skipped tests.
-- If a task will touch more than three files, plan first and get the plan
-  approved before editing anything.
+- **If a task will touch more than three files, plan first and get the plan
+  approved before editing anything.** Gate on the *estimate*, made before you
+  start — not on the moment the sprawl becomes obvious, which is a gate that
+  fires after licensing exactly the edits it existed to stop. This binds `/next`
+  as much as ad-hoc work: a §11 backlog row authorises the *work*, not the edits,
+  and the A-test is an edit like any other.
 - If you are more than 50% unsure what was meant, ask one specific question
   rather than guessing and building the wrong thing.
 - Prefer editing an existing file over creating a new one.

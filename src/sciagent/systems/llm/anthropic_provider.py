@@ -39,7 +39,7 @@ import json
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
-from sciagent.core.errors import ProviderError
+from sciagent.core.errors import ProviderError, ProviderUnavailableError
 from sciagent.systems.llm.transcripts import Completion
 
 if TYPE_CHECKING:  # pragma: no cover - import cost, not behaviour
@@ -119,17 +119,65 @@ class AnthropicProvider:
         demands. Each is reported with what actually came back, because a
         provider failure during a recording run is the thing being debugged and
         a bare "no proposal" would not be enough to debug it.
+
+        Raises :class:`~sciagent.core.errors.ProviderUnavailableError` when the
+        API could not be reached at all -- a 429, a 529, a dropped connection, a
+        credential the account no longer honours, or the SDK not being installed.
+        That one propagates rather than being recorded; see the guard below.
         """
-        response = self._messages().create(
-            model=self._model,
-            max_tokens=self._max_tokens,
-            system=system,
-            output_config={
-                "effort": self._effort,
-                "format": {"type": "json_schema", "schema": dict(schema)},
-            },
-            messages=[{"role": "user", "content": brief}],
-        )
+        try:
+            from anthropic import AnthropicError
+        except ImportError as error:  # pragma: no cover - dependency present
+            # Guarded for the same reason ``_messages`` guards its own import: a
+            # bare ``ImportError`` is not a ``SciAgentError`` and would cross
+            # ``run_matrix``'s handler, which is the escape shape this module was
+            # just fixed for. Missing the SDK is a fault of the machine, so it
+            # takes the propagating class rather than the recorded one.
+            raise ProviderUnavailableError(
+                "the anthropic SDK is not installed, so no call can be made; "
+                "replaying a recorded transcript does not need it"
+            ) from error
+
+        try:
+            response = self._messages().create(
+                model=self._model,
+                max_tokens=self._max_tokens,
+                system=system,
+                output_config={
+                    "effort": self._effort,
+                    "format": {"type": "json_schema", "schema": dict(schema)},
+                },
+                messages=[{"role": "user", "content": brief}],
+            )
+        except AnthropicError as error:
+            # The transport clause of this exception's own contract, which was
+            # unhonoured until 2026-08-18: a 429, a 529 or a dropped connection
+            # arrived as an ``anthropic`` exception, which is not a
+            # ``SciAgentError`` and so crossed both of ``run_matrix``'s handlers.
+            # Neither checkpoints, so the in-flight replicate's transcripts went
+            # with it -- the case that runner's docstring calls unrecoverable.
+            #
+            # ``AnthropicError`` is the SDK's root and the guard is deliberately
+            # written there rather than at the status classes: 529 is
+            # ``OverloadedError``, a *sibling* of ``InternalServerError`` and not
+            # a subclass, so a guard reasoning from status codes misses the one
+            # failure a long recording run is likeliest to meet. This SDK raises
+            # nothing bare, so its root is both floor and ceiling.
+            #
+            # ``ProviderUnavailableError``, **not** ``ProviderError``. The first
+            # draft of this guard raised the latter, which ``Hybrid`` catches and
+            # records as ``"refused"`` -- so the investigation completed, was
+            # scored, and ``run_matrix`` checkpointed a reading into an
+            # append-only ledger that a 429 had degraded. That is worse than the
+            # crash it replaced: the crash lost transcripts, this wrote a wrong
+            # number and could not even be replayed, since a failed call stores
+            # nothing. Propagating keeps the checkpointing that motivated the
+            # guard and drops the scoring that came with it.
+            raise ProviderUnavailableError(
+                f"the call to {self._model} could not be completed: "
+                f"{type(error).__name__}: {error}. Nothing was recorded, so this "
+                f"replicate can be re-run once the cause has cleared"
+            ) from error
         if response.stop_reason == "refusal":
             details = getattr(response, "stop_details", None)
             raise ProviderError(
@@ -154,13 +202,15 @@ class AnthropicProvider:
     def _messages(self) -> Any:
         """Return the Messages resource, constructing the client on first use."""
         if self._client is None:
-            try:
-                from anthropic import Anthropic
-            except ImportError as error:  # pragma: no cover - dependency present
-                raise ProviderError(
-                    "the anthropic SDK is not installed, so no call can be made; "
-                    "replaying a recorded transcript does not need it"
-                ) from error
+            # Unguarded on purpose, and this is the *only* place the client is
+            # built. :meth:`complete` is the sole caller and has already imported
+            # from ``anthropic`` behind its own ``ImportError`` guard, so the
+            # package is importable by the time this runs. A second guard here
+            # was unreachable code raising a *different* class for the same
+            # condition, which is how the two answers to "SDK missing" came
+            # to disagree.
+            from anthropic import Anthropic
+
             self._client = Anthropic()
         return self._client.messages
 

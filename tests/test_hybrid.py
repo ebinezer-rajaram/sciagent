@@ -34,7 +34,17 @@ from environments.pointproc.outcomes import (
     slice_designs,
 )
 from environments.pointproc.scenarios import scenario, slice_scenarios
-from sciagent.core.errors import TranscriptMissError
+from sciagent.core.edits import Defect
+from sciagent.core.errors import (
+    ClampError,
+    CyclicDependencyError,
+    DeterminismError,
+    ExecutionError,
+    ProviderUnavailableError,
+    StructureNotMeasurableError,
+    TranscriptMissError,
+    UnknownComponentError,
+)
 from sciagent.eval.campaign import ScenarioRun, run_scenario
 from sciagent.inference.empirical import EmpiricalTable, EmpiricalTableEngine
 from sciagent.registry.store import ExperimentStore
@@ -49,6 +59,11 @@ from sciagent.systems.llm import (
     ScriptedProvider,
     TranscriptStore,
     fixed_payload,
+)
+from sciagent.systems.llm.encoding import (
+    decode,
+    draft_from_payload,
+    structural_menu,
 )
 
 #: A payload per proposal V7 is allowed to make. Structure 3 is the mark-component
@@ -86,6 +101,34 @@ def _table() -> EmpiricalTable:
     if not _TABLE:
         _TABLE.append(gate_table())
     return _TABLE[0]
+
+
+def _off_table_candidate() -> Defect:
+    """Return a licensed structure the shared table holds no row for.
+
+    ``with_structure`` returns unchanged at a cost of zero for a structure it
+    already covers, so a guard around ``simulate`` is only reached by a defect
+    the table has never seen -- every member of ``closed_set()`` is in the gate
+    table by construction, and passing one would make a test of that guard pass
+    without executing it.
+
+    The grid indices are the ones
+    ``test_an_unmeasurable_proposal_leaves_a_usable_investigation`` documents
+    below: structure 1 at ``(32, 55, 29, 22)``, recovered from the error that
+    stopped item 15's V7/S2 replicate 07. Reused rather than re-derived because
+    what is wanted here is any licensed structure the table lacks, and that one
+    is already known to qualify and already explained.
+    """
+    candidate = decode(
+        AGENT_GRAMMAR,
+        structural_menu(AGENT_GRAMMAR),
+        draft_from_payload(fixed_payload(1, (32, 55, 29, 22), name="off_table")),
+    )
+    assert not _table().holds(candidate), (
+        "the table already holds this structure, so with_structure would return "
+        "before reaching the guard under test"
+    )
+    return candidate
 
 
 def _run(
@@ -260,6 +303,116 @@ class TestProposalIsGatedOnDetection:
             "unmeasurable",
             "refused",
         )
+
+    @pytest.mark.parametrize(
+        "raised",
+        [
+            ExecutionError("unknown family"),
+            UnknownComponentError("no such component"),
+            CyclicDependencyError("instantaneous cycle"),
+            ClampError("clamped component the programme does not hold"),
+        ],
+    )
+    def test_a_candidate_the_environment_cannot_run_costs_only_the_proposal(
+        self, raised: Exception
+    ) -> None:
+        """The tier's floor: every ``ProgramError`` that is about the candidate.
+
+        ``with_structure``'s guard caught ``ExecutionError`` alone, and the
+        comment beneath it reasons carefully about the *two* ways a row can fail
+        to exist -- adding ``OutOfRangeError`` for that reason -- without
+        considering the siblings the same ``simulate`` call can raise. Each of
+        these is a statement about the proposed structure or about the pair of it
+        and a design: a component the programme does not hold, an instantaneous
+        cycle, a clamp that denotes no intervention on it. None is a statement
+        about the framework, so each should cost the proposal and not the
+        campaign, exactly as ``ExecutionError`` already does.
+
+        This is the same shape as the two escapes 2026-08-18 found by running:
+        a guard narrower than the errors behind it, discovered when a live cell
+        stopped. Only an arm proposing structure outside the library reaches
+        here, so the 38 conventional cells could not have found it either.
+        """
+
+        def refuses(*_args: Any) -> Any:
+            raise raised
+
+        with pytest.raises(StructureNotMeasurableError):
+            _table().with_structure(_off_table_candidate(), refuses)
+
+    def test_a_determinism_violation_is_not_filed_as_unmeasurable(self) -> None:
+        """The tier's ceiling, which matters more than its floor.
+
+        ``DeterminismError`` is a ``ProgramError`` sibling of the four above and
+        is deliberately **not** converted. It reports a violation of invariant 3
+        -- a non-finite draw, a bad seed -- which is a fact about the framework
+        rather than about the candidate.
+
+        Filing it as ``unmeasurable`` would be worse than letting it crash. That
+        tier is caught by ``Hybrid._admit``, so the run would carry on, spend the
+        rest of its budget and record a scientific outcome for a campaign whose
+        determinism guarantee had already failed. A widening that catches the
+        whole ``ProgramError`` family would do exactly that, which is why the
+        guard names its members instead.
+        """
+
+        def undeterministic(*_args: Any) -> Any:
+            raise DeterminismError("non-finite draw")
+
+        with pytest.raises(DeterminismError):
+            _table().with_structure(_off_table_candidate(), undeterministic)
+
+    def test_an_unreachable_provider_stops_the_run_rather_than_scoring_it(
+        self,
+    ) -> None:
+        """A 429 is not a scientific event, and must not be recorded as one.
+
+        The defect this pins was introduced by the first draft of the transport
+        guard and caught by review before it shipped. That draft raised
+        ``ProviderError``, which ``_propose_once`` catches and records as
+        ``"refused"`` -- so ``_extend`` broke, ``investigate`` **completed**, and
+        ``run_matrix`` checkpointed a scored reading into an append-only ledger
+        for a replicate whose model was never reached.
+
+        Three things made that worse than the crash it replaced. The reading is
+        permanent, because the ledger has no update path. It is unreproducible,
+        because a call that fails stores no transcript, so a replay pass raises
+        ``TranscriptMissError`` on it. And a ``--verify`` pass on a healthy
+        network would re-run the cell, get a different reading, and raise
+        ``RegistryConflictError`` -- whose docstring says "that is a framework
+        bug and never a finding", which it would not have been.
+
+        So the transport class propagates. It is still a ``SciAgentError``,
+        which is the whole difference from letting the SDK's own exception
+        escape: ``run_matrix`` stops cleanly on it with every completed
+        replicate already checkpointed, which is what the guard was for.
+        """
+
+        class _Unreachable:
+            """A provider that cannot be reached, as a 429 or a dead CLI is."""
+
+            @property
+            def id(self) -> str:
+                return "unreachable"
+
+            @property
+            def model(self) -> str:
+                return "test-model"
+
+            @property
+            def settings(self) -> str:
+                return ""
+
+            def complete(
+                self, system: str, brief: str, schema: Mapping[str, Any]
+            ) -> Completion:
+                raise ProviderUnavailableError("the call could not be completed")
+
+        layer = ProposalLayer(
+            _Unreachable(), AGENT_GRAMMAR, TranscriptStore(mode=RECORD)
+        )
+        with pytest.raises(ProviderUnavailableError):
+            _run("S11", system=Hybrid(closed_set(), layer))
 
     def test_two_edits_on_one_target_leave_a_usable_investigation(self) -> None:
         """A draft can be licensed edit by edit and invalid as a defect.

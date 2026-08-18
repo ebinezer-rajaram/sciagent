@@ -35,6 +35,17 @@ Do not read SPEC.md end to end. It is 540 lines and the item needs one row.
 
 ## 3. Build
 
+**Estimate the file count first, and gate on it.** From what §2 turned up, name
+the files this item will touch — the test file, the modules, the docs. If that
+estimate is more than three, CLAUDE.md's rule applies here exactly as it does to
+ad-hoc work: plan first and get the plan approved before editing anything, step 1's
+A-test included. A backlog row authorises the *work*; it does not authorise the
+edits.
+
+Estimate before starting rather than waiting for the count to become obvious. A
+gate that fires once the sprawl is clear has already licensed the edits it existed
+to stop.
+
 Tests first, for anything with an acceptance criterion:
 
 1. **Write the A-test.** Name it for its criterion: `test_a7_...` inside class

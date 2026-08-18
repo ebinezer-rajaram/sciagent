@@ -633,6 +633,11 @@ adequate* (a property of space and scenario, arm-symmetric, harness-computable
 before the run) with *did this system detect that it was not* (a property of
 behaviour, undefined for B1). Any re-specification has to pick one and say which.
 
+**The write-up is done; the decision is not.** `docs/OPEN-DECISIONS.md` §1 sets
+out the fork any fix has to take, three candidate wordings with what each would
+make the criterion mean, and a recommendation. It was written 2026-08-18 by a
+session that had not run V7, and it changes nothing.
+
 **Touches.** SPEC §12, an exit criterion, and therefore CLAUDE.md's invariant 6
 in its surviving form: **this must not be decided in a session that has just
 measured V7 against the candidate wording.** A draft replacement was written on
@@ -794,6 +799,32 @@ run on that change:
   `max_proposals = 2`, where declining can only lower the ratio; at 3 or more a
   model unable to produce a second admission would score strictly higher by
   declining. Raising `max_proposals` is therefore a sharper change than it looks.
+
+**One escape found and deliberately not fixed, 2026-08-18.** `CANDIDATE_FAULTS`
+in `src/sciagent/inference/empirical.py` enumerates `ProgramError` members only,
+but `simulate` reaches `EditGrammar.apply`, which raises `EditNotInGrammarError`
+— a `GrammarError` — at `src/sciagent/core/edits.py:483` and `:487`. Nothing on
+the path catches it, so it escapes `_admit` and stops a campaign. It is
+unreachable today only because `agent_grammar() ⊆ edit_grammar()`, which is the
+same "wiring, not a promise" argument that the sibling change in
+`provider.py` explicitly rejected as a reason to leave a guard narrow.
+
+It is left open rather than fixed because closing it needs a decision this entry
+is the right place for and a one-line widening is the wrong way to take it: is a
+grammar refusal *at apply time* a property of the candidate (so `"unmeasurable"`,
+costing the proposal) or a divergence between two grammars that should stop the
+run? The first reading widens `CANDIDATE_FAULTS` past the `ProgramError` family
+its docstring scopes it to; the second adds it to the propagating class beside
+transport. Decide it with the retiering below, not before.
+
+**Partly done, 2026-08-18.** The enumeration exists and four guards found
+narrower than the errors behind them are fixed — see `docs/DECISIONS.md`. What
+remains is the *retiering*, and it is now known to be a scoring change rather
+than a diagnostic one: `docs/OPEN-DECISIONS.md` §2 lists all twenty conditions
+`"refused"` conflates, shows why adding a `ProposalRecord` field moves
+`yield_fraction`'s denominator and so touches what §12 criterion 11 reads, and
+recommends T3 — but recommends taking it *after* the R5 re-scoring question,
+since a matrix that is re-run anyway makes the metric-version bump free.
 
 **Touches.** No frozen decision. It is enumeration and test coverage over an
 existing boundary. Sequencing: **not** mid-campaign, and not in a session that

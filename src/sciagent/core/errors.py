@@ -402,14 +402,49 @@ class TranscriptMissError(ProposalError):
     """
 
 
+class ProviderUnavailableError(ProposalError):
+    """A model backend could not be reached, or the session died under it.
+
+    A rate limit, a 5xx, a dropped connection, an expired credential, a Claude
+    Code process that exited. Deliberately **not** a
+    :class:`ProviderError`, and the distinction is the whole point of the class.
+
+    A ``ProviderError`` is a scientific event: the model was asked and produced
+    nothing, which is a fact about the investigation and is recorded as one.
+    ``Hybrid._propose_once`` catches it, the run completes, and a reading is
+    written to the ledger. **None of that is true of a 429.** A transport
+    failure says nothing about the model's ability to propose, so a run scored
+    after one reports a degraded result as though the system had earned it --
+    permanently, since the ledger is append-only, and unreproducibly, since a
+    call that failed leaves no transcript to replay.
+
+    So this one propagates. It is still a :class:`~sciagent.core.errors.SciAgentError`,
+    which is what makes the difference from letting the SDK's own exception
+    escape: ``run_matrix`` catches it, reports "stopped after N replicate(s)",
+    and every completed replicate is already checkpointed. The campaign stops
+    cleanly and resumes into the same cell once the cause has cleared.
+
+    Same standing as :class:`TranscriptMissError` and for the same reason --
+    a fault of the harness or its surroundings is not a finding, and swallowing
+    one turns a broken run into a quietly worse result.
+    """
+
+
 class ProviderError(ProposalError):
     """A model provider could not produce a draft at all.
 
-    A refusal, a transport failure, or a response carrying no tool call.
-    Deliberately distinct from :class:`MalformedProposalError`: this one says
-    nothing was proposed, which is a legitimate thing for a research system to
-    have happen and for the harness to record, whereas a malformed draft means
-    something was proposed and did not denote.
+    A refusal, an output ceiling reached, or a response carrying no tool call:
+    the model was reached, answered, and the answer holds no proposal. That is a
+    legitimate outcome for a research system to have and for the harness to
+    record, which is why ``Hybrid`` catches this one and scores the run.
+
+    Deliberately distinct from :class:`MalformedProposalError`, which means
+    something *was* proposed and did not denote — and, since 2026-08-18, from
+    :class:`ProviderUnavailableError`, which means the model was never reached
+    at all. This docstring read "a refusal, **a transport failure**, or a
+    response carrying no tool call" until then, and that middle clause was the
+    defect rather than the contract: a 429 is not an outcome of an
+    investigation, and recording one as though it were is what the split fixes.
     """
 
 

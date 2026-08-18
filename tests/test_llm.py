@@ -28,6 +28,7 @@ import json
 import subprocess
 import sys
 from collections.abc import Callable, Sequence
+from dataclasses import fields
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -44,12 +45,17 @@ from environments.pointproc.outcomes import (
     slice_designs,
 )
 from environments.pointproc.scenarios import scenario
-from sciagent.core.edits import AddDependency, canonical
+from sciagent.core.edits import AddDependency, Defect, EditGrammar, canonical
 from sciagent.core.errors import (
+    EditNotInGrammarError,
+    InvalidEditError,
     MalformedProposalError,
+    OffGridParameterError,
     ProposalError,
     ProviderError,
+    ProviderUnavailableError,
     TranscriptMissError,
+    UnknownParameterError,
 )
 from sciagent.inference.empirical import EmpiricalTableEngine
 from sciagent.registry.store import ExperimentStore
@@ -787,6 +793,56 @@ class TestTheProposalLayer:
         AGENT_GRAMMAR.validate_defect(proposal.program_edit)
         assert proposal.address.startswith("call/")
 
+    @pytest.mark.parametrize(
+        "raised",
+        [
+            InvalidEditError("two edits on one target"),
+            EditNotInGrammarError("this grammar does not license that type"),
+            UnknownParameterError("parameter names disagree with the construct"),
+            OffGridParameterError("value is not a grid point"),
+        ],
+    )
+    def test_every_grammar_refusal_reaches_the_caller_as_malformed(
+        self, raised: Exception
+    ) -> None:
+        """``_build``'s guard was one of the four errors it stands in front of.
+
+        ``ProposalLayer.propose`` documents itself as raising
+        ``MalformedProposalError`` "when the payload does not denote a structure
+        the grammar licenses", and ``Hybrid._propose_once`` catches that and not
+        ``GrammarError``. So any ``GrammarError`` the guard misses escapes
+        ``investigate`` and stops a campaign -- which is exactly how
+        ``InvalidEditError`` stopped item 15's V3/S11 cell on 2026-08-18, and the
+        guard added then named that one error rather than the family behind it.
+
+        The three additions are not reachable through the public path today: the
+        menu is built from the same frozen ``EditGrammar`` the layer validates
+        against, so a licensed decode cannot fail validation. That is a property
+        of how the layer is wired and not a promise the guard makes, and the
+        wiring is what a menu/grammar divergence would break -- ``decode`` itself
+        carries an error for that case ("menu and grammar have come apart"). The
+        grammar here therefore refuses at ``validate_defect`` directly, which is
+        the seam the guard actually sits on.
+        """
+
+        class _RefusingGrammar(EditGrammar):
+            def validate_defect(self, defect: Defect) -> None:
+                raise raised
+
+        grammar = _RefusingGrammar(
+            **{
+                field.name: getattr(AGENT_GRAMMAR, field.name)
+                for field in fields(AGENT_GRAMMAR)
+            }
+        )
+        layer = ProposalLayer(
+            ScriptedProvider([fixed_payload(0, (10, 20, 30))]),
+            grammar,
+            TranscriptStore(mode=RECORD),
+        )
+        with pytest.raises(MalformedProposalError):
+            layer.propose(_investigation("S1"))
+
     def test_the_layer_carries_no_number_of_its_own(self) -> None:
         """A ``Proposal`` is structure, prose and provenance. Nothing else."""
         layer = _layer(ScriptedProvider([fixed_payload(0, (1, 2, 3))]))
@@ -869,6 +925,105 @@ def _sdk_available() -> bool:
     return True
 
 
+def _raising_client(failure: Exception) -> Any:
+    """Return a stand-in Anthropic client whose ``messages.create`` raises.
+
+    Injected through ``AnthropicProvider(client=...)``, so the transport failure
+    arrives from exactly where a real one would -- the ``create`` call -- without
+    a socket being opened or a credential being read.
+    """
+
+    class _Messages:
+        def create(self, **_kwargs: Any) -> Any:
+            raise failure
+
+    class _Client:
+        messages = _Messages()
+
+    return _Client()
+
+
+#: Every way the Messages API can fail to deliver a payload, by SDK class name.
+#:
+#: The last two are the point of the list. ``APIStatusError`` is the base of the
+#: four status errors above it and ``AnthropicError`` is the SDK's root, so a
+#: guard that converts *those* converts their subclasses by construction --
+#: whereas a guard enumerating only the leaves converts nothing else. Naming the
+#: leaves as well is not redundancy: ``OverloadedError`` is what the SDK actually
+#: raises for the 529 a long campaign dies of, and it is a *sibling* of
+#: ``InternalServerError`` rather than a subclass, so a list that reasoned from
+#: the 5xx status alone would miss it.
+ANTHROPIC_FAILURES: tuple[str, ...] = (
+    "RateLimitError",
+    "OverloadedError",
+    "InternalServerError",
+    "APIConnectionError",
+    "APITimeoutError",
+    "AuthenticationError",
+    "APIStatusError",
+    "AnthropicError",
+)
+
+
+def _anthropic_failure(name: str) -> Exception:
+    """Return a real instance of the named ``anthropic`` exception."""
+    import anthropic
+    import httpx
+
+    request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    statuses = {
+        "RateLimitError": 429,
+        "OverloadedError": 529,
+        "InternalServerError": 500,
+        "AuthenticationError": 401,
+        "APIStatusError": 500,
+    }
+    build: Callable[..., Exception] = getattr(anthropic, name)
+    if name in statuses:
+        return build(
+            name,
+            response=httpx.Response(statuses[name], request=request),
+            body=None,
+        )
+    if name in {"APIConnectionError", "APITimeoutError"}:
+        return build(request=request)
+    return anthropic.AnthropicError(name)
+
+
+#: Every way an Agent SDK session can die, by class name.
+#:
+#: ``ClaudeSDKError`` is the SDK's root and is here for the same reason
+#: ``AnthropicError`` is above. Plain ``Exception`` is here for a different and
+#: worse reason: ``claude_agent_sdk`` raises it bare from seven sites in
+#: ``_internal/query.py``, and one of them is what stopped item 15's V4/S11 cell
+#: (``Exception: Claude Code returned an error result: success``). A guard on the
+#: SDK root converts none of those seven.
+AGENT_SDK_FAILURES: tuple[str, ...] = (
+    "CLINotFoundError",
+    "ProcessError",
+    "CLIJSONDecodeError",
+    "CLIConnectionError",
+    "ClaudeSDKError",
+    "Exception",
+)
+
+
+def _agent_sdk_failure(name: str) -> Exception:
+    """Return a real instance of the named ``claude_agent_sdk`` exception."""
+    import claude_agent_sdk
+
+    if name == "Exception":
+        # Verbatim from item 15's third stoppage, recorded in docs/DECISIONS.md
+        # (2026-08-18) as "transient on one observation".
+        return Exception("Claude Code returned an error result: success")
+    if name == "ProcessError":
+        return claude_agent_sdk.ProcessError("claude exited", exit_code=1)
+    if name == "CLIJSONDecodeError":
+        return claude_agent_sdk.CLIJSONDecodeError("not json", ValueError("boom"))
+    build: Callable[..., Exception] = getattr(claude_agent_sdk, name)
+    return build(name)
+
+
 class TestTheAnthropicProvider:
     """What can be asserted about the live backend without credentials."""
 
@@ -911,6 +1066,55 @@ class TestTheAnthropicProvider:
 
     def test_the_sdk_is_a_declared_dependency(self) -> None:
         assert _sdk_available(), "anthropic is declared in pyproject but not installed"
+
+    @pytest.mark.parametrize("failure_name", ANTHROPIC_FAILURES)
+    def test_a_transport_failure_becomes_a_provider_unavailable_error(
+        self, failure_name: str
+    ) -> None:
+        """A backend that cannot be reached raises, and says so in its type.
+
+        ``ProviderError`` *used* to be documented as covering "a refusal, a
+        transport failure, or a response carrying no tool call". The middle
+        clause was the defect rather than the contract, and it is gone: reaching
+        the model and getting no proposal is an outcome to record, while never
+        reaching it at all is not. So this asserts
+        ``ProviderUnavailableError`` -- see that class, and
+        ``tests/test_hybrid.py``'s
+        ``test_an_unreachable_provider_stops_the_run_rather_than_scoring_it``
+        for why the distinction is load-bearing rather than tidy.
+
+        Before the guard existed the Messages API call was unguarded: a 429, a
+        5xx or a dropped connection left the SDK's own exception to propagate.
+        It is not a ``SciAgentError``, so it crossed ``run_matrix``'s
+        ``except SciAgentError`` *and* its
+        ``KeyboardInterrupt`` handler, and neither checkpoints -- taking the
+        in-flight replicate's transcripts with it, which that runner's docstring
+        names as the unrecoverable case.
+
+        The list includes ``APIStatusError`` and ``AnthropicError`` themselves,
+        not only their subclasses. That direction is the one that establishes
+        anything: converting a base implies its leaves, while converting five
+        leaves implies nothing about the base, and a guard enumerating exactly
+        the leaves a test names is the wrong implementation such a test would
+        wave through.
+
+        ``__cause__`` is asserted here rather than in a test of its own, so that
+        the chaining is checked on every failure in the list instead of on one
+        chosen representative.
+        """
+        from sciagent.systems.llm.anthropic_provider import AnthropicProvider
+
+        failure = _anthropic_failure(failure_name)
+        provider = AnthropicProvider(client=_raising_client(failure))
+        with pytest.raises(
+            ProviderUnavailableError, match="could not be completed"
+        ) as caught:
+            provider.complete("s", "b", SCHEMA)
+        # Chained, not swallowed. The tier this lands in says only that nothing
+        # was proposed; *which* failure it was decides whether a stopped campaign
+        # can be resumed at once or not at all -- a 429 waits, an
+        # AuthenticationError does not -- so the original has to survive.
+        assert caught.value.__cause__ is failure
 
 
 @lru_cache(maxsize=1)
@@ -1358,6 +1562,79 @@ class TestTheAgentSdkProvider:
 
         provider = AgentSdkProvider(runner=empty)
         with pytest.raises(ProviderError, match="without a result message"):
+            provider.complete("s", "b", SCHEMA)
+
+    @pytest.mark.parametrize("failure_name", AGENT_SDK_FAILURES)
+    def test_a_session_that_dies_becomes_a_provider_unavailable_error(
+        self, monkeypatch: pytest.MonkeyPatch, failure_name: str
+    ) -> None:
+        """The same contract clause, for the backend item 15 actually recorded on.
+
+        ``asyncio.run(drain())`` was unguarded, so every way the SDK reports a
+        dead session -- CLI missing, child process gone, a stream that will not
+        decode -- escaped as a non-``SciAgentError`` and stopped a campaign
+        without checkpointing.
+
+        The ``"Exception"`` case is the one that decides the shape of the guard,
+        and it is not hypothetical. Item 15's third stoppage, on V4/S11 replicate
+        13, was ``Exception: Claude Code returned an error result: success``,
+        printed as a traceback rather than as the runner's designed "stopped
+        after N replicate(s)"; ``docs/DECISIONS.md`` (2026-08-18) recorded it as
+        transient on one observation. ``claude_agent_sdk`` raises bare
+        ``Exception`` from seven sites in ``_internal/query.py``, so a guard on
+        ``ClaudeSDKError`` -- the tidy answer, and the one the Messages backend
+        can use -- converts none of them and leaves this exact stoppage escaping.
+        """
+        from sciagent.systems.llm.agent_sdk_provider import AgentSdkProvider
+
+        _clear_contaminants(monkeypatch)
+        failure = _agent_sdk_failure(failure_name)
+
+        def runner(*, prompt: str, options: Any) -> Any:
+            async def stream() -> Any:
+                raise failure
+                yield  # pragma: no cover - makes this an async generator
+
+            return stream()
+
+        provider = AgentSdkProvider(runner=runner)
+        with pytest.raises(
+            ProviderUnavailableError, match="could not be completed"
+        ) as caught:
+            provider.complete("s", "b", SCHEMA)
+        assert caught.value.__cause__ is failure
+
+    def test_a_framework_error_is_not_disguised_as_a_provider_failure(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The ceiling on that guard, which matters more than the floor.
+
+        Widening far enough to catch a bare ``Exception`` risks converting *our*
+        faults into a provider outcome, and a ``ProviderError`` is caught by
+        ``Hybrid._propose_once`` and recorded as ``"refused"`` -- so a bug here
+        would not stop a campaign, it would let one carry on and write a
+        scientific outcome for it. That is strictly worse than the crash this
+        change exists to prevent.
+
+        A ``SciAgentError`` raised anywhere under the session must therefore come
+        out unchanged. ``TranscriptMissError`` is the one to check with: it is
+        the fault ``Hybrid`` deliberately does not catch, precisely so a broken
+        replay cannot masquerade as a quietly worse result.
+        """
+        from sciagent.systems.llm.agent_sdk_provider import AgentSdkProvider
+
+        _clear_contaminants(monkeypatch)
+        failure = TranscriptMissError("no recording at this address")
+
+        def runner(*, prompt: str, options: Any) -> Any:
+            async def stream() -> Any:
+                raise failure
+                yield  # pragma: no cover - makes this an async generator
+
+            return stream()
+
+        provider = AgentSdkProvider(runner=runner)
+        with pytest.raises(TranscriptMissError):
             provider.complete("s", "b", SCHEMA)
 
     def test_the_layer_records_a_proposal_through_this_backend(

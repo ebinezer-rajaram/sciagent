@@ -56,9 +56,12 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from typing import Final
 
 from sciagent.core.edits import Defect, EditGrammar, canonical, sort_key
 from sciagent.core.errors import (
+    ClampError,
+    CyclicDependencyError,
     DuplicateExperimentError,
     DuplicateHypothesisError,
     ExecutionError,
@@ -67,6 +70,7 @@ from sciagent.core.errors import (
     OutOfRangeError,
     StructureNotMeasurableError,
     TableError,
+    UnknownComponentError,
     UnknownExperimentError,
     UnknownHypothesisError,
 )
@@ -108,6 +112,48 @@ _REPLACE_BACKOFF_S = 0.05
 
 #: Widest seed the registry's ``INTEGER`` column holds without loss.
 _SEED_MODULUS = 1 << 63
+
+#: The ``ProgramError`` types that describe the *candidate* rather than the
+#: framework.
+#:
+#: Raised out of ``simulate`` in :meth:`EmpiricalTable.with_structure`, where each
+#: means the same thing: this structure, or this pairing of it with a design, has
+#: no row to be had. That is a measurement limit, so it costs the proposal and not
+#: the campaign -- see :class:`~sciagent.core.errors.StructureNotMeasurableError`.
+#:
+#: Membership is by enumeration rather than by catching ``ProgramError`` whole,
+#: because the family has one member that must **not** be here.
+#: :class:`~sciagent.core.errors.DeterminismError` reports a violation of
+#: invariant 3 and is a fact about the framework; converting it would let
+#: ``Hybrid._admit`` file it as ``"unmeasurable"`` and a campaign carry on past a
+#: failed determinism guarantee, writing a scientific outcome for a bug. A crash
+#: is the better failure there, so it is deliberately absent.
+#:
+#: Until 2026-08-18 this was ``ExecutionError`` alone and the three siblings
+#: escaped ``_admit`` and stopped the run -- the same shape as the two proposal
+#: escapes that stopped item 15's matrix, and unreachable by any arm that does not
+#: propose structure outside the library.
+#:
+#: **Why this enumerates while ``ProposalLayer._build`` catches ``GrammarError``
+#: whole.** The same change fixed two guards two different ways, and the rule
+#: distinguishing them is whether the family contains a *framework* fault.
+#: Every ``GrammarError`` reaching ``_build`` means one thing -- the grammar
+#: refuses this defect -- so the family is safe to catch entire. ``ProgramError``
+#: is not: ``DeterminismError`` is a fact about the framework, so catching the
+#: family would convert it. Enumeration is chosen over
+#: ``except DeterminismError: raise`` before ``except ProgramError`` because the
+#: two fail in opposite directions on the *next* sibling somebody adds. Catching
+#: the family absorbs it silently as ``"unmeasurable"`` -- and if it turns out to
+#: be another framework fault, that is a campaign scoring a bug, which is the
+#: failure this whole class of change exists to prevent. Enumerating lets it
+#: escape and stop the run, which is loud, recoverable and wrong in the safe
+#: direction.
+CANDIDATE_FAULTS: Final = (
+    ExecutionError,
+    UnknownComponentError,
+    CyclicDependencyError,
+    ClampError,
+)
 
 #: Numerator of the rule of three. With ``M`` independent replicates and no hit
 #: in a cell, ``3 / M`` is the one-sided 95% upper bound on that cell's
@@ -431,10 +477,10 @@ class EmpiricalTable:
                 template = self.templates[template_id]
                 try:
                     result = simulate(defect, template, draw)
-                except ExecutionError as exc:
+                except CANDIDATE_FAULTS as exc:
                     raise StructureNotMeasurableError(
-                        f"structure {key!r} executes but design {template_id!r} "
-                        f"cannot be measured on it: {exc}"
+                        f"structure {key!r} yields no row for design "
+                        f"{template_id!r}: {type(exc).__name__}: {exc}"
                     ) from exc
                 calls += 1
                 # ``cell_of`` is inside the guard, not after it. Both ways a row

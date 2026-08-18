@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from sciagent.core.edits import Defect, EditGrammar
-from sciagent.core.errors import InvalidEditError, MalformedProposalError
+from sciagent.core.errors import GrammarError, MalformedProposalError
 from sciagent.systems.base import Investigation
 from sciagent.systems.llm.encoding import (
     Memory,
@@ -94,10 +94,18 @@ class Provider(Protocol):
         backend needs no per-call state and a completion cannot be paired with
         the wrong run's metadata.
 
-        Raises :class:`~sciagent.core.errors.ProviderError` if nothing could be
-        produced at all -- a refusal, a transport failure, a response carrying no
-        tool call. That is a legitimate outcome for a research system to have and
-        is distinct from a payload that does not decode.
+        Raises :class:`~sciagent.core.errors.ProviderError` if the model was
+        reached and its answer holds no proposal -- a refusal, an output ceiling,
+        a response carrying no tool call. That is a legitimate outcome for a
+        research system to have, and is distinct from a payload that does not
+        decode.
+
+        Raises :class:`~sciagent.core.errors.ProviderUnavailableError` if the
+        model was **not** reached: a rate limit, a 5xx, a dropped connection, a
+        dead session. Every backend owes this distinction, because the two have
+        opposite consequences downstream -- the first is recorded and scored, the
+        second stops the run -- and a backend that folded them together would put
+        a throttled account's silence in the corpus as a scientific result.
         """
         ...
 
@@ -221,22 +229,32 @@ class ProposalLayer:
     def _build(self, draft: ProposalDraft, address: str) -> Proposal:
         """Decode a draft and check it against the grammar.
 
-        ``validate_defect`` raises :class:`~sciagent.core.errors.InvalidEditError`,
-        a ``GrammarError``, for a defect whose edits are each licensed but which
-        conflict -- two on one target, whose compiled family would be ambiguous.
-        ``decode`` has already refused everything else it checks, so this is the
-        one way a draft reaches here licensed edit by edit and invalid as a
-        whole. It is re-raised as the error this method's caller documents,
-        because "does not denote a structure the grammar licenses" is precisely
-        what it is, and because ``Hybrid._propose_once`` catches that and not
-        ``GrammarError``. Until 2026-08-18 it escaped and stopped item 15's
-        V3/S11 mid-cell.
+        Every ``GrammarError`` is re-raised as the error this method's caller
+        documents, because "does not denote a structure the grammar licenses" is
+        precisely what each of them says, and because ``Hybrid._propose_once``
+        catches ``MalformedProposalError`` and not ``GrammarError`` -- so one
+        that escapes here does not cost a proposal, it stops the campaign.
+
+        The commonest is :class:`~sciagent.core.errors.InvalidEditError`, for a
+        defect whose edits are each licensed but which conflict: two on one
+        target, whose compiled family would be ambiguous. ``decode`` has already
+        refused everything else it checks, so that is the one way a draft reaches
+        here licensed edit by edit and invalid as a whole. Until 2026-08-18 it
+        escaped and stopped item 15's V3/S11 mid-cell.
+
+        The guard is written at ``GrammarError`` rather than at that one member
+        because the fix for that stoppage named the error it had just seen, which
+        is how a guard ends up narrower than the boundary it defends. The other
+        three are unreachable while ``self._menu`` is built from ``self._grammar``
+        in ``__init__`` -- a licensed decode cannot fail validation -- but that is
+        a property of this class's wiring rather than a promise validation makes,
+        and ``decode`` already carries an error for the wiring coming apart.
         """
         program_edit = decode(self._grammar, self._menu, draft)
         try:
             self._grammar.validate_defect(program_edit)
-        except InvalidEditError as error:
-            raise MalformedProposalError(str(error)) from error
+        except GrammarError as error:
+            raise MalformedProposalError(f"{type(error).__name__}: {error}") from error
         return Proposal(
             program_edit=program_edit,
             name=_slug(draft.name),

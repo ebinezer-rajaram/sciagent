@@ -95,7 +95,11 @@ import os
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, Literal
 
-from sciagent.core.errors import ProviderError
+from sciagent.core.errors import (
+    ProviderError,
+    ProviderUnavailableError,
+    SciAgentError,
+)
 from sciagent.systems.llm.transcripts import Completion
 
 if TYPE_CHECKING:  # pragma: no cover - import cost, not behaviour
@@ -220,6 +224,11 @@ class AgentSdkProvider:
         truncated response, a failed run, a body that is not the JSON object the
         schema demands, or a response served by a model other than the one this
         provider is pinned to.
+
+        Raises :class:`~sciagent.core.errors.ProviderUnavailableError` when the
+        session could not be reached or died under us -- a missing CLI, a dead
+        child process, a stream that will not decode. That one propagates rather
+        than being recorded; see the guard in :meth:`_call`.
         """
         self._refuse_a_contaminated_environment()
         result, manifest = self._call(system, brief, schema)
@@ -324,7 +333,12 @@ class AgentSdkProvider:
         try:
             from claude_agent_sdk import ResultMessage, query
         except ImportError as error:  # pragma: no cover - dependency present
-            raise ProviderError(
+            # ``ProviderUnavailableError``, matching the Messages API backend. A
+            # missing dependency means the model was never reached, so it belongs
+            # to the propagating class -- and it took the recorded class until
+            # review caught the asymmetry, which would have had ``Hybrid`` score
+            # a run as ``"refused"`` because a package was absent.
+            raise ProviderUnavailableError(
                 "the claude-agent-sdk package is not installed, so no call can "
                 "be made; replaying a recorded transcript does not need it"
             ) from error
@@ -365,7 +379,46 @@ class AgentSdkProvider:
                 "directly"
             )
 
-        result, manifest = asyncio.run(drain())
+        try:
+            result, manifest = asyncio.run(drain())
+        except (SciAgentError, MemoryError):
+            # Ours passes through untouched, and so does ``MemoryError``, which
+            # is not ours but is equally not a statement about a model. This
+            # machine is recorded dying at around 300 half-investigations in one
+            # process and CLAUDE.md records ``-n auto`` failing three tests on
+            # exactly this, so it is a case with a history here rather than a
+            # hypothetical.
+            raise
+        except Exception as error:
+            # Catching ``Exception`` is against this project's standing rule, and
+            # it is done here on purpose, once, with the reason recorded.
+            #
+            # The rule forbids *suppressing* an error to make a check pass. This
+            # suppresses nothing: the original is chained on ``__cause__``, its
+            # type name is in the message, and the clause above guarantees no
+            # framework error can enter here at all. What it does is translate a
+            # foreign process's failures at the one seam where they arrive.
+            #
+            # It cannot be narrowed to ``ClaudeSDKError``, which is the tidy
+            # answer and the one the Messages backend gets to use.
+            # ``claude_agent_sdk`` raises bare ``Exception`` from seven sites in
+            # ``_internal/query.py``, and one of them stopped item 15's V4/S11
+            # cell with ``Exception: Claude Code returned an error result:
+            # success`` -- recorded in ``docs/DECISIONS.md`` (2026-08-18) as
+            # transient on one observation, because nothing here could tell it
+            # apart from one. A guard on the SDK root converts none of the seven.
+            #
+            # ``ProviderUnavailableError``, **not** ``ProviderError``, and that
+            # class's docstring carries the reasoning. In short: ``Hybrid``
+            # catches the latter and records ``"refused"``, so a dead session
+            # would leave a completed, *scored*, permanently-ledgered replicate
+            # that no transcript can reproduce. Propagating keeps the
+            # checkpointing this guard was written for and drops the scoring.
+            raise ProviderUnavailableError(
+                f"the {self._model} session could not be completed: "
+                f"{type(error).__name__}: {error}. Nothing was recorded, so this "
+                f"replicate can be re-run once the cause has cleared"
+            ) from error
         if result is None:
             raise ProviderError(
                 f"the {self._model} session ended without a result message, so "

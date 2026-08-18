@@ -62,7 +62,7 @@ import time
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from claude_agent_sdk import Message, ResultMessage, query
 
@@ -78,6 +78,7 @@ from sciagent.core.errors import (
     MalformedProposalError,
     ProposalError,
     ProviderError,
+    ProviderUnavailableError,
 )
 from sciagent.core.types import ExperimentTemplateId, HypothesisId, Seed
 from sciagent.eval.campaign import stage_a_id
@@ -207,6 +208,31 @@ class UsageTap:
             yield message
 
 
+#: Outcome names meaning no answer was served and the run stopped.
+#:
+#: Both, because ``CallRecord.outcome`` holds ``type(error).__name__`` and
+#: ``ProviderUnavailableError`` is a *sibling* of ``ProviderError`` rather than a
+#: subclass -- so every comparison against the one name silently excludes the
+#: other. Three separate comparisons in this file needed it, which is why it is a
+#: constant rather than a repeated literal: a stopped run was being counted as
+#: billed, and the "THE RUN STOPPED" block that is the pilot's whole output on a
+#: rate cap would not have printed.
+STOPPED_OUTCOMES: Final = ("ProviderError", "ProviderUnavailableError")
+
+
+def _stored_address(store: TranscriptStore, before: set[str]) -> str:
+    """Return the address this call added to ``store``, or ``""`` if none.
+
+    A ``ProviderError`` is raised before anything is stored, so an empty string
+    is the honest answer there and means "no transcript to inspect". A decode
+    failure is the case this exists for: the payload was resolved and stored
+    before ``_build`` rejected it, so there *is* a transcript, and the report's
+    "inspect these" listing is worth nothing without its address.
+    """
+    added = set(store.addresses()) - before
+    return added.pop() if len(added) == 1 else ""
+
+
 def work_list(calls: int, seeds: int = 20) -> tuple[tuple[Scenario, Memory], ...]:
     """Return ``calls`` (scenario, memory) pairs whose gate actually opens.
 
@@ -229,9 +255,15 @@ def work_list(calls: int, seeds: int = 20) -> tuple[tuple[Scenario, Memory], ...
     Memory is cycled across the kept pairs rather than nested outside them, so a
     short run still covers more than one representation.
 
-    This costs a gate evaluation per candidate, which is cheap: the expensive
-    part of an investigation is simulating a *proposed* structure, and nothing is
-    proposed here.
+    **This screening is not cheap, and an earlier wording said it was.** It
+    claimed "a gate evaluation per candidate", reasoning that the expensive part
+    of an investigation is simulating a *proposed* structure and nothing is
+    proposed here. The second half is true and the first is not:
+    :func:`at_proposal_time` spends half the scenario budget through BOED before
+    the gate can be read at all. A twenty-call run therefore screens on the order
+    of 240 half-investigations in one process, on a machine ``docs/DECISIONS.md``
+    records dying at around 300. Raising ``--calls`` or ``seeds`` moves that
+    product, so treat both as memory settings and not only as quota settings.
     """
     scenarios = slice_scenarios()
     table = gate_table()
@@ -397,15 +429,28 @@ def run_pilot(
         brief_chars = len(render_brief(investigation, layer.menu, memory=memory))
 
         tap.last = None
+        # The store is shared across layers and `propose` does not hand its
+        # address back, so the address a *failed* call used is recovered by
+        # diffing. It matters because `ProposalLayer.propose` resolves and stores
+        # the transcript before decoding it: a draft that fails the grammar is
+        # already in the corpus, and recording it against an empty address is
+        # what made the report's "inspect these" rows unjoinable to the very
+        # transcripts they name.
+        before = set(store.addresses())
         started = time.perf_counter()
         try:
             proposal = layer.propose(investigation)
         # A bad proposal is an outcome, not a cap: record it and keep going, as
-        # Hybrid does. Three types, none of them a subclass of another --
-        # MalformedProposalError is a *sibling* of ProviderError under
-        # ProposalError, and InvalidEditError is a GrammarError outside that tree
-        # altogether. Catching one and not the rest is how the first re-run threw
-        # away fifteen paid calls at the sixteenth.
+        # Hybrid does. Catching one type and not the rest is how the first re-run
+        # threw away fifteen paid calls at the sixteenth.
+        #
+        # ``InvalidEditError`` is now unreachable here and is kept deliberately:
+        # ``ProposalLayer._build`` widened to ``except GrammarError`` on
+        # 2026-08-18 and wraps every one of them as ``MalformedProposalError``
+        # before it can leave ``propose``. Keeping the name costs nothing and
+        # holds the branch open if that widening is ever narrowed; what would
+        # cost something is trusting the *old* comment here, which said the two
+        # types "remain unrelated" and stopped being true in the same change.
         except (MalformedProposalError, InvalidEditError) as error:
             records.append(
                 _record(
@@ -414,7 +459,7 @@ def run_pilot(
                     memory=memory,
                     outcome=type(error).__name__,
                     brief_chars=brief_chars,
-                    address="",
+                    address=_stored_address(store, before),
                     wall_s=time.perf_counter() - started,
                     result=tap.last,
                     detail=str(error),
@@ -428,7 +473,16 @@ def run_pilot(
         # A provider failure is the one that stops the run: it may be the rate
         # cap this pilot exists to notice, and calls made after one would be
         # measurements of a throttled account.
-        except ProviderError as error:
+        #
+        # ``ProviderUnavailableError`` is listed explicitly because it is a
+        # *sibling* of ``ProviderError`` under ``ProposalError`` rather than a
+        # subclass, so catching the latter alone does not reach it. Missing it
+        # was a real regression for the length of one review round: a rate cap
+        # would have propagated out of `main`, skipping `report` and
+        # `_save_transcripts` entirely and losing every call already billed in
+        # this process — in the one script whose stated purpose is to be running
+        # when a cap bites.
+        except (ProviderError, ProviderUnavailableError) as error:
             records.append(
                 _record(
                     index=index,
@@ -436,7 +490,7 @@ def run_pilot(
                     memory=memory,
                     outcome=type(error).__name__,
                     brief_chars=brief_chars,
-                    address="",
+                    address=_stored_address(store, before),
                     wall_s=time.perf_counter() - started,
                     result=tap.last,
                     detail=str(error),
@@ -581,14 +635,22 @@ def report(records: Sequence[CallRecord], *, dry_run: bool) -> None:
     # run pays for it exactly the same. `usable` is the narrower question of how
     # many produced a proposal, which is a fact about the model rather than
     # about the budget.
-    ok = [record for record in records if record.cost_usd > 0.0 or dry_run]
+    #
+    # Served-ness is read off the *outcome*, not off the cost. This gated on
+    # `cost_usd > 0.0` until 2026-08-18, which discards the whole measurement
+    # after the quota has already been spent whenever the session reports no
+    # cost -- and this backend authenticates by subscription with `apiKeySource`
+    # of "none", so a zero from the SDK's costing is the case to expect rather
+    # than a hypothetical. A `ProviderError` is the one outcome where no answer
+    # was served; everything else was.
+    ok = [record for record in records if record.outcome not in STOPPED_OUTCOMES]
     usable = [record for record in records if record.outcome == "ok"]
     rejected = [
         record
         for record in records
         if record.outcome in {"MalformedProposalError", "InvalidEditError"}
     ]
-    failed = [record for record in records if record.outcome == "ProviderError"]
+    failed = [record for record in records if record.outcome in STOPPED_OUTCOMES]
     print()
     print(
         f"calls attempted: {len(records)}   billed: {len(ok)}   "
@@ -648,6 +710,20 @@ def report(records: Sequence[CallRecord], *, dry_run: bool) -> None:
 
     median_cost = statistics.median(costs)
     median_wall = statistics.median(walls)
+    if sum(costs) == 0.0:
+        # Reachable since 2026-08-18: `ok` no longer gates on a positive cost, so
+        # a run the SDK charged nothing for now reaches this projection instead
+        # of being discarded. Discarding it was the worse bug -- the quota was
+        # already spent -- but a cost table of zeros printed without comment is
+        # its own way of misleading, since every projected figure below is then
+        # $0.00 and looks like a measurement.
+        print()
+        print(
+            "NO COST REPORTED. Every call was served and timed, so the wall-clock\n"
+            "  and token figures stand, but the session charged nothing this run --\n"
+            "  expected under subscription auth, where apiKeySource is 'none'.\n"
+            "  Read every cost below as absent, not as zero."
+        )
     print()
     print("projected, serially:")
     print("  calls        cost   model time   basis")
@@ -746,7 +822,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not args.dry_run:
         complaint = _save_transcripts(store, args.out)
         print(complaint or f"written: {args.out.with_suffix('.transcripts.json')}")
-    return 0 if all(record.outcome == "ok" for record in records) else 1
+    # Three outcomes, three codes. Until 2026-08-18 a rejected draft and a
+    # stopped run both returned 1, which makes the one event this pilot exists
+    # to detect indistinguishable from the one it explicitly carries on past:
+    # a provider failure may be the rate cap biting, while a draft that does not
+    # decode is an ordinary and expected cost of the run.
+    if any(record.outcome in STOPPED_OUTCOMES for record in records):
+        return 1
+    if any(record.outcome != "ok" for record in records):
+        return 3
+    return 0
 
 
 if __name__ == "__main__":

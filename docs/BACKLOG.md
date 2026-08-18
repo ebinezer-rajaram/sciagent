@@ -860,3 +860,458 @@ here costs live model calls, so a session that is not mid-campaign should do it
 and re-run the pilot to confirm.
 
 **Touches.** No frozen decision. A script, not the framework.
+
+---
+
+The sixteen entries below were appended 2026-08-18 by the deep adversarial
+review (`docs/REVIEW-2026-08-18.md`, which carries the evidence, the ranked
+order and the costed experiment designs). Each carries a named acceptance
+criterion under **Gate.** (in the `test_aNN` form `scripts/status.py` tracks)
+and an effort estimate under its cost line. Gate numbers A25–A40 extend §6's
+namespace through this
+file, per SPEC §13; none of them grades an already-built system: every gate
+below binds framework apparatus on constructed cases, and wherever a change
+would move a number a recorded campaign already reported, the entry says so
+and routes it through a metric-version bump decided cold.
+
+## Real-data grounding on the SCEDC QTM catalog
+
+**Idea.** Ground the framework on the QTM catalog (Ross et al. 2019, Science):
+1.81M template-matched Southern California events 2008–2017, two text files
+(192MB + 95MB) verified byte-frozen since 2019-04-15. Snapshot and hash it as
+`DATA_VERSION`; build the ingestion pipeline (magnitude cut, deterministic tie
+rule, rescale to mean gap 1.0, disjoint 512-event segments keyed by seed
+index) as versioned environment code beside `pointproc`; declare short-term
+aftershock incompleteness as an S12-style unscored nuisance. Two preregistered
+tracks, never mixed: semi-synthetic (recalibrate the reference to QTM's
+operating point, author edits, simulate — full D1–D6) and found-data (the
+ETAS consensus edit is the D1 surrogate; D2/D4/D6 intact, D5 observational
+only, D3 only as the found battery of in-network M5+ events).
+
+**Rationale.** The framework has only ever seen defects it wrote itself. QTM
+is the one surveyed corpus that is natively a frozen citable snapshot *and*
+whose century-deep consensus mechanism — ETAS magnitude-gated triggering, fit
+to this catalog specifically (Moutote 2021; van den Ende & Ampuero 2020) — is
+exactly one library edit: `AddDependency(size→arrival)`, `mechanisms.py:146`,
+S11's out-of-library mechanism, sole detector `size_gap_correlation`. The
+transfer test writes itself: does the system detect inadequacy on data where
+seismology knows the truth is the S11 edit, and does Stage B propose it? R4
+is answerable without interventions as rank preservation under D2. Known
+risks, adversarially verified: no formal licence text (get written SCEDC
+confirmation before redistributing the snapshot); template-matching false
+detections cluster after large marks — the same signature as the consensus
+edit — so the detector's reading must be bounded on semi-synthetic ETAS with
+and without an artifact model; regional pooling needs a polygon sensitivity
+arm. Runner-up if QTM falls through: Binance spot aggTrades monthly zips
+(exact time/size/sign schema, checksummed immutable files; licence ambiguity,
+superposed mechanisms).
+
+**Touches.** F2 as intended (domain grounding as fidelity upgrade and
+transfer test). §8's dimension table needs the found-data reading stated
+(which dimensions survive, what replaces D3) — a §13 note, not a rewrite.
+Item 1's recorder stays deferred: this is data that already exists.
+
+**Gate.** `test_a25_qtm_ingestion_is_deterministic_and_declared` —
+snapshot-hash → byte-identical `EventLog` segments across processes;
+the declared censoring model is applied and versioned; the consensus edit is
+preregistered in the environment before any system runs on a segment.
+
+**Cost.** XL (pipeline + calibration ≈ 1–2 weeks). Compute: conventional arms
+$0; V7 on 20 found segments ≈ 40 calls ≈ $4–8 live.
+
+## D4 is identically zero by construction, and D2 is not a proper score
+
+**Idea.** Fix D4 by excluding the candidate's own hypothesis from the
+entertained set it is compared against (`eval/matrix.py:543` passes the full
+set, which always contains the candidate, so "mine − best" is never
+positive); replace D2's modal-cell reading (`eval/scoring.py:355`) with
+cross-entropy under the truth's full distribution, keeping the −inf
+semantics. Both ride one `METRIC_VERSION` bump.
+
+**Rationale.** Verified against the ledger: `d4 = 0` on 1,120 of 1,120
+recorded rows — every recorded D4 is a constant reported as a comparison, and
+DECISIONS' "D4 bit-identical between V7 and V1" is vacuous. D2 as written is
+improper: a point mass on the truth's modal cell beats the truth itself, so
+the dimension rewards overconfidence. Two of six reported dimensions are
+currently uninformative, which no amount of agent capability can compensate.
+The fix changes what recorded campaigns would read — hence the version bump
+and the re-derivation entry below, not an in-place correction.
+
+**Touches.** §8's D2/D4 definitions in their computed form (the prose
+survives; the wording "posterior predictive score" arguably *demands* the
+proper score). No frozen decision.
+
+**Gate.** `test_a26_d4_rewards_a_rescuing_candidate` — on a constructed case
+where a candidate explains an observation the entertained set fits poorly,
+D4 > 0; on a case where it adds nothing, D4 = 0; and the truth maximises D2
+among all candidate distributions on a constructed grid.
+
+**Cost.** M (≤ 2 days including the metric-version plumbing and tests).
+
+## A preregistered held-out battery, so arms are scored on one question set
+
+**Idea.** Fix the D2/D3 held-out battery per scenario (a function of the
+scenario declaration only), instead of deriving it per run from leftover
+designs (`eval/matrix.py:559`); guarantee D3's battery contains at least one
+intervention; record battery membership in the address.
+
+**Rationale.** As recorded, arms are scored on different question sets:
+`n_held_out` is {3,2} for V-arms, {2} for B4/B5 and {0} for B1 — whose D3 is
+`nan` on 20/20 S11 rows — and D3's "intervention battery" can hold no
+intervention. `test_scoring.py`'s named `HELD_OUT` is the precedent. Without
+this, no cross-arm D2/D3 comparison is clean, including the preregistered
+contrast.
+
+**Touches.** §8's D3 wording ("held-out intervention battery") — this
+implements it rather than changing it. No frozen decision.
+
+**Gate.** `test_a27_the_battery_is_a_function_of_the_scenario_alone` — two
+arms with different run histories on one scenario receive identical
+batteries; every scenario's battery contains an intervention; battery
+membership appears in the recorded address.
+
+**Cost.** M.
+
+## The criterion-5 comparator that was never built
+
+**Idea.** Build the B6-equivalent arm SPEC §12 criterion 5 names: a uniform
+proposer over the agent grammar, drawn at the same Stage A gate under the
+same budget split as V7, seeded from the replicate seed. First form: uniform
+over `enumerate_edits(1)`'s 48-corner stratification (table rows already
+cached from B5's search table); optional second form over the full grid under
+a preregistered proposal budget (~33s table fill per novel structure). While
+here, run B4-with-BOED-selection once, completing the 2×2 of {proposal
+source} × {selection policy}.
+
+**Rationale.** Criterion 5 is unmeasured because its comparator does not
+exist — grep and ledger both confirm no random-structured-generation arm
+anywhere. DECISIONS itself calls the uniform proposer "cheap to build". The
+2×2 matters because the recorded V7-vs-B4/B5 non-overlap on S11 D3 is
+attributable to selection policy and library, not proposal source: V7's D3 is
+bit-identical to V1's on all 20 S11 replicates. The criterion predates V7, so
+building its comparator now grades nothing after the fact.
+
+**Touches.** §5's "no more" baseline list gains the arm §12 already names —
+a §13 note that criterion 5 implicitly amended §5. No other frozen decision.
+
+**Gate.** `test_a28_the_uniform_proposer_is_licensed_and_seeded` — every
+proposal is grammar-licensed, on-grid, and a pure function of (scenario seed,
+replicate index); two processes produce identical proposal sequences.
+
+**Cost.** S–M. Compute: corner form minutes; full-grid form bounded by the
+preregistered budget. API $0.
+
+## Criterion 4's observable, implemented arm-symmetrically once decided cold
+
+**Idea.** After the OPEN-DECISIONS §1 decision is taken (C1 recommended
+there: power against size on the named Stage A probe), implement it: the
+harness evaluates the named probe for every arm uniformly at the gate point,
+records both flags (probe verdict and whole-record PPC) clearly labelled, and
+reports detection with a false-positive term.
+
+**Rationale.** The recorded matrix cannot answer the preregistered contrast:
+`CellReading.inadequate` is the whole-record PPC (V7/S11 0/20) while V7 acted
+on the gate (17/20); `report_matrix --contrast` exits 3 by design. The
+decision itself is not this entry's to take — it is written up to be taken
+cold, and the repository has already paid twice for taking such decisions
+hot. This entry is the implementation that follows, whichever wording wins.
+
+**Touches.** §12 criterion 4 (the decision); `eval/campaign.py` and the
+ledger payload (the implementation). Couples to the payload entry below.
+
+**Gate.** `test_a29_the_probe_verdict_is_arm_symmetric` — for a fixed
+(scenario, seed), the harness-evaluated probe verdict is identical whichever
+system ran, and both flags are recorded and distinguishable in the payload.
+
+**Cost.** M for the implementation; the decision is the user's.
+
+## The verifier has no production caller
+
+**Idea.** Wire claim authorship and adjudication into campaign runs:
+`claims_from_run` (or agent-authored claims when they exist) adjudicated by
+`verify()` per run, verdicts aggregated per campaign, and
+`verify/contradiction.py` findings accumulated so §12 criterion 8 is a
+measured zero rather than a vacuous one.
+
+**Rationale.** `verify()` has no caller in `src` — the whole seven-check
+verifier adjudicates only test-generated claims, so criterion 10's figure is
+a synthetic cross-product (the repo says so at DECISIONS.md:2310-2313) and
+criterion 8 is vacuously true because the objects it counts are never created
+in recorded runs. DECISIONS already names the fix "a reporting pass, not new
+machinery". A23's bar grades the verifier's coverage, not any agent, so
+re-measuring it over real run claims does not re-grade a built system.
+
+**Touches.** No frozen decision. `eval/campaign.py`/`runner.py` gain the
+pass; the ledger payload entry below carries the aggregates.
+
+**Gate.** `test_a30_every_campaign_run_is_adjudicated` — a campaign over
+constructed runs yields an adjudication rate and a per-run contradiction
+count in its recorded output; an injected zombie claim is counted, not
+silently absent.
+
+**Cost.** M–L.
+
+## The ledger payload omits what three §12 criteria read
+
+**Idea.** Extend `CellReading.as_payload` with the fields §12 reads and the
+run already computes or could: autonomy fraction (criterion 11 / F10), the
+Stage-A gate flag beside the whole-record PPC (criterion 4), and
+`null_mass`/`abstain_mass` (criterion 9). Metric-version bump; old rows stay.
+
+**Rationale.** Verified over all 1,120 rows: the payload's 16 fields include
+no agency figure, no gate flag, and no mass decomposition, so criterion 11 is
+not met for the recorded campaign (its machinery has zero production
+callers), criterion 9 is not decidable from the report, and criterion 4's two
+observables cannot be compared after the fact. The `ScenarioRun` carrying the
+inputs dies inside `runner.execute` today. F10 says "alongside every
+performance figure" — this is where the figures live.
+
+**Touches.** No frozen decision; implements F10 where it failed to reach.
+Couples to the criterion-4 entry (which flag) and the re-derivation entry
+(how recorded rows get the fields).
+
+**Gate.** `test_a31_the_payload_carries_agency_and_masses` — a constructed
+run's payload carries autonomy fraction, both detection flags and both
+masses; render shows the autonomy fraction beside every dimension block.
+
+**Cost.** M.
+
+## Append-only is breached by a foreign REPLACE, and A14 has a module-scope blind spot
+
+**Idea.** Three closures, probe-verified as real: (1) a `BEFORE INSERT`
+trigger aborting when the digest already exists, so a foreign connection's
+`INSERT OR REPLACE` is refused regardless of its pragmas (delete triggers do
+not fire under REPLACE with `recursive_triggers` off — sqlite's default);
+(2) collect module-level statements in `callgraph.py` as a synthetic
+`<module>` function so import-time sealed access is analysable; (3) pin the
+"no system holds a store handle" property with a test, and add the lowercase
+partition literals to `SEALED_SYMBOLS`. Optionally (ambition): a
+sequence-linked hash chain over `(prev_hash, digest, result_digest)` making
+any overwrite detectable in one cheap pass instead of an A15 re-run.
+
+**Rationale.** All three were demonstrated by probes this review: a raw
+connection overwrote a registered row (result → `[999.0]`, digest "forged");
+a planted module-level `SealedAccess`/HOLDOUT reference analysed clean;
+`store.query("...partition = 'holdout'")` returned sealed rows tokenlessly.
+Invariant 4's stated guarantee and `store.py:27`'s docstring are currently
+stronger than the enforcement.
+
+**Touches.** No frozen decision — invariant 4 already demands this.
+
+**Gate.** `test_a32_a_foreign_replace_is_refused` — `INSERT OR REPLACE` from
+a fresh raw connection with default pragmas fails and the row is unchanged;
+the A14 analyser finds a planted module-level violation; no module under
+`sciagent.systems` references the store or ledger types.
+
+**Cost.** M.
+
+## The verification substrate has unversioned randomness, caches and dependencies
+
+**Idea.** (1) Register a Hypothesis profile: fixed `derandomize` for gates
+(or a recorded seed printed on failure) and a committed example database, so
+a counterexample found on one machine reaches the repo. (2) Give the table
+cache a code-version dimension: fold a simulator-code digest (or at minimum
+an automated `ENV_VERSION`-bump check) into the cache key, and let
+`suite-freshness.sh` account for `.cache/tables` state. (3) Record the numpy
+version beside every report and registry-adjacent artefact, since the
+determinism guarantee rides numpy's bit-stream stability and `pyproject`
+declares lower bounds only.
+
+**Rationale.** The completeness critic's three confirmed gaps, all in the
+substrate the verification stands on: property gates certify one random
+sample per run on a project whose invariant is seeded randomness; a mechanism
+bugfix without a manual `ENV_VERSION` bump silently reuses stale
+2000-replicate tables across every worktree; a `uv lock --upgrade` could move
+results while every content address stays fixed — the exact confusion the
+platform pin exists to prevent, reopened through the lockfile.
+
+**Touches.** No frozen decision. Invariant 3's reach, extended to the tools
+that verify it.
+
+**Gate.** `test_a33_the_substrate_is_versioned` — the Hypothesis profile is
+registered and in force under pytest; a table cached under one simulator-code
+digest is refused under another; the rendered report names the numpy version.
+
+**Cost.** M.
+
+## Comparator parity: selection policy is confounded with proposal source
+
+**Idea.** Give B4 and B5 the same BOED selection V7 uses (or, if rotation is
+kept deliberately, preregister that V1-vs-B4 bounds the selection effect in
+the contrast analysis and state the three protocol deltas where the
+comparison is defined). Close the open sealing channel while in the file:
+`Investigation.propose(predictions=...)` currently accepts predictions
+validated for falsifiability only — require table-fidelity or record
+authorship so the verifier can discount agent-authored conditions.
+
+**Rationale.** The preregistered D3 contrast partly credits conventional BOED
+to the LLM arm: B4 selects by fixed rotation while V7's evidence half is
+BOED-chosen — "equal budget" holds for the count, not the informativeness.
+B4's library also excludes S11's truth by construction, and no test pins its
+D3 on the one scenario the designation exists for. The predictions channel is
+the review's one open invariant-2 surface: unexercised by shipped systems,
+but public API with no fidelity check.
+
+**Touches.** §5's baseline definitions (how B4/B5 select — arguably
+implementation, not spec); F7 enforcement for the predictions channel. If
+rotation is kept, the preregistration route touches nothing frozen.
+
+**Gate.** `test_a34_selection_parity_or_bounded` — either B4/B5 route
+selection through `boed.plan` identically to V7 on a constructed scenario, or
+the contrast declaration records the bounding comparison; and a self-serving
+explicit prediction that contradicts the structure's table row is refused or
+marked agent-authored.
+
+**Cost.** M.
+
+## Refusals break replay, and the corpus has no in-repo hash
+
+**Idea.** Record model refusals as first-class transcripts so a scored
+replicate containing one replays (`REPLAY` currently raises
+`TranscriptMissError` at that address — a sibling of `ProviderError` that
+`Hybrid` cannot catch); register the transcript corpus's content hash in the
+repository (or registry) so "an artefact to be committed, reviewed and re-run
+against" is checkable by a third party; run and record one full
+`store.misses == 0` replay across all 18 LLM cells.
+
+**Rationale.** Any replicate the ledger scored as "refused" is currently
+unreplayable — replay of the recorded campaign would crash at the first
+refusal-containing address. No corpus is committed or hash-registered
+anywhere, and no in-tree evidence exists that a full replay has ever been
+executed; the replay claim is the reproducibility story for every LLM number.
+
+**Touches.** No frozen decision. `transcripts.py`, `anthropic_provider.py`,
+and the address scheme (a refusal transcript is a new record kind — version
+the scheme).
+
+**Gate.** `test_a35_a_refused_replicate_replays` — a recorded run containing
+a refusal replays byte-identically with zero misses; the corpus hash is
+resolvable from the repository.
+
+**Cost.** S–M.
+
+## Elicitation hygiene: a priming example, a cold cache, one sample
+
+**Idea.** Three changes at the elicitation surface, landed together at a
+recording-campaign boundary since the schema is hashed into every address:
+(1) replace the schema's name-field example `'self_excitation'` — a menu
+mechanism that is also S1's truth — with a mechanism-neutral example; (2)
+restructure the brief so the stable menu prefix sits in a cacheable block
+(the system block is ~300 tokens, below the 512-token cache minimum; the menu
+rides the user message, so nothing caches today); (3) add a k-sample
+elicitation mode (record k completions at indexed addresses, admit the first
+grammar-valid, report the distribution) so proposal diversity and menu
+coverage become measurable.
+
+**Rationale.** The example primes a specific mechanism on every call — an
+uncontrolled nudge correlated with S1's truth; effect size unmeasured, which
+is the problem. The cache structure means every unique brief pays the full
+write premium (measured: ~3/4 of input tokens are cache creation). Single
+-sample elicitation leaves R1's most direct evidence — what the model
+*distribution* proposes — unmeasured while the addressing already supports
+indices.
+
+**Touches.** No frozen decision. The transcript address version (schema
+change), `encoding.py`, providers.
+
+**Gate.** `test_a36_the_schema_is_neutral_and_the_address_versioned` — no
+menu mechanism name appears anywhere in the schema or its examples; the
+address version differs from the recorded campaign's; k-sample mode stores k
+indexed calls and admits deterministically.
+
+**Cost.** M. Live cost of k-sampling: (k−1) × $0.098 per firing at current
+rates.
+
+## The paired-seed design deserves a paired analysis
+
+**Idea.** When `Contrast.paired` is true, report the mean within-seed
+difference with its interval alongside (not instead of) the two independent
+intervals `contrast()` reports today.
+
+**Rationale.** Seeds are paired across arms by construction — established at
+real cost and then discarded at analysis, where two independent normal
+intervals are compared. At n=20 the paired analysis is strictly more
+powerful, collapses no dimensions, and changes no recorded number (it is an
+additional reading of the same ledger rows).
+
+**Touches.** None. §8's no-collapse prohibition is untouched — a paired
+difference on one dimension is still one dimension.
+
+**Gate.** `test_a37_paired_contrasts_report_the_paired_difference` — on
+constructed paired rows the report carries the within-seed difference and its
+interval, and refuses the paired reading when the seed sets differ.
+
+**Cost.** S.
+
+## A LICENSE and a CI gate, before any third party reads this
+
+**Idea.** Add a LICENSE (and the `pyproject` license field), and a minimal
+check-only CI workflow: `uv run pytest -n 4 --dist loadfile` plus
+`uv run mypy` on push, on a runner that writes no registry entries or tables
+that outlive the job — consistent with the platform pin, which governs
+produced *numbers*, not verification.
+
+**Rationale.** No LICENSE and no license field means default
+all-rights-reserved: no reviewer may legally run or cite the code. No CI
+means every verification claim is session-local — the false-green incident
+the suite-freshness hook exists for had to be caught by hand. Both are
+one-day credibility items an external reader hits in the first five minutes.
+
+**Touches.** None.
+
+**Gate.** `test_a38_the_repository_is_licensed` — a LICENSE exists, the
+`pyproject` field names it, and the CI workflow file invokes the suite and
+mypy. (The green run itself lives in the forge, not the test.)
+
+**Cost.** S.
+
+## The scale-up document §12 criterion 12 asks for
+
+**Idea.** Write `docs/SCALE-UP.md`: the interface changes the slice showed
+are required for the 104-scenario benchmark, consolidated from the fragments
+that already exist — the Stage A battery entry (single-direction gates stop
+being defensible at scale), the model-tier entry, the grammar-sensitivity
+entry, `ENV_VERSION` as content hash (SPEC §3.2's unimplemented promise), the
+Environment protocol dissolved into convention (F4), and the likelihood-free
+engine's staging rule.
+
+**Rationale.** "scale-up" appears exactly once in docs/ — inside the
+criterion; "criterion 12" appears nowhere else in the tree. The fragments all
+exist; nothing consolidates them, so the criterion is not met by a repository
+that has in fact done most of the thinking.
+
+**Touches.** None — it documents; it changes nothing.
+
+**Gate.** `test_a39_the_scale_up_document_exists_and_names_its_items` — the
+document exists and names, at minimum, the Stage A battery, the version-hash
+promise, and the Environment protocol disposition.
+
+**Cost.** S.
+
+## Re-derivation of the recorded matrix under fixed metrics
+
+**Idea.** After the D4/D2 fix and the battery preregistration land: bump
+`METRIC_VERSION`, re-run the 38 conventional cells (deterministic), and
+replay the 18 LLM cells from the transcript corpus — `REPLAY` raises on any
+miss, so this doubles as the first full-corpus replay audit. Old rows stay
+(append-only); the report selects by metric version and labels the
+re-derivation as such.
+
+**Rationale.** The recorded matrix is the evidence already paid for; under
+the fixed instruments it becomes readable for roughly two hours of compute
+and zero live calls. This is the step at which §12's capability criteria
+become decidable and the preregistered contrast either answers or honestly
+reports its conditioning set. It re-reads systems that already ran — which is
+exactly why it must ride a version bump, be labelled, and follow the fixes
+rather than accompany them; the OPEN-DECISIONS §2 note that "T2 is the right
+answer if the matrix is going to be re-run anyway" binds here, so take the
+taxonomy decision in the same window.
+
+**Touches.** No frozen decision. Invariant 6's surviving reason governs the
+sequencing: instruments first, decided cold; re-derivation second, labelled.
+
+**Gate.** `test_a40_rederivation_selects_by_metric_version` — a ledger
+holding rows under two metric versions renders them separately, refuses to
+pool them, and the replayed campaign reports `store.misses == 0`.
+
+**Cost.** M (≈ 20 min conventional + ≈ 2 h replay + report plumbing). API $0.

@@ -6638,3 +6638,92 @@ exercised before the merge, and its first real use is also its first test. Both
 `/next` and CLAUDE.md therefore carry the `Unknown skill` fallback — open the
 file and carry it out inline — because the window where that fires is the window
 where the step is easiest to lose.
+
+## 2026-08-18 — infrastructure: the CLAUDE.md trim was attempted, reviewed twice, and abandoned
+
+**Decision.** CLAUDE.md is not being trimmed. An audit cut it from 22,696 to
+21,224 characters — 6.5%, about 400 tokens a session — by removing the ten
+slash-command bullets, two `Stack` lines derivable from `pyproject.toml`, and
+the forensic receipts behind four rules. Two independent `/code-review` passes
+over that diff returned nine and then fifteen findings. The whole trim was
+reverted. What survives is one fix that was never part of it: the stale
+`docs/DECISIONS.md` figures, below.
+
+**Why — the decisive case.** Invariant 6 was compressed from eight lines to
+four. The original carries **two** prohibitions, not one: *"anything that would
+move evaluation apparatus after the agent that is scored by it reopens the
+confound"* **and** *"a new gate written after the system it grades is not [in
+bounds]"*. The first compression kept only the broad clause, which made the
+headline an absolute that `c4dcee3` — the item 15 matrix, which grades V7 and
+was written thirteen days after it — already violated; a session reading it
+literally would have had to refuse the remaining LLM cells. The second, written
+to fix that, kept only the narrow clause, which would have **permitted the SPEC
+§12 criterion 4 rewrite that this file records as withdrawn on 2026-08-16 for
+violating invariant 6**. An exit criterion is not an acceptance test, so "gate"
+alone does not reach it. The two wordings, quoted because the trim was reverted
+and exists in no commit — too broad: *"Evaluation apparatus is never written
+after the system it grades."* Too narrow: *"A gate is never written after the
+system it grades."* Two attempts, opposite failures, and the second was
+worse than the first because it silently re-opened a violation the repository
+had already paid to catch.
+
+**Why — the general reason.** Compressing prose is safe; compressing a
+prohibition changes what it prohibits, and this file's prose is densely
+cross-referential in ways not visible from the line being cut. Other instances
+from the same two reviews: a restored line reading *"acceptance criteria get
+property-based tests"* is false — `grep -rn '@given' tests/` returns 6 against
+343 `test_a*` functions; removing the cd-prefix magnitude left *"Measured across
+50 transcripts; none of the prefixed commands needed it"*, a measurement with
+its result deleted, which says less than no measurement; a pointer replacing the
+`mypy`-takes-no-arguments explanation aimed at a section containing no `mypy`
+guidance. Each was introduced by a round of fixes for the previous round's
+findings. The failure mode is not carelessness about any one line — it is that
+the reviews kept being right, and the edits kept generating fresh work.
+
+**Closes off.** It rules out re-proposing a CLAUDE.md size reduction on
+token-saving grounds alone. ~400 tokens a session is not worth a non-negotiable
+invariant changing scope, and nothing in the audit found a way to get the first
+without risking the second. If it is ever attempted again, invariant 6 is the
+test case: any compression that does not preserve **both** its clauses is wrong,
+and the two ways of getting it wrong are recorded above.
+
+**What was kept, and why it is unrelated.** CLAUDE.md and `/recall` described
+`docs/DECISIONS.md` with figures stale by roughly a factor of two — "~190KB
+across ~90 entries ... about 50k tokens" in one place, "226KB" in another,
+"over 220KB across more than 100 entries ... upwards of 55k tokens" in
+`/recall`, whose fan-out slice sizing said "roughly 25 entries and 950 lines
+each". Measured 2026-08-18 with this entry in place, over the git blob (LF), which
+is 6,171 bytes smaller than `wc -c` on the CRLF working tree: **~370,000 bytes,
+~6,180 lines, 135 entries**, most entries under 60 lines but one in ten over 80 and the longest 185,
+and 16 entries carrying no scope. A session trusting the 50k figure as a budget and reading the
+file whole would have spent about 90k. The slice figure was stale rather than
+harmful — `/recall` anchors its fourth range at the end of the file, so a
+literal four-way cut still covered everything; what 950 understated was how much
+each sweeper had to read, which pushes a slice toward `Read`'s default window.
+Two counting traps are worth recording, because both bit this fix: `grep -c
+'^## '` returns 136, one more than the 135 real entries, since the preamble's
+fenced entry-format template matches the same pattern; and the scope-less count
+is 16 by the colon test, not the 17 that same template inflates it to. The
+figures are approximate by that file's own instruction not to restate them as
+exact.
+
+**Left incomplete, and what it is waiting on.** Two things.
+
+The three-file plan gate. The user settled in this session that the rule should
+bind `/next` as well — a backlog row authorises the work, not the edits — but
+**nothing in the repository carries that yet**, so it is an intention and not
+in force: CLAUDE.md's rule is unchanged and names no skill, and
+`.claude/skills/next/SKILL.md` has no plan step at all (`grep -in plan` returns
+nothing). The sentence drafted for it was reverted with the trim, and had a
+defect worth fixing before it returns: it read "once an item is clearly spanning
+more than three files, stop", which licenses editing until the count becomes
+clear, against a base rule that says "before editing anything". Landing it means
+both files, not one.
+
+Whether block-level HTML comments are stripped from CLAUDE.md before injection:
+documented at `code.claude.com/docs/en/memory.md`, never measured here. It
+mattered because the trim's receipts were moved into such a block, and the
+saving was 6.5% if the stripping happens and 0.4% if it does not. With the trim
+reverted nothing depends on it, but the next audit that reaches for the
+mechanism should measure it with `/context` first rather than inherit the
+assumption.

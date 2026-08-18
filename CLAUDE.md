@@ -140,7 +140,7 @@ personal config file because cloud sessions clone the repo and see nothing from
   comprehension: how a module works, whether an invariant holds. The test is
   whether the result could be checked with a grep — if checking it means
   redoing the work, do not delegate. Say what you delegated and what came back.
-  The one exception is work that does not fit one context at all: reading 226KB
+  The one exception is work that does not fit one context at all: reading 360KB
   of `DECISIONS.md` is not grep-checkable either, but the alternative there is
   not doing it rather than doing it yourself, so the test does not apply.
 - For the verification case specifically, use the `evidence-checker` subagent.
@@ -300,7 +300,7 @@ eight. Anything new that reads a cached artefact should go through the same door
   no permission and may run on your own initiative. `/next` ends with it.
 - `/ship` — commit, merge and push what `/preflight` has checked. The user invokes
   this one; you never do.
-- `/recall <topic>` — find what was already decided, without reading 190KB.
+- `/recall <topic>` — find what was already decided, without reading it whole.
 - `/handoff` — write a note so a session ending badly does not strand its work.
   Prefer `claude --resume`; this is the fallback when resuming is impossible.
 - `/platform-check` — dormant. The instrument for lifting the Windows pin, kept
@@ -314,8 +314,8 @@ continuously at no cost in context. Do not re-run the script to orient. Do run
 `--run` when you need gates verified by execution rather than by their tests
 merely existing.
 
-**Do not read `docs/DECISIONS.md` end to end.** It is ~190KB across ~90 entries
-and grows every session; reading it whole costs about 50k tokens. Use `/recall`,
+**Do not read `docs/DECISIONS.md` end to end.** It is ~360KB across ~135 entries
+and grows every session; reading it whole costs about 90k tokens. Use `/recall`,
 which greps headers and reads only what matches. The file still holds what the
 repository cannot tell you — that has not changed, only how to get at it.
 

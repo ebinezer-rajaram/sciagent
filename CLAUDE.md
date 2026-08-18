@@ -252,7 +252,31 @@ eight. Anything new that reads a cached artefact should go through the same door
 - **Ask before assuming.** If the spec is ambiguous, ask rather than picking.
   Ambiguity in the spec is a real finding worth surfacing.
 - **Tests first for anything with an acceptance criterion.** Write the A-test,
-  watch it fail, then implement.
+  watch it fail, run `/test-review` on it, then implement.
+- **`/next` is not the only way to write code here.** A request made directly —
+  "implement X", or something we discussed and planned — is a first-class path.
+  What it drops is `/next`'s **§1 and §2**, the two whole sections that resolve
+  the cursor and read the §11 row and the §6 gates: an ad-hoc request has no
+  backlog row, so there is nothing there to resolve. **`/next` §3 is kept
+  entire**, every numbered step of it — write the test, watch it fail,
+  `/test-review` it, implement, verify. Read that carefully: §3's own steps 1
+  and 2 are the test and its watched failure, and they are the last things to
+  drop. Then §4 as written: `/decide`, then `/preflight`. `/ship` needs only
+  that `/preflight` has run — it never checks for `/next`.
+
+  The test review is the one step that does not follow from anything else on
+  this page, which is why it is named here as well as in both skills. Skipping
+  it because the work arrived as a sentence rather than a backlog row is how
+  ad-hoc work silently becomes the untested kind. What replaces the §6 criterion
+  is your own written statement of what the test establishes — write it before
+  the review, not after, and do not narrow it to fit the test.
+
+  **If `/test-review` does not resolve** — `Unknown skill` — open
+  `.claude/skills/test-review/SKILL.md` and carry it out inline, and say that is
+  what you did. A skill is invisible to a worktree session until its branch
+  reaches `main` (`docs/DECISIONS.md`, 2026-08-17), and ad-hoc work asked for
+  inside a worktree is exactly where that bites. Losing the step silently is the
+  failure this whole entry exists to prevent.
 - Run `uv run pytest -n 4 --dist loadfile` and `uv run mypy` before saying done.
   `mypy` takes no
   arguments: `pyproject.toml` sets `strict` and the file set, so naming a path
@@ -266,6 +290,10 @@ eight. Anything new that reads a cached artefact should go through the same door
 
 - `/next` (or `/next 12`) — drive one SPEC §11 backlog item: resolve the
   cursor, A-test first, watch it fail, review the test, implement, verify.
+- `/test-review` — review a freshly written failing test against the standard it
+  is meant to encode, before the implementation exists. `/next` calls it at
+  step 3; on the ad-hoc path you call it yourself. The only moment anything
+  looks at a test alone.
 - `/decide` — append to `docs/DECISIONS.md`.
 - `/gate A9` — run one acceptance criterion and report the real outcome.
 - `/preflight` — scope, verify and review independently. Lands nothing, so it needs

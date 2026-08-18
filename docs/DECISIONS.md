@@ -6045,3 +6045,47 @@ what is addressed, so adding them later is a resume and not a re-run. The
 preregistered contrast (V7 vs B4 on S11, D3, conditional on inadequacy detection)
 is **unanswerable** until they land, which is why `scripts/report_matrix.py` keeps
 `--contrast` off by default.
+
+## 2026-08-18 — infrastructure: ad-hoc work is a first-class path, and the A-test lens is no longer `/next`'s
+
+**Decision.** The test review that the 2026-08-17 entry above installed as
+`/next` step 3 now lives in its own skill, `/test-review`, which `/next` calls
+and which a direct request calls for itself. CLAUDE.md gains the ad-hoc path
+explicitly: a request made in a sentence rather than a backlog row drops
+`/next`'s §1 and §2 — the two sections that resolve the cursor and read the §11
+row, which an ad-hoc request has nothing to resolve against — and keeps §3
+entire. `/ship` §1 gains the matching commit form: ad-hoc work takes no
+`(backlog item N)` suffix, because `/next` step 1.3 resolves the cursor by
+grepping for exactly that string and a false one marks an item done. Nothing
+about the lens itself changed — the agent choice, the accepts-and-rejects
+question, the path-not-excerpt rule and the `/recall` guard all moved verbatim.
+
+**Why.** Everything else `/next` does was already in CLAUDE.md and already
+applied to any work: test first, watch it fail, `mypy` and the suite,
+`suite-freshness` pinning, `/decide`, `/preflight`. Checked by grep —
+`"reviewing a test, not the code"` returned exactly one file. The lens was the
+sole step reachable only by invoking `/next`, so asking for something directly
+silently bought the whole discipline minus the one review that cannot be run
+later. The alternative was to leave it where it was and rely on remembering it
+on the ad-hoc path; that is the class of thing this repository writes down
+precisely because remembering does not scale.
+
+**Read the 2026-08-17 entry as scoped, not wrong.** It settles what the lens
+asks and why, and all of that stands. What it no longer settles is *where the
+lens fires* — a fresh session reading it alone would conclude the lens is a
+`/next` feature, and since entries are never edited, this is the forward link
+that says otherwise.
+
+**Closes off.** It rules out `/next` becoming the mandatory route to writing
+code here. `/ship` never checked for `/next` and still does not — it requires
+only that `/preflight` has run — so the ad-hoc path reaches a commit through
+exactly the same gate.
+
+**Left incomplete, and what it is waiting on.** `/test-review` has never been
+invoked. It was authored in a worktree, and the skill namespace fact recorded on
+2026-08-17 applies to it: a skill authored in a worktree is invisible to that
+worktree's own session until its branch reaches `main`. So it cannot be
+exercised before the merge, and its first real use is also its first test. Both
+`/next` and CLAUDE.md therefore carry the `Unknown skill` fallback — open the
+file and carry it out inline — because the window where that fires is the window
+where the step is easiest to lose.

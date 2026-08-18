@@ -100,6 +100,15 @@ git log --oneline -5   # match the established phrasing
 Format: `<Verb> <what> (backlog item N)` — e.g. `Add the claim verifier and its
 five gates (backlog item 10)`.
 
+**Only if the work really is that item.** Ad-hoc work — a request made directly
+rather than drawn from §11 — takes the same `<Verb> <what>` and **no trailing
+parenthesis**: `Factor the A-test lens into its own skill`. Do not invent a
+number to fill the slot. `/next` step 1.3 resolves the cursor with
+`git log --oneline --grep='backlog item'` and takes the lowest-numbered item no
+commit names, so a commit falsely claiming item N marks that item done and the
+cursor silently skips it. The convention is a way of finding items, not a
+required suffix.
+
 Where to commit depends on the surface. Check it rather than assuming:
 
 ```sh

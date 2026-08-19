@@ -7590,3 +7590,130 @@ the child's stderr first, and do not "fix" a recurrence by retrying the
 subprocess: if the child is dying for want of memory, a retry hides a resource
 limit behind a green, and if it is not, a retry hides the determinism defect A1
 exists to catch.
+
+## 2026-08-19 — gate A28: B6 draws over the whole grid, and is not a 57th cell of §9
+
+**Decision.** SPEC §12 criterion 5's comparator is built, as
+`systems/baselines/uniform.UniformProposer` inside `systems/hybrid.Hybrid` under
+the name B6. Three things were settled that the backlog entry left open or that
+it decided the other way.
+
+*The draw is the entry's second form.* `docs/BACKLOG.md` named uniform-over-
+`enumerate_edits(1)` — the 48-corner stratification — as the cheap first form,
+and the full grid as optional. The full grid was chosen instead, before any code
+was written. A grid box's corners are where the degenerate parameterisations
+live: `BeamSearch` says so at `_UNSCORABLE`, having found them by enumerating
+exactly those corners. A B6 confined to them would lose for a reason unrelated to
+random generation, and a deflator that is too easy to beat flatters the arm it
+exists to deflate — which SPEC §12's "beating B4 or B5 is the research question
+rather than an exit criterion" can least afford. So the draw is the menu cell
+uniformly, then each of that cell's grid indices uniformly: V7's action space
+exactly, leaving the two arms differing in *how a point in it is chosen* and in
+nothing else. The measured menu is 5 cells, 16 grids, every grid 64 points,
+arities 3 and 4, so the corner form's cost advantage was real — at most 48
+structures ever, against at most 40 novel table rows for the whole B6 cell. Forty
+rows is a bounded price for a comparator that is not systematically degenerate.
+
+*B6 is `Hybrid`, not a new class.* `Hybrid.layer` was annotated with the concrete
+`ProposalLayer`; it is now a `ProposalSource` protocol that both `ProposalLayer`
+and `UniformProposer` satisfy. The backlog asked for a proposer drawn "at the same
+Stage A gate under the same budget split as V7", and sharing V7's class makes both
+facts about construction rather than claims for a later reader to audit — the
+argument `memory_ablation` already makes for V3 and V4.
+
+**Why.** Criterion 5 has been unmeasurable since it was written, and
+`docs/DECISIONS.md` (2026-08-04) records why in as many words: *"no B6 exists"*.
+The two frozen decisions behind that cannot both be satisfied — §5 lists B6 under
+"deferred to the full benchmark" while §12 criterion 5 requires B6 to score the
+slice — which is precisely SPEC §13's trigger, "a case where two frozen decisions
+cannot both be satisfied". §13 resolves it in the backlog and here, so
+`docs/SPEC.md` is untouched.
+
+**Closes off.** B6 is `CRITERION5_CELLS` — one cell, S11, twenty replicates — and
+deliberately **not** a fifty-seventh row of `SPEC9_CELLS`, whose docstring says
+"Do not add an arm" three lines above the tuple. §9 recorded 56 cells and still
+records 56; `ALL_CELLS` is the union for the runner, and `run_matrix.py`'s
+`--systems` still defaults to §9's seven arms, so B6 is opt-in and a default pass
+cannot widen the preregistered matrix by accident. Anything later reporting "the
+matrix" must still say which.
+
+**Left deliberately incomplete: nothing was run.** This lands the arm and its
+wiring, not a reading. The cell is executable at `--systems B6` with no provider
+and API $0. It is unexecuted because A40 ("Re-derivation of the recorded matrix
+under fixed metrics") is where readings are produced under the post-A26 metric
+version and post-A27 battery term, and a B6 reading filed before it would be
+re-derived immediately. Criterion 5 stays *unmeasured* until A40; what changed is
+that it is no longer *unmeasurable*.
+
+## 2026-08-19 — the intermittent subprocess failure is memory, confirmed
+
+**Supersedes nothing; it answers the open question in the entry above it.** That
+entry — "an intermittent subprocess failure in A1 and test_llm, seen and not
+explained" — recorded four `-n 4` runs going green/red/red/green, fixed the
+blindness rather than the cause, and left a hypothesis: *"Memory, not CPU"*, with
+the shared `.cache/tables` read/write race as the rival candidate. It asked that
+the next occurrence say which, and named the newly-surfaced child stderr as the
+instrument.
+
+**The next occurrence said which.** One `-n 4 --dist loadfile` run during gate
+A28: `3 failed, 1449 passed, 7 skipped in 253.04s`. All three failures were the
+subprocess-spawning tests, and the stderr the previous entry added carried the
+answer verbatim:
+
+    OpenBLAS error: Memory allocation still failed after 10 retries, giving up.
+
+Not a table-cache `PermissionError`, not a determinism mismatch — an allocator
+giving up. The hypothesis is confirmed and the rival is ruled out for this
+occurrence. All three passed in isolation on the same tree, and the run did not
+reproduce: a rerun with the identical tree was fully green, `1452 passed, 7
+skipped in 246.76s`.
+
+**Why this is worth a second entry.** The instrument the previous session
+installed worked exactly as intended and cost one run to pay off, which is the
+argument for installing it. And the attribution trap is worth naming: on seeing
+one red run with a new test file present and one green run with it absent, the
+obvious inference is that the new file tipped it. That inference is wrong at n=1
+per side — a green rerun *with* the file present is what settles it — and it was
+made in this session before being corrected.
+
+**Closes off.** A red on these tests is a resource fact until its stderr says
+otherwise, so read the stderr before reading it as a determinism regression. Do
+not attribute an intermittent failure to whatever changed most recently without a
+rerun on both sides. And do not retry the subprocess to make it green: the
+previous entry's reasoning holds and is now better founded — if the child is dying
+for want of memory, a retry hides a resource limit, and the limit is real.
+
+## 2026-08-19 — killing a backgrounded suite orphans its workers, and the next run pays
+
+**Measured, and the failure surfaces one run later disguised as a test defect.**
+Stopping a backgrounded `uv run pytest -n 4 --dist loadfile` through the harness's
+task-stop killed the parent `pytest.exe` and left its four `pytest-xdist` execnet
+gateways alive — `python -u -c "import sys;exec(eval(sys.stdin.readline()))"`, at
+131, 132, 133 and 183 MB. Eleven stray processes in total, 657 MB, every one of
+them traceable to this worktree by command line. Free physical memory: **1662 MB
+of 16310**.
+
+The immediately following full-suite run then died in *collection*, not in a test:
+
+    ERROR tests/acceptance/test_a06_a11.py - MemoryError
+    ERROR tests/acceptance/test_a01_a05.py - ImportError while importing test mod...
+    ERROR gw3 - Different tests were collected between gw0 and gw3.
+    6 errors in 26.46s
+
+Reaping the strays took free memory to 2144 MB, and the same command on the same
+tree then ran clean: `1452 passed, 7 skipped in 246.76s`.
+
+**Why it is written down.** "Different tests were collected between gw0 and gw3"
+reads like a conftest or collection-order defect and is nothing of the kind; it is
+what xdist reports when workers die unevenly for want of memory. A session that
+took it at face value would go looking in the wrong file, and the cause is one run
+in the past and invisible in the tree. This is the same scarcity the entry above
+confirms and the same one CLAUDE.md records as "memory binds before cores here" —
+a third face of it, with a self-inflicted trigger.
+
+**Closes off.** Do not stop a running suite that way; let it finish or let it time
+out. If it is stopped anyway, check for orphaned interpreters before starting
+another run rather than diagnosing the next run's collection errors. The check is
+`Get-CimInstance Win32_Process -Filter "Name='python.exe'"` filtered on the
+worktree path — and filter it, because this repository expects several sessions on
+one machine and a blanket kill would take another session's suite with it.

@@ -1054,7 +1054,114 @@ membership appears in the recorded address.
 
 **Cost.** M.
 
-## The criterion-5 comparator that was never built
+## DONE (2026-08-19, gate A28) — The criterion-5 comparator that was never
+## built
+
+**Done, with one departure and one deferral, both named below.** B6 is
+`systems/hybrid.Hybrid` — V7's class — holding a
+`systems/baselines/uniform.UniformProposer` in place of an LLM proposal layer.
+`Hybrid`'s `layer` parameter, which named `ProposalLayer` concretely, is now the
+`ProposalSource` protocol that both satisfy. Nothing reimplements the loop, so
+"drawn at the same Stage A gate under the same budget split as V7" is a fact
+about construction and not a claim to audit — the same argument `memory_ablation`
+already makes for V3 and V4, and the reason `Hybrid.name` was parameterised.
+Thirty-six tests in `tests/acceptance/test_a28.py`.
+
+**Departure: the draw is the entry's second form, not its first.** The entry
+named the 48-corner `enumerate_edits(1)` stratification as the cheap first form.
+It is cheap, and it is the wrong comparator. A grid box's corners are where the
+degenerate parameterisations live — `BeamSearch` says so at `_UNSCORABLE`, having
+found them by enumerating exactly those corners — so a B6 confined to them would
+lose for a reason unrelated to random generation. A deflator that is too easy to
+beat flatters V7, which is the direction SPEC §12's "beating B4 or B5 is the
+research question rather than an exit criterion" can least afford. So the draw is
+uniform over the menu cell and then over each of that cell's grid indices: V7's
+action space exactly, which makes the two arms differ in how a point in it is
+chosen and in nothing else. Decided with the user before implementation; the cost
+is bounded at ≤40 novel table rows for the whole cell and is stated at
+`uniform_draft`.
+
+**Deferral: the "while here" half of the 2×2 is A34's, not this entry's.**
+B4-with-BOED-selection is what "Comparator parity: selection policy is confounded
+with proposal source" (gate A34, below) exists to decide, and doing it here would
+have settled A34's question in a change nobody was reviewing for it.
+
+**B6 is not a fifty-seventh cell of SPEC §9.** `environments/pointproc/matrix.py`
+says "Do not add an arm" three lines above `SPEC9_CELLS`, and the rule held: the
+comparator is `CRITERION5_CELLS`, a separate declaration of one cell — B6 on S11
+at twenty replicates, which is what criterion 5 names and what makes an interval
+comparable with the V7 cell it deflates. `ALL_CELLS` is the union for the runner.
+`--systems` still defaults to §9's seven arms, so a default `run_matrix.py` pass
+records §9's matrix and nothing beside it; B6 is opt-in.
+
+**Nothing was run.** This lands the arm and its wiring, not a reading. Criterion
+5's cell is executable — `uv run python scripts/run_matrix.py <ledger> --systems
+B6`, no provider, API $0 — and deliberately unexecuted: A40 ("Re-derivation of
+the recorded matrix under fixed metrics") is where readings are produced under
+the post-A26/A27 metric and battery versions, and a B6 reading filed before it
+would be re-derived immediately.
+
+**The contradiction this resolves, per SPEC §13.** §5 lists B6 under "deferred to
+the full benchmark"; §12 criterion 5 requires B6 to score the slice. Both are
+frozen and they cannot both be satisfied, which is §13's own trigger for a change
+— "a case where two frozen decisions cannot both be satisfied". The entry
+anticipated this as "a §13 note that criterion 5 implicitly amended §5".
+`docs/SPEC.md` is untouched: §13 puts the note in the backlog and in
+`docs/DECISIONS.md`, which is where it is.
+
+**The gate is wider than the line below asked for, on a `/test-review` finding,
+and the finding was executed rather than argued.** The first version of the test
+was reviewed before any implementation existed, and came back too weak with three
+wrong implementations that each passed all 24 assertions: a proposer that ignored
+its seed and indexed from a module-level counter (every determinism assertion
+pointed at the free function `uniform_draft`, and `UniformProposer.propose` was
+never called); a proposer whose every draw was malformed, which `Hybrid` records
+as an outcome and carries on from, so the run still looked like one that proposed;
+and a draw confined to grid indices 0 and 1, which satisfied both guards meant to
+pin the full-grid form, because the grids hold 64 points and "more distinct
+indices than grids" needed only 17. The test now drives the class, names the
+outcomes a draw may legitimately have, and states the distribution's own
+statistics normalised by grid size. The three variants and what stops each are
+recorded in the test module's header, because they are the failure modes this
+gate is actually exposed to. Each was then re-executed against the corrected
+test and each is now rejected — A by
+`test_a28_b6_is_built_fresh_for_each_replicate`, B by
+`test_a28_a_drawn_proposal_never_fails_to_decode`, C by
+`test_a28_most_of_every_grid_is_actually_drawn`.
+
+**`/preflight`'s review then found a fourth, and one thing this change gave
+away.** `/code-review` constructed a proposer whose call counter increments but
+never reaches the draw — `uniform_draft(menu, seed, 0)` every time — which
+survived the rewrite because every remaining test read either the free function
+or a *fresh* proposer's first call, and both agree with a constant index. In a
+run B6 would propose one structure twice, `Hybrid._admit` would record the second
+as `"duplicate"` — a legitimate outcome — and the arm would quietly take half
+V7's effective proposal budget with the gate green.
+`test_a28_the_proposer_draws_the_function_s_sequence` closes it. The same review
+found the module had no golden pin at all, so a changed draw formula would leave
+everything green while silently invalidating recorded readings; the determinism
+lens had raised the same gap independently, and
+`test_a28_the_draw_stream_is_pinned_to_recorded_values` now exists to go red.
+
+The thing given away was in `hybrid.py`: `_slug` lived inside `ProposalLayer`, so
+while `Hybrid` held that class concretely, every name reaching the graph had been
+through it. Widening to `ProposalSource` turned that into a guarantee each source
+had to remember — and `eval/scoring.py` reserves the id `__candidate__` for D5's
+candidate slot, so a hypothesis carrying it would have its structure overwritten
+and its mass dropped from the comparison belief. Not reachable through either
+shipped source, but SPEC's second invariant asks for a runtime assertion rather
+than a convention, so the slug is now applied in `Hybrid._admit` and is public as
+`slug_hypothesis_name`. It is idempotent, so V7's node ids do not move.
+
+Two further review findings are worth naming because they were wrong in the
+*documentation* rather than the code. The `min` clamp in `_uniform_index` was
+justified by a rounding carry that does not exist — `int((1 - 2**-53) * size)` is
+below `size` for every size from 2 to 300000, and at 3 the product is
+`2.9999999999999996` — so the guard stays, unreachable, and now says so. And the
+two grid-coverage tests pooled every grid into one list while their names claimed
+a per-grid property; they are per grid now, each against its own size.
+
+### As proposed
 
 **Idea.** Build the B6-equivalent arm SPEC §12 criterion 5 names: a uniform
 proposer over the agent grammar, drawn at the same Stage A gate under the

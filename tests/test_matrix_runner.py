@@ -47,9 +47,11 @@ import pytest
 import slice_tables
 from slice_tables import AGENT_GRAMMAR, GRAMMAR, METRICS, gate_table
 
-from environments.pointproc.matrix import SPEC9_CELLS
+from environments.pointproc.matrix import ALL_CELLS, CRITERION5_CELLS, SPEC9_CELLS
 from environments.pointproc.outcomes import executor, simulator, slice_designs
 from environments.pointproc.runner import (
+    ALL_SYSTEMS,
+    CRITERION5_SYSTEMS,
     LLM_SYSTEMS,
     MATRIX_SYSTEMS,
     MatrixRunner,
@@ -141,6 +143,20 @@ class TestEveryArmOfTheMatrixIsBuildable:
 
     def test_the_factory_covers_exactly_the_arms_the_cell_table_names(self) -> None:
         assert set(MATRIX_SYSTEMS) == {cell.system for cell in SPEC9_CELLS}
+
+    def test_the_criterion_five_arm_is_covered_and_kept_separate(self) -> None:
+        """B6's factory and cell set agree, and neither leaks into §9's.
+
+        The same pin as above for the arm SPEC §12 criterion 5 names, plus the
+        separation that keeps it out of §9's recorded matrix -- see
+        ``CRITERION5_CELLS`` in ``environments/pointproc/matrix.py``. Both
+        directions matter: a B6 with no cell is unrunnable, and a B6 inside
+        ``SPEC9_CELLS`` would silently make the preregistered matrix 57 cells.
+        """
+        assert set(CRITERION5_SYSTEMS) == {cell.system for cell in CRITERION5_CELLS}
+        assert not set(CRITERION5_SYSTEMS) & set(MATRIX_SYSTEMS)
+        assert set(ALL_CELLS) == set(SPEC9_CELLS) | set(CRITERION5_CELLS)
+        assert set(ALL_SYSTEMS) == set(MATRIX_SYSTEMS) | set(CRITERION5_SYSTEMS)
 
     @pytest.mark.parametrize("name", ("V1", "B1", "B4", "B5"))
     def test_a_conventional_arm_reports_its_own_identifier(self, name: str) -> None:

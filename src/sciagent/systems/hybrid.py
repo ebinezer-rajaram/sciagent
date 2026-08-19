@@ -59,6 +59,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
 
 from sciagent.core.edits import Defect
 from sciagent.core.errors import (
@@ -73,9 +74,48 @@ from sciagent.experiments import boed
 from sciagent.experiments.dsl import ExperimentDesign
 from sciagent.hypothesis.validator import find_duplicate
 from sciagent.systems.base import Investigation, entertain
-from sciagent.systems.llm.provider import Proposal, ProposalLayer
+from sciagent.systems.llm.provider import Proposal, slug_hypothesis_name
 
-__all__ = ["Hybrid", "ProposalAttempt"]
+__all__ = ["Hybrid", "ProposalAttempt", "ProposalSource"]
+
+
+@runtime_checkable
+class ProposalSource(Protocol):
+    """Where a :class:`Hybrid` gets structure from.
+
+    Structural rather than nominal, and consumer-side, for the reason
+    :class:`~sciagent.eval.campaign.Proposing` is both: this class has to be able
+    to hold more than one kind of source, and must not thereby depend on which.
+    Two exist. :class:`~sciagent.systems.llm.provider.ProposalLayer` is V7's, and
+    goes to a model through a transcript store.
+    :class:`~sciagent.systems.baselines.uniform.UniformProposer` is B6's, and
+    draws from the grammar's structural menu at random.
+
+    That B6 is this class holding the second is what makes SPEC §12 criterion 5's
+    comparison clean: the two arms differ in how a point in the action space is
+    chosen and in nothing else, because everything else -- the library, the Stage
+    A gate, the budget split, the selection policy -- is :meth:`Hybrid.investigate`
+    either way. The annotation used to name ``ProposalLayer`` concretely, which
+    made "same gate, same split" a thing to reimplement rather than to inherit.
+
+    One method, deliberately. A source that also reported, say, how many calls it
+    had made would be a source the harness could read differently per arm.
+    :attr:`Hybrid.attempts` is where a run's record of asking lives, and it is
+    written by this class from what :meth:`propose` returned or raised.
+    """
+
+    def propose(self, investigation: Investigation) -> Proposal:
+        """Return one proposal for the state ``investigation`` is in.
+
+        May raise :class:`~sciagent.core.errors.ProviderError` -- the backend was
+        reached and declined -- or
+        :class:`~sciagent.core.errors.MalformedProposalError`, a payload that does
+        not denote a licensed structure. :meth:`Hybrid._propose_once` converts
+        both into recorded outcomes, because for a research system a refusal is a
+        result rather than a crash. A source that can raise neither, as a uniform
+        draw cannot, simply never produces those outcomes.
+        """
+        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,7 +129,17 @@ class ProposalAttempt:
     """
 
     address: str | None
-    """The transcript address, or ``None`` if the call never produced one."""
+    """What produced the proposal, or ``None`` if nothing did.
+
+    The transcript address of the model call where a
+    :class:`~sciagent.systems.llm.provider.ProposalLayer` produced it. A
+    :class:`ProposalSource` that reaches no provider writes its own
+    provenance instead -- B6's reads ``uniform:{seed}:{index}`` -- so this
+    is not resolvable against a transcript store in general. ``None`` means
+    the attempt produced no proposal at all: a refusal, or a draft that did
+    not decode. Nothing in the framework reads this for a number; see
+    :func:`~sciagent.eval.agency.proposal_record`, which counts
+    :attr:`outcome` alone."""
 
     node_id: HypothesisId | None
     """The hypothesis admitted, or ``None`` if nothing was."""
@@ -124,7 +174,7 @@ class Hybrid:
     def __init__(
         self,
         library: Mapping[str, Defect],
-        layer: ProposalLayer,
+        layer: ProposalSource,
         *,
         max_proposals: int = 2,
         name: str = "V7",
@@ -276,15 +326,27 @@ class Hybrid:
         re-proposing a structure an error and §12 asks for zero zombie
         hypotheses. It is still *reported*, since a model that keeps proposing
         what is already entertained is doing something worth seeing.
+
+        The name is slugged **here** and not left to the source. It used to be
+        left to :class:`~sciagent.systems.llm.provider.ProposalLayer`, which was
+        sound while that was the only thing ``Hybrid`` could hold; under
+        :class:`ProposalSource` it would be a guarantee each source had to
+        remember separately. What it protects is not cosmetic:
+        :func:`~sciagent.eval.scoring._enabled_value` reserves the id
+        ``__candidate__`` for D5's candidate slot, and an entertained hypothesis
+        carrying that id would have its structure overwritten and its mass
+        dropped from the comparison belief -- a scored dimension moved by a name
+        a source chose. Slugging is idempotent, so ``ProposalLayer``'s own call
+        is unaffected and V7's node ids do not move.
         """
-        node_id = HypothesisId(proposal.name)
+        node_id = HypothesisId(slug_hypothesis_name(proposal.name))
         existing = find_duplicate(investigation.graph, proposal.program_edit)
         if existing is not None:
             return ProposalAttempt(
                 proposal.address, existing, "duplicate", proposal.rationale
             )
         if node_id in investigation.graph.nodes:
-            node_id = HypothesisId(f"{proposal.name}/{len(investigation.proposed)}")
+            node_id = HypothesisId(f"{node_id}/{len(investigation.proposed)}")
         try:
             investigation.propose(
                 node_id,

@@ -40,7 +40,7 @@ from sciagent.systems.llm.transcripts import (
     call_address,
 )
 
-__all__ = ["Proposal", "ProposalLayer", "Provider"]
+__all__ = ["Proposal", "ProposalLayer", "Provider", "slug_hypothesis_name"]
 
 
 @runtime_checkable
@@ -114,9 +114,17 @@ class Provider(Protocol):
 class Proposal:
     """A decoded, grammar-checked proposal, ready to be entertained.
 
-    Carries the structure and the prose, and no number. ``address`` is the
-    transcript address the draft came from, which is what lets a claim about this
-    proposal be traced back to the exact model call that produced it.
+    Carries the structure and the prose, and no number.
+
+    ``address`` says what produced this proposal. For a
+    :class:`ProposalLayer` it is the transcript address of the model call, which
+    is what lets a claim about the proposal be traced back to the exact call.
+    It is **not** always a transcript address: a source that reaches no provider
+    writes its own provenance instead --
+    :class:`~sciagent.systems.baselines.uniform.UniformProposer` writes
+    ``uniform:{seed}:{index}``, naming the draw rather than a call. So do not
+    hand this to :meth:`~sciagent.systems.llm.transcripts.TranscriptStore.resolve`
+    without knowing which source produced it; nothing in the framework does.
     """
 
     program_edit: Defect
@@ -257,18 +265,29 @@ class ProposalLayer:
             raise MalformedProposalError(f"{type(error).__name__}: {error}") from error
         return Proposal(
             program_edit=program_edit,
-            name=_slug(draft.name),
+            name=slug_hypothesis_name(draft.name),
             rationale=draft.rationale,
             address=address,
         )
 
 
-def _slug(name: str) -> str:
-    """Return a hypothesis-id-safe rendering of a model-chosen name.
+def slug_hypothesis_name(name: str) -> str:
+    """Return a hypothesis-id-safe rendering of a source-chosen name.
 
     A model writes prose, and a ``HypothesisId`` ends up in file paths, claim
     ids and sorted orderings, so the characters it may carry are the
-    framework's decision and not the model's. Anything outside a conservative
+    framework's decision and not the model's.
+
+    Public, and applied by :meth:`~sciagent.systems.hybrid.Hybrid._admit`
+    rather than only here. While ``Hybrid`` held a ``ProposalLayer``
+    concretely, calling this in :meth:`ProposalLayer._build` was enough --
+    every name reaching the graph had been through it. Once ``Hybrid`` took
+    any :class:`~sciagent.systems.hybrid.ProposalSource`, that stopped being
+    a property of the framework and became one each source had to remember,
+    which is the shape of guarantee SPEC's second invariant says to enforce
+    with an assertion rather than a convention. Idempotent, so a source that
+    slugs its own names -- as ``ProposalLayer`` still does -- is unchanged by
+    the second application. Anything outside a conservative
     set becomes an underscore; an empty result becomes ``"proposal"`` rather
     than an id that sorts before everything and reads as absent.
     """

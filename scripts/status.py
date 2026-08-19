@@ -23,6 +23,10 @@ from typing import Final
 
 ROOT = Path(__file__).resolve().parent.parent
 SPEC = ROOT / "docs" / "SPEC.md"
+#: Gates declared after the design freeze. SPEC §6 stops at A24 and SPEC is
+#: frozen, so criteria added since are stated in the backlog entry that
+#: proposes them -- see :func:`parse_backlog_gates`.
+BACKLOG = ROOT / "docs" / "BACKLOG.md"
 
 #: ``- **A1** Determinism: ...`` and ``- **A6 Likelihood estimation.** ...``
 GATE_DEFINITION = re.compile(r"^-\s+\*\*A(\d+)\b(.*)$")
@@ -32,6 +36,9 @@ GATE_DEFINITION = re.compile(r"^-\s+\*\*A(\d+)\b(.*)$")
 DASHES = f"{chr(0x2013)}{chr(0x2014)}-"  # en dash, em dash, hyphen
 GATE_RANGE = re.compile(rf"A(\d+)\s*[{DASHES}]\s*A?(\d+)")
 GATE_SINGLE = re.compile(r"A(\d+)")
+#: ``**Gate.** `test_a26_d4_rewards_a_rescuing_candidate` -- on a ...``. Every
+#: post-freeze backlog entry states its criterion in exactly this form.
+BACKLOG_GATE = re.compile(r"^\*\*Gate\.\*\*\s+`test_a0*(\d+)_([a-z0-9_]+)`")
 #: Every acceptance test is named for its criterion; that naming is the tag.
 TEST_GATE = re.compile(r"^test_a0*(\d+)_")
 BACKLOG_ROW = re.compile(r"^\|\s*(\d+)\s*\|(.+?)\|(.+?)\|\s*$")
@@ -58,6 +65,9 @@ class GateStatus:
     title: str
     total: int
     passed: int | None
+    post_freeze: bool = False
+    """Declared in ``docs/BACKLOG.md`` rather than SPEC §6. Reported in its own
+    block so that A1-A24 keep reading as the frozen contract they are."""
 
     @property
     def written(self) -> bool:
@@ -104,6 +114,36 @@ def parse_gate_titles(spec_text: str) -> dict[int, str]:
         rest = match.group(2).replace("*", "").strip()
         title = re.split(r"[.:,]", rest, maxsplit=1)[0].strip()
         titles[number] = title[:TITLE_WIDTH] if title else f"A{number}"
+    return titles
+
+
+def parse_backlog_gates(backlog_text: str) -> dict[int, str]:
+    """Return post-freeze criterion number to short title, read from BACKLOG.md.
+
+    SPEC §6 stops at A24 and SPEC is frozen, so a criterion added since is stated
+    in the backlog entry that proposes it, on a ``**Gate.**`` line naming the test
+    that encodes it. Without this, a correctly named ``test_a26_...`` would be
+    attributed to a gate the report has no title for and silently vanish -- and
+    the naming convention CLAUDE.md calls load-bearing would stop being so at
+    exactly the point the backlog moved past the freeze.
+
+    The title is the test's own name with underscores opened out, which is what
+    the entry already chose to call the criterion. Deriving it rather than
+    restating it means the two cannot drift.
+    """
+    titles: dict[int, str] = {}
+    struck = False
+    for line in backlog_text.splitlines():
+        if line.startswith("## "):
+            # A struck entry keeps its gate line as a record of what was
+            # proposed, so the scanner has to know it is reading a withdrawn
+            # criterion rather than a pending one. A DONE entry is the opposite
+            # case and must keep its gate: A26 is discharged and still real.
+            struck = line.startswith("## STRUCK")
+        match = BACKLOG_GATE.match(line.strip())
+        if match is None or struck:
+            continue
+        titles[int(match.group(1))] = match.group(2).replace("_", " ")[:TITLE_WIDTH]
     return titles
 
 
@@ -233,22 +273,35 @@ def run_tests(root: Path) -> tuple[dict[int, int], dict[int, int], int]:
     return passed, total, other
 
 
-def gate_statuses(spec_text: str, *, execute: bool) -> tuple[list[GateStatus], int]:
-    """Return one status per acceptance criterion named in the spec."""
+def gate_statuses(
+    spec_text: str, backlog_text: str, *, execute: bool
+) -> tuple[list[GateStatus], int]:
+    """Return one status per acceptance criterion, frozen and post-freeze alike.
+
+    SPEC §6 wins any collision: if a number is ever declared in both places, the
+    frozen document is the contract and the backlog entry is a proposal.
+    """
     titles = parse_gate_titles(spec_text)
+    post_freeze = {
+        number: title
+        for number, title in parse_backlog_gates(backlog_text).items()
+        if number not in titles
+    }
     if execute:
         passed, total, other = run_tests(ROOT)
     else:
         total, other = collect_tests(ROOT)
         passed = {}
+    merged = {**titles, **post_freeze}
     return [
         GateStatus(
             number=number,
-            title=titles[number],
+            title=merged[number],
             total=total.get(number, 0),
             passed=passed.get(number, 0) if execute else None,
+            post_freeze=number in post_freeze,
         )
-        for number in sorted(titles)
+        for number in sorted(merged)
     ], other
 
 
@@ -321,10 +374,41 @@ def compress_ranges(numbers: list[int]) -> str:
     )
 
 
+def _print_gates(
+    statuses: list[GateStatus], *, blocking: list[int], execute: bool
+) -> None:
+    """Print one block of gates, compressing the ones nothing is waiting on.
+
+    Listing twenty-odd "absent" lines every session costs context and says
+    nothing, so a gate with no tests appears only when the cursor is blocked on
+    it; the rest are compressed to a single range.
+    """
+    for status in statuses:
+        if not status.total and status.number not in blocking:
+            continue
+        if execute and status.total:
+            detail = f"{status.passed}/{status.total} pass"
+            if not status.green:
+                detail = f"FAIL {detail}"
+        elif status.total:
+            detail = f"{status.total} test(s) written"
+        else:
+            detail = "next up, not yet written"
+        print(f"  A{status.number:<3} {status.title:<{TITLE_WIDTH}}  {detail}")
+    later = [
+        status.number
+        for status in statuses
+        if not status.total and status.number not in blocking
+    ]
+    if later:
+        print(f"  later: {compress_ranges(later)} ({len(later)} gates, not written)")
+
+
 def report(*, execute: bool) -> int:
     """Print the status report; return a process exit code."""
     spec_text = SPEC.read_text(encoding="utf-8")
-    statuses, other = gate_statuses(spec_text, execute=execute)
+    backlog_text = BACKLOG.read_text(encoding="utf-8")
+    statuses, other = gate_statuses(spec_text, backlog_text, execute=execute)
     gates = {status.number: status for status in statuses}
     backlog = parse_backlog(spec_text)
     description, dirty = git_state(ROOT)
@@ -379,25 +463,16 @@ def report(*, execute: bool) -> int:
         ]
 
     print("Acceptance gates")
-    for status in statuses:
-        if not status.total and status.number not in blocking:
-            continue
-        if execute and status.total:
-            detail = f"{status.passed}/{status.total} pass"
-            if not status.green:
-                detail = f"FAIL {detail}"
-        elif status.total:
-            detail = f"{status.total} test(s) written"
-        else:
-            detail = "next up, not yet written"
-        print(f"  A{status.number:<3} {status.title:<{TITLE_WIDTH}}  {detail}")
-    later = [
-        status.number
-        for status in statuses
-        if not status.total and status.number not in blocking
-    ]
-    if later:
-        print(f"  later: {compress_ranges(later)} ({len(later)} gates, not written)")
+    _print_gates(
+        [status for status in statuses if not status.post_freeze],
+        blocking=blocking,
+        execute=execute,
+    )
+    post_freeze = [status for status in statuses if status.post_freeze]
+    if post_freeze:
+        print()
+        print("Post-freeze gates (docs/BACKLOG.md, not SPEC §6)")
+        _print_gates(post_freeze, blocking=blocking, execute=execute)
     if other:
         print(f"  (+{other} test(s) not named for a gate)")
     print()

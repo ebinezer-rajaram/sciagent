@@ -919,7 +919,41 @@ preregistered in the environment before any system runs on a segment.
 **Cost.** XL (pipeline + calibration ≈ 1–2 weeks). Compute: conventional arms
 $0; V7 on 20 found segments ≈ 40 calls ≈ $4–8 live.
 
-## D4 is identically zero by construction, and D2 is not a proper score
+## DONE (2026-08-19, gate A26) — D4 is identically zero by construction, and
+## D2 is not a proper score
+
+**Done as specified, with one departure: the version term.** This entry asked
+for both fixes to ride a `METRIC_VERSION` bump. They ride a new
+`sciagent.eval.scoring.DIMENSION_VERSION` (`"spec8/2"`) instead, carried in the
+cell key's `config` exactly as `MATRIX_VERSION` already is, and checked by
+`report._at_address` so two readings cannot be pooled. The reason is measured
+rather than stylistic: `METRIC_VERSION` reaches every `Discretisation`'s content
+hash through `str(MetricRef)`, so it addresses the *empirical tables* as well as
+the ledger — bumping it would invalidate every cached table and force a 3m11s
+rebuild to reproduce bit-identical rows, in every worktree and on every machine,
+for a change that touches no estimator. Probed before the change: `1.2.0` gives
+`outcomes/6cf306b0f598cf0f` and `1.3.0` gives `outcomes/a29d5b818d9d3634`. No
+ledger schema change was needed and no `CampaignAddress` field was added.
+
+Both defects are fixed as described. D4 excludes the candidate's own structure
+from the set it is compared against — by `Defect` equality, so a duplicate id
+cannot reinstate it — and D2 is now the expected log score under the truth's
+whole distribution, `_predictive_log_score`, with the `-inf` rule unchanged.
+
+**The gate is wider than the line below asked for**, on a `/test-review` finding.
+As first written the propriety clause exercised only the kernel, so a call site
+that transposed its two arguments passed 7/7 while reinstating the exact defect —
+demonstrated by execution, not argued. `test_a26_d2_is_the_proper_score_off_the_diagonal`
+closes it: at `candidate == truth` the proper score and its transpose are
+numerically identical, so only an off-diagonal case separates them. A
+two-observation D4 case was added for the same reason — one observation cannot
+tell per-observation clipping from clipping the total.
+
+Nine tests in `tests/acceptance/test_a26.py`. `scripts/status.py` learned to read
+`**Gate.**` lines from this file, since SPEC §6 stops at A24 and is frozen, and
+reports post-freeze gates in their own block.
+
+### As proposed
 
 **Idea.** Fix D4 by excluding the candidate's own hypothesis from the
 entertained set it is compared against (`eval/matrix.py:543` passes the full
@@ -1315,3 +1349,81 @@ holding rows under two metric versions renders them separately, refuses to
 pool them, and the replayed campaign reports `store.misses == 0`.
 
 **Cost.** M (≈ 20 min conventional + ≈ 2 h replay + report plumbing). API $0.
+
+## The ground truth is on the `Investigation` public surface, twice
+
+**Idea.** Close two read paths by which a research system can reach the
+scenario's truth, and replace the comments that currently claim it cannot with
+enforcement. (1) `ExecutionResult.defect` **is** the truth
+(`experiments/executor.py:394-404`), and `Investigation.run` appends that object
+to `_history`, which `Investigation.history` republishes as a public property
+(`systems/base.py:170-172, 256-261`) — so `investigation.history[-1].defect`
+hands a system D1 = 0, D2/D3 maximal and `log_score` = 0. (2) `EngineView.table`
+gives a system the whole `EmpiricalTable`, whose `structures` are *readable*
+renderings rather than hashes (`inference/empirical.py:200, 226-231, 298-300`),
+and the campaign table is threaded from cell to cell — so every previous cell's
+truth, parameters and all, is in the artefact each campaign loads. Fixes: project
+the history a system sees onto a record without `defect`, and give the table
+handed through `EngineView` opaque structure keys.
+
+**Rationale.** Found by `invariant-auditor` lens 2 during A26's preflight, and
+confirmed at runtime rather than argued: `history[0].defect is truth` returns
+`True`, and `AddDependency(size->arrival|size|exponential|base_rate=...,decay=...,
+excitation=...)` — S11's out-of-library truth — appears six times in
+`.cache/tables/matrix-2000-20260803-e084e2009916.json`, the table `matrix_table()`
+loads at the start of every campaign. Both are **pre-existing** and neither is
+read by any shipped system (`rg "\.defect"` over `src/` returns nothing), so
+no recorded result is known to be affected. What makes them worth an entry is
+that four separate docstrings state the opposite as a guarantee —
+`systems/base.py:74-76` ("cannot reach the ground truth through any public
+attribute or method"), `systems/base.py:14-16`, `eval/scoring.py:19-21` and
+`:379-381` — and invariant 2 says to enforce with runtime assertions, not
+comments. `tests/test_llm.py:390` asserts the brief is clean and gives as its
+reason "the only path to it is `Scenario.truth` and an `Investigation` has none",
+which is false; the assertion passes, the reason does not.
+`test_the_truths_parameters_do_not_appear_when_it_is_not_entertained` checks the
+brief, and the table behind the brief is the leak.
+
+**Touches.** No frozen decision — invariant 2 already demands this. Touches
+`systems/base.py`'s public surface (a system reading `history[i].defect` would
+break, and none does) and the `EngineView` table contract.
+
+**Gate.** `test_a41_the_truth_is_not_on_the_investigation_surface` — no public
+attribute or method of `Investigation` returns, contains or renders the
+scenario's truth, checked by traversal rather than by name; and a structure key
+reachable from `EngineView.table` does not disclose a defect's parameters.
+
+**Cost.** M. No API the shipped systems use is affected.
+
+## D4 now rewards entertaining fewer alternatives
+
+**Idea.** Decide, cold, what D4's comparison set is: the system's own entertained
+hypotheses (what A26 implemented) or a fixed per-scenario reference set. If the
+former stands, report the size of the comparison set beside D4 the way
+`n_held_out` accompanies D2 and D3, so a figure cannot be read without knowing
+what it was compared against.
+
+**Rationale.** Raised by `invariant-auditor` lens 2 against the A26 fix, as a
+suspicion rather than a violation: no number is authored by a system — D4 is
+derived in the framework from structure, the same sanctioned channel as D1 and
+D6 — but the surface is *newly live*, because D4 was identically zero before
+A26. With the candidate excluded, `best` is a max over the other entertained
+structures, so entertaining an additional alternative can only raise `best` and
+therefore only lower D4. A system with a rich library (V1) is penalised relative
+to one entertaining a single weak alternative, and a system whose leader is the
+null with nothing else entertained scores 0.0 through the empty-set branch —
+indistinguishable in the ledger from the identically-zero bug A26 fixed. SPEC
+§8's wording, "likelihood improvement on previously poorly-explained registered
+results", does not say whose set the improvement is over. This is the moment to
+say so, before the re-derivation entry below fixes a reading into recorded rows.
+
+**Touches.** §8's D4 reading, in its computed form. A fixed reference set would
+be a change to what the dimension means; reporting the set size alongside is
+additive and touches nothing. Couples to the payload entry above and to the
+re-derivation entry below, which should not run before this is settled.
+
+**Gate.** `test_a42_d4_names_the_set_it_improved_on` — the payload carries the
+size of the comparison set beside D4, and a candidate scoring 0.0 because the set
+was empty is distinguishable from one scoring 0.0 because it was outperformed.
+
+**Cost.** S for the reporting; the semantic decision is the user's.

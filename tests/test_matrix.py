@@ -56,7 +56,11 @@ from sciagent.eval.matrix import (
     replicate_seeds,
     run_matrix,
 )
-from sciagent.eval.scoring import ClosedWorldScore, DimensionVector
+from sciagent.eval.scoring import (
+    DIMENSION_VERSION,
+    ClosedWorldScore,
+    DimensionVector,
+)
 from sciagent.experiments.executor import Executor
 from sciagent.inference.empirical import EmpiricalTableEngine
 from sciagent.registry.ledger import CampaignLedger
@@ -301,6 +305,27 @@ class TestAnAddressCoversWhatDeterminesACell:
             assert ledger.count() == 2
             assert ledger.contains(before.digest)
 
+    def test_a_dimension_reading_bump_is_a_new_address(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The sibling of the metric-version case, and the one no version
+        # *column* can express: D1-D6 are computed in sciagent.eval.scoring, so
+        # nothing in CampaignAddress moves when a dimension's definition
+        # changes. Without this term a re-scored cell would land on the address
+        # of the reading it replaced, and run_matrix's skip_recorded default
+        # would report the stale row as the new campaign's -- having executed
+        # nothing to disagree with it.
+        task = CellTask(
+            cell=Cell("V7", ScenarioId("S11"), 1), replicate=0, seed=Seed(7)
+        )
+        after = cell_key(task, ADDRESS)
+        assert after.config["dimensions"] == DIMENSION_VERSION
+
+        monkeypatch.setattr("sciagent.eval.matrix.DIMENSION_VERSION", "spec8/1")
+        before = cell_key(task, ADDRESS)
+        assert before.config["dimensions"] == "spec8/1"
+        assert before.digest != after.digest
+
     def test_a_partition_change_is_a_new_address(self) -> None:
         # A cell run on DEV and the same cell run on TEST are two readings and
         # must not collide.
@@ -335,6 +360,7 @@ class TestAnAddressCoversWhatDeterminesACell:
         assert key.digest == cell_key(task, ADDRESS).digest
         assert dict(key.config) == {
             "matrix": "spec9/1",
+            "dimensions": "spec8/2",
             "partition": "dev",
             "replicate": "07",
             "scenario": "S11",

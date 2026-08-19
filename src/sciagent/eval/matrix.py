@@ -80,6 +80,7 @@ from sciagent.core.types import (
 )
 from sciagent.eval.campaign import ScenarioRun
 from sciagent.eval.scoring import (
+    DIMENSION_VERSION,
     ClosedWorldScore,
     DimensionVector,
     dimension_vector,
@@ -300,8 +301,17 @@ def cell_key(task: CellTask, address: CampaignAddress) -> ExperimentKey:
 
     Guarantees the address covers every coordinate that should determine the
     cell -- the matrix, the system, the scenario, the replicate, the partition,
-    the environment, data and metric versions, and the seed -- and nothing that
-    should not. Two cells share an address only if they are the same work.
+    the environment, data and metric versions, the reading of §8's dimensions the
+    cell was scored under, and the seed -- and nothing that should not. Two cells
+    share an address only if they are the same work.
+
+    ``dimensions`` is here because none of the version *columns* moves when a
+    dimension's definition changes: they describe the environment, its data and
+    its diagnostic catalogue, while D1-D6 are computed in
+    :mod:`sciagent.eval.scoring` from the truth and the table. Without it,
+    ``skip_recorded`` would report a stale reading as a new campaign's. See
+    :data:`~sciagent.eval.scoring.DIMENSION_VERSION` for why it is not a
+    ``METRIC_VERSION`` bump.
 
     The replicate is zero-padded so that a ledger sorted as text reads in
     replicate order, which is the order anybody inspecting one expects.
@@ -311,6 +321,7 @@ def cell_key(task: CellTask, address: CampaignAddress) -> ExperimentKey:
         config=FrozenDict[str, str](
             {
                 "matrix": MATRIX_VERSION,
+                "dimensions": DIMENSION_VERSION,
                 "system": task.cell.system,
                 "scenario": str(task.cell.scenario),
                 "replicate": f"{task.replicate:02d}",

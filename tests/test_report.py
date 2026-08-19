@@ -329,6 +329,62 @@ class TestRowsAreSelectedByAddress:
         with pytest.raises(MalformedDesignError, match="no row"):
             report_of(foreign)
 
+    def test_rows_scored_under_another_dimension_reading_are_not_read(self) -> None:
+        # The sibling of the matrix-version case, for the criterion no address
+        # column carries: D1-D6 are computed in sciagent.eval.scoring, so a
+        # change to what a dimension *means* moves no version field. Without
+        # this clause a row whose D4 is identically zero and whose D2 is the
+        # pre-A26 modal reading would be pooled with rows scored under neither.
+        entries = rows("V7", "S11", [reading()] * 4)
+        earlier = tuple(
+            dataclasses.replace(
+                entry,
+                key=dataclasses.replace(
+                    entry.key,
+                    config=type(entry.key.config)(
+                        {**dict(entry.key.config), "dimensions": "spec8/1"}
+                    ),
+                ),
+            )
+            for entry in entries
+        )
+        with pytest.raises(MalformedDesignError, match="spec8/1"):
+            report_of(earlier)
+
+    def test_a_row_recorded_before_the_reading_was_versioned_is_not_read(self) -> None:
+        # Every row of the recorded 1,120-cell campaign is this shape: no
+        # "dimensions" key at all, because the term did not exist when it ran.
+        # Absent must read as "some earlier reading", never as "the current one".
+        entries = rows("V7", "S11", [reading()] * 4)
+        unlabelled = tuple(
+            dataclasses.replace(
+                entry,
+                key=dataclasses.replace(
+                    entry.key,
+                    config=type(entry.key.config)(
+                        {
+                            key: value
+                            for key, value in dict(entry.key.config).items()
+                            if key != "dimensions"
+                        }
+                    ),
+                ),
+            )
+            for entry in entries
+        )
+        with pytest.raises(MalformedDesignError, match="unlabelled"):
+            report_of(unlabelled)
+
+    def test_an_empty_ledger_is_not_reported_as_an_earlier_reading(self) -> None:
+        # The diagnostic above is a real diagnosis and must not be volunteered to
+        # somebody who does not have that problem. An empty ledger holds no rows
+        # under any reading, so naming one would send the operator to re-derive a
+        # campaign that was never run.
+        with pytest.raises(MalformedDesignError, match="no row") as raised:
+            report_of(())
+        assert "spec8/1" not in str(raised.value)
+        assert "re-derived" not in str(raised.value)
+
     def test_a_report_over_no_matching_row_raises(self) -> None:
         # An empty report is indistinguishable from a matrix that ran and
         # produced nothing, which is the one reading nobody should reach by

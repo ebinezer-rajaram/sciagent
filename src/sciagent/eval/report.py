@@ -65,9 +65,11 @@ store domain-independent.
 
 :func:`summarise` therefore keeps only the rows matching a whole
 :class:`~sciagent.eval.matrix.CampaignAddress` -- matrix version, partition,
-environment, data and metric versions -- and raises rather than return an empty
-report, because a report over no rows is indistinguishable from a matrix that ran
-and produced nothing.
+environment, data and metric versions -- **and the reading of SPEC §8's
+dimensions the row was scored under**, which is the criterion most likely to
+reject a caller's rows and the one no address column carries. It raises rather
+than return an empty report, because a report over no rows is indistinguishable
+from a matrix that ran and produced nothing.
 
 Domain-independent, like the rest of ``sciagent``. This module names no system
 and no scenario: it reads them as opaque text out of each row's ``config``, and
@@ -92,7 +94,7 @@ from sciagent.core.reductions import variance as exact_variance
 from sciagent.core.types import FrozenDict, GrammarVersion, ScenarioId
 from sciagent.eval.matrix import MATRIX_VERSION, CampaignAddress
 from sciagent.eval.scenarios import SCENARIO_CLASSES, ScenarioClass
-from sciagent.eval.scoring import primary_dimension
+from sciagent.eval.scoring import DIMENSION_VERSION, primary_dimension
 from sciagent.registry.ledger import LedgerEntry
 from sciagent.verify.numerical import CONFIDENCE_LEVEL, Z_TWO_SIDED
 
@@ -525,10 +527,21 @@ def _rate(rows: Sequence[LedgerEntry], name: str) -> float:
 
 
 def _at_address(row: LedgerEntry, address: CampaignAddress) -> bool:
-    """Return whether a row belongs to the campaign ``address`` names."""
+    """Return whether a row belongs to the campaign ``address`` names.
+
+    ``dimensions`` is checked for the same reason ``matrix`` is: D1-D6 are what
+    this report renders, and two rows scored under different readings of them are
+    not two measurements of one quantity. A row recorded before
+    :data:`~sciagent.eval.scoring.DIMENSION_VERSION` existed carries no such key
+    and is therefore excluded, which is correct -- it was scored under the modal
+    D2 and the identically-zero D4 that A26 replaced. Re-deriving those rows is
+    ``docs/BACKLOG.md``'s own next entry; pooling them would be the error that
+    entry exists to avoid.
+    """
     key = row.key
     return (
         key.config.get("matrix") == MATRIX_VERSION
+        and key.config.get("dimensions") == DIMENSION_VERSION
         and key.config.get("partition") == address.partition.value
         and key.env_version == address.env_version
         and key.data_version == address.data_version
@@ -654,10 +667,12 @@ def summarise(
     from.
 
     Only rows matching the whole ``address`` are read -- matrix version,
-    partition, environment, data and metric versions -- so stale rows left by a
-    re-addressed cell and rows from another partition are excluded by
-    construction rather than by the caller filtering first. See this module's
-    docstring for why that job lands here.
+    partition, environment, data and metric versions, and
+    :data:`~sciagent.eval.scoring.DIMENSION_VERSION` -- so stale rows left by a
+    re-addressed cell, rows from another partition, and rows scored under an
+    earlier reading of SPEC §8's dimensions are all excluded by construction
+    rather than by the caller filtering first. See this module's docstring for
+    why that job lands here.
 
     ``platform`` and ``grammar`` are **required and validated**, not defaulted.
     Neither is recoverable from the ledger and both must appear wherever these
@@ -685,13 +700,35 @@ def summarise(
     _refuse_non_ascii("platform", platform)
     _refuse_non_ascii("grammar", str(grammar))
 
-    rows = tuple(row for row in entries if _at_address(row, address))
+    # Materialised, because the diagnostic below reads them a second time and
+    # ``entries`` is an Iterable: a generator caller would have found it empty
+    # and reported "the ledger holds nothing" about a ledger that holds rows.
+    recorded = tuple(entries)
+    rows = tuple(row for row in recorded if _at_address(row, address))
     if not rows:
+        others = sorted(
+            {
+                row.key.config.get("dimensions", "spec8/1 (unlabelled)")
+                for row in recorded
+                if row.key.config.get("dimensions") != DIMENSION_VERSION
+            }
+        )
+        # Only when rows under another reading actually exist. Volunteering it
+        # unconditionally told the operator of an empty ledger that their rows
+        # needed re-deriving, which is a diagnosis of a problem they do not have.
+        elsewhere = (
+            f" The ledger holds rows under {others!r} instead: rows scored under "
+            f"another reading of SPEC §8 are excluded rather than pooled, and "
+            f"re-deriving them is a campaign re-run and not a report option."
+            if others
+            else ""
+        )
         raise MalformedDesignError(
-            f"no row matches campaign {MATRIX_VERSION} at "
-            f"{address.env_version}/{address.data_version}/"
-            f"{address.metric_version} on {address.partition.value}. An empty "
-            f"report reads as a matrix that ran and produced nothing"
+            f"no row matches campaign {MATRIX_VERSION} under dimension reading "
+            f"{DIMENSION_VERSION} at {address.env_version}/"
+            f"{address.data_version}/{address.metric_version} on "
+            f"{address.partition.value}. An empty report reads as a matrix that "
+            f"ran and produced nothing.{elsewhere}"
         )
 
     grouped: dict[tuple[str, str], list[LedgerEntry]] = {}

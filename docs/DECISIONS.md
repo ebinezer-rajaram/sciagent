@@ -7210,3 +7210,114 @@ Windows Store Python 3.11 is on this machine's PATH, so switching activation off
 without also injecting the venv leaves bare `python` resolving to 3.11 inside a
 project pinned to >=3.12. That is a worse failure than the cosmetic one being
 fixed.
+
+## 2026-08-19 — gate A26: the version term the eval layer needed, and a gate that had to grow
+
+**Decision.** The §8 dimensions carry their own version,
+`sciagent.eval.scoring.DIMENSION_VERSION = "spec8/2"`, held in the cell key's
+`config` exactly as `MATRIX_VERSION` is and checked by `report._at_address`. The
+backlog entry that asked for A26 had prescribed a `METRIC_VERSION` bump instead;
+that is the abandoned approach below.
+
+**Why.** No existing address term moves when a dimension's definition changes.
+`env_version` and `data_version` describe the environment and its data, and
+`metric_version` is a content hash over the *environment's diagnostic
+catalogue* — while D1–D6 are computed in `sciagent/eval/scoring.py` from the
+truth and the table. So before this constant, changing D2 or D4 moved no address
+at all, and `run_matrix`'s `skip_recorded` default would have reported the stale
+reading as the new campaign's without executing anything to disagree with it.
+
+**Tried and abandoned: bumping `METRIC_VERSION`.** It reaches every
+`Discretisation`'s content hash through `str(MetricRef)` — `"name@version"` — so
+it addresses the *empirical tables*, not only the ledger. Probed before changing
+anything:
+
+| `METRIC_VERSION` | one axis | its outcome space |
+|---|---|---|
+| `1.2.0` | `bins/2ac271cff162c232` | `outcomes/6cf306b0f598cf0f` |
+| `1.3.0` | `bins/4630ff0d33995d59` | `outcomes/a29d5b818d9d3634` |
+
+`EmpiricalTable.version` folds in `outcome.version`, and `cache_key` folds in
+that, so a bump is a cache miss on every table. The gate table costs **3m11s**
+cold against **1.055s** warm — paid in every worktree and on every machine, to
+reproduce rows that are bit-identical because no estimator changed. This is not
+hypothetical: `.cache/tables/` holds three gate-table and three search-table
+generations, and the 2026-08-16 bump to 1.2.0 caused one of them. That bump was
+*correct* — a metric had actually been added — which is the distinction worth
+keeping: the metric version means the catalogue moved, and borrowing it to mean
+"a dimension moved" costs a rebuild every time and says something false.
+
+Landed in `config` rather than as a fourth `CampaignAddress` column, following
+`MATRIX_VERSION`'s precedent, so no ledger schema change and no fixture churn.
+
+**Left deliberately incomplete.** Rows recorded before today carry no
+`dimensions` key, so `_at_address` now excludes them and `report_matrix` raises
+rather than rendering — the message names which readings the ledger actually
+holds. **The recorded 1,120-row matrix is therefore unreportable until it is
+re-derived**, which is `docs/BACKLOG.md`'s own next entry (gate A40). That is the
+intended sequencing — instruments first, decided cold; re-derivation second,
+labelled — but it means anyone reaching for `report_matrix` before A40 lands will
+meet an error, and that error is the design rather than a regression.
+
+**Closes off.** Do not "fix" that by relaxing `_at_address` to treat a missing
+`dimensions` key as the current reading: pooling A26-scored rows with rows whose
+D4 is identically zero and whose D2 is improper is precisely the error the
+version exists to prevent. And do not reach for `METRIC_VERSION` the next time a
+dimension changes — A27, A29 and A31 all change dimension or payload semantics,
+and under the bump each would force another full table rebuild for no numerical
+reason.
+
+## 2026-08-19 — where post-freeze gate titles live
+
+**Decision.** `scripts/status.py` reads gate titles from `docs/BACKLOG.md`'s
+`**Gate.**` lines as well as from SPEC §6, and reports those criteria in their
+own "Post-freeze gates" block. SPEC is not amended.
+
+**Why.** A genuine gap between two frozen rules. SPEC §6 is the acceptance
+contract and stops at A24; SPEC §13 says new ideas enter `docs/BACKLOG.md`. The
+sixteen entries added on 2026-08-18 name gates A25–A40, and `parse_gate_titles`
+read §6 alone — so a test named `test_a26_...` exactly as CLAUDE.md requires was
+attributed to a gate with no title and silently dropped from the report. Neither
+document is wrong; nothing said where a criterion declared *after* the freeze
+belongs. Resolved by the user in favour of reading the backlog, on the reasoning
+that §13 already routes post-freeze material there and amending §6 sixteen times
+would erode the freeze it exists to hold. The separate block is so that A1–A24
+keep reading as the frozen contract rather than being diluted by a queue.
+
+**Closes off.** The convention CLAUDE.md calls load-bearing — "a test not named
+this way is invisible to the status report" — now holds past A24 as well, which
+it had quietly stopped doing. Titles are derived from the test name in the
+`**Gate.**` line rather than restated, so the two cannot drift.
+
+## 2026-08-19 — tried and abandoned: an A26 test that only checked the diagonal
+
+**Approach abandoned.** The first version of `tests/acceptance/test_a26.py`
+tested D2's propriety on the kernel alone, plus one end-to-end case at
+`candidate == truth`. `/test-review` returned TOO WEAK and demonstrated it by
+execution rather than argument: with the call site transposed — computing
+`sum(mine[c] * log2 theirs[c])`, which is linear in `mine` and therefore
+maximised by a point mass — the suite ran **7 passed** while the exact defect
+A26 exists to remove was reinstated. `tests/test_scoring.py` did not catch it
+either (20 passed); its only D2 assertions are an `isinstance` and an `isnan`.
+
+**Why it failed.** At `candidate == truth` the proper score and its transpose are
+numerically identical — both reduce to the row's negative entropy — so the
+diagonal is exactly where the two wirings cannot be told apart. Closed by
+`test_a26_d2_is_the_proper_score_off_the_diagonal`. On
+`query:phase_conditioned_dispersion`, candidate `poisson_mixture` against truth
+`hawkes`, the three candidate wirings separate:
+
+| wiring | D2 |
+|---|---|
+| proper, `sum(theirs * log2 mine)` | **-7.724875483580779** |
+| transposed | -5.145434226360676 |
+| modal (the pre-A26 reading) | -9.396973478894598 |
+
+One assertion therefore rejects both wrong readings. A two-observation D4 case
+was added for the same class of reason: with one observation, clipping per
+observation and clipping the total give the same answer.
+
+**Closes off.** The general shape is worth carrying to the next gate: a defect
+that is symmetric on the diagonal survives any test that only checks the
+diagonal, and "the kernel is correct" is not the same claim as "the dimension is
+wired to the kernel". A gate that exercises a helper is testing the helper.

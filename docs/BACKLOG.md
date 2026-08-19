@@ -982,7 +982,55 @@ among all candidate distributions on a constructed grid.
 
 **Cost.** M (≤ 2 days including the metric-version plumbing and tests).
 
-## A preregistered held-out battery, so arms are scored on one question set
+## DONE (2026-08-19, gate A27) — A preregistered held-out battery, so arms are
+## scored on one question set
+
+**Done as specified.** `Scenario.held_out` carries the battery, `held_out_battery`
+reads it and nothing else, and `cell_key` gained a `battery` term through a new
+`matrix.battery_key`. `run_matrix` takes a `battery` callback beside the existing
+`scenario_seed`, for the same reason that one is a callback: the declaration lives
+on the environment's scenarios and `sciagent` may not import one. The environment
+declares it once in `outcomes.held_out_designs`, and `tests/test_scoring.py`'s
+`HELD_OUT` — the precedent this entry named — is now an alias for that rather than
+a second list. Eleven tests in `tests/acceptance/test_a27.py`.
+
+**The reading the entry did not fix, taken deliberately.** The battery is a
+declared *subset of the offered designs*, not a set withheld from the offer. The
+slice has exactly one intervention and SPEC §4.2 makes it the only design
+separating Hawkes from regime switching, so reserving it would break S5's
+intervention planning, the oracle policy lengths behind A24, and S10's derived
+budget. The cost is that an arm which ran a battery design is scored on a question
+it asked; §8's "unused during the investigation" is honoured in intent rather than
+mechanically. That is a weaker guarantee than the derivation gave and a better
+instrument, because the derivation bought its guarantee by making the question set
+depend on the arm. Stated at `Scenario.held_out` rather than left to be
+rediscovered.
+
+**No `METRIC_VERSION` or `DIMENSION_VERSION` bump, and every cell address moves
+anyway.** Battery membership is in the address itself, which is what the entry
+asked for, so two readings cannot be pooled without either version moving. The
+1,120 recorded rows survive at their old addresses under append-only and are not
+re-derivable under the new one without a re-run — which is what the re-derivation
+entry below exists for, and which names this entry as its prerequisite.
+
+**The gate is wider than the line below asked for**, on a `/test-review` finding,
+and the finding was demonstrated rather than argued. As first written the address
+clause compared batteries of *different sizes*, so `battery_key = str(len(battery))`
+passed all ten assertions while leaving two batteries of three different designs
+sharing one address — reinstating exactly the stale-row failure the term exists to
+stop. The same defect appeared a second time on the scoring side: the arm-scored
+clause asserted `n_held_out`, a length, so `reading_of` could have been handed any
+three offered designs and computed D3 on a battery holding no intervention. Both
+are closed by comparing same-cardinality, different-membership batteries;
+`_swap_one_observational` is that construction.
+
+**The reversal is recorded rather than silent.** `docs/DECISIONS.md` (2026-08-17)
+closed off the derivation deliberately — `dimension_vector` cannot check that a
+battery excludes what was run and `reading_of` could. That closure was real, and
+this undoes it. `held_out_battery`'s docstring says so and says why the property
+it bought was worth less than the one it spent.
+
+### As proposed
 
 **Idea.** Fix the D2/D3 held-out battery per scenario (a function of the
 scenario declaration only), instead of deriving it per run from leftover
@@ -1277,7 +1325,45 @@ interval, and refuses the paired reading when the seed sets differ.
 
 **Cost.** S.
 
-## A LICENSE and a CI gate, before any third party reads this
+## DONE (2026-08-19, gate A38) — A LICENSE and a CI gate, before any third
+## party reads this
+
+**Done as specified.** `LICENSE` carries the Apache-2.0 text with the appendix
+boilerplate completed; `pyproject` declares `license = "Apache-2.0"` and
+`license-files = ["LICENSE"]` in the PEP 639 form hatchling supports.
+`.github/workflows/check.yml` runs `uv run mypy`, `uv run ruff check .`,
+`uv run ruff format --check .` and `uv run pytest -n 4 --dist loadfile` on push
+and pull request. Seven tests in `tests/acceptance/test_a38.py`.
+
+**The licence is the user's choice, taken rather than inferred.** Apache-2.0 over
+MIT and BSD-3 for the patent grant, which is what legal review at an institution
+looks for.
+
+**Two `/test-review` findings, both demonstrated by execution rather than argued.**
+(1) The workflow clause enumerated *mechanisms* — `upload-artifact`, the literal
+`cache/tables`, `git push`, `git commit` — and a workflow caching `path: .cache`
+passed all four while persisting Ubuntu-built tables into every later job. That is
+not a contrived bypass: table acquisition is 3m11s cold against 1.055s warm, so
+whoever watches CI spend three extra minutes a push reaches for exactly that step.
+The clause now states the condition — no cross-job cache, no mention of the
+repository's cache directory — and the workflow deliberately has no `actions/cache`
+step at all. (2) `-n 4` was never asserted, and `--dist loadfile` does nothing
+without it: `uv run pytest --dist loadfile` alone runs serially, so the gate would
+have accepted a job at 262.44s claiming the 151.30s invocation. Both flags are now
+asserted on the same line. The review also found the `pyproject` parameter of the
+tracked-path test could never go red, since no implementation of A38 could untrack
+it; it was dropped rather than counted.
+
+**One thing the module learned about itself.** The forbidden-token scan first read
+the raw YAML and failed on the workflow's *own comment* explaining that it
+deliberately has no `actions/cache` step. Comment lines are stripped now: an
+assertion that a mechanism is absent must not be satisfiable or breakable by prose
+describing its absence.
+
+**What this cannot check, and does not claim to.** Whether CI passes lives in the
+forge. The gate line says so, and the assertions are about the workflow's content.
+
+### As proposed
 
 **Idea.** Add a LICENSE (and the `pyproject` license field), and a minimal
 check-only CI workflow: `uv run pytest -n 4 --dist loadfile` plus
@@ -1299,7 +1385,39 @@ mypy. (The green run itself lives in the forge, not the test.)
 
 **Cost.** S.
 
-## The scale-up document §12 criterion 12 asks for
+## DONE (2026-08-19, gate A39) — The scale-up document §12 criterion 12 asks for
+
+**Done as specified.** `docs/SCALE-UP.md` consolidates all six fragments the entry
+names, each with the contract it moves: the Stage A battery (§4.6 gains a
+combination rule; `Scenario.stage_a` becomes a sequence), `ENV_VERSION` as the
+content hash §3.2 already promises and does not keep, the `Environment` protocol's
+disposition (no `class Environment(Protocol)` exists; the surface is module
+functions reached through callbacks, so F4 is either implemented or amended),
+model tier, grammar sensitivity, and F12's staging rule for the likelihood-free
+engine. Eight tests in `tests/acceptance/test_a39.py`.
+
+**The model-tier entry is in the document reporting *no* interface change, and
+that is deliberate.** The tier already reaches the transcript address through
+`Provider.model`. A scale-up document that omitted it would imply a contract has
+to move where none does.
+
+**A `/test-review` finding that mattered more than it looks.** The module's
+docstring claimed each item was checked "named together with the thing it is
+about" and the code checked substring membership over one blob of the whole file —
+which is a different statement, and both senses of "battery" and of "content hash"
+already coexist in this repository's own docs. The reviewer built a passing
+counterexample: a 3,245-character *index* of six note titles with pointers, which
+documents zero interface changes and says so, and which passed the module
+unchanged. Closed three ways — the pairing is now scoped to a `##` section, each
+item must name its *claim* and not only its subject (`not yet`/`becomes` near the
+version promise, `convention` near the protocol), and at least four sections must
+name an interface. The same review found the anti-skeleton guard read the raw text
+while every other check went through a lowercased helper, so a document ending
+"todo: everything above this line" passed the whole gate; it is case-insensitive
+now. The length floor is kept and explicitly not load-bearing — the counterexample
+cleared it on filler.
+
+### As proposed
 
 **Idea.** Write `docs/SCALE-UP.md`: the interface changes the slice showed
 are required for the 104-scenario benchmark, consolidated from the fragments
@@ -1427,3 +1545,43 @@ size of the comparison set beside D4, and a candidate scoring 0.0 because the se
 was empty is distinguishable from one scoring 0.0 because it was outperformed.
 
 **Cost.** S for the reporting; the semantic decision is the user's.
+
+## The report layer checks the battery's presence, not its value
+
+**Idea.** Give `summarise` a `battery: Callable[[ScenarioId], Sequence[ExperimentDesign]]`
+parameter, the sibling of the `scenario_class` callback it already takes and of
+the `battery` callback `run_matrix` takes, and have `_at_address` compare each
+row's battery term against the expected one for its scenario instead of merely
+requiring the term to be present.
+
+**Rationale.** Raised by `/code-review` against the A27 change, as the one
+finding that landed with the fix rather than being closed by it. `battery` is
+the only address term checked for presence: `dimensions` is compared against a
+module constant, and the battery cannot be, because a battery is declared per
+scenario on an environment and `sciagent` may not import one. So a report built
+*entirely* on rows scored under a superseded battery is accepted and rendered as
+though it were current. `_refuse_mixed_batteries` does not catch it — it fires
+only when two batteries coexist for one scenario — and the case is not exotic:
+any future battery change makes every earlier row exactly that.
+
+Two halves were taken with A27 and this is the half that was not. The term is
+now rendered per cell (`CellSummary.battery`), so a reader holding the
+declaration can compare, and the "no row matches" diagnostic names a row
+excluded for its battery instead of listing the terms it matched. Both make the
+failure visible; neither makes it refuse. Deferred rather than done because the
+parameter is required to be worth anything — an optional one defaulting to the
+present behaviour reproduces the defect for every caller who forgets it, which
+is the argument `cell_key`'s own `battery` parameter is written on — and making
+it required touches every `summarise` call site.
+
+Sequencing: before A40. The re-derivation is what first puts two generations of
+battery in one ledger, and this is the check that keeps them apart.
+
+**Touches.** No frozen decision. `summarise`'s signature, and every caller.
+
+**Gate.** `test_a43_a_superseded_battery_is_refused_rather_than_rendered` — a
+ledger holding only rows scored under a battery the scenario no longer declares
+raises rather than reporting, and the message names both terms; a ledger at the
+declared battery reports unchanged.
+
+**Cost.** S.

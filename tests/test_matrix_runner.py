@@ -53,6 +53,7 @@ from environments.pointproc.runner import (
     LLM_SYSTEMS,
     MATRIX_SYSTEMS,
     MatrixRunner,
+    scenario_battery,
     scenario_seed,
     system_for,
 )
@@ -321,6 +322,7 @@ class TestTheRunnerDrivesTheRealMatrix:
                 cells,
                 address=address,
                 scenario_seed=scenario_seed,
+                battery=scenario_battery,
                 execute=running.execute,
                 ledger=ledger,
             )
@@ -330,6 +332,7 @@ class TestTheRunnerDrivesTheRealMatrix:
                 cells,
                 address=address,
                 scenario_seed=scenario_seed,
+                battery=scenario_battery,
                 execute=running.execute,
                 ledger=ledger,
             )

@@ -363,11 +363,19 @@ def dimension_vector(
     against one battery without re-simulating -- the difference between a scoring
     pass that costs seconds and one that costs an hour.
 
-    ``held_out`` must be designs the investigation did *not* run: §8 measures D2
-    "on diagnostics unused during the investigation", and a design the system
-    already saw would measure fit rather than prediction. Nothing here checks it,
-    because this function cannot see what was run. The caller holds the history
-    and it is the caller's to honour.
+    ``held_out`` is the battery D2, D3 **and D5** are defined over -- three
+    dimensions, not the two the first two names suggest, since
+    :func:`_enabled_value` reads it as the set of questions a candidate could
+    still be asked.
+
+    §8 words it as "diagnostics unused during the investigation", and **that is
+    no longer a promise this function's caller makes.** Gate A27 replaced the
+    per-run derivation -- every offered design the arm did not run -- with a
+    battery declared on the scenario, because the derivation made the question
+    set a function of what the arm chose and graded B1 on an empty battery. So a
+    design the system ran *can* be in here. Nothing checks it and nothing is
+    meant to: see :attr:`~sciagent.eval.scenarios.Scenario.held_out` for why the
+    weaker guarantee is the better instrument, and what it costs.
 
     ``grammar`` should be the **environment's**, not the agent's. On an
     out-of-library scenario the truth is by construction outside the agent's

@@ -42,6 +42,7 @@ import pytest
 
 import sciagent.eval.report as report_module
 from environments.pointproc.matrix import SPEC9_CONTRAST
+from environments.pointproc.outcomes import held_out_designs
 from sciagent.core.errors import MalformedDesignError
 from sciagent.core.types import (
     DataVersion,
@@ -58,6 +59,7 @@ from sciagent.eval.matrix import (
     Cell,
     CellReading,
     CellTask,
+    battery_key,
     cell_key,
 )
 from sciagent.eval.report import (
@@ -81,6 +83,12 @@ ADDRESS = CampaignAddress(
     metric_version=MetricVersion("1.2.0"),
     partition=DataPartition.DEV,
 )
+
+#: Stand-in for a scenario's preregistered held-out battery. This module is
+#: about *rendering* rows, not about which questions they were scored on, so
+#: what matters here is only that every row carries one and that two rows
+#: differing in nothing but the seed still share a config.
+BATTERY = held_out_designs()
 
 PLATFORM = "Windows-11-x86_64"
 GRAMMAR = GrammarVersion("pointproc-edits/1.0.0")
@@ -146,6 +154,10 @@ def reading(**overrides: float) -> CellReading:
         inadequate=bool(values["inadequate"]),
         experiments=int(values["experiments"]),
         structural_distance=1.0,
+        # Not read here -- this module builds rows through `cell_key` directly
+        # rather than through `run_matrix`, which is where the field is checked.
+        # Kept consistent with the battery those keys carry all the same.
+        battery=battery_key(BATTERY),
     )
 
 
@@ -167,7 +179,9 @@ def rows(
     return tuple(
         LedgerEntry(
             key=cell_key(
-                CellTask(cell=cell, replicate=index, seed=Seed(index)), address
+                CellTask(cell=cell, replicate=index, seed=Seed(index)),
+                address,
+                battery=BATTERY,
             ),
             reading=FrozenDict[str, float](dict(entry.as_payload())),
             sequence=index,
@@ -410,6 +424,7 @@ class TestRowsAreSelectedByAddress:
                 key=cell_key(
                     CellTask(cell=cell, replicate=index, seed=Seed(900 + index)),
                     ADDRESS,
+                    battery=BATTERY,
                 ),
                 reading=row.reading,
                 sequence=row.sequence + 10,

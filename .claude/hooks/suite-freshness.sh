@@ -34,9 +34,25 @@
 # on). Content, not mtime: a touched file with identical bytes cannot change a
 # test outcome, and mtimes churn for reasons that are not edits.
 #
-# It deliberately does NOT cover docs/. A DECISIONS.md entry cannot change a
-# test result, and treating it as though it could would defeat the whole
-# mechanism, since /decide runs between the two suite invocations by design.
+# It deliberately does NOT cover docs/ in general. A DECISIONS.md entry cannot
+# change a test result, and treating it as though it could would defeat the
+# whole mechanism, since /decide runs between the two suite invocations by
+# design.
+#
+# NON-PYTHON INPUTS -- the exception that premise now has
+#
+# "A doc cannot change a test result" stopped being true on 2026-08-19, when
+# gates A38 and A39 landed acceptance tests that read files no .py glob covers:
+# `tests/acceptance/test_a39.py` reads `docs/SCALE-UP.md`, and
+# `tests/acceptance/test_a38.py` reads `LICENSE` and `.github/workflows/`. Under
+# the original hash, deleting a section of SCALE-UP.md left `check` reporting
+# FRESH while A39 was red -- the exact false green this script exists to prevent,
+# reintroduced through a door it was not watching.
+#
+# So the rule is not "code only", it is *every input an acceptance gate reads*.
+# The three named below are that set today. Anything that adds a gate over a
+# non-.py file belongs here in the same commit as the gate; the general docs/
+# exclusion survives because nothing asserts over the rest of it.
 #
 # CONCURRENT EDITS -- why `record` alone was not enough
 #
@@ -128,6 +144,17 @@ tree_hash() {
     {
         find src tests scripts -name '*.py' -type f -exec sha256sum {} + 2>/dev/null | sort
         sha256sum pyproject.toml uv.lock 2>/dev/null
+        # The non-.py files an acceptance gate reads. See NON-PYTHON INPUTS above.
+        find .github/workflows -type f 2>/dev/null -exec sha256sum {} + | sort
+        sha256sum LICENSE docs/SCALE-UP.md 2>/dev/null
+        # And the git *index* for those same paths, because two of the gates
+        # assert tracked-ness rather than content: `test_a38_every_named_path_is_
+        # tracked` and `test_a39_the_document_is_tracked` shell out to
+        # `git ls-files --error-unmatch`. `git rm --cached LICENSE` leaves every
+        # byte on disk, so the content hashes above do not move and `check`
+        # reported FRESH while A38 was red -- the same false green the section
+        # above closed, one door further along. Found by review, not by the hook.
+        git ls-files -s LICENSE docs/SCALE-UP.md .github/workflows 2>/dev/null
     } | sha256sum | cut -d' ' -f1
 }
 

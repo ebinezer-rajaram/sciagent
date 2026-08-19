@@ -62,6 +62,7 @@ from sciagent.core.errors import SystemConfigurationError
 from sciagent.core.types import ScenarioId, Seed
 from sciagent.eval.campaign import run_scenario
 from sciagent.eval.matrix import CampaignAddress, CellReading, CellTask, reading_of
+from sciagent.experiments.dsl import ExperimentDesign
 from sciagent.inference.empirical import EmpiricalTable, EmpiricalTableEngine
 from sciagent.inference.interface import DiagnosticVector, ExperimentTemplate
 from sciagent.registry.store import ExperimentStore
@@ -80,6 +81,7 @@ __all__ = [
     "MATRIX_SYSTEMS",
     "MatrixRunner",
     "ProviderFactory",
+    "scenario_battery",
     "scenario_seed",
     "system_for",
 ]
@@ -176,6 +178,20 @@ def system_for(
         f"no system {name!r}; the arms of SPEC section 9 are "
         f"{', '.join(MATRIX_SYSTEMS)}"
     )
+
+
+def scenario_battery(target: ScenarioId) -> tuple[ExperimentDesign, ...]:
+    """Return the held-out battery a scenario's cells are addressed and scored on.
+
+    The ``battery`` callback :func:`~sciagent.eval.matrix.run_matrix` needs, and a
+    sibling of :func:`scenario_seed` for the same reason: ``sciagent`` may not
+    import an environment, and the declaration lives on the
+    :class:`~sciagent.eval.scenarios.Scenario`. Reading it off the scenario rather
+    than deriving it here is what makes the battery a function of the scenario
+    alone -- gate A27 -- so every arm on one scenario is graded on one question
+    set whatever it chose to run.
+    """
+    return scenario(str(target)).held_out
 
 
 def scenario_seed(target: ScenarioId) -> Seed:

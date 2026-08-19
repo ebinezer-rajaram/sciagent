@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Literal
 
 from sciagent.core.errors import InvestigationError, MalformedDesignError
 from sciagent.core.types import ScenarioId, Seed
-from sciagent.experiments.dsl import ExperimentDesign
+from sciagent.experiments.dsl import ExperimentDesign, is_intervention
 from sciagent.registry.budget import Budget
 
 if TYPE_CHECKING:
@@ -94,6 +94,42 @@ class Scenario:
     a truth that is not.
     """
 
+    held_out: tuple[ExperimentDesign, ...] = ()
+    """The designs SPEC §8's D2, D3 and D5 are scored on, fixed before any arm runs.
+
+    **Three dimensions, not two.** D2 and D3 are the ones §8 names against the
+    battery, and :func:`~sciagent.eval.scoring._enabled_value` reads it too --
+    D5 is the value of the experiments a candidate leaves available, and the
+    battery is the set it is drawn from. Raised by review against an earlier
+    version of this docstring that named only D2 and D3, which under-states
+    what a change here moves.
+
+    A subset of :attr:`designs`, and **preregistered**: it is a property of the
+    scenario, so two arms with different run histories are graded on one question
+    set. That is the whole of gate A27, and what it replaces is a battery derived
+    per run from whatever designs an investigation left unused -- under which
+    ``n_held_out`` was {3,2} for the V-arms, {2} for B4/B5 and 0 for B1, whose D3
+    was therefore ``nan`` on every recorded S11 row. No cross-arm D2/D3
+    comparison was clean, including the §9 contrast that is the point of the
+    matrix.
+
+    **Not withheld from the offer, and that is a deliberate trade.** The slice
+    holds exactly one intervention, and SPEC §4.2 makes it the only design that
+    separates Hawkes self-excitation from latent regime switching, so reserving
+    it would break S5's intervention planning, the oracle policy lengths behind
+    A24, and S10's derived budget. The cost is that an arm which ran a battery
+    design is scored on a question it asked. §8's "unused during the
+    investigation" is honoured in intent rather than mechanically -- D2 and D3
+    read simulated rows for candidate against truth rather than the run's own
+    observations, so what leaks is indirect -- and the alternative bought a
+    stronger guarantee by making the question set depend on the arm, which is
+    worse.
+
+    Empty means undeclared, and gives D2 and D3 as ``nan``: the honest reading of
+    a question never asked. Every scenario the matrix scores declares one; the
+    default exists so a scenario built for a test that scores nothing need not.
+    """
+
     rationale: str = ""
     """What the scenario is for, in SPEC §4.5's terms. Documentation, not data."""
 
@@ -146,6 +182,50 @@ class Scenario:
                     f"template id names a design uniquely"
                 )
             seen[str(design.id)] = design
+        if self.held_out:
+            # By design equality, not by id. `ExperimentDesign.id` is documented
+            # as **not injective** -- `n_events` is deliberately absent from it --
+            # so an id check would admit a battery member that shares an offered
+            # design's id and differs in run length, and it would then be scored
+            # off the offered design's table row. A diagnostic's sampling
+            # distribution depends on how much data it saw, so that is a wrong
+            # number rather than a near-enough one.
+            offered = set(self.designs)
+            stray = sorted(
+                str(design.id) for design in self.held_out if design not in offered
+            )
+            if stray:
+                raise MalformedDesignError(
+                    f"scenario {self.id!r} holds out template(s) {stray!r} that it "
+                    f"does not offer; D2, D3 and D5 are read off the table rows "
+                    f"the scenario's own designs build, so a battery member "
+                    f"outside the offer has no row for either the candidate or "
+                    f"the truth. A member sharing an offered id but differing in "
+                    f"n_events is outside the offer for this purpose"
+                )
+            repeated = sorted(
+                str(design.id)
+                for index, design in enumerate(self.held_out)
+                if design in self.held_out[:index]
+            )
+            if repeated:
+                raise MalformedDesignError(
+                    f"scenario {self.id!r} holds out template(s) {repeated!r} more "
+                    f"than once. D2 and D3 are means over the battery and D5 is a "
+                    f"maximum over it, so a repeated member does not merely "
+                    f"duplicate a row -- it weights one question twice against the "
+                    f"others, and the reader of a dimension has no way to see it. "
+                    f"The offered designs are refused for the same reason a few "
+                    f"lines above"
+                )
+            if not any(is_intervention(design) for design in self.held_out):
+                raise MalformedDesignError(
+                    f"scenario {self.id!r} holds out "
+                    f"{sorted(str(design.id) for design in self.held_out)!r}, none "
+                    f"of which is an intervention; SPEC section 8 defines D3 over "
+                    f"a held-out *intervention* battery, and a battery of pure "
+                    f"observation measures something else under that name"
+                )
 
     @property
     def is_null(self) -> bool:
@@ -180,9 +260,19 @@ class Scenario:
     def brief(self) -> Sequence[ExperimentDesign]:
         """Return what a system may be told: the design space, and nothing else.
 
-        Deliberately not a projection of this dataclass. Anything a system is
-        allowed to know is assembled by
-        :class:`~sciagent.systems.base.Investigation` from this call and from the
-        engine, so adding a field here cannot accidentally widen what leaks.
+        Deliberately not a projection of this dataclass. The *design space* a
+        system is allowed to know comes through here and nowhere else, so adding
+        a field to :class:`Scenario` cannot accidentally widen it --
+        :attr:`held_out` was the first field added since this was written, and it
+        does not appear below.
+
+        Not the whole of what reaches an
+        :class:`~sciagent.systems.base.Investigation`, which an earlier version of
+        this paragraph implied and review corrected.
+        :func:`~sciagent.eval.campaign.run_scenario` also passes :attr:`id`,
+        :attr:`executed`, :attr:`seed` and the Stage A template id. Three of those
+        four are private on the investigation with no accessor, the fourth
+        (``scenario_id``) is public and reaches no prompt, and none is a number or
+        a battery -- but "this call and the engine" was not the full list.
         """
         return self.designs

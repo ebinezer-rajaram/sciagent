@@ -30,6 +30,7 @@ from environments.pointproc.matrix import REPLICATES, SPEC9_CELLS
 from environments.pointproc.outcomes import (
     closed_set,
     executor,
+    held_out_designs,
     simulator,
     slice_designs,
 )
@@ -50,6 +51,7 @@ from sciagent.eval.matrix import (
     CellReading,
     CellTask,
     MatrixOutcome,
+    battery_key,
     cell_key,
     held_out_battery,
     reading_of,
@@ -61,6 +63,7 @@ from sciagent.eval.scoring import (
     ClosedWorldScore,
     DimensionVector,
 )
+from sciagent.experiments.dsl import ExperimentDesign
 from sciagent.experiments.executor import Executor
 from sciagent.inference.empirical import EmpiricalTableEngine
 from sciagent.registry.ledger import CampaignLedger
@@ -85,6 +88,19 @@ SEEDS = {ScenarioId(f"S{index}"): Seed(20260900 + index) for index in range(1, 1
 
 def seed_of(scenario: ScenarioId) -> Seed:
     return SEEDS[scenario]
+
+
+#: The battery this module's addresses are built over: the slice's own, since
+#: `slice_run` runs real slice scenarios and an address has to match the one
+#: `reading_of` scored. Bound to a name so the assertions read, not to decouple
+#: anything -- an earlier comment here claimed it was "named rather than
+#: imported" to keep these addresses independent of the slice's battery, which
+#: was simply false of `held_out_designs()` and was caught by review.
+BATTERY = held_out_designs()
+
+
+def battery_of(scenario: ScenarioId) -> tuple[ExperimentDesign, ...]:
+    return BATTERY
 
 
 def stub_reading(**overrides: float) -> CellReading:
@@ -119,6 +135,9 @@ def stub_reading(**overrides: float) -> CellReading:
         inadequate=False,
         experiments=8,
         structural_distance=1.0,
+        # The battery this module addresses on, since `run_matrix` refuses a
+        # reading scored on one battery at another's address.
+        battery=battery_key(BATTERY),
     )
 
 
@@ -249,6 +268,7 @@ class TestResumingSkipsWhatIsAddressed:
                     cells,
                     address=ADDRESS,
                     scenario_seed=seed_of,
+                    battery=battery_of,
                     execute=stop_after_two,
                     ledger=ledger,
                 )
@@ -280,6 +300,7 @@ class TestResumingSkipsWhatIsAddressed:
                     cells,
                     address=ADDRESS,
                     scenario_seed=seed_of,
+                    battery=battery_of,
                     execute=lambda _task: stub_reading(d1=99.0),
                     ledger=ledger,
                     skip_recorded=False,
@@ -295,8 +316,10 @@ class TestAnAddressCoversWhatDeterminesACell:
         task = CellTask(
             cell=Cell("V7", ScenarioId("S11"), 1), replicate=0, seed=Seed(7)
         )
-        before = cell_key(task, ADDRESS)
-        after = cell_key(task, ADDRESS.at(metric_version=MetricVersion("1.3.0")))
+        before = cell_key(task, ADDRESS, battery=BATTERY)
+        after = cell_key(
+            task, ADDRESS.at(metric_version=MetricVersion("1.3.0")), battery=BATTERY
+        )
         assert before.digest != after.digest
 
         with CampaignLedger.in_memory() as ledger:
@@ -318,11 +341,11 @@ class TestAnAddressCoversWhatDeterminesACell:
         task = CellTask(
             cell=Cell("V7", ScenarioId("S11"), 1), replicate=0, seed=Seed(7)
         )
-        after = cell_key(task, ADDRESS)
+        after = cell_key(task, ADDRESS, battery=BATTERY)
         assert after.config["dimensions"] == DIMENSION_VERSION
 
         monkeypatch.setattr("sciagent.eval.matrix.DIMENSION_VERSION", "spec8/1")
-        before = cell_key(task, ADDRESS)
+        before = cell_key(task, ADDRESS, battery=BATTERY)
         assert before.config["dimensions"] == "spec8/1"
         assert before.digest != after.digest
 
@@ -332,8 +355,8 @@ class TestAnAddressCoversWhatDeterminesACell:
         task = CellTask(
             cell=Cell("V7", ScenarioId("S11"), 1), replicate=0, seed=Seed(7)
         )
-        dev = cell_key(task, ADDRESS)
-        test = cell_key(task, ADDRESS.at(partition=DataPartition.TEST))
+        dev = cell_key(task, ADDRESS, battery=BATTERY)
+        test = cell_key(task, ADDRESS.at(partition=DataPartition.TEST), battery=BATTERY)
         assert dev.digest != test.digest
 
     @pytest.mark.parametrize(
@@ -356,16 +379,25 @@ class TestAnAddressCoversWhatDeterminesACell:
         task = CellTask(
             cell=Cell("V7", ScenarioId("S11"), 1), replicate=7, seed=Seed(7)
         )
-        key = cell_key(task, ADDRESS)
-        assert key.digest == cell_key(task, ADDRESS).digest
+        key = cell_key(task, ADDRESS, battery=BATTERY)
+        assert key.digest == cell_key(task, ADDRESS, battery=BATTERY).digest
         assert dict(key.config) == {
             "matrix": "spec9/1",
             "dimensions": "spec8/2",
+            "battery": battery_key(BATTERY),
             "partition": "dev",
             "replicate": "07",
             "scenario": "S11",
             "system": "V7",
         }
+        # Spelled through battery_key rather than as a literal, and that is not
+        # laziness: the literal would pin a digest of the *slice's* battery into
+        # a module that is otherwise free of the slice's choices, so changing the
+        # battery would fail here with a hex mismatch rather than in
+        # tests/acceptance/test_a27.py where the choice lives. What this line is
+        # for is that the key is present and named, which a literal and a call
+        # establish equally.
+        assert key.config["battery"].startswith(f"{len(BATTERY)}#")
 
 
 def _key_of(coordinate: tuple[str, str, int]) -> ExperimentKey:
@@ -375,7 +407,7 @@ def _key_of(coordinate: tuple[str, str, int]) -> ExperimentKey:
         replicate=replicate,
         seed=Seed(1),
     )
-    return cell_key(task, ADDRESS)
+    return cell_key(task, ADDRESS, battery=BATTERY)
 
 
 class TestTheDriverReportsWhatItDid:
@@ -386,6 +418,7 @@ class TestTheDriverReportsWhatItDid:
                 cells,
                 address=ADDRESS,
                 scenario_seed=seed_of,
+                battery=battery_of,
                 execute=lambda _task: stub_reading(log_score=-math.inf, d3=math.nan),
                 ledger=ledger,
             )
@@ -498,17 +531,23 @@ class TestAReadingComesFromARealRun:
         assert derived.data_version == runner.data_version
         assert derived.partition == runner.partition
 
-    def test_the_held_out_battery_excludes_every_design_that_was_run(self) -> None:
-        # SPEC §8 measures D2 and D3 on diagnostics unused during the
-        # investigation. dimension_vector cannot check this; reading_of can,
-        # because the run carries its own evidence index.
+    def test_the_held_out_battery_is_the_scenarios_and_not_the_runs(self) -> None:
+        # Gate A27 reversed what this test used to assert. It read the battery as
+        # the complement of the evidence index -- SPEC §8's "diagnostics unused
+        # during the investigation", taken literally -- which made the question
+        # set a function of what the arm chose to run, and graded B1 on nothing
+        # at all. The battery is now declared on the scenario. The whole
+        # criterion lives in tests/acceptance/test_a27.py; what is checked here
+        # is that this module's driver reads the same thing, since it is what
+        # puts the battery in the address.
         run, _runner, _engine = slice_run("S1", BOEDOnly(closed_set()))
-        battery = held_out_battery(run)
         used = {record.template for record in run.evidence.ordered()}
-        offered = {design.id for design in run.scenario.designs}
         assert used, "the run should have executed something"
-        assert not {design.id for design in battery} & used
-        assert {design.id for design in battery} | used == offered
+        assert held_out_battery(run) == run.scenario.held_out
+        assert {design.id for design in held_out_battery(run)} & used, (
+            "the declared battery no longer overlaps what a BOED arm runs, so "
+            "this test no longer shows that the battery survives being run"
+        )
 
 
 def _drive(
@@ -527,6 +566,7 @@ def _drive(
         cells,
         address=ADDRESS,
         scenario_seed=seed_of,
+        battery=battery_of,
         execute=execute,
         ledger=ledger,
     )

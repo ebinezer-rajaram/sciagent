@@ -57,6 +57,7 @@ from environments.pointproc.runner import (
     MATRIX_SYSTEMS,
     MatrixRunner,
     ProviderFactory,
+    scenario_battery,
     scenario_seed,
 )
 from environments.pointproc.tables import matrix_table, save_matrix_table
@@ -265,6 +266,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 cells,
                 address=runner.address,
                 scenario_seed=scenario_seed,
+                battery=scenario_battery,
                 execute=execute,
                 ledger=ledger,
                 skip_recorded=not args.verify,

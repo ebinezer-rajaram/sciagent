@@ -68,6 +68,7 @@ four for no change in any number.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Final
 
 from environments.pointproc.catalogue import metric_registry
 from environments.pointproc.components import ARRIVAL, LIBRARY_VERSION
@@ -80,8 +81,14 @@ from environments.pointproc.operations import (
 )
 from environments.pointproc.program import reference_program
 from sciagent.core.edits import Defect, EditGrammar
+from sciagent.core.errors import MalformedDesignError
 from sciagent.core.types import DataVersion, EnvVersion, MetricName
-from sciagent.experiments.dsl import ExperimentDesign, ForceArrival, QueryDiagnostic
+from sciagent.experiments.dsl import (
+    ExperimentDesign,
+    ForceArrival,
+    QueryDiagnostic,
+    is_intervention,
+)
 from sciagent.experiments.executor import Executor
 from sciagent.inference.binning import Discretisation, OutcomeSpace
 from sciagent.inference.interface import ExperimentTemplate, Simulator
@@ -318,6 +325,52 @@ def slice_designs() -> tuple[ExperimentDesign, ...]:
     :attr:`~sciagent.inference.empirical.EmpiricalTable.version`.
     """
     return (*(_design(name) for name in sorted(_QUERY_EDGES)), forced_design())
+
+
+#: Template ids of the slice's preregistered held-out battery. Named rather than
+#: sliced positionally, and that is not style: ``tests/test_scoring.py``'s
+#: ``HELD_OUT`` was ``slice_designs()[3:]`` until SPEC §4.3 gained
+#: ``size_gap_correlation``, when the slice silently grew from two designs to
+#: three and a reported D3 moved with nothing in the diff to say so
+#: (``docs/DECISIONS.md``). Membership of a battery that D2 and D3 are defined
+#: over cannot be a consequence of where a design happens to sort.
+_HELD_OUT_IDS: Final = frozenset(
+    {"query:size_dispersion", "query:size_gap_correlation"}
+)
+
+
+def held_out_designs() -> tuple[ExperimentDesign, ...]:
+    """Return the battery SPEC §8's D2 and D3 are scored on, in design order.
+
+    Guarantees a fixed membership that is a subset of :func:`slice_designs` and
+    contains the intervention, which is what
+    :class:`~sciagent.eval.scenarios.Scenario` requires of a declared battery and
+    what gate A27 asks of every scenario.
+
+    The two mark diagnostics and the forced arrival. ``size_gap_correlation`` is
+    the sharpest available case of a candidate that got the arrival side right
+    and the mark side wrong -- a Hawkes process against S11's truth exactly -- and
+    excluding it would mean declining to measure the thing the battery exists to
+    test; ``docs/DECISIONS.md`` records that judgement being made against the
+    incentive, since dropping it would have restored a more flattering number
+    this repository had already published to itself. The forced arrival is the
+    slice's only intervention, and D3 is an *intervention* battery.
+    """
+    offered = slice_designs()
+    unmatched = sorted(_HELD_OUT_IDS - {str(design.id) for design in offered})
+    if unmatched:
+        raise MalformedDesignError(
+            f"the held-out battery names template(s) {unmatched!r} that the slice "
+            f"does not offer. Naming an id that matches nothing does not raise on "
+            f"its own -- it silently shrinks the battery, which is the positional "
+            f"slice's failure in a slower form: D2, D3 and D5 move and the diff "
+            f"says nothing"
+        )
+    return tuple(
+        design
+        for design in offered
+        if str(design.id) in _HELD_OUT_IDS or is_intervention(design)
+    )
 
 
 def slice_templates() -> tuple[ExperimentTemplate, ...]:

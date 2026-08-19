@@ -45,7 +45,7 @@ from environments.pointproc.mechanisms import (
     defect,
     mechanism_defect,
 )
-from environments.pointproc.outcomes import slice_designs
+from environments.pointproc.outcomes import held_out_designs, slice_designs
 from sciagent.core.edits import Defect
 from sciagent.core.types import ScenarioId, Seed
 from sciagent.eval.scenarios import Scenario, ScenarioClass
@@ -142,11 +142,17 @@ def _truth(name: str) -> Defect:
 def slice_scenarios() -> tuple[Scenario, ...]:
     """Return S1-S12, in specification order.
 
-    Guarantees a fixed set of ids, truths, nuisances, budgets and seeds, so a
-    scenario is a reproducible artefact and two runs of one system on one
-    scenario perform byte-identical executions.
+    Guarantees a fixed set of ids, truths, nuisances, budgets, seeds and
+    held-out batteries, so a scenario is a reproducible artefact and two runs of
+    one system on one scenario perform byte-identical executions.
+
+    Every scenario gets the *same* battery, because every scenario offers the
+    same designs. That is a fact about the slice rather than a rule: the battery
+    is declared per scenario (gate A27), so a scenario with its own design space
+    would carry its own.
     """
     designs = slice_designs()
+    battery = held_out_designs()
     stage_a = next(
         design for design in designs if str(design.id) == "query:size_gap_correlation"
     )
@@ -159,6 +165,7 @@ def slice_scenarios() -> tuple[Scenario, ...]:
             budget=Budget(total=budget),
             seed=Seed(_SEEDS[name]),
             nuisance=_NUISANCES.get(name, frozenset()),
+            held_out=battery,
             rationale=rationale,
             stage_a=stage_a,
         )

@@ -7321,3 +7321,272 @@ observation and clipping the total give the same answer.
 that is symmetric on the diagonal survives any test that only checks the
 diagonal, and "the kernel is correct" is not the same claim as "the dimension is
 wired to the kernel". A gate that exercises a helper is testing the helper.
+
+## 2026-08-19 — gate A27: what "held out" means, and a closure deliberately reversed
+
+**Decision.** SPEC §8's "held-out intervention battery" is ambiguous between two
+readings, and the second is taken: the battery is a **declared subset of the
+designs the scenario offers**, scored whatever the arm ran — not a set withheld
+from the offer so that non-use is guaranteed.
+
+**Why.** The withholding reading is the more natural one and it is not available
+here. The slice has exactly one intervention, `forced_design()`, and SPEC §4.2
+makes it the only design that separates Hawkes self-excitation from latent regime
+switching. Reserving it would break S5's "intervention planning", the oracle
+policy lengths gate A24 rests on, and S10's budget, which is defined by
+measurement against those lengths. Manufacturing a *second* forced arrival to
+reserve instead was the other way out, and it costs more than it buys: a new
+design changes `EmpiricalTable.version`, retiring every cached table for a 3m11s
+cold rebuild in every worktree, and it widens the simulator's scope — all to
+score a question no system was going to ask anyway. Three things also point at
+the subset reading independently: `tests/test_scoring.py`'s `HELD_OUT`, which the
+BACKLOG entry names as the precedent, is exactly that; the gate's own clause
+"two arms with different run histories receive identical batteries" is trivially
+true under withholding and therefore pointless to state; and the entry claims to
+touch no frozen decision, which withholding plainly would.
+
+**What this reverses, said out loud.** The 2026-08-17 entry recorded deriving the
+battery from the evidence index as a *closure* — "one way to get a whole matrix
+quietly wrong, removed" — on the true observation that `dimension_vector` cannot
+check the battery excludes what was run and `reading_of` can. That closure was
+real and this undoes it. The reason is that the property it bought is worth less
+than the one it spent: across the recorded matrix `n_held_out` came out {3,2} for
+the V-arms, {2} for B4/B5 and **0** for B1, whose D3 was `nan` on 20/20 S11 rows.
+An instrument whose question set moves with the answer is not an instrument.
+
+**The cost, which is not zero.** An arm that ran a battery design is now scored on
+a question it asked. §8's "unused during the investigation" is honoured in intent
+rather than mechanically. It is indirect rather than flagrant — D2 and D3 read
+simulated table rows for candidate against truth, not the run's own observations —
+but it is a real weakening and it is stated at `Scenario.held_out` rather than
+left for someone to find.
+
+**Closes off.** Every cell address moves: `battery_key` is in `cell_key`'s config,
+so the 1,120 recorded rows stay at their old addresses under append-only and are
+not re-derivable under the new scheme without a re-run. That is what the A40
+re-derivation entry exists for and it names A27 as its prerequisite. No
+`METRIC_VERSION` or `DIMENSION_VERSION` bump was needed, because membership is in
+the address itself — the same move A26 made, for the same reason: bumping
+`METRIC_VERSION` would reach every `Discretisation`'s content hash and invalidate
+the tables, for a change that touches no estimator.
+
+## 2026-08-19 — tried and abandoned: an A27 gate that compared batteries by size
+
+**Approach abandoned.** The first version of `tests/acceptance/test_a27.py`
+established "battery membership appears in the recorded address" by comparing the
+scenario's declared battery against a *filtered-down* one — `narrower = tuple(d
+for d in full if is_intervention(d))`. `/test-review` returned TOO WEAK and showed
+why by construction rather than by argument.
+
+**Why it failed.** `narrower` is a subsequence of `full`, so the guard
+`narrower != full` forces `len(narrower) < len(full)`, and the slice has exactly
+one intervention, so the pair compared is always (3, 1). A `battery_key` that read
+`str(len(battery))` therefore separated them — and passed all ten assertions in
+the module. Under it, two batteries of three *different* designs share one cell
+address, so a cell re-scored on a different question set lands on the address of
+the reading it replaced and `run_matrix`'s `skip_recorded` default reports the
+stale row as the new campaign's, having executed nothing to disagree with it —
+verbatim the failure the term exists to prevent. Not a strawman: `n_held_out` is
+already how the ledger payload summarises a battery and how the BACKLOG entry
+describes one ("{3,2} … {2} … {0}"), so the count is the natural reach.
+
+The same defect appeared a second time on the scoring side and had to be closed
+separately: the arm-scored clause asserted `reading.dimensions.n_held_out == 3`,
+and `n_held_out` is `len(held_out)`, so `reading_of` could have been handed any
+three offered designs — including three observational ones — and computed D3 on a
+battery holding no intervention, which is the exact defect A27 was written about.
+
+**Closes off.** `_swap_one_observational` is the construction that closes both:
+exchange one observational member for another offered design, giving equal
+cardinality, equal intervention count and different membership. The general shape
+is worth carrying, and it is the second gate in a row to need it — A26's was "a
+defect symmetric on the diagonal survives a test that only checks the diagonal".
+This one is: **wherever membership is the property, a test that varies the size is
+testing the size.** If the two batteries in a comparison differ in length, the
+comparison cannot distinguish a membership term from a count.
+
+## 2026-08-19 — gates A38 and A39 opened a hole in suite-freshness, and closed it
+
+**Decision.** `.claude/hooks/suite-freshness.sh` now hashes `LICENSE`,
+`.github/workflows/` and `docs/SCALE-UP.md` alongside the `.py` files,
+`pyproject.toml` and `uv.lock`. The rule it implements is not "code only" but
+*every input an acceptance gate reads*.
+
+**Why.** The script's own comment asserted that docs/ is excluded because "a
+DECISIONS.md entry cannot change a test result". That premise held until A38 and
+A39 landed on the same day and broke it: `tests/acceptance/test_a39.py` reads
+`docs/SCALE-UP.md`, and `tests/acceptance/test_a38.py` reads `LICENSE` and
+`.github/workflows/`. Under the original hash, deleting a section of SCALE-UP.md
+left `check` reporting FRESH while A39 was red — the exact false green the script
+was written to prevent, reintroduced through a door it was not watching, by the
+work that created the door. Verified after the change rather than assumed:
+appending one line to `docs/SCALE-UP.md` between `begin` and `record` moved the
+tree hash from `ce9d8c8a…` to `bb28eb67…` and `record` refused.
+
+**Closes off.** Anything that adds a gate over a non-`.py` file has to be added
+here in the same commit as the gate, and the comment now says so. The general
+docs/ exclusion survives, because nothing asserts over the rest of it and
+`/decide` runs between the two suite invocations by design. Note the consequence
+for this session: widening the formula changes the hash of an unchanged tree, so
+the green recorded before the change does not map onto it and the suite is re-run
+under the new definition rather than carried over.
+
+## 2026-08-19 — tried and abandoned: A38 and A39 gates that prose could satisfy
+
+**Approach abandoned.** Both gates were first written as keyword checks over a
+file's whole text, and `/test-review` broke both with executed counterexamples.
+
+**Why A38's failed.** The "writes no artefact that outlives the job" clause
+enumerated four *mechanisms* — `upload-artifact`, the literal `cache/tables`,
+`git push`, `git commit`. A workflow with `actions/cache` on `path: .cache`
+mentions none of them and persists Ubuntu-built empirical tables into every later
+job. That is the likely workflow, not a contrived one: table acquisition is 3m11s
+cold against 1.055s warm, so whoever watches CI spend three extra minutes per push
+reaches for exactly that step. Separately, `-n 4` was never asserted, and
+`--dist loadfile` does nothing without it — `uv run pytest --dist loadfile` alone
+runs serially — so the gate accepted a job at CLAUDE.md's 262.44s claiming the
+151.30s invocation. Fixed by stating the condition (no cross-job cache, no mention
+of the repository's cache directory) instead of enumerating ways to build one, and
+by asserting both flags on the same line.
+
+A third defect surfaced only on running the corrected gate: it read raw YAML and
+failed on the workflow's *own comment* explaining that it deliberately has no
+`actions/cache` step. Comment lines are stripped now. An assertion that a
+mechanism is absent must not be satisfiable, or breakable, by prose describing its
+absence.
+
+**Why A39's failed.** The module's docstring claimed each required item was
+checked "named together with the thing it is about"; the code checked substring
+membership over one blob of the whole file, which is a different statement. Both
+senses of "battery" and of "content hash" already coexist in this repository's own
+docs, so the pairing was ceremony. The reviewer built a 3,245-character *index* —
+six note titles with pointers, documenting zero interface changes and saying so
+explicitly — and it passed the module unchanged. Its anti-skeleton guard also read
+the raw text while every other check went through a lowercased helper, so
+appending a lowercase placeholder line still passed.
+
+**Closes off.** Three closes, and the first is the general one: scope a paired
+keyword check to a *section*, not a file. Then require the **claim** and not only
+the subject — `not yet`/`becomes` near the version promise, `convention` near the
+protocol — because naming a topic is not naming what is asserted about it. Then at
+least four sections must name an interface, which is what a pointer index cannot
+do. The length floor is kept and explicitly not load-bearing: the counterexample
+cleared it on filler, so it measures typing.
+
+## 2026-08-19 — tried and abandoned: a delimited encoding for the battery address term
+
+**Approach abandoned.** `battery_key` built the string it digests by joining
+designs on `\x00` and each design's config entries on `\x01`, on the premise that
+no config value could contain either. The premise is false by construction:
+`operation_config` renders a `CompareCandidates` operation's candidate set as its
+`defect_key`s joined on `\x00`, so a single design's value carries the byte that
+separates designs. Confirmed by execution rather than by reading — a
+two-candidate design's `op.candidates` holds exactly one `\x00`. Replaced by a
+length-framed encoding, which is decodable and therefore unambiguous whatever the
+parts contain.
+
+**Why it matters even though it is unreachable today.** The pointproc compiler
+refuses `CompareCandidates`, and `held_out_designs()` returns only
+`QueryDiagnostic` and `ForceArrival` designs, so no live path reaches the
+collision. But `battery_key` takes a `Sequence[ExperimentDesign]` and states its
+injectivity guarantee unconditionally, and a battery of designs whose per-design
+strings are `{"P\x00Q", "R"}` collides with one of `{"P", "Q\x00R"}` — equal
+cardinality, different membership, one address. That is verbatim the stale-row
+failure the term was added to prevent, arriving through the encoding rather than
+through the count, and it is the second time in two gates that the *count* term
+`len(battery)` was the thing standing between a defect and a passing test.
+
+**The test decodes rather than collides, and that is not laziness.** A colliding
+pair of *real* designs is not constructible: it needs two batteries whose sorted
+per-design strings concatenate identically, and a design's config is not free
+text — `design`, `operation`, `n_events` and `outcome` are all fixed by the
+design itself. So the test parses `_battery_payload` back into the multiset of
+designs it was built from, with a parser written independently of the encoder.
+A decodable payload cannot be ambiguous, which is the general property; a
+specific collision would have been the weaker evidence even if one could be
+built.
+
+**Closes off.** Do not "simplify" the framing back to a separator by choosing a
+byte believed not to occur. The class of failure is choosing any such byte, and
+the repository already contains one counterexample it did not know about.
+
+## 2026-08-19 — the A27/A38/A39 review round, and one test that never failed
+
+**Work left deliberately incomplete.** `/code-review` returned five findings
+against the three gates after they were implemented and green. Four are fixed in
+the same tree, plus one from `invariant-auditor` lens 3 (the entry above) and two
+from lens 2. The fifth is deferred to a new backlog entry, gate A43: `summarise`
+checks that a row carries a battery term but never that it carries the *right*
+one, so a report built entirely on rows scored under a superseded battery is
+accepted and rendered as current. `_refuse_mixed_batteries` does not catch it —
+it fires only when two batteries coexist for one scenario.
+
+**Why deferred rather than done.** The check needs a `battery` callback on
+`summarise`, the sibling of the `scenario_class` callback it already takes, and it
+is worth having only if it is **required**: an optional parameter defaulting to
+today's behaviour reproduces the defect for every caller who forgets it, which is
+the argument `cell_key`'s own `battery` parameter is written on. Required means
+every `summarise` call site changes, which is a wider edit than a review fix
+should make to another gate's tree. What was taken instead is the visible half:
+the term is rendered per cell, and the "no row matches" diagnostic now names a
+row excluded for its battery rather than listing the terms it matched — which is
+what anyone pointing `report_matrix` at the recorded 1,120-row matrix meets
+first. A43 is sequenced **before A40**: the re-derivation is what first puts two
+generations of battery in one ledger.
+
+**One test in `tests/acceptance/test_a27.py` passes against the unfixed code, and
+it is meant to.** `test_a27_no_research_system_can_reach_the_battery` asserts that
+`sciagent/systems/` imports no `sciagent.eval` and that `Investigation` carries no
+scenario-shaped slot. Lens 2 verified both facts and observed that *nothing
+asserted them*: `Scenario.held_out` is unreachable from an agent for the same
+reasons `Scenario.truth` is, but where `plausibility` has a symbol list, a
+derivation check and A17's call-graph analyser, the battery had a structural
+accident. Adding `held_out` to `Investigation` tomorrow would have failed no test.
+So this one is a regression guard rather than a demonstration of a fix, and it
+never went red — the deliberate exception to "watch it fail", recorded here so a
+later reader does not read it as the step having been skipped.
+
+**Closes off.** The four fixed findings are in the diff and need no entry. Two
+lenses (3 and 6) died mid-response on API connection errors and were re-run to
+completion rather than reported from their partial output, so the round is six
+agents of six and not four.
+
+## 2026-08-19 — an intermittent subprocess failure in A1 and test_llm, seen and not explained
+
+**Measured, and left open.** Four full `-n 4 --dist loadfile` runs on one desktop
+during the A27/A38/A39 preflight: **green, red, red, green**. Each red failed
+exactly one test, and a *different* one each time —
+`test_llm.py::TestAddressingIsDeterministic::test_in_process_addresses_match_a_subprocess`,
+then `test_a01_a05.py::TestA1Determinism::test_a1_byte_identical_across_processes`.
+Those two are the only tests in the suite that spawn a child interpreter, and in
+both cases the child exited 1. Both passed in isolation and under a targeted
+`-n 4` run of just the two files, and `determinism_child.py` run directly printed
+its nine digests cleanly. Wall clock moved with it: 155s, 221s, 203s, 181s.
+
+**Why this is written down rather than shrugged off.** The second one is **A1**,
+a frozen §6 gate, and an intermittently-red determinism gate is either a real
+cross-process determinism defect or an environmental one. Nothing in four runs
+distinguishes them, and the changes in flight cannot account for it: they touch
+neither child, the greens bracket the reds, and the two failures were in
+different files.
+
+**What was fixed is the blindness, not the cause.** Both call sites ran
+`subprocess.run(..., capture_output=True, check=True)`, so `CalledProcessError`
+carried the child's stderr and never showed it: a dead child reported an exit
+status and nothing else, which is why four runs produced no diagnosis. Both now
+assert on `returncode` explicitly and put stderr and stdout in the failure
+message. The assertion is unchanged in strength.
+
+**The standing hypothesis, untested.** Memory, not CPU. This file already records
+`-n auto` (12 workers) dying with `MemoryError` on this 16 GB machine, and these
+two tests fork a fifth interpreter beside four workers holding empirical tables.
+The shared `.cache/tables` read/write race is the other candidate, already guarded
+by retries in `EmpiricalTable.save` and `_read_text_contended`. Neither was
+confirmed, and the next occurrence should say which — that is what the stderr is
+now there for.
+
+**Closes off.** Do not read a red A1 as a determinism regression without reading
+the child's stderr first, and do not "fix" a recurrence by retrying the
+subprocess: if the child is dying for want of memory, a retry hides a resource
+limit behind a green, and if it is not, a retry hides the determinism defect A1
+exists to catch.

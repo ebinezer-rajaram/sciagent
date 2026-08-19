@@ -21,7 +21,7 @@ import math
 import pytest
 from slice_tables import GRAMMAR, gate_table
 
-from environments.pointproc.outcomes import closed_set, simulator, slice_designs
+from environments.pointproc.outcomes import closed_set, held_out_designs, simulator
 from environments.pointproc.scenarios import scenario
 from sciagent.core.errors import DiagnosisError
 from sciagent.core.types import Diagnosis, FrozenDict, HypothesisId, Probability
@@ -53,17 +53,14 @@ from sciagent.inference.empirical import EmpiricalTable
 #: and a mark coupling got wrong, which is Hawkes against S11's truth exactly.
 #: Excluding it would have preserved an earlier finding by declining to measure
 #: the thing that tests it. See ``docs/DECISIONS.md``.
-_HELD_OUT_IDS = frozenset(
-    {
-        "query:size_dispersion",
-        "query:size_gap_correlation",
-    }
-)
-HELD_OUT = tuple(
-    design
-    for design in slice_designs()
-    if str(design.id) in _HELD_OUT_IDS or str(design.id).startswith("force[")
-)
+#:
+#: **Now the environment's declaration rather than this module's list.** Gate A27
+#: made the battery a property of the scenario, so the choice the paragraphs above
+#: describe lives in ``environments.pointproc.outcomes.held_out_designs`` and this
+#: is an alias for it. Two spellings of one battery is the same defect as the
+#: positional slice in a slower form: they would agree until one of them was
+#: edited, and the number that moved would be reported by whichever module was not.
+HELD_OUT = held_out_designs()
 
 _TABLE: list[EmpiricalTable] = []
 

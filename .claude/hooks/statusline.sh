@@ -19,6 +19,11 @@
 # Git state is read live, because it changes constantly and is cheap.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+# Read stdin before anything else can consume it. The statusline payload carries
+# the model, context and cost figures appended at the end of the rendered line.
+# Stdin is a stream, so a second reader gets nothing.
+hook_read_payload
 hook_cd_project || exit 0
 
 # Own tree first, then the shared checkout's copy.
@@ -66,4 +71,71 @@ else
     dirty_part="clean"
 fi
 
-printf '%s · %s · %s · %s gates\n' "$branch" "$dirty_part" "$cursor" "$gates"
+# ── Colour ───────────────────────────────────────────────────────────────────
+#
+# Semantic ANSI slots, never hardcoded hex. The terminal's own palette supplies
+# the actual colours, so this line follows whatever scheme the terminal is set to
+# and needs no editing when the editor theme changes -- Catppuccin Mocha and
+# Tokyo Night each define all 16 slots, so `green` is that theme's green either
+# way. Truecolor escapes would pin the statusline to one of the two.
+D='\033[2m'; R='\033[0m'
+GRN='\033[32m'; YEL='\033[33m'; RED='\033[31m'; CYN='\033[36m'; MAG='\033[35m'
+
+# Detached HEAD is worth seeing immediately; `git rev-parse --abbrev-ref` reports
+# it literally as HEAD, which is otherwise indistinguishable from a branch name.
+if [ "$branch" = "HEAD" ]; then branch_c="$RED"; else branch_c="$GRN"; fi
+
+if [ "$dirty_part" = "clean" ]; then dirty_c="$D"; else dirty_c="$YEL"; fi
+
+case "$cursor" in
+    "all gates satisfied") cursor_c="$D" ;;
+    *)                     cursor_c="$CYN" ;;
+esac
+
+# ── Agent state ──────────────────────────────────────────────────────────────
+#
+# Appended rather than replacing anything. The four repository fields above are
+# what this line existed for; the model/context/cost trio answers a different
+# question -- how much room is left and what the session has cost -- that nothing
+# else on screen answers at all.
+#
+# Each segment is emitted only when its field is present, because absence is
+# normal rather than exceptional: before the first API response the payload
+# carries `null` for both the context and the cost figure.
+#
+# The model name is matched inline rather than through hook_field. That function
+# pays three subprocesses and normalises backslashes for file paths; a display
+# name needs neither, and a line that re-renders on every assistant message
+# cannot afford the former.
+model=""
+[[ $hook_payload =~ \"display_name\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]] &&
+    model="${BASH_REMATCH[1]}"
+
+ctx=$(hook_field_num remaining_percentage)
+cost=$(hook_field_num total_cost_usd)
+
+agent=""
+[ -n "$model" ] && agent="${agent}${D} · ${R}${MAG}${model}${R}"
+
+if [ -n "$ctx" ]; then
+    # Rounded rather than assumed integral: the payload documents a
+    # pre-calculated percentage, and 20.6 must not render as `20.6%`.
+    #
+    # No guard on the result, because hook_field_num only returns a well-formed
+    # number and so this cannot fail. An earlier version guarded on the output
+    # being non-empty and the comment claimed a bad value would skip the segment
+    # -- the opposite of the truth. `printf '%.0f' abc` prints `0` with a nonzero
+    # status rather than printing nothing, so that guard was dead code hiding a
+    # false red `0%`. Validating the shape at extraction is what makes it
+    # unreachable rather than merely unlikely.
+    ctx_i=$(printf '%.0f' "$ctx")
+    if   [ "$ctx_i" -lt 10 ]; then ctx_c="$RED"
+    elif [ "$ctx_i" -lt 25 ]; then ctx_c="$YEL"
+    else                           ctx_c="$D"
+    fi
+    agent="${agent}${D} · ${R}${ctx_c}${ctx_i}%${R}"
+fi
+
+[ -n "$cost" ] && agent="${agent}${D} · \$$(printf '%.2f' "$cost")${R}"
+
+printf '%b\n' "${branch_c}${branch}${R}${D} · ${R}${dirty_c}${dirty_part}${R}${D} · ${R}${cursor_c}${cursor}${R}${D} · ${gates} gates${R}${agent}"

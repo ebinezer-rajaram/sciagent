@@ -99,12 +99,23 @@ class TestA1Determinism:
         outputs = []
         for hash_seed in ("0", "1", "random"):
             environment = dict(os.environ, PYTHONHASHSEED=hash_seed)
+            # `check=True` raised `CalledProcessError` with the child's stderr
+            # captured and never shown, so a child that died reported only its
+            # exit status and A1 -- a frozen gate -- failed uninvestigably. Seen
+            # under `-n 4` on 2026-08-19. The status is still asserted; what
+            # changed is that the failure now carries the reason.
             completed = subprocess.run(
                 [sys.executable, str(CHILD)],
                 capture_output=True,
                 text=True,
-                check=True,
+                check=False,
                 env=environment,
+            )
+            assert completed.returncode == 0, (
+                f"{CHILD.name} exited {completed.returncode} under "
+                f"PYTHONHASHSEED={hash_seed}\n"
+                f"--- stderr ---\n{completed.stderr}\n"
+                f"--- stdout ---\n{completed.stdout}"
             )
             outputs.append((hash_seed, completed.stdout))
         reference_output = outputs[0][1]

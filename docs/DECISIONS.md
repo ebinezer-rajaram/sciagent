@@ -7052,7 +7052,671 @@ the change did not touch. The rate is the finding worth carrying: a guard whose
 `except` clause was written from memory of a failure rather than from the
 boundary's contract is a recurring defect in this repository, not an incident.
 
----
+## 2026-08-19 — editor and terminal setup: what the files cannot tell you
+
+Most of this session's work is derivable from its own diff — the settings, the
+extension list, the palettes and the reasoning are all in the files, commented.
+Four things are not, and one of them is a trap that fails silently.
+
+**The installed Nerd Font is not called what the documentation says.** The
+upstream Nerd Fonts patcher names families `<CamelCase> Nerd Font`, and its
+readme states the rule explicitly with a worked example. The winget package
+`DEVCOM.JetBrainsMonoNerdFont` 3.3.0 does **not** follow it: enumerating
+`System.Drawing.Text.InstalledFontCollection` after installing shows
+`JetBrainsMono NF` (double-width icons), `JetBrainsMono NFM` (single-width),
+`JetBrainsMono NFP` (proportional), plus a `JetBrainsMonoNL` no-ligature flavour
+of each — 42 families, none of them named `JetBrainsMono Nerd Font`.
+
+**Why that matters more than a naming quibble.** A `fontFamily` naming a font
+that does not exist produces no error, no warning and no log line; the editor
+falls through to the next entry in the chain. The first version of
+`%APPDATA%\Code\User\settings.json` written this session asked for
+`JetBrainsMono Nerd Font` and would have rendered as Cascadia Code indefinitely,
+looking merely disappointing rather than broken. Verify a font by enumerating the
+installed collection, never by trusting the package name or the upstream docs.
+
+**Tokyo Night was chosen as the default theme and then abandoned before it
+shipped.** It ships `semanticTokenColors` with eight selectors but never sets
+`"semanticHighlighting": true`. VS Code's `editor.semanticHighlighting.enabled`
+defaults to `configuredByTheme` and the theme-side property defaults to false, so
+every one of those rules is inert unless the setting is forced on. Its repository
+was last pushed 2025-02-05 with 13 unanswered issues. Catppuccin was pushed
+2026-08-18 and carries genuinely Python-aware selectors — `class:python`,
+`class.builtin:python`, `variable.typeHint:python`, `function.decorator:python`.
+For a Python repository that made the choice evidential rather than aesthetic.
+Both are installed; Mocha is active. `editor.semanticHighlighting.enabled` is
+forced true regardless, which also revives Tokyo Night's dormant rules if it is
+ever selected. Note also that `Avetis.tokyo-night` is a different publisher
+shipping an identically-named extension — `enkia.tokyo-night` is the one meant.
+
+**Work left deliberately incomplete: the global Claude Code settings are
+unwired, and this repository is why.** `.claude/settings.json` denies
+`Edit(~/.claude/settings.json)`. That is a hard block rather than a prompt, so no
+session working in this repository can write global Claude Code settings, and
+verbal permission does not lift it. Consequently `~/.claude/statusline.sh` and
+`~/.claude/themes/{catppuccin-mocha,tokyo-night}.json` exist and are valid but
+nothing references the statusline, and `preferredNotifChannel` is unset — which
+matters because the VS Code integrated terminal receives no desktop notification
+(only Ghostty, Kitty and iTerm2 do). Waiting on either a paste into that file by
+hand, `/statusline` and `/config` run from inside a session, or a deliberate
+relaxation of the deny rule. Routing around it via `WebClient` or
+`Start-BitsTransfer` was available and declined: a deny rule the user wrote is
+not an obstacle to be engineered past.
+
+**Two smaller facts that would cost a future session time.** `winget install
+Microsoft.PowerShell` delivers 7.6.5 as an **MSIX** package, so `pwsh.exe` lives
+under `%LOCALAPPDATA%\Microsoft\WindowsApps\Microsoft.PowerShell_8wekyb3d8bbwe\`
+and **not** `C:\Program Files\PowerShell\7\` — a hardcoded Program Files path
+fails. And measured on this desktop: pwsh 7 starts in **804ms** with the starship
+profile against **299ms** at `-NoProfile`, so the prompt costs about 505ms per
+shell. Windows PowerShell 5.1 is deliberately left with no profile, because
+Claude Code's PowerShell tool runs 5.1 and should not pay that on every call.
+
+**Closes off.** The font finding generalises past fonts: three of this session's
+surfaces fail silently rather than loudly — an unknown Claude Code theme token is
+ignored, an invalid theme colour is ignored, and a missing font family falls
+back. In all three "it looks like nothing happened" is the failure mode, so each
+was verified by enumerating what the system actually accepted rather than by
+reading the file back. Nothing here touches `src/` or the acceptance gates; the
+suite was not run, and no test covers `.claude/hooks/`, so `bash -n` plus direct
+execution against captured payloads is the whole of the available check.
+
+## 2026-08-19 — statusline render cost, and a guard written from intent
+
+Follow-up to the entry above, recording what its review found. Both items are
+things the diff no longer shows, because the review's fixes removed them.
+
+**Measured: the first version doubled statusline render time.** Twenty renders,
+warm, identical payload, two trials each. Before the change **296–366ms** per
+render; with three `hook_field`-style extractions **581–596ms**; after replacing
+them with `BASH_REMATCH` **367–368ms**. The extractions alone accounted for
+~168ms, from nine subprocesses per render — three `printf|sed|head` chains. The
+figure matters because the script's own header rejects `scripts/status.py` at 4.2s
+on precisely this ground, and a statusline is debounced at 300ms, so a 200ms
+regression sits inside the interval it re-renders on. `hook_field` remains
+`sed`-based and is correct to: a PostToolUse hook fires once per edit and can
+afford three subprocesses, where this cannot. Cost is per-*call-site*, not
+per-helper.
+
+**A guard whose comment asserted the opposite of the measured behaviour.** The
+context-percentage segment guarded on `printf '%.0f' "$ctx"` producing empty
+output for a non-numeric value, and said so in a comment. `printf '%.0f' abc`
+prints `0` with a nonzero status; the status was discarded, so the guard was dead
+and a malformed value would have rendered a confident red `0%` rather than being
+skipped. Fixed by validating the shape at extraction instead, which makes the
+condition unreachable rather than merely unlikely.
+
+**Why that is worth an entry rather than a line in the diff.** The entry
+immediately above this one closes by nominating exactly this defect class as
+recurring in this repository — "a guard whose `except` clause was written from
+memory of a failure rather than from the boundary's contract". This is the same
+error in `bash` rather than Python, committed one entry later, in a file whose
+whole purpose was to be verified by direct execution. Reaching for what a
+primitive *ought* to do on bad input, instead of running it once, is the shape to
+watch for; `printf` was two seconds away from being tested.
+
+**Also fixed, without needing an entry each.** `hook_field_num` truncated
+exponential notation, so a cost of `1e-7` rendered as `$1.00` — a seven-decade
+error, now `$0.00`. `.vscode/settings.json` had excluded `.claude/worktrees/**`
+from `files.watcherExclude` two blocks after a comment explaining why worktrees
+must stay visible; the watcher does not read `.gitignore`, so that would have
+blinded the editor to the only tree that changes mid-session. And its interpreter
+pin was Windows-only in a file tracked specifically so Ubuntu cloud sessions read
+it; removed entirely, since deleting the *global* override was the actual fix and
+the Python extension auto-discovers `.venv` on every platform.
+
+**Closes off.** Nothing here is covered by a test, and nothing can be: no test in
+this repository reaches `.claude/hooks/`, which is why the review's method —
+extracting the payload constructor from the shipped `claude.exe` to confirm
+`remaining_percentage` is an integer 0–100 rather than a 0–1 fraction — was the
+only way to establish that the `<10` and `<25` thresholds point the right way.
+That contract is now depended upon by two scripts and is not written down
+anywhere in the repository except here.
+
+## 2026-08-19 — tried and failed: env-var venv activation in the VS Code terminal
+
+**Symptom.** Opening an integrated terminal shows the Starship prompt in about
+700ms, and then several seconds later
+`(Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned) ; (& ...\.venv\Scripts\Activate.ps1)`
+appears at that prompt and runs. The delay is not the shell starting: measured
+here, `pwsh -NoProfile` is ~330ms and the Starship profile adds ~380ms, both of
+which are spent before the prompt is drawn. The visible junk arrives afterwards,
+because the Python extension activates an environment with `sendText` — it waits
+for shell integration, then types the command.
+
+**Tried, and it did not work.** `ms-python.python` 2026.4.0 offers an opt-in
+experiment, `pythonTerminalEnvVarActivation`, whose stated purpose is to activate
+by setting environment variables at terminal creation instead of typing a
+command. Enabled it as `"python.experiments.optInto":
+["pythonTerminalEnvVarActivation"]` in user settings, with
+`python.experiments.enabled` at its default true. After a window reload and a new
+terminal, **the typed command and the delay both persisted.** The enum member is
+spelled correctly — it is one of six the extension declares — so this is the
+experiment not taking effect rather than a typo.
+
+**Left deliberately incomplete.** The setting is still in
+`%APPDATA%\Code\User\settings.json`, where it is currently inert and carries a
+comment claiming it fixes the problem. That comment now overclaims, which is the
+defect the entry two above this one nominates as recurring here, so it is written
+down rather than left to be rediscovered. Untouched for now at the user's
+explicit direction — the next attempt should either delete the key and its
+comment, or replace both with a platform-keyed
+`terminal.integrated.env.windows` / `.linux` block injecting `VIRTUAL_ENV` and a
+`PATH` prefix directly, which needs no experiment and no typed command.
+
+**Closes off.** Do not re-enable the experiment expecting a different result, and
+do not reach for `python.terminal.activateEnvironment: false` on its own: a
+Windows Store Python 3.11 is on this machine's PATH, so switching activation off
+without also injecting the venv leaves bare `python` resolving to 3.11 inside a
+project pinned to >=3.12. That is a worse failure than the cosmetic one being
+fixed.
+
+## 2026-08-19 — gate A26: the version term the eval layer needed, and a gate that had to grow
+
+**Decision.** The §8 dimensions carry their own version,
+`sciagent.eval.scoring.DIMENSION_VERSION = "spec8/2"`, held in the cell key's
+`config` exactly as `MATRIX_VERSION` is and checked by `report._at_address`. The
+backlog entry that asked for A26 had prescribed a `METRIC_VERSION` bump instead;
+that is the abandoned approach below.
+
+**Why.** No existing address term moves when a dimension's definition changes.
+`env_version` and `data_version` describe the environment and its data, and
+`metric_version` is a content hash over the *environment's diagnostic
+catalogue* — while D1–D6 are computed in `sciagent/eval/scoring.py` from the
+truth and the table. So before this constant, changing D2 or D4 moved no address
+at all, and `run_matrix`'s `skip_recorded` default would have reported the stale
+reading as the new campaign's without executing anything to disagree with it.
+
+**Tried and abandoned: bumping `METRIC_VERSION`.** It reaches every
+`Discretisation`'s content hash through `str(MetricRef)` — `"name@version"` — so
+it addresses the *empirical tables*, not only the ledger. Probed before changing
+anything:
+
+| `METRIC_VERSION` | one axis | its outcome space |
+|---|---|---|
+| `1.2.0` | `bins/2ac271cff162c232` | `outcomes/6cf306b0f598cf0f` |
+| `1.3.0` | `bins/4630ff0d33995d59` | `outcomes/a29d5b818d9d3634` |
+
+`EmpiricalTable.version` folds in `outcome.version`, and `cache_key` folds in
+that, so a bump is a cache miss on every table. The gate table costs **3m11s**
+cold against **1.055s** warm — paid in every worktree and on every machine, to
+reproduce rows that are bit-identical because no estimator changed. This is not
+hypothetical: `.cache/tables/` holds three gate-table and three search-table
+generations, and the 2026-08-16 bump to 1.2.0 caused one of them. That bump was
+*correct* — a metric had actually been added — which is the distinction worth
+keeping: the metric version means the catalogue moved, and borrowing it to mean
+"a dimension moved" costs a rebuild every time and says something false.
+
+Landed in `config` rather than as a fourth `CampaignAddress` column, following
+`MATRIX_VERSION`'s precedent, so no ledger schema change and no fixture churn.
+
+**Left deliberately incomplete.** Rows recorded before today carry no
+`dimensions` key, so `_at_address` now excludes them and `report_matrix` raises
+rather than rendering — the message names which readings the ledger actually
+holds. **The recorded 1,120-row matrix is therefore unreportable until it is
+re-derived**, which is `docs/BACKLOG.md`'s own next entry (gate A40). That is the
+intended sequencing — instruments first, decided cold; re-derivation second,
+labelled — but it means anyone reaching for `report_matrix` before A40 lands will
+meet an error, and that error is the design rather than a regression.
+
+**Closes off.** Do not "fix" that by relaxing `_at_address` to treat a missing
+`dimensions` key as the current reading: pooling A26-scored rows with rows whose
+D4 is identically zero and whose D2 is improper is precisely the error the
+version exists to prevent. And do not reach for `METRIC_VERSION` the next time a
+dimension changes — A27, A29 and A31 all change dimension or payload semantics,
+and under the bump each would force another full table rebuild for no numerical
+reason.
+
+## 2026-08-19 — where post-freeze gate titles live
+
+**Decision.** `scripts/status.py` reads gate titles from `docs/BACKLOG.md`'s
+`**Gate.**` lines as well as from SPEC §6, and reports those criteria in their
+own "Post-freeze gates" block. SPEC is not amended.
+
+**Why.** A genuine gap between two frozen rules. SPEC §6 is the acceptance
+contract and stops at A24; SPEC §13 says new ideas enter `docs/BACKLOG.md`. The
+sixteen entries added on 2026-08-18 name gates A25–A40, and `parse_gate_titles`
+read §6 alone — so a test named `test_a26_...` exactly as CLAUDE.md requires was
+attributed to a gate with no title and silently dropped from the report. Neither
+document is wrong; nothing said where a criterion declared *after* the freeze
+belongs. Resolved by the user in favour of reading the backlog, on the reasoning
+that §13 already routes post-freeze material there and amending §6 sixteen times
+would erode the freeze it exists to hold. The separate block is so that A1–A24
+keep reading as the frozen contract rather than being diluted by a queue.
+
+**Closes off.** The convention CLAUDE.md calls load-bearing — "a test not named
+this way is invisible to the status report" — now holds past A24 as well, which
+it had quietly stopped doing. Titles are derived from the test name in the
+`**Gate.**` line rather than restated, so the two cannot drift.
+
+## 2026-08-19 — tried and abandoned: an A26 test that only checked the diagonal
+
+**Approach abandoned.** The first version of `tests/acceptance/test_a26.py`
+tested D2's propriety on the kernel alone, plus one end-to-end case at
+`candidate == truth`. `/test-review` returned TOO WEAK and demonstrated it by
+execution rather than argument: with the call site transposed — computing
+`sum(mine[c] * log2 theirs[c])`, which is linear in `mine` and therefore
+maximised by a point mass — the suite ran **7 passed** while the exact defect
+A26 exists to remove was reinstated. `tests/test_scoring.py` did not catch it
+either (20 passed); its only D2 assertions are an `isinstance` and an `isnan`.
+
+**Why it failed.** At `candidate == truth` the proper score and its transpose are
+numerically identical — both reduce to the row's negative entropy — so the
+diagonal is exactly where the two wirings cannot be told apart. Closed by
+`test_a26_d2_is_the_proper_score_off_the_diagonal`. On
+`query:phase_conditioned_dispersion`, candidate `poisson_mixture` against truth
+`hawkes`, the three candidate wirings separate:
+
+| wiring | D2 |
+|---|---|
+| proper, `sum(theirs * log2 mine)` | **-7.724875483580779** |
+| transposed | -5.145434226360676 |
+| modal (the pre-A26 reading) | -9.396973478894598 |
+
+One assertion therefore rejects both wrong readings. A two-observation D4 case
+was added for the same class of reason: with one observation, clipping per
+observation and clipping the total give the same answer.
+
+**Closes off.** The general shape is worth carrying to the next gate: a defect
+that is symmetric on the diagonal survives any test that only checks the
+diagonal, and "the kernel is correct" is not the same claim as "the dimension is
+wired to the kernel". A gate that exercises a helper is testing the helper.
+
+## 2026-08-19 — gate A27: what "held out" means, and a closure deliberately reversed
+
+**Decision.** SPEC §8's "held-out intervention battery" is ambiguous between two
+readings, and the second is taken: the battery is a **declared subset of the
+designs the scenario offers**, scored whatever the arm ran — not a set withheld
+from the offer so that non-use is guaranteed.
+
+**Why.** The withholding reading is the more natural one and it is not available
+here. The slice has exactly one intervention, `forced_design()`, and SPEC §4.2
+makes it the only design that separates Hawkes self-excitation from latent regime
+switching. Reserving it would break S5's "intervention planning", the oracle
+policy lengths gate A24 rests on, and S10's budget, which is defined by
+measurement against those lengths. Manufacturing a *second* forced arrival to
+reserve instead was the other way out, and it costs more than it buys: a new
+design changes `EmpiricalTable.version`, retiring every cached table for a 3m11s
+cold rebuild in every worktree, and it widens the simulator's scope — all to
+score a question no system was going to ask anyway. Three things also point at
+the subset reading independently: `tests/test_scoring.py`'s `HELD_OUT`, which the
+BACKLOG entry names as the precedent, is exactly that; the gate's own clause
+"two arms with different run histories receive identical batteries" is trivially
+true under withholding and therefore pointless to state; and the entry claims to
+touch no frozen decision, which withholding plainly would.
+
+**What this reverses, said out loud.** The 2026-08-17 entry recorded deriving the
+battery from the evidence index as a *closure* — "one way to get a whole matrix
+quietly wrong, removed" — on the true observation that `dimension_vector` cannot
+check the battery excludes what was run and `reading_of` can. That closure was
+real and this undoes it. The reason is that the property it bought is worth less
+than the one it spent: across the recorded matrix `n_held_out` came out {3,2} for
+the V-arms, {2} for B4/B5 and **0** for B1, whose D3 was `nan` on 20/20 S11 rows.
+An instrument whose question set moves with the answer is not an instrument.
+
+**The cost, which is not zero.** An arm that ran a battery design is now scored on
+a question it asked. §8's "unused during the investigation" is honoured in intent
+rather than mechanically. It is indirect rather than flagrant — D2 and D3 read
+simulated table rows for candidate against truth, not the run's own observations —
+but it is a real weakening and it is stated at `Scenario.held_out` rather than
+left for someone to find.
+
+**Closes off.** Every cell address moves: `battery_key` is in `cell_key`'s config,
+so the 1,120 recorded rows stay at their old addresses under append-only and are
+not re-derivable under the new scheme without a re-run. That is what the A40
+re-derivation entry exists for and it names A27 as its prerequisite. No
+`METRIC_VERSION` or `DIMENSION_VERSION` bump was needed, because membership is in
+the address itself — the same move A26 made, for the same reason: bumping
+`METRIC_VERSION` would reach every `Discretisation`'s content hash and invalidate
+the tables, for a change that touches no estimator.
+
+## 2026-08-19 — tried and abandoned: an A27 gate that compared batteries by size
+
+**Approach abandoned.** The first version of `tests/acceptance/test_a27.py`
+established "battery membership appears in the recorded address" by comparing the
+scenario's declared battery against a *filtered-down* one — `narrower = tuple(d
+for d in full if is_intervention(d))`. `/test-review` returned TOO WEAK and showed
+why by construction rather than by argument.
+
+**Why it failed.** `narrower` is a subsequence of `full`, so the guard
+`narrower != full` forces `len(narrower) < len(full)`, and the slice has exactly
+one intervention, so the pair compared is always (3, 1). A `battery_key` that read
+`str(len(battery))` therefore separated them — and passed all ten assertions in
+the module. Under it, two batteries of three *different* designs share one cell
+address, so a cell re-scored on a different question set lands on the address of
+the reading it replaced and `run_matrix`'s `skip_recorded` default reports the
+stale row as the new campaign's, having executed nothing to disagree with it —
+verbatim the failure the term exists to prevent. Not a strawman: `n_held_out` is
+already how the ledger payload summarises a battery and how the BACKLOG entry
+describes one ("{3,2} … {2} … {0}"), so the count is the natural reach.
+
+The same defect appeared a second time on the scoring side and had to be closed
+separately: the arm-scored clause asserted `reading.dimensions.n_held_out == 3`,
+and `n_held_out` is `len(held_out)`, so `reading_of` could have been handed any
+three offered designs — including three observational ones — and computed D3 on a
+battery holding no intervention, which is the exact defect A27 was written about.
+
+**Closes off.** `_swap_one_observational` is the construction that closes both:
+exchange one observational member for another offered design, giving equal
+cardinality, equal intervention count and different membership. The general shape
+is worth carrying, and it is the second gate in a row to need it — A26's was "a
+defect symmetric on the diagonal survives a test that only checks the diagonal".
+This one is: **wherever membership is the property, a test that varies the size is
+testing the size.** If the two batteries in a comparison differ in length, the
+comparison cannot distinguish a membership term from a count.
+
+## 2026-08-19 — gates A38 and A39 opened a hole in suite-freshness, and closed it
+
+**Decision.** `.claude/hooks/suite-freshness.sh` now hashes `LICENSE`,
+`.github/workflows/` and `docs/SCALE-UP.md` alongside the `.py` files,
+`pyproject.toml` and `uv.lock`. The rule it implements is not "code only" but
+*every input an acceptance gate reads*.
+
+**Why.** The script's own comment asserted that docs/ is excluded because "a
+DECISIONS.md entry cannot change a test result". That premise held until A38 and
+A39 landed on the same day and broke it: `tests/acceptance/test_a39.py` reads
+`docs/SCALE-UP.md`, and `tests/acceptance/test_a38.py` reads `LICENSE` and
+`.github/workflows/`. Under the original hash, deleting a section of SCALE-UP.md
+left `check` reporting FRESH while A39 was red — the exact false green the script
+was written to prevent, reintroduced through a door it was not watching, by the
+work that created the door. Verified after the change rather than assumed:
+appending one line to `docs/SCALE-UP.md` between `begin` and `record` moved the
+tree hash from `ce9d8c8a…` to `bb28eb67…` and `record` refused.
+
+**Closes off.** Anything that adds a gate over a non-`.py` file has to be added
+here in the same commit as the gate, and the comment now says so. The general
+docs/ exclusion survives, because nothing asserts over the rest of it and
+`/decide` runs between the two suite invocations by design. Note the consequence
+for this session: widening the formula changes the hash of an unchanged tree, so
+the green recorded before the change does not map onto it and the suite is re-run
+under the new definition rather than carried over.
+
+## 2026-08-19 — tried and abandoned: A38 and A39 gates that prose could satisfy
+
+**Approach abandoned.** Both gates were first written as keyword checks over a
+file's whole text, and `/test-review` broke both with executed counterexamples.
+
+**Why A38's failed.** The "writes no artefact that outlives the job" clause
+enumerated four *mechanisms* — `upload-artifact`, the literal `cache/tables`,
+`git push`, `git commit`. A workflow with `actions/cache` on `path: .cache`
+mentions none of them and persists Ubuntu-built empirical tables into every later
+job. That is the likely workflow, not a contrived one: table acquisition is 3m11s
+cold against 1.055s warm, so whoever watches CI spend three extra minutes per push
+reaches for exactly that step. Separately, `-n 4` was never asserted, and
+`--dist loadfile` does nothing without it — `uv run pytest --dist loadfile` alone
+runs serially — so the gate accepted a job at CLAUDE.md's 262.44s claiming the
+151.30s invocation. Fixed by stating the condition (no cross-job cache, no mention
+of the repository's cache directory) instead of enumerating ways to build one, and
+by asserting both flags on the same line.
+
+A third defect surfaced only on running the corrected gate: it read raw YAML and
+failed on the workflow's *own comment* explaining that it deliberately has no
+`actions/cache` step. Comment lines are stripped now. An assertion that a
+mechanism is absent must not be satisfiable, or breakable, by prose describing its
+absence.
+
+**Why A39's failed.** The module's docstring claimed each required item was
+checked "named together with the thing it is about"; the code checked substring
+membership over one blob of the whole file, which is a different statement. Both
+senses of "battery" and of "content hash" already coexist in this repository's own
+docs, so the pairing was ceremony. The reviewer built a 3,245-character *index* —
+six note titles with pointers, documenting zero interface changes and saying so
+explicitly — and it passed the module unchanged. Its anti-skeleton guard also read
+the raw text while every other check went through a lowercased helper, so
+appending a lowercase placeholder line still passed.
+
+**Closes off.** Three closes, and the first is the general one: scope a paired
+keyword check to a *section*, not a file. Then require the **claim** and not only
+the subject — `not yet`/`becomes` near the version promise, `convention` near the
+protocol — because naming a topic is not naming what is asserted about it. Then at
+least four sections must name an interface, which is what a pointer index cannot
+do. The length floor is kept and explicitly not load-bearing: the counterexample
+cleared it on filler, so it measures typing.
+
+## 2026-08-19 — tried and abandoned: a delimited encoding for the battery address term
+
+**Approach abandoned.** `battery_key` built the string it digests by joining
+designs on `\x00` and each design's config entries on `\x01`, on the premise that
+no config value could contain either. The premise is false by construction:
+`operation_config` renders a `CompareCandidates` operation's candidate set as its
+`defect_key`s joined on `\x00`, so a single design's value carries the byte that
+separates designs. Confirmed by execution rather than by reading — a
+two-candidate design's `op.candidates` holds exactly one `\x00`. Replaced by a
+length-framed encoding, which is decodable and therefore unambiguous whatever the
+parts contain.
+
+**Why it matters even though it is unreachable today.** The pointproc compiler
+refuses `CompareCandidates`, and `held_out_designs()` returns only
+`QueryDiagnostic` and `ForceArrival` designs, so no live path reaches the
+collision. But `battery_key` takes a `Sequence[ExperimentDesign]` and states its
+injectivity guarantee unconditionally, and a battery of designs whose per-design
+strings are `{"P\x00Q", "R"}` collides with one of `{"P", "Q\x00R"}` — equal
+cardinality, different membership, one address. That is verbatim the stale-row
+failure the term was added to prevent, arriving through the encoding rather than
+through the count, and it is the second time in two gates that the *count* term
+`len(battery)` was the thing standing between a defect and a passing test.
+
+**The test decodes rather than collides, and that is not laziness.** A colliding
+pair of *real* designs is not constructible: it needs two batteries whose sorted
+per-design strings concatenate identically, and a design's config is not free
+text — `design`, `operation`, `n_events` and `outcome` are all fixed by the
+design itself. So the test parses `_battery_payload` back into the multiset of
+designs it was built from, with a parser written independently of the encoder.
+A decodable payload cannot be ambiguous, which is the general property; a
+specific collision would have been the weaker evidence even if one could be
+built.
+
+**Closes off.** Do not "simplify" the framing back to a separator by choosing a
+byte believed not to occur. The class of failure is choosing any such byte, and
+the repository already contains one counterexample it did not know about.
+
+## 2026-08-19 — the A27/A38/A39 review round, and one test that never failed
+
+**Work left deliberately incomplete.** `/code-review` returned five findings
+against the three gates after they were implemented and green. Four are fixed in
+the same tree, plus one from `invariant-auditor` lens 3 (the entry above) and two
+from lens 2. The fifth is deferred to a new backlog entry, gate A43: `summarise`
+checks that a row carries a battery term but never that it carries the *right*
+one, so a report built entirely on rows scored under a superseded battery is
+accepted and rendered as current. `_refuse_mixed_batteries` does not catch it —
+it fires only when two batteries coexist for one scenario.
+
+**Why deferred rather than done.** The check needs a `battery` callback on
+`summarise`, the sibling of the `scenario_class` callback it already takes, and it
+is worth having only if it is **required**: an optional parameter defaulting to
+today's behaviour reproduces the defect for every caller who forgets it, which is
+the argument `cell_key`'s own `battery` parameter is written on. Required means
+every `summarise` call site changes, which is a wider edit than a review fix
+should make to another gate's tree. What was taken instead is the visible half:
+the term is rendered per cell, and the "no row matches" diagnostic now names a
+row excluded for its battery rather than listing the terms it matched — which is
+what anyone pointing `report_matrix` at the recorded 1,120-row matrix meets
+first. A43 is sequenced **before A40**: the re-derivation is what first puts two
+generations of battery in one ledger.
+
+**One test in `tests/acceptance/test_a27.py` passes against the unfixed code, and
+it is meant to.** `test_a27_no_research_system_can_reach_the_battery` asserts that
+`sciagent/systems/` imports no `sciagent.eval` and that `Investigation` carries no
+scenario-shaped slot. Lens 2 verified both facts and observed that *nothing
+asserted them*: `Scenario.held_out` is unreachable from an agent for the same
+reasons `Scenario.truth` is, but where `plausibility` has a symbol list, a
+derivation check and A17's call-graph analyser, the battery had a structural
+accident. Adding `held_out` to `Investigation` tomorrow would have failed no test.
+So this one is a regression guard rather than a demonstration of a fix, and it
+never went red — the deliberate exception to "watch it fail", recorded here so a
+later reader does not read it as the step having been skipped.
+
+**Closes off.** The four fixed findings are in the diff and need no entry. Two
+lenses (3 and 6) died mid-response on API connection errors and were re-run to
+completion rather than reported from their partial output, so the round is six
+agents of six and not four.
+
+## 2026-08-19 — an intermittent subprocess failure in A1 and test_llm, seen and not explained
+
+**Measured, and left open.** Four full `-n 4 --dist loadfile` runs on one desktop
+during the A27/A38/A39 preflight: **green, red, red, green**. Each red failed
+exactly one test, and a *different* one each time —
+`test_llm.py::TestAddressingIsDeterministic::test_in_process_addresses_match_a_subprocess`,
+then `test_a01_a05.py::TestA1Determinism::test_a1_byte_identical_across_processes`.
+Those two are the only tests in the suite that spawn a child interpreter, and in
+both cases the child exited 1. Both passed in isolation and under a targeted
+`-n 4` run of just the two files, and `determinism_child.py` run directly printed
+its nine digests cleanly. Wall clock moved with it: 155s, 221s, 203s, 181s.
+
+**Why this is written down rather than shrugged off.** The second one is **A1**,
+a frozen §6 gate, and an intermittently-red determinism gate is either a real
+cross-process determinism defect or an environmental one. Nothing in four runs
+distinguishes them, and the changes in flight cannot account for it: they touch
+neither child, the greens bracket the reds, and the two failures were in
+different files.
+
+**What was fixed is the blindness, not the cause.** Both call sites ran
+`subprocess.run(..., capture_output=True, check=True)`, so `CalledProcessError`
+carried the child's stderr and never showed it: a dead child reported an exit
+status and nothing else, which is why four runs produced no diagnosis. Both now
+assert on `returncode` explicitly and put stderr and stdout in the failure
+message. The assertion is unchanged in strength.
+
+**The standing hypothesis, untested.** Memory, not CPU. This file already records
+`-n auto` (12 workers) dying with `MemoryError` on this 16 GB machine, and these
+two tests fork a fifth interpreter beside four workers holding empirical tables.
+The shared `.cache/tables` read/write race is the other candidate, already guarded
+by retries in `EmpiricalTable.save` and `_read_text_contended`. Neither was
+confirmed, and the next occurrence should say which — that is what the stderr is
+now there for.
+
+**Closes off.** Do not read a red A1 as a determinism regression without reading
+the child's stderr first, and do not "fix" a recurrence by retrying the
+subprocess: if the child is dying for want of memory, a retry hides a resource
+limit behind a green, and if it is not, a retry hides the determinism defect A1
+exists to catch.
+
+## 2026-08-19 — gate A28: B6 draws over the whole grid, and is not a 57th cell of §9
+
+**Decision.** SPEC §12 criterion 5's comparator is built, as
+`systems/baselines/uniform.UniformProposer` inside `systems/hybrid.Hybrid` under
+the name B6. Three things were settled that the backlog entry left open or that
+it decided the other way.
+
+*The draw is the entry's second form.* `docs/BACKLOG.md` named uniform-over-
+`enumerate_edits(1)` — the 48-corner stratification — as the cheap first form,
+and the full grid as optional. The full grid was chosen instead, before any code
+was written. A grid box's corners are where the degenerate parameterisations
+live: `BeamSearch` says so at `_UNSCORABLE`, having found them by enumerating
+exactly those corners. A B6 confined to them would lose for a reason unrelated to
+random generation, and a deflator that is too easy to beat flatters the arm it
+exists to deflate — which SPEC §12's "beating B4 or B5 is the research question
+rather than an exit criterion" can least afford. So the draw is the menu cell
+uniformly, then each of that cell's grid indices uniformly: V7's action space
+exactly, leaving the two arms differing in *how a point in it is chosen* and in
+nothing else. The measured menu is 5 cells, 16 grids, every grid 64 points,
+arities 3 and 4, so the corner form's cost advantage was real — at most 48
+structures ever, against at most 40 novel table rows for the whole B6 cell. Forty
+rows is a bounded price for a comparator that is not systematically degenerate.
+
+*B6 is `Hybrid`, not a new class.* `Hybrid.layer` was annotated with the concrete
+`ProposalLayer`; it is now a `ProposalSource` protocol that both `ProposalLayer`
+and `UniformProposer` satisfy. The backlog asked for a proposer drawn "at the same
+Stage A gate under the same budget split as V7", and sharing V7's class makes both
+facts about construction rather than claims for a later reader to audit — the
+argument `memory_ablation` already makes for V3 and V4.
+
+**Why.** Criterion 5 has been unmeasurable since it was written, and
+`docs/DECISIONS.md` (2026-08-04) records why in as many words: *"no B6 exists"*.
+The two frozen decisions behind that cannot both be satisfied — §5 lists B6 under
+"deferred to the full benchmark" while §12 criterion 5 requires B6 to score the
+slice — which is precisely SPEC §13's trigger, "a case where two frozen decisions
+cannot both be satisfied". §13 resolves it in the backlog and here, so
+`docs/SPEC.md` is untouched.
+
+**Closes off.** B6 is `CRITERION5_CELLS` — one cell, S11, twenty replicates — and
+deliberately **not** a fifty-seventh row of `SPEC9_CELLS`, whose docstring says
+"Do not add an arm" three lines above the tuple. §9 recorded 56 cells and still
+records 56; `ALL_CELLS` is the union for the runner, and `run_matrix.py`'s
+`--systems` still defaults to §9's seven arms, so B6 is opt-in and a default pass
+cannot widen the preregistered matrix by accident. Anything later reporting "the
+matrix" must still say which.
+
+**Left deliberately incomplete: nothing was run.** This lands the arm and its
+wiring, not a reading. The cell is executable at `--systems B6` with no provider
+and API $0. It is unexecuted because A40 ("Re-derivation of the recorded matrix
+under fixed metrics") is where readings are produced under the post-A26 metric
+version and post-A27 battery term, and a B6 reading filed before it would be
+re-derived immediately. Criterion 5 stays *unmeasured* until A40; what changed is
+that it is no longer *unmeasurable*.
+
+## 2026-08-19 — the intermittent subprocess failure is memory, confirmed
+
+**Supersedes nothing; it answers the open question in the entry above it.** That
+entry — "an intermittent subprocess failure in A1 and test_llm, seen and not
+explained" — recorded four `-n 4` runs going green/red/red/green, fixed the
+blindness rather than the cause, and left a hypothesis: *"Memory, not CPU"*, with
+the shared `.cache/tables` read/write race as the rival candidate. It asked that
+the next occurrence say which, and named the newly-surfaced child stderr as the
+instrument.
+
+**The next occurrence said which.** One `-n 4 --dist loadfile` run during gate
+A28: `3 failed, 1449 passed, 7 skipped in 253.04s`. All three failures were the
+subprocess-spawning tests, and the stderr the previous entry added carried the
+answer verbatim:
+
+    OpenBLAS error: Memory allocation still failed after 10 retries, giving up.
+
+Not a table-cache `PermissionError`, not a determinism mismatch — an allocator
+giving up. The hypothesis is confirmed and the rival is ruled out for this
+occurrence. All three passed in isolation on the same tree, and the run did not
+reproduce: a rerun with the identical tree was fully green, `1452 passed, 7
+skipped in 246.76s`.
+
+**Why this is worth a second entry.** The instrument the previous session
+installed worked exactly as intended and cost one run to pay off, which is the
+argument for installing it. And the attribution trap is worth naming: on seeing
+one red run with a new test file present and one green run with it absent, the
+obvious inference is that the new file tipped it. That inference is wrong at n=1
+per side — a green rerun *with* the file present is what settles it — and it was
+made in this session before being corrected.
+
+**Closes off.** A red on these tests is a resource fact until its stderr says
+otherwise, so read the stderr before reading it as a determinism regression. Do
+not attribute an intermittent failure to whatever changed most recently without a
+rerun on both sides. And do not retry the subprocess to make it green: the
+previous entry's reasoning holds and is now better founded — if the child is dying
+for want of memory, a retry hides a resource limit, and the limit is real.
+
+## 2026-08-19 — killing a backgrounded suite orphans its workers, and the next run pays
+
+**Measured, and the failure surfaces one run later disguised as a test defect.**
+Stopping a backgrounded `uv run pytest -n 4 --dist loadfile` through the harness's
+task-stop killed the parent `pytest.exe` and left its four `pytest-xdist` execnet
+gateways alive — `python -u -c "import sys;exec(eval(sys.stdin.readline()))"`, at
+131, 132, 133 and 183 MB. Eleven stray processes in total, 657 MB, every one of
+them traceable to this worktree by command line. Free physical memory: **1662 MB
+of 16310**.
+
+The immediately following full-suite run then died in *collection*, not in a test:
+
+    ERROR tests/acceptance/test_a06_a11.py - MemoryError
+    ERROR tests/acceptance/test_a01_a05.py - ImportError while importing test mod...
+    ERROR gw3 - Different tests were collected between gw0 and gw3.
+    6 errors in 26.46s
+
+Reaping the strays took free memory to 2144 MB, and the same command on the same
+tree then ran clean: `1452 passed, 7 skipped in 246.76s`.
+
+**Why it is written down.** "Different tests were collected between gw0 and gw3"
+reads like a conftest or collection-order defect and is nothing of the kind; it is
+what xdist reports when workers die unevenly for want of memory. A session that
+took it at face value would go looking in the wrong file, and the cause is one run
+in the past and invisible in the tree. This is the same scarcity the entry above
+confirms and the same one CLAUDE.md records as "memory binds before cores here" —
+a third face of it, with a self-inflicted trigger.
+
+**Closes off.** Do not stop a running suite that way; let it finish or let it time
+out. If it is stopped anyway, check for orphaned interpreters before starting
+another run rather than diagnosing the next run's collection errors. The check is
+`Get-CimInstance Win32_Process -Filter "Name='python.exe'"` filtered on the
+worktree path — and filter it, because this repository expects several sessions on
+one machine and a blanket kill would take another session's suite with it.
 
 ## 2026-08-19 — docs/BACKLOG.md becomes the second build backlog, and one gate namespace spans two files
 
@@ -7174,3 +7838,96 @@ criterion 4's observable) carries `**Held.** OPEN-DECISIONS §1`, and the cursor
 names it and passes over it — that decision is the user's, is written up cold,
 and until it is taken the entry is not work an agent may begin. Ranks 1, 2, 4
 are unblocked and in order.
+
+## 2026-08-19 — Two sessions built the same reader, and the merge kept one of each behaviour
+
+**What happened.** `worktree-backlog-cursor` branched at `52f193e` to make
+`docs/BACKLOG.md` a tracked second backlog. While it worked, `main` advanced six
+commits, and one of them taught `scripts/status.py` to read the same file:
+`parse_backlog_gates` scanned `**Gate.**` lines, gave each a title and printed a
+"Post-freeze gates" block. Neither session knew of the other. The merge arrived
+with two readers of one file in one module, textually compatible — git resolved
+all but three hunks — and semantically duplicated.
+
+**Resolution: one reader, and the better half of each.** `parse_backlog_entries`
+survives, because it is a superset: it returns rank, held and closed as well as
+the gate, and the cursor is the whole point of the branch. Three behaviours came
+back the other way, and each is now covered by a test that did not exist on
+either side:
+
+- **The gate title is derived from the test name, not the heading.** `main` chose
+  this and was right for a reason the branch had not met: by the time the merge
+  happened, five entries had landed, and a landed entry's heading opens with
+  `DONE (2026-08-19, gate A26) —`. Keying the report on the heading spent the
+  row's width on provenance.
+- **A `STRUCK` gate leaves the namespace.** `main` excluded it; the branch did
+  not distinguish it from `DONE`. Withdrawn work will never be satisfied, so a
+  title for it is a permanently empty row and a number reserved against an entry
+  that could still use it. `entry_row` now renders it `withdrawn` rather than as
+  the discrepancy a `DONE` with no tests correctly is.
+- **The two gate blocks print separately.** A1–A24 keep reading as the frozen
+  contract they are; `report` derives which numbers came from the backlog by set
+  difference rather than threading a flag through.
+
+`main`'s "SPEC §6 wins any collision" was **not** kept. The branch raises
+instead, and a rule that silently prefers one declaration is exactly the quiet
+loss the rest of this parser is built to refuse.
+
+**The ranks had to move, and that is a judgement worth flagging.** `main` added
+three gated entries with no `**Rank.**`, since the field did not exist there.
+A43 states its own sequencing — *"before A40"*, because the re-derivation is what
+first puts two battery generations in one ledger — and the review's rank space
+had no free number below A40's 5. So the open block shifted down by one (A40
+5→6, A25 6→7, … A37 14→15) and A43 took 5. Closed and held entries kept the
+numbers the 2026-08-18 review gave them, so 1–4 and 16–17 are unchanged and the
+review's ranked table still reads across.
+
+A41 and A42 went to 18 and 19, at the tail, and **this is the weakest call in
+the change.** Neither entry states a sequencing constraint, and extending the
+user's ranked plan seemed better than reshuffling it on my own reading. But A41
+is a truth leak on the `Investigation` surface that four docstrings and
+invariant 2 all state cannot happen; ranking it below eight routine entries
+understates it, and moving it is one number.
+
+**A42 is held on a decision that is not written up.** Its own cost line says "the
+semantic decision is the user's", which is the A29 shape without an
+`OPEN-DECISIONS` section to point at. It carries `**Held.** a cold decision on
+D4's comparison set` rather than a rank alone, so the cursor names it and passes
+over it. If that decision gets written up, the `**Held.**` should point at it.
+
+**Two defects the merge introduced, and how each was found.** Neither came from a
+test:
+
+- `CLOSED_PREFIX` was written as "everything up to the first dash", with the
+  file's existing `DASHES` constant — which includes the hyphen. `DONE
+  (2026-08-19, gate A26) — title` has two hyphens in the date, so every landed
+  entry rendered as `08-19, gate A26) — D4 is identically zero by`. Found by
+  reading the report, not by running the suite. The separator is now the en and
+  em dashes only, and a test covers it.
+- `git_state` passed `text=True` with no encoding, so `subprocess` decoded git's
+  UTF-8 output with the Windows locale encoding. Latent until a commit subject
+  carried a section sign, which this branch's own message did: it printed
+  `SPEC Â§6`. Fixed at that call only; the two pytest calls are left alone rather
+  than changed speculatively.
+
+**`Path.write_text` translates newlines.** The edit scripts driving this merge
+used it, and on Windows `\n` becomes `\r\n`, so whole files silently converted
+to CRLF. git normalises on commit and would have hidden it, but
+`suite-freshness.sh` hashes the *working tree*: a run pinned against CRLF content
+reads STALE the moment git rewrites it. Rewritten with `write_bytes` before
+pinning. Use `write_bytes`, or pass `newline="\n"`, for anything the freshness
+hook will hash.
+
+**The earlier blocker resolved itself.** On 2026-08-19 this branch stopped short
+of merging because another session held uncommitted edits to
+`.claude/hooks/statusline.sh` in the main tree, and a `--ff-only` merge would
+have rewritten a file under a live session. That work has since landed as
+`6ff2a11`, and the merge in this direction — `main` into the worktree — never
+needed the main tree to be clean in any case. The rule stands: stop and report
+rather than resolving another session's conflict. What is worth carrying is that
+waiting cost nothing, and the thing waited on arrived as an ordinary commit.
+
+**Closes off.** The cursor resolves to `BACKLOG rank 5 — The report layer checks
+the battery's presence, not its value`, blocked on A43. Ranks 1, 2, 4, 16 and 17
+are landed, 3 and 19 are held on decisions that are the user's, and 5 onward are
+open in order.

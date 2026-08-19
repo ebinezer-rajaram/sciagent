@@ -62,6 +62,7 @@ from sciagent.core.errors import SystemConfigurationError
 from sciagent.core.types import ScenarioId, Seed
 from sciagent.eval.campaign import run_scenario
 from sciagent.eval.matrix import CampaignAddress, CellReading, CellTask, reading_of
+from sciagent.experiments.dsl import ExperimentDesign
 from sciagent.inference.empirical import EmpiricalTable, EmpiricalTableEngine
 from sciagent.inference.interface import DiagnosticVector, ExperimentTemplate
 from sciagent.registry.store import ExperimentStore
@@ -71,15 +72,19 @@ from sciagent.systems.baselines.beam_search import BeamSearch, table_fit
 from sciagent.systems.baselines.boed_only import BOEDOnly
 from sciagent.systems.baselines.ppc_only import PPCOnly
 from sciagent.systems.baselines.retrieval import Retrieval
+from sciagent.systems.baselines.uniform import UniformProposer
 from sciagent.systems.hybrid import Hybrid
 from sciagent.systems.llm import ProposalLayer, TranscriptStore
 from sciagent.systems.llm.provider import Provider
 
 __all__ = [
+    "ALL_SYSTEMS",
+    "CRITERION5_SYSTEMS",
     "LLM_SYSTEMS",
     "MATRIX_SYSTEMS",
     "MatrixRunner",
     "ProviderFactory",
+    "scenario_battery",
     "scenario_seed",
     "system_for",
 ]
@@ -98,6 +103,24 @@ LLM_SYSTEMS: Final[frozenset[str]] = frozenset({"V7", "V3", "V4"})
 #: :data:`environments.pointproc.matrix.SPEC9_CELLS` by a test, because a factory
 #: that covers six of seven is a matrix with a hole in it that reports complete.
 MATRIX_SYSTEMS: Final[tuple[str, ...]] = ("V1", "V7", "B4", "B5", "B1", "V3", "V4")
+
+#: The arms SPEC section 12 criterion 5 needs and section 9 does not run.
+#: Pinned against :data:`environments.pointproc.matrix.CRITERION5_CELLS` by
+#: a test, for the same reason :data:`MATRIX_SYSTEMS` is pinned against
+#: ``SPEC9_CELLS``: a factory that covers one and not the other is a hole
+#: that reports complete.
+#:
+#: Deliberately *not* folded into :data:`MATRIX_SYSTEMS`. That tuple is
+#: "every arm section 9 names", and B6 is not one -- SPEC section 5 defers
+#: it to the full benchmark. Merging the two would make a default
+#: ``run_matrix.py`` invocation quietly record a fifty-seventh cell into the
+#: section 9 ledger.
+CRITERION5_SYSTEMS: Final[frozenset[str]] = frozenset({"B6"})
+
+#: Every arm :func:`system_for` can build. What ``scripts/run_matrix.py``
+#: validates ``--systems`` against, so ``--systems B6`` is accepted while the
+#: default stays section 9's seven.
+ALL_SYSTEMS: Final[tuple[str, ...]] = MATRIX_SYSTEMS + tuple(sorted(CRITERION5_SYSTEMS))
 
 
 @lru_cache(maxsize=1)
@@ -121,6 +144,7 @@ def system_for(
     *,
     provider: ProviderFactory | None = None,
     store: TranscriptStore | None = None,
+    seed: Seed | None = None,
 ) -> ResearchSystem:
     """Return the SPEC §5 system with this identifier, built to run one replicate.
 
@@ -137,8 +161,17 @@ def system_for(
     model's, and skipping the cell would leave the matrix short by twenty
     replicates while reporting that it finished.
 
+    Raises the same error for an arm in :data:`CRITERION5_SYSTEMS` offered no
+    ``seed``. B6 draws structure at random, so a default seed would not be a
+    convenience: it would give all twenty replicates of the cell one proposal
+    sequence, silently, and the interval SPEC §12 criterion 5 asks for would be
+    computed over twenty copies of one draw. ``seed`` is
+    :attr:`~sciagent.eval.matrix.CellTask.seed` -- the replicate seed the ledger
+    addresses the row under -- and is ignored by every arm that draws nothing.
+
     A fresh object is returned on every call for the LLM arms, which carry
-    per-call state. B5 is shared -- see :func:`_beam`.
+    per-call state, and for B6, which carries a seed and a draw counter. B5 is
+    shared -- see :func:`_beam`.
     """
     if name == "V1":
         return BOEDOnly(closed_set())
@@ -148,6 +181,16 @@ def system_for(
         return Retrieval(closed_set())
     if name == "B5":
         return _beam()
+    if name in CRITERION5_SYSTEMS:
+        if seed is None:
+            raise SystemConfigurationError(
+                f"{name!r} draws structure at random and was offered no "
+                f"seed. It is not run without one: a default would make "
+                f"every replicate of the cell draw one sequence, and "
+                f"nothing in the ledger would say so. Pass the replicate "
+                f"seed, which is CellTask.seed"
+            )
+        return Hybrid(closed_set(), UniformProposer(AGENT_GRAMMAR, seed), name=name)
     if name in LLM_SYSTEMS:
         if provider is None:
             raise SystemConfigurationError(
@@ -173,9 +216,23 @@ def system_for(
     raise SystemConfigurationError(
         # ASCII: this reaches a Windows console through scripts/run_matrix.py,
         # where a literal section sign comes back as a replacement character.
-        f"no system {name!r}; the arms of SPEC section 9 are "
-        f"{', '.join(MATRIX_SYSTEMS)}"
+        f"no system {name!r}; the arms this environment builds are "
+        f"{', '.join(ALL_SYSTEMS)}"
     )
+
+
+def scenario_battery(target: ScenarioId) -> tuple[ExperimentDesign, ...]:
+    """Return the held-out battery a scenario's cells are addressed and scored on.
+
+    The ``battery`` callback :func:`~sciagent.eval.matrix.run_matrix` needs, and a
+    sibling of :func:`scenario_seed` for the same reason: ``sciagent`` may not
+    import an environment, and the declaration lives on the
+    :class:`~sciagent.eval.scenarios.Scenario`. Reading it off the scenario rather
+    than deriving it here is what makes the battery a function of the scenario
+    alone -- gate A27 -- so every arm on one scenario is graded on one question
+    set whatever it chose to run.
+    """
+    return scenario(str(target)).held_out
 
 
 def scenario_seed(target: ScenarioId) -> Seed:
@@ -273,7 +330,10 @@ class MatrixRunner:
         """
         target = replace(scenario(str(task.cell.scenario)), seed=task.seed)
         system = system_for(
-            task.cell.system, provider=self._provider, store=self._store
+            task.cell.system,
+            provider=self._provider,
+            store=self._store,
+            seed=task.seed,
         )
         graph = null_seeded_graph(AGENT_GRAMMAR, METRICS, self._table, slice_designs())
         engine = EmpiricalTableEngine(graph, self._table, simulate=self._simulate)

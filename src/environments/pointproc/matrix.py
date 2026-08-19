@@ -31,6 +31,14 @@ matrix, and both would be one line's worth of change to this tuple. That is
 exactly why the rule is written down beside the tuple rather than somewhere
 else.
 
+The rule held under the one case that tested it. SPEC §12 criterion 5 names an
+arm -- "B6-equivalent random structured generation" -- that §5 defers to the full
+benchmark, so the criterion could not be measured at all until gate A28 built it.
+That arm is :data:`CRITERION5_CELLS`, a *separate* declaration, and not a
+fifty-seventh row here. What §9 recorded stays what §9 recorded; a criterion-5
+reading and a §9 reading are different claims and keep different cell sets.
+:data:`ALL_CELLS` is the union, for the runner that has to visit both.
+
 The preregistered contrast
 --------------------------
 
@@ -57,7 +65,9 @@ from sciagent.eval.report import Preregistration
 
 __all__ = [
     "ABLATION_SCENARIOS",
+    "ALL_CELLS",
     "CORE_SYSTEMS",
+    "CRITERION5_CELLS",
     "REPLICATES",
     "SPEC9_CELLS",
     "SPEC9_CONTRAST",
@@ -106,6 +116,34 @@ def _cells() -> tuple[Cell, ...]:
 #: must visit the same cells in the same order, and a list somebody appended to
 #: at import time would be a different matrix with the same name.
 SPEC9_CELLS: Final[tuple[Cell, ...]] = _cells()
+
+#: SPEC §12 criterion 5's comparator cell, which is **not** part of §9's matrix.
+#:
+#: Criterion 5 reads: "Proposes an S11 extension exceeding B6-equivalent random
+#: structured generation on D3, with a non-overlapping 95% interval." It names an
+#: arm SPEC §5 defers to the full benchmark, so until gate A28 the criterion had
+#: a comparator by name and nothing to compare against. This is that comparator.
+#:
+#: Separate from :data:`SPEC9_CELLS` rather than appended to it, and the reason is
+#: written three lines above that tuple: *do not add an arm*. §9's 56 cells are
+#: what the recorded campaign was addressed under, and a §9 that quietly became 57
+#: would make every "the matrix" statement ambiguous about which matrix. A
+#: criterion-5 reading and a §9 reading are different claims; keeping the cell sets
+#: apart is what keeps a report of one from reading as a report of the other.
+#:
+#: One scenario and not twelve. Criterion 5 is about an *S11* extension, so B6
+#: anywhere else answers a question nobody asked and costs twenty investigations
+#: to do it. Twenty replicates because the criterion asks for a 95% interval, and
+#: an interval computed at a different replicate count than the V7 cell it
+#: deflates is not comparable with it.
+CRITERION5_CELLS: Final[tuple[Cell, ...]] = (Cell("B6", ScenarioId("S11"), REPLICATES),)
+
+#: Every cell this environment can run: §9's, plus criterion 5's comparator.
+#:
+#: What ``scripts/run_matrix.py`` selects from. Ordered §9-first so that a pass
+#: over everything visits the preregistered matrix in the order it was recorded
+#: in, and appends rather than interleaves.
+ALL_CELLS: Final[tuple[Cell, ...]] = SPEC9_CELLS + CRITERION5_CELLS
 
 #: SPEC §9's preregistered primary contrast, as data rather than as prose.
 #:

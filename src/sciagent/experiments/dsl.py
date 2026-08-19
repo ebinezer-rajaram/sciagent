@@ -82,6 +82,7 @@ __all__ = [
     "PerturbParameter",
     "QueryDiagnostic",
     "defect_key",
+    "is_intervention",
     "operation_config",
     "render",
     "targets",
@@ -519,3 +520,24 @@ class ExperimentDesign:
                 **operation_config(self.operation),
             }
         )
+
+
+def is_intervention(design: ExperimentDesign) -> bool:
+    """Return whether this design manipulates the programme rather than observing it.
+
+    Guarantees the answer is a property of the *operation* and nothing else: it
+    is exactly ``targets(design.operation)`` being non-empty, so a design is an
+    intervention when there is a component it acts on. The three that manipulate
+    are :class:`PerturbParameter`, :class:`ForceArrival` and
+    :class:`AblateComponent`; the other three license no causal claim, which each
+    of their docstrings says in as many words.
+
+    Derived from :func:`targets` rather than from a list of types, because a
+    seventh operation would then have to be remembered in two places and the one
+    that got forgotten would fail silently -- an intervention read as an
+    observation is a battery that looks well formed and answers a different
+    question. SPEC §8's D3 is the caller that matters:
+    :class:`~sciagent.eval.scenarios.Scenario` refuses a held-out battery in
+    which this is false of every member.
+    """
+    return bool(targets(design.operation))

@@ -65,9 +65,11 @@ store domain-independent.
 
 :func:`summarise` therefore keeps only the rows matching a whole
 :class:`~sciagent.eval.matrix.CampaignAddress` -- matrix version, partition,
-environment, data and metric versions -- and raises rather than return an empty
-report, because a report over no rows is indistinguishable from a matrix that ran
-and produced nothing.
+environment, data and metric versions -- **and the reading of SPEC §8's
+dimensions the row was scored under**, which is the criterion most likely to
+reject a caller's rows and the one no address column carries. It raises rather
+than return an empty report, because a report over no rows is indistinguishable
+from a matrix that ran and produced nothing.
 
 Domain-independent, like the rest of ``sciagent``. This module names no system
 and no scenario: it reads them as opaque text out of each row's ``config``, and
@@ -92,7 +94,7 @@ from sciagent.core.reductions import variance as exact_variance
 from sciagent.core.types import FrozenDict, GrammarVersion, ScenarioId
 from sciagent.eval.matrix import MATRIX_VERSION, CampaignAddress
 from sciagent.eval.scenarios import SCENARIO_CLASSES, ScenarioClass
-from sciagent.eval.scoring import primary_dimension
+from sciagent.eval.scoring import DIMENSION_VERSION, primary_dimension
 from sciagent.registry.ledger import LedgerEntry
 from sciagent.verify.numerical import CONFIDENCE_LEVEL, Z_TWO_SIDED
 
@@ -215,6 +217,25 @@ class CellSummary:
     scenario_class: ScenarioClass
     replicates: int
     """Rows selected for this cell at the report's address."""
+
+    battery: str
+    """The held-out battery term these rows were scored on, from their address.
+
+    Rendered rather than merely carried. D2, D3 and D5 are defined over the
+    battery, so a figure for any of the three means nothing without knowing
+    which battery it is a figure *under* -- and this module cannot check the
+    term against a current one, because a battery is declared per scenario on
+    an environment and :mod:`sciagent` may not import one. Presence is checked
+    by :func:`_at_address` and agreement within a scenario by
+    :func:`_refuse_mixed_batteries`; **neither can tell a current battery from a
+    superseded one**, so a report built entirely on rows scored under a battery
+    that has since been replaced is accepted. Printing the term is what stops
+    that being silent: a reader who has the declaration can compare, which is
+    strictly more than they could do before. Raised by review; the check that
+    would close it rather than expose it wants a battery callback on
+    :func:`summarise`, and that is recorded in ``docs/BACKLOG.md`` rather than
+    taken here.
+    """
 
     dimensions: FrozenDict[str, DimensionSummary]
     """§8's six, keyed by :data:`DIMENSIONS`."""
@@ -525,10 +546,32 @@ def _rate(rows: Sequence[LedgerEntry], name: str) -> float:
 
 
 def _at_address(row: LedgerEntry, address: CampaignAddress) -> bool:
-    """Return whether a row belongs to the campaign ``address`` names."""
+    """Return whether a row belongs to the campaign ``address`` names.
+
+    ``dimensions`` is checked for the same reason ``matrix`` is: D1-D6 are what
+    this report renders, and two rows scored under different readings of them are
+    not two measurements of one quantity. A row recorded before
+    :data:`~sciagent.eval.scoring.DIMENSION_VERSION` existed carries no such key
+    and is therefore excluded, which is correct -- it was scored under the modal
+    D2 and the identically-zero D4 that A26 replaced. Re-deriving those rows is
+    ``docs/BACKLOG.md``'s own next entry; pooling them would be the error that
+    entry exists to avoid.
+
+    ``battery`` is required to be *present* for the same reason and excluded for
+    the same reason, but it cannot be compared against a constant the way
+    ``dimensions`` is: a battery is declared per scenario on the environment's
+    :class:`~sciagent.eval.scenarios.Scenario`, and this module may not import an
+    environment. So presence is checked here -- which drops every row recorded
+    before gate A27, since those were scored on a battery derived from whatever
+    the arm happened not to run -- and *agreement* is checked by
+    :func:`_refuse_mixed_batteries`, which needs no such constant because it asks
+    only whether the surviving rows say the same thing.
+    """
     key = row.key
     return (
         key.config.get("matrix") == MATRIX_VERSION
+        and key.config.get("dimensions") == DIMENSION_VERSION
+        and key.config.get("battery") is not None
         and key.config.get("partition") == address.partition.value
         and key.env_version == address.env_version
         and key.data_version == address.data_version
@@ -614,6 +657,47 @@ def _refuse_reseeded(rows: Sequence[LedgerEntry]) -> None:
         seen[coordinate] = row
 
 
+def _refuse_mixed_batteries(rows: Sequence[LedgerEntry]) -> None:
+    """Raise if one scenario's rows were scored on more than one held-out battery.
+
+    The sibling of :func:`_refuse_reseeded`, and it exists for a defect found by
+    review rather than by reasoning. Gate A27 put the battery in every cell's
+    content address, and :func:`_at_address` compares the terms it can compare
+    against a constant -- but the battery has no module-level constant to compare
+    against, because it is declared per scenario on the environment. So two rows
+    differing *only* in battery both matched the filter and were pooled: measured
+    on a constructed pair, D2 of -1.0 and -9.0 came back as one cell at -5.0 with
+    nothing raising, and at a colliding replicate the seed check fired instead
+    and blamed "seeds 7 and 7" -- a re-seed that had not happened.
+
+    D2 and D3 mean something different under a different battery, and D5 reads it
+    too, so pooling is averaging answers to different questions. Raising is the
+    only honest option for the reason :func:`_refuse_reseeded` gives: under the
+    fourth invariant both rows are legitimate and neither supersedes the other,
+    so this module cannot pick which battery the caller meant.
+
+    Per **scenario**, not across the report. Two scenarios with different design
+    spaces have different batteries by construction, and refusing that would
+    refuse every well-formed multi-scenario report.
+    """
+    seen: dict[str, str] = {}
+    for row in rows:
+        _system, scenario = _coordinate(row)
+        battery = row.key.config["battery"]
+        earlier = seen.setdefault(scenario, battery)
+        if earlier != battery:
+            first, second = sorted((earlier, battery))
+            raise MalformedDesignError(
+                f"scenario {scenario} has rows scored on two held-out batteries, "
+                f"{first} and {second}. D2, D3 and D5 are defined over the "
+                f"battery, so rows under two of them answer different questions "
+                f"and pooling them would report the average as one cell. The "
+                f"battery is part of the cell address, so both rows are "
+                f"legitimate under the fourth invariant and neither supersedes "
+                f"the other; select the battery you mean"
+            )
+
+
 def _coordinate(row: LedgerEntry) -> tuple[str, str]:
     """Return a row's ``(system, scenario)``, raising if its config lacks either."""
     config = row.key.config
@@ -654,10 +738,12 @@ def summarise(
     from.
 
     Only rows matching the whole ``address`` are read -- matrix version,
-    partition, environment, data and metric versions -- so stale rows left by a
-    re-addressed cell and rows from another partition are excluded by
-    construction rather than by the caller filtering first. See this module's
-    docstring for why that job lands here.
+    partition, environment, data and metric versions, and
+    :data:`~sciagent.eval.scoring.DIMENSION_VERSION` -- so stale rows left by a
+    re-addressed cell, rows from another partition, and rows scored under an
+    earlier reading of SPEC §8's dimensions are all excluded by construction
+    rather than by the caller filtering first. See this module's docstring for
+    why that job lands here.
 
     ``platform`` and ``grammar`` are **required and validated**, not defaulted.
     Neither is recoverable from the ledger and both must appear wherever these
@@ -685,18 +771,67 @@ def summarise(
     _refuse_non_ascii("platform", platform)
     _refuse_non_ascii("grammar", str(grammar))
 
-    rows = tuple(row for row in entries if _at_address(row, address))
+    # Materialised, because the diagnostic below reads them a second time and
+    # ``entries`` is an Iterable: a generator caller would have found it empty
+    # and reported "the ledger holds nothing" about a ledger that holds rows.
+    recorded = tuple(entries)
+    rows = tuple(row for row in recorded if _at_address(row, address))
     if not rows:
+        others = sorted(
+            {
+                row.key.config.get("dimensions", "spec8/1 (unlabelled)")
+                for row in recorded
+                if row.key.config.get("dimensions") != DIMENSION_VERSION
+            }
+        )
+        # Only when rows under another reading actually exist. Volunteering it
+        # unconditionally told the operator of an empty ledger that their rows
+        # needed re-deriving, which is a diagnosis of a problem they do not have.
+        elsewhere = (
+            f" The ledger holds rows under {others!r} instead: rows scored under "
+            f"another reading of SPEC §8 are excluded rather than pooled, and "
+            f"re-deriving them is a campaign re-run and not a report option."
+            if others
+            else ""
+        )
+        # The battery term excludes rows whose *every other* term matches, so a
+        # message naming only the terms above describes a row that does match it
+        # and leaves the reader hunting a version that moved. This is the case
+        # anyone reaching for the recorded 1,120-row matrix meets first: those
+        # rows were scored before gate A27, on a battery derived from whatever
+        # each arm happened not to run. Found by review, on the message rather
+        # than on the filter.
+        pre_battery = sum(
+            1
+            for row in recorded
+            if row.key.config.get("battery") is None
+            and row.key.config.get("dimensions") == DIMENSION_VERSION
+        )
+        unbatteried = (
+            f" {pre_battery} row(s) match every other term but carry no battery "
+            f"in their address, so they were recorded before gate A27 and were "
+            f"scored on a battery derived per run rather than declared: D2, D3 "
+            f"and D5 on them answer a question that varied by arm. They are "
+            f"excluded rather than pooled, and re-deriving them is a campaign "
+            f"re-run and not a report option."
+            if pre_battery
+            else ""
+        )
         raise MalformedDesignError(
-            f"no row matches campaign {MATRIX_VERSION} at "
-            f"{address.env_version}/{address.data_version}/"
-            f"{address.metric_version} on {address.partition.value}. An empty "
-            f"report reads as a matrix that ran and produced nothing"
+            f"no row matches campaign {MATRIX_VERSION} under dimension reading "
+            f"{DIMENSION_VERSION} at {address.env_version}/"
+            f"{address.data_version}/{address.metric_version} on "
+            f"{address.partition.value}. An empty report reads as a matrix that "
+            f"ran and produced nothing.{elsewhere}{unbatteried}"
         )
 
     grouped: dict[tuple[str, str], list[LedgerEntry]] = {}
     for row in rows:
         grouped.setdefault(_coordinate(row), []).append(row)
+    # Batteries before seeds: a mixed-battery pair also trips the seed check
+    # when its replicate indices collide, and the message it gives there blames
+    # a re-seed that did not happen.
+    _refuse_mixed_batteries(rows)
     _refuse_reseeded(rows)
 
     cells = tuple(
@@ -739,6 +874,10 @@ def _cell(
         scenario=scenario,
         scenario_class=kind,
         replicates=len(rows),
+        # One term for the whole cell: `_refuse_mixed_batteries` has already
+        # raised if this scenario's rows disagree, so reading the first is
+        # reading all of them.
+        battery=rows[0].key.config["battery"],
         dimensions=FrozenDict[str, DimensionSummary](
             {name: _summarise(_values(rows, name)) for name in DIMENSIONS}
         ),
@@ -948,6 +1087,7 @@ def _cell_block(cell: CellSummary, header: str) -> list[str]:
         f"{cell.system} / {cell.scenario}  ({cell.scenario_class}, "
         f"{cell.replicates} replicates)",
         f"  primary dimension: {primary}",
+        f"  held-out battery:  {cell.battery}",
         f"  {'':<{_LABEL_WIDTH}s}{header}",
     ]
     summaries = [cell.dimensions[name] for name in DIMENSIONS]

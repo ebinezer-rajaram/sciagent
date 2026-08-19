@@ -4,8 +4,9 @@ Nothing here is named ``test_aN_``. This is tooling, not a SPEC §6 criterion,
 and crediting it to a gate would tell ``scripts/status.py`` that a criterion
 covers work no criterion claims.
 
-What these check: that the sixteen gated entries the 2026-08-18 review appended
-become a *tracked, ordered* backlog rather than prose. Three things have to hold
+What these check: that ``docs/BACKLOG.md``'s gated entries -- the sixteen the
+2026-08-18 review appended, and the ones added since -- are a *tracked, ordered*
+backlog rather than prose. Three things have to hold
 for that. The parser must survive the file's real shape -- a fenced example
 entry, headers wrapped across two ``##`` lines, closed entries, ungated ideas.
 The cursor must follow ``**Rank.**`` rather than file position or gate number,
@@ -97,7 +98,8 @@ def _entry(
         opening = [f"## {heading}"]
     lines = [*opening, "", "**Idea.** Something.", "**Touches.** None."]
     if gate is not None:
-        lines.append(f"**Gate.** `test_a{gate}_the_thing_holds` — it holds.")
+        slug = re.sub(r"[^a-z0-9]+", "_", title.lower()).strip("_")
+        lines.append(f"**Gate.** `test_a{gate}_{slug}` — it holds.")
     if rank is not None:
         lines.append(f"**Rank.** {rank}")
     if held is not None:
@@ -205,7 +207,7 @@ class TestParsingTheGatedEntries:
     def test_the_gate_and_its_test_name_are_read_off_the_gate_line(self) -> None:
         by_rank = {e.rank: e for e in status.parse_backlog_entries(FIXTURE)}
         assert by_rank[10].gate == 40
-        assert by_rank[10].test_name == "test_a40_the_thing_holds"
+        assert by_rank[10].test_name == "test_a40_first_to_build"
 
     def test_a_held_entry_names_what_holds_it(self) -> None:
         held = [e for e in status.parse_backlog_entries(FIXTURE) if e.held is not None]
@@ -275,8 +277,69 @@ class TestTheGateNamespaceExtends:
     def test_a_backlog_gate_gains_a_title(self) -> None:
         entries = status.parse_backlog_entries(FIXTURE)
         titles = status.merge_gate_titles({1: "Determinism"}, entries)
-        assert set(titles) == {1, 25, 37, 38, 40, 41, 42}
-        assert titles[40] == "First to build"
+        assert set(titles) == {1, 25, 38, 40, 41, 42}
+
+    def test_the_title_is_derived_from_the_test_not_the_heading(self) -> None:
+        """Restating it in two places is how the two come to disagree.
+
+        The heading is also the wrong source: a landed entry's heading opens
+        with ``DONE (date, gate ANN) —``, so a report keyed on it would spend
+        its width on provenance.
+        """
+        entries = status.parse_backlog_entries(FIXTURE)
+        titles = status.merge_gate_titles({}, entries)
+        assert titles[40] == "first to build"
+        assert (
+            titles[38]
+            == (
+                "a landed entry whose heading wraps onto a second line"[
+                    : status.TITLE_WIDTH
+                ]
+            )
+        )
+
+    def test_a_withdrawn_criterion_is_not_in_the_namespace(self) -> None:
+        """STRUCK keeps its gate line as a record of what was proposed.
+
+        Nothing is ever going to satisfy it, so it is not a criterion: giving
+        it a title would put a permanently empty row in the gate report and
+        would reserve the number against an entry that could still use it.
+        """
+        entries = status.parse_backlog_entries(FIXTURE)
+        struck = [entry for entry in entries if entry.struck]
+        assert [entry.gate for entry in struck] == [37]
+        assert 37 not in status.merge_gate_titles({}, entries)
+
+    def test_a_withdrawn_entry_is_not_a_missing_gate(self) -> None:
+        """It has no gate row, so it has no evidence to fall short of.
+
+        The DONE branch renders "marked landed but no tests" as a discrepancy,
+        which is right for work claimed to be done. Reaching that branch for
+        STRUCK would demand tests for a decision to build nothing.
+        """
+        entry = next(e for e in status.parse_backlog_entries(FIXTURE) if e.struck)
+        marker, detail = status.entry_row(entry, None, execute=False)
+        assert marker == "-"
+        assert "withdrawn" in detail and "no tests" not in detail
+
+    def test_a_closed_entrys_row_drops_its_provenance_prefix(self) -> None:
+        """``DONE (2026-08-16) — title`` renders as ``title``.
+
+        The date carries two hyphens, so a separator rule that accepts one cuts
+        the heading inside the parenthetical and renders the provenance instead
+        of the name. Only the en and em dashes separate here.
+        """
+        entries = status.parse_backlog_entries(FIXTURE)
+        landed = next(entry for entry in entries if entry.gate == 38)
+        assert landed.title.startswith("DONE (2026-08-16) — ")
+        assert landed.short_title == (
+            "A landed entry whose heading wraps onto a second line"
+        )
+
+    def test_an_open_entrys_row_is_its_heading_unchanged(self) -> None:
+        entries = status.parse_backlog_entries(FIXTURE)
+        open_entry = next(entry for entry in entries if entry.gate == 40)
+        assert open_entry.short_title == open_entry.title == "First to build"
 
     def test_a_gate_number_the_spec_already_defines_is_an_error(self) -> None:
         entries = status.parse_backlog_entries(_entry("Clash", rank=1, gate=7))
@@ -327,7 +390,8 @@ class TestTheRealBacklogFile:
         spec_titles = status.parse_gate_titles(status.SPEC.read_text(encoding="utf-8"))
         entries = status.parse_backlog_entries(BACKLOG.read_text(encoding="utf-8"))
         merged = status.merge_gate_titles(spec_titles, entries)
-        assert set(merged) == set(spec_titles) | {entry.gate for entry in entries}
+        live = {entry.gate for entry in entries if not entry.struck}
+        assert set(merged) == set(spec_titles) | live
         assert set(spec_titles) == set(range(1, 25))
 
 
@@ -443,11 +507,6 @@ class TestAClosedEntryDoesNotClaimEvidence:
     it exist". A heading marker is not evidence of either, so it may order the
     backlog without being allowed to speak for the gate.
     """
-
-    def _entry_of(self, **kwargs: object) -> Any:
-        return status.BacklogEntry(
-            rank=1, title="T", gate=25, test_name="test_a25_x", held=None, closed=False
-        )
 
     def test_a_landed_entry_with_no_tests_is_not_rendered_as_a_pass(self) -> None:
         entry = status.BacklogEntry(

@@ -61,7 +61,8 @@ why it was built deliberately rather than improvised here. It is
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+import hashlib
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Final
 
@@ -80,6 +81,7 @@ from sciagent.core.types import (
 )
 from sciagent.eval.campaign import ScenarioRun
 from sciagent.eval.scoring import (
+    DIMENSION_VERSION,
     ClosedWorldScore,
     DimensionVector,
     dimension_vector,
@@ -100,6 +102,7 @@ __all__ = [
     "CellReading",
     "CellTask",
     "MatrixOutcome",
+    "battery_key",
     "cell_key",
     "held_out_battery",
     "reading_of",
@@ -295,13 +298,113 @@ def replicate_seeds(scenario_seed: Seed, replicates: int) -> tuple[Seed, ...]:
     )
 
 
-def cell_key(task: CellTask, address: CampaignAddress) -> ExperimentKey:
+def battery_key(battery: Sequence[ExperimentDesign]) -> str:
+    """Return the address term naming a held-out battery's membership.
+
+    Guarantees the term is a pure function of the *set* of designs: two orderings
+    of one battery give one term, and two batteries of one size and different
+    membership give two. The size is carried in the clear beside the digest
+    because it is the figure a reader of a ledger row wants -- ``n_held_out`` is
+    in the payload and this is what it should agree with -- and the digest is
+    what makes the term cover membership rather than the count.
+
+    Over each design's :meth:`~sciagent.experiments.dsl.ExperimentDesign.config`
+    rather than its ``id``, and the difference is not cosmetic: that module
+    documents the id as **not injective over designs**, because ``n_events`` is
+    deliberately absent from it. Digesting ids would give two batteries differing
+    only in run length one address, while their D2, D3 and D5 differ -- they read
+    different table rows, since a diagnostic's sampling distribution depends on
+    how much data it saw. That is the same stale-row failure this term exists to
+    prevent, one level down. ``config`` is injective and is what the registry
+    already addresses an experiment by.
+
+    That distinction is the whole reason this is not ``str(len(battery))``. D2
+    and D3 mean something different under a battery of three other designs, so a
+    count-only term would let a re-scored cell land on the address of the reading
+    it replaced, and :func:`run_matrix`'s ``skip_recorded`` default would report
+    the stale row as the new campaign's, having executed nothing to disagree with
+    it. Digested rather than spelled out for the reason
+    :func:`~sciagent.experiments.dsl.render` digests a candidate set: a battery
+    is unbounded in size and an address that grew with it would be unreadable in
+    exactly the campaigns where reading it matters.
+
+    The encoding is **length-framed**, not delimited, and that is the second
+    thing here that is not cosmetic. This joined on ``\\x00`` between designs and
+    ``\\x01`` between a design's config entries until review, on the premise that
+    no config value could contain either -- and that premise is false by
+    construction:
+    :func:`~sciagent.experiments.dsl.operation_config` renders a
+    ``CompareCandidates`` operation's candidate set as its keys joined on
+    ``\\x00``, so one design's value carries the byte that separates designs.
+    Demonstrated rather than argued: a two-candidate design's ``op.candidates``
+    holds exactly one ``\\x00``. Under a delimited encoding a battery of designs
+    ``{"P\\x00Q", "R"}`` and one of ``{"P", "Q\\x00R"}`` build one payload, so two
+    memberships share an address -- the failure the paragraph above is about,
+    arriving through the encoding instead of through the count. Framing each part
+    with its length makes the payload decodable, and a decodable payload cannot
+    be ambiguous whatever the parts contain. ``tests/acceptance/test_a27.py``
+    decodes one to check that, rather than trusting this paragraph.
+    """
+    payload = _battery_payload(battery)
+    digest = hashlib.blake2b(payload.encode("utf-8"), digest_size=8).hexdigest()
+    return f"{len(battery)}#{digest}"
+
+
+def _battery_payload(battery: Sequence[ExperimentDesign]) -> str:
+    """Return the string :func:`battery_key` digests.
+
+    Separated from the digest so a test can decode it. What makes the term
+    trustworthy is that this is unambiguous, and a digest cannot be inspected
+    for that -- ``tests/acceptance/test_a27.py`` decodes one with a parser it
+    writes itself.
+    """
+    return _framed(
+        sorted(
+            _framed(
+                part
+                for name, value in sorted(design.config().items())
+                for part in (name, value)
+            )
+            for design in battery
+        )
+    )
+
+
+def _framed(parts: Iterable[str]) -> str:
+    """Return ``parts`` concatenated so the original sequence can be recovered.
+
+    Each part is prefixed with its length in characters and a colon, so no part's
+    content can be mistaken for a boundary. The alternative -- picking a
+    separator believed not to occur in the parts -- is what
+    :func:`battery_key` did until a config value was found carrying it.
+    """
+    return "".join(f"{len(part)}:{part}" for part in parts)
+
+
+def cell_key(
+    task: CellTask, address: CampaignAddress, *, battery: Sequence[ExperimentDesign]
+) -> ExperimentKey:
     """Return the content address one replicate of one cell is recorded at.
 
     Guarantees the address covers every coordinate that should determine the
     cell -- the matrix, the system, the scenario, the replicate, the partition,
-    the environment, data and metric versions, and the seed -- and nothing that
-    should not. Two cells share an address only if they are the same work.
+    the environment, data and metric versions, the reading of §8's dimensions the
+    cell was scored under, the held-out battery it was scored on, and the seed --
+    and nothing that should not. Two cells share an address only if they are the
+    same work.
+
+    ``battery`` is keyword-only and **has no default**, which is the point of it.
+    A default would reproduce exactly the failure the paragraph below describes:
+    a caller who forgot it would not raise, the cell would be *skipped*, and its
+    stale reading reported as the new campaign's. See :func:`battery_key`.
+
+    ``dimensions`` is here because none of the version *columns* moves when a
+    dimension's definition changes: they describe the environment, its data and
+    its diagnostic catalogue, while D1-D6 are computed in
+    :mod:`sciagent.eval.scoring` from the truth and the table. Without it,
+    ``skip_recorded`` would report a stale reading as a new campaign's. See
+    :data:`~sciagent.eval.scoring.DIMENSION_VERSION` for why it is not a
+    ``METRIC_VERSION`` bump.
 
     The replicate is zero-padded so that a ledger sorted as text reads in
     replicate order, which is the order anybody inspecting one expects.
@@ -311,6 +414,8 @@ def cell_key(task: CellTask, address: CampaignAddress) -> ExperimentKey:
         config=FrozenDict[str, str](
             {
                 "matrix": MATRIX_VERSION,
+                "dimensions": DIMENSION_VERSION,
+                "battery": battery_key(battery),
                 "system": task.cell.system,
                 "scenario": str(task.cell.scenario),
                 "replicate": f"{task.replicate:02d}",
@@ -336,6 +441,7 @@ def run_matrix(
     *,
     address: CampaignAddress,
     scenario_seed: Callable[[ScenarioId], Seed],
+    battery: Callable[[ScenarioId], Sequence[ExperimentDesign]],
     execute: Callable[[CellTask], CellReading],
     ledger: CampaignLedger,
     skip_recorded: bool = True,
@@ -352,6 +458,22 @@ def run_matrix(
     and graph, run the system -- and returns a :class:`CellReading`. It is a
     callback rather than something this module does because ``sciagent`` may not
     import an environment.
+
+    ``battery`` returns the scenario's preregistered held-out battery, and is a
+    callback for the same reason ``scenario_seed`` is: the declaration lives on
+    the environment's :class:`~sciagent.eval.scenarios.Scenario` instances and
+    this module may not reach them. It goes into the address rather than only
+    into the reading, because D2 and D3 mean something different under a
+    different battery and no version *column* moves when membership changes --
+    see :func:`battery_key`. Required rather than defaulted for the reason spelt
+    out at :meth:`CampaignAddress.of`: an omitted address term does not raise, it
+    makes the cell *skip*.
+
+    It is checked against what ``execute`` reports having scored on
+    (:attr:`CellReading.battery`) before the row is recorded, and a disagreement
+    raises. The check is not ceremony: this callback and
+    :func:`reading_of`'s scenario lookup are two independent resolutions of one
+    fact, and until review found it, nothing but a docstring said they agreed.
 
     It returns a ``CellReading`` and not a float mapping **so that a partial or
     invented payload cannot be authored**. An earlier version took
@@ -389,8 +511,13 @@ def run_matrix(
     entries: list[LedgerEntry] = []
     seen: dict[Digest, str] = {}
     for cell in cells:
+        # Resolved once per cell rather than once per replicate, so that every
+        # replicate of a cell is addressed on one battery even if the callback
+        # is not a pure function.
+        declared = tuple(battery(cell.scenario))
+        addressed = battery_key(declared)
         for task in tasks_of(cell, scenario_seed(cell.scenario)):
-            key = cell_key(task, address)
+            key = cell_key(task, address, battery=declared)
             if key.digest in seen:
                 raise MalformedDesignError(
                     f"replicate {task.name} has the same address as "
@@ -406,7 +533,19 @@ def run_matrix(
                 skipped += 1
                 entries.append(recorded)
                 continue
-            entries.append(ledger.append(key, reading=execute(task).as_payload()))
+            reading = execute(task)
+            if reading.battery != addressed:
+                raise MalformedDesignError(
+                    f"replicate {task.name} was addressed on battery "
+                    f"{addressed!r} and scored on {reading.battery!r}. The "
+                    f"address is built from this call's ``battery`` callback and "
+                    f"the reading from the scenario ``execute`` actually ran, so "
+                    f"the two disagreeing means the callback and the scenario "
+                    f"are not the same declaration. Recording it would put a "
+                    f"reading of one question set at the address of another, "
+                    f"which is what the battery term exists to prevent"
+                )
+            entries.append(ledger.append(key, reading=reading.as_payload()))
             ran += 1
     return MatrixOutcome(ran=ran, skipped=skipped, entries=tuple(entries))
 
@@ -447,6 +586,24 @@ class CellReading:
     from D1, which is the distance to the *leading* structure: a system can hold
     the truth and conclude something else, and reporting only one of the two
     would hide that."""
+
+    battery: str
+    """:func:`battery_key` of the battery D2, D3 and D5 were actually scored on.
+
+    Carried so :func:`run_matrix` can check the reading against the address it
+    recorded it at. The two are resolved separately and have to be: the address
+    is computed *before* the cell runs, from the caller's ``battery`` callback,
+    while the reading is scored afterwards from
+    :attr:`~sciagent.eval.scenarios.Scenario.held_out` on the run's own scenario.
+    Nothing made them agree until review pointed out that only a docstring
+    claimed they did -- and a cell recorded at one battery's address while scored
+    on another is the stale-reading failure :func:`battery_key` exists to
+    prevent, arriving from the other side.
+
+    Not in :meth:`as_payload`, which is a mapping of floats. Membership already
+    reaches the ledger through the address; this is the check, not a second
+    record of it.
+    """
 
     def as_payload(self) -> Reading:
         """Return the reading as the ledger stores it.
@@ -499,13 +656,17 @@ def reading_of(
     out of the agent's library by construction, and a distance under a grammar
     that cannot express one endpoint is undefined.
 
-    The held-out battery is *derived* rather than passed. SPEC §8 measures D2 and
-    D3 on diagnostics unused during the investigation, and
-    :func:`~sciagent.eval.scoring.dimension_vector` says in as many words that it
-    cannot check this because it cannot see what was run. This can: the run
-    carries its evidence index, so the battery is every design the scenario
-    offered that no experiment used. A caller cannot get it wrong by supplying
-    the wrong list.
+    The held-out battery is *read off the scenario* rather than passed or
+    derived. SPEC §8 measures D2 and D3 on diagnostics unused during the
+    investigation, and :func:`~sciagent.eval.scoring.dimension_vector` says in as
+    many words that it cannot check this because it cannot see what was run. This
+    could -- the run carries its evidence index -- and until gate A27 it did,
+    which made the battery a function of what the arm chose to run and graded two
+    arms on one scenario against different question sets. It is now
+    :func:`held_out_battery`, which is
+    :attr:`~sciagent.eval.scenarios.Scenario.held_out` and nothing else. A caller
+    still cannot get it wrong by supplying the wrong list, because a caller still
+    does not supply one; what changed is which right answer it gets.
 
     ``observations`` cannot be derived the same way -- an
     :class:`~sciagent.inference.interface.Observation` carries the engine's
@@ -551,24 +712,50 @@ def reading_of(
             inadequate=run.ppc.inadequate,
             experiments=run.experiments,
             structural_distance=run.structural_distance,
+            battery=battery_key(held_out_battery(run)),
         ),
         grown,
     )
 
 
 def held_out_battery(run: ScenarioRun) -> tuple[ExperimentDesign, ...]:
-    """Return the designs the scenario offered and the investigation never ran.
+    """Return the battery this run's D2 and D3 are scored on: the scenario's own.
 
-    What SPEC §8 means by "diagnostics unused during the investigation". Empty
-    when a system ran every design the scenario offered, in which case D2 and D3
-    are ``nan`` -- the honest reading of a question never asked, and the reason
+    Guarantees the answer is a function of
+    :attr:`~sciagent.eval.scenarios.Scenario.held_out` alone, so two arms with
+    different run histories on one scenario are graded on one question set --
+    on D2, D3 **and D5**, all three of which read the battery. That
+    is gate A27, and it is the only guarantee here worth having -- the reading
+    itself is one attribute access.
+
+    **This replaces a derivation, and the reversal is deliberate.** Until A27
+    this returned every offered design the investigation did *not* run, which
+    read SPEC §8's "diagnostics unused during the investigation" literally and
+    made the battery a function of what the arm chose. ``docs/DECISIONS.md``
+    (2026-08-17) recorded that as a closure -- ``dimension_vector`` cannot check
+    the battery excludes what was run, and this function could -- and the closure
+    was real. What it missed is that the property it bought is worth less than
+    the one it spent: measured over the recorded matrix, ``n_held_out`` came out
+    {3,2} for the V-arms, {2} for B4/B5 and 0 for B1, whose D3 was therefore
+    ``nan`` on all twenty S11 rows. An instrument whose question set moves with
+    the answer is not an instrument, and no cross-arm D2/D3 comparison was clean,
+    including the §9 contrast the matrix exists for.
+
+    The cost of the reversal is stated at
+    :attr:`~sciagent.eval.scenarios.Scenario.held_out`: an arm that ran a battery
+    design is now scored on a question it asked. Empty means the scenario
+    declares no battery, and D2 and D3 are ``nan`` -- the honest reading of a
+    question never asked, and the reason
     :attr:`~sciagent.eval.scoring.DimensionVector.n_held_out` is reported beside
     them rather than left implicit.
 
-    A scenario's Stage A design is *not* excluded. It is framework apparatus the
-    system neither chose nor could cite, so it was never used *by the
-    investigation*, and holding it out is what keeps the battery identical
-    across arms.
+    Kept as a function rather than inlined because it is the one place the
+    battery is resolved **for scoring**. There is a second resolution for
+    *addressing* -- :func:`run_matrix`'s ``battery`` callback, which has to run
+    before the cell does and so cannot read a scenario off a run that does not
+    exist yet. The two are reconciled by
+    :attr:`CellReading.battery` rather than by this sentence: an earlier version
+    of it claimed there was one resolution, which review corrected, and a
+    docstring is not what CLAUDE.md's second invariant asks for.
     """
-    used = {record.template for record in run.evidence.ordered()}
-    return tuple(design for design in run.scenario.designs if design.id not in used)
+    return run.scenario.held_out

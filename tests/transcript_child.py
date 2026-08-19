@@ -68,7 +68,8 @@ def addresses() -> dict[str, str]:
         engine = EmpiricalTableEngine(graph, table, simulate=simulator(GRAMMAR))
         investigation = Investigation(
             scenario_id=the_scenario.id,
-            designs=the_scenario.designs,
+            # `brief()` and not `.designs`; see `eval/campaign.py`.
+            designs=the_scenario.brief(),
             truth=the_scenario.executed,
             executor=executor(
                 GRAMMAR,

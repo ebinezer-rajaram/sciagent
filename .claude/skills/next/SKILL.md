@@ -51,7 +51,7 @@ the §6 text — the criterion is written there, in the same `test_aNN` form, an
 §6 does not define it. Read the *one* entry:
 
 ```sh
-grep -n 'test_a26_' docs/BACKLOG.md      # the cursor's gate; one hit, the **Gate.** line
+grep -n 'test_a<NN>_' docs/BACKLOG.md    # <NN> is the cursor's gate; one hit, its **Gate.** line
 ```
 
 then read from the `## ` above that line to the `## ` below it. **Do not index
@@ -59,7 +59,7 @@ sections by position** — the file is chronological and its gated tail is in
 *gate* order, neither of which is rank order, so "the Nth section" is not
 "rank N". The gate number from the cursor is the only reliable key.
 
-Then `grep -n "A26\b" docs/DECISIONS.md` for prior decisions. The
+Then `grep -n "A<NN>\b" docs/DECISIONS.md` for prior decisions. The
 entry's **Touches.** line names any frozen decision the work would move — if it
 names one, say so before building, because that is a question for the user.
 

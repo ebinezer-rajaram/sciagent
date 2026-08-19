@@ -26,6 +26,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import Final
 
 from sciagent.core.edits import Defect, EditGrammar
 from sciagent.core.errors import DiagnosisError
@@ -42,6 +43,7 @@ from sciagent.inference.empirical import EmpiricalTable
 from sciagent.inference.interface import Observation, Simulator
 
 __all__ = [
+    "DIMENSION_VERSION",
     "ClosedWorldScore",
     "DimensionVector",
     "closed_world_score",
@@ -50,6 +52,39 @@ __all__ = [
     "leading_structure",
     "primary_dimension",
 ]
+
+#: Which reading of §8's six dimensions a recorded cell was scored under. In
+#: every cell address, so a campaign scored under one reading cannot be pooled
+#: with, or silently resumed from, one scored under another.
+#:
+#: **This is the eval layer's own version, and it exists because no other term
+#: moves when a dimension changes.** A cell's address carries ``env_version``,
+#: ``data_version`` and ``metric_version``; the first two describe the
+#: environment and its data, and the third is a content hash over the
+#: *environment's diagnostic catalogue*. D1-D6 are computed here, from the truth
+#: and the table, and appear in none of them -- so before this constant a change
+#: to a dimension moved nothing, and
+#: :func:`~sciagent.eval.matrix.run_matrix`'s ``skip_recorded`` default would
+#: report the stale reading as the new campaign's without executing anything to
+#: disagree with it.
+#:
+#: Bumping ``METRIC_VERSION`` instead was the obvious alternative and is wrong,
+#: measured rather than argued: the metric version reaches every
+#: :class:`~sciagent.inference.binning.Discretisation`'s content hash through
+#: ``str(MetricRef)``, so it addresses the empirical tables too. A dimension
+#: change would then invalidate every cached table and force a 3m11s rebuild to
+#: reproduce bit-identical rows, on every machine and in every worktree, for a
+#: change that touches no estimator.
+#:
+#: Carried inside the cell key's ``config`` rather than as a column on
+#: :class:`~sciagent.eval.matrix.CampaignAddress`, exactly as
+#: :data:`~sciagent.eval.matrix.MATRIX_VERSION` is -- a version the eval layer
+#: owns, in the address, with no ledger schema change.
+#:
+#: ``spec8/2`` is the A26 reading: D2 proper rather than modal, D4 excluding the
+#: candidate's own structure. ``spec8/1`` was never written down, and is what
+#: every row recorded before 2026-08-19 was scored under.
+DIMENSION_VERSION: Final = "spec8/2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,9 +181,14 @@ class DimensionVector:
     better; ``0`` is exact structural recovery."""
 
     d2_held_out_predictive: float
-    """Mean log2 probability the candidate assigns to the outcome the truth most
-    often produces, on designs the investigation never ran. Higher is better;
-    ``-inf`` if the candidate ruled out something that happens."""
+    """Mean expected log2 probability the candidate assigns to the truth's
+    outcomes, on designs the investigation never ran. Higher is better; ``-inf``
+    if the candidate ruled out something that happens.
+
+    A **proper** score: over all distributions on the same cells it is maximised
+    by the truth, so hedging correctly cannot lose to overconfidence. Until A26
+    it read the truth's modal cell alone, which a point mass on that cell
+    maximised."""
 
     d3_intervention_similarity: float
     """One minus the mean Jensen-Shannon divergence between the candidate's and
@@ -160,10 +200,15 @@ class DimensionVector:
 
     d4_explanatory_coverage: float
     """Total log2-likelihood improvement the candidate offers over the best
-    hypothesis already entertained, summed across recorded experiments where it
-    does better. Non-negative by construction: §8 asks about *improvement* on
-    poorly-explained results, so an experiment the existing set already explains
-    contributes nothing rather than a penalty."""
+    *other* hypothesis already entertained, summed across recorded experiments
+    where it does better. Non-negative by construction: §8 asks about
+    *improvement* on poorly-explained results, so an experiment the existing set
+    already explains contributes nothing rather than a penalty.
+
+    The candidate's own structure is excluded from the comparison set, which A26
+    added and without which this is identically zero -- see
+    :func:`_explanatory_coverage`. The clipping is per experiment, so an
+    experiment the candidate loses cannot cancel one it wins."""
 
     d5_enabled_experiment_value: float
     """Expected information gain, in bits, of the best experiment the candidate
@@ -231,6 +276,40 @@ def jensen_shannon_bits(left: Sequence[float], right: Sequence[float]) -> float:
     return min(1.0, max(0.0, divergence))
 
 
+def _predictive_log_score(mine: Sequence[float], theirs: Sequence[float]) -> float:
+    """Return D2's per-design term: the expected log2 probability under ``theirs``.
+
+    Guarantees propriety. By Gibbs' inequality the value is maximised, over every
+    distribution on the same cells, exactly when ``mine`` equals ``theirs`` -- so
+    a candidate cannot improve its score by being more confident than the truth
+    warrants. That is the property the dimension exists to have and the reading
+    this replaced did not: D2 was ``log2 mine[modal]`` at the truth's most
+    frequent cell alone, which a point mass on that cell maximises. See A26.
+
+    ``-inf`` when the candidate rules out a cell the truth reaches, which is what
+    the modal reading got right and is kept. A cell the truth never reaches
+    contributes nothing whatever the candidate says about it -- the ``0 log 0 =
+    0`` convention, not a special case.
+
+    Summation is by :func:`math.fsum` over the cells in order.
+    """
+    if len(mine) != len(theirs):
+        raise DiagnosisError(
+            f"cannot score a distribution over {len(mine)} cells against one "
+            f"over {len(theirs)}"
+        )
+    if not mine:
+        raise DiagnosisError("cannot score a distribution over no cells")
+    terms: list[float] = []
+    for weight, probability in zip(theirs, mine, strict=True):
+        if weight <= 0.0:
+            continue
+        if probability <= 0.0:
+            return -math.inf
+        terms.append(weight * math.log2(probability))
+    return math.fsum(terms)
+
+
 def _entropy_bits(values: Sequence[float]) -> float:
     """Return the Shannon entropy of a distribution, in bits, skipping zeros."""
     return -math.fsum(value * math.log2(value) for value in values if value > 0.0)
@@ -284,11 +363,19 @@ def dimension_vector(
     against one battery without re-simulating -- the difference between a scoring
     pass that costs seconds and one that costs an hour.
 
-    ``held_out`` must be designs the investigation did *not* run: §8 measures D2
-    "on diagnostics unused during the investigation", and a design the system
-    already saw would measure fit rather than prediction. Nothing here checks it,
-    because this function cannot see what was run. The caller holds the history
-    and it is the caller's to honour.
+    ``held_out`` is the battery D2, D3 **and D5** are defined over -- three
+    dimensions, not the two the first two names suggest, since
+    :func:`_enabled_value` reads it as the set of questions a candidate could
+    still be asked.
+
+    §8 words it as "diagnostics unused during the investigation", and **that is
+    no longer a promise this function's caller makes.** Gate A27 replaced the
+    per-run derivation -- every offered design the arm did not run -- with a
+    battery declared on the scenario, because the derivation made the question
+    set a function of what the arm chose and graded B1 on an empty battery. So a
+    design the system ran *can* be in here. Nothing checks it and nothing is
+    meant to: see :attr:`~sciagent.eval.scenarios.Scenario.held_out` for why the
+    weaker guarantee is the better instrument, and what it costs.
 
     ``grammar`` should be the **environment's**, not the agent's. On an
     out-of-library scenario the truth is by construction outside the agent's
@@ -334,12 +421,19 @@ def _held_out_dimensions(
 ) -> tuple[float, float]:
     """Return D2 and D3, which share the held-out battery and its table rows.
 
-    D2 reads the candidate's predictive at the truth's *modal* cell -- the
-    outcome the world most often actually produces -- while D3 compares the whole
-    distributions. The two answer different questions: "would this candidate have
-    predicted what happens" versus "does it respond to intervention the way the
-    truth does". §8 keeps them apart for that reason, and R7 is the reason it
-    matters: a structure can be wrong on the first and right on the second.
+    D2 is the candidate's expected log2 probability under the truth's outcome
+    distribution -- a proper score, so the truth maximises it -- while D3
+    compares the two distributions symmetrically. The two answer different
+    questions: "would this candidate have predicted what happens" versus "does it
+    respond to intervention the way the truth does". §8 keeps them apart for that
+    reason, and R7 is the reason it matters: a structure can be wrong on the
+    first and right on the second.
+
+    D2 read ``log2 mine[modal]`` at the truth's single most frequent cell until
+    A26. That was improper -- a point mass there beat the truth itself -- so the
+    dimension paid for overconfidence. Both readings are ``-inf`` on a candidate
+    that rules out something that happens, and the mean propagates that rather
+    than averaging it away.
 
     Both read ``resolved_probabilities``, which floors an unreached cell at the
     rule-of-three bound, so neither figure treats a cell the simulation budget
@@ -352,8 +446,7 @@ def _held_out_dimensions(
     for design in held_out:
         mine = table.resolved_probabilities(candidate, design.id)
         theirs = table.resolved_probabilities(truth, design.id)
-        modal = max(range(len(theirs)), key=lambda cell: (theirs[cell], -cell))
-        predictive.append(math.log2(mine[modal]) if mine[modal] > 0.0 else -math.inf)
+        predictive.append(_predictive_log_score(mine, theirs))
         similarity.append(1.0 - jensen_shannon_bits(mine, theirs))
     mean_predictive = (
         math.fsum(predictive) / len(predictive)
@@ -372,15 +465,34 @@ def _explanatory_coverage(
     """Return D4: how much better the candidate explains what was already seen.
 
     Per recorded experiment, the candidate's log-likelihood against the best any
-    entertained hypothesis achieved, converted to bits. Only positive differences
-    are summed, because §8 asks for "likelihood improvement on previously
-    poorly-explained registered results": an experiment the existing set already
-    explains well is not a result the candidate was supposed to rescue.
+    *other* entertained hypothesis achieved, converted to bits. Only positive
+    differences are summed, because §8 asks for "likelihood improvement on
+    previously poorly-explained registered results": an experiment the existing
+    set already explains well is not a result the candidate was supposed to
+    rescue.
+
+    **The candidate's own structure is excluded from the comparison set**, and
+    that word "other" is the whole of A26. :func:`~sciagent.eval.matrix.reading_of`
+    scores a run's *leading* structure and passes the run's whole edit map as
+    ``entertained``, so the candidate is always a member; comparing it with
+    itself makes ``best >= mine`` hold on every observation and
+    ``max(0.0, mine - best)`` identically zero. Every one of the 1,120 rows of
+    the recorded campaign reads ``d4 == 0`` for that reason -- a constant
+    reported as a comparison.
+
+    Exclusion is by structure rather than by hypothesis id. A :data:`Defect` is a
+    ``frozenset`` of edits, so equality is exact and independent of iteration
+    order, and two ids carrying one structure are one structure: a candidate
+    entertained twice has still rescued nothing.
+
+    Returns ``0.0`` when the exclusion leaves nothing to compare against. There
+    is no alternative the candidate improves on, which is a coverage of zero and
+    not a missing measurement.
     """
     scored = [
         entertained[node_id]
         for node_id in sorted(entertained)
-        if table.holds(entertained[node_id])
+        if entertained[node_id] != candidate and table.holds(entertained[node_id])
     ]
     if not observations or not scored:
         return 0.0

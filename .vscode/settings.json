@@ -1,0 +1,82 @@
+{
+  // Workspace editor settings for sciagent.
+  //
+  // MEANT for version control but not yet staged -- `git add .vscode/`. Tracking
+  // it follows the same argument CLAUDE.md already makes for keeping working
+  // habits in the repository rather than in ~/.claude/: cloud sessions clone the
+  // repo and see nothing from a personal config.
+
+  // ── Interpreter ─────────────────────────────────────────────────────────────
+  // Deliberately NOT pinned here. requires-python = ">=3.12" and the uv venv is
+  // 3.12.10, and the bug worth fixing was the *global*
+  // python.defaultInterpreterPath naming a Windows Store Python 3.11 -- which
+  // overrode auto-detection and had Pylance resolving this repo against an
+  // interpreter that cannot run it. That setting is now gone, and the Python
+  // extension auto-discovers ${workspaceFolder}/.venv on every platform.
+  //
+  // Pinning it here would have to be spelled either .venv/Scripts/python.exe or
+  // .venv/bin/python, and this file is tracked precisely so Ubuntu cloud
+  // sessions read it -- so a Windows-only path would contradict the reason for
+  // tracking it, and would also miss when a git worktree is opened as the folder,
+  // since worktrees carry no .venv of their own.
+
+  // ── Ruff ────────────────────────────────────────────────────────────────────
+  // No line-length or rule selection here on purpose: ruff reads
+  // [tool.ruff] from pyproject.toml, which stays the single source of truth.
+  // Duplicating line-length = 88 in two files is how they drift.
+  "ruff.importStrategy": "fromEnvironment",
+  "editor.rulers": [88],
+
+  // ── Type checking ───────────────────────────────────────────────────────────
+  // Left at the global "basic" on purpose, NOT raised to strict.
+  //
+  // CLAUDE.md is explicit that mypy is the gate and pyright is advisory, and
+  // that code must never be edited to satisfy a pyright-only complaint. Raising
+  // Pylance to strict would mostly generate advisory squiggles you are
+  // instructed to ignore, which is worse ergonomics rather than better. Run
+  // `uv run mypy` for the answer that counts.
+
+  // ── Tests ───────────────────────────────────────────────────────────────────
+  // Test discovery deliberately off. CLAUDE.md documents that this suite is
+  // CPU-bound and that anything running alongside it costs 12-15%; VS Code
+  // re-collecting in the background is exactly that kind of uninvited load.
+  // Run it explicitly: uv run pytest -n 4 --dist loadfile
+  "python.testing.pytestEnabled": false,
+  "python.testing.unittestEnabled": false,
+
+  // ── Markdown ────────────────────────────────────────────────────────────────
+  // docs/DECISIONS.md is ~360KB of prose and docs/SPEC.md is frozen; wrapping
+  // and quiet suggestions make both bearable to read in the editor.
+  "[markdown]": {
+    "editor.wordWrap": "on",
+    "editor.quickSuggestions": {
+      "other": false,
+      "comments": false,
+      "strings": false
+    },
+    "editor.rulers": []
+  },
+
+  // ── Noise ───────────────────────────────────────────────────────────────────
+  // .cache/ holds derived empirical tables and is gitignored. Note that
+  // .claude/worktrees/ is intentionally NOT excluded here: .gitignore's own
+  // comment says worktrees should stay browsable in the explorer, and
+  // search.useIgnoreFiles already keeps search out of them.
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/.pytest_cache": true,
+    "**/.ruff_cache": true,
+    "**/.mypy_cache": true,
+    "**/*.egg-info": true
+  },
+  // .claude/worktrees/ is deliberately absent from this list. The file watcher
+  // does not consult .gitignore, so excluding it here would blind VS Code to the
+  // one tree that actually changes: a worktree created mid-session would never
+  // appear in the explorer, and an open tab from a worktree would not reload
+  // after an agent edited the file. That would also contradict .gitignore's own
+  // stated intent, which is to keep worktrees browsable.
+  "files.watcherExclude": {
+    "**/.cache/**": true,
+    "**/.venv/**": true
+  }
+}

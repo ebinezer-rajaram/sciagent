@@ -40,7 +40,11 @@ Adding the next two promotes it to build work, and both are then required:
 
 An entry stays in place when it lands: prefix the heading with
 `DONE (date) —`, or `STRUCK (date, why) —` if it was withdrawn, and leave the
-fields alone. The report marks it closed and the cursor moves past it.
+fields alone. The report marks it closed and the cursor moves past it. The two
+markers differ in one machine-read way: a `DONE` entry's gate is still a
+criterion and keeps its row, while a `STRUCK` one's gate line survives only as
+a record of what was proposed — nothing will satisfy it, so it leaves the
+namespace and its number is free again.
 
 ---
 
@@ -886,12 +890,13 @@ and re-run the pilot to confirm.
 
 ---
 
-The sixteen entries below were appended 2026-08-18 by the deep adversarial
-review (`docs/REVIEW-2026-08-18.md`, which carries the evidence, the ranked
-order and the costed experiment designs). Each carries a named acceptance
-criterion under **Gate.** (in the `test_aNN` form `scripts/status.py` tracks)
-and an effort estimate under its cost line. Gate numbers A25–A40 extend §6's
-namespace through this
+The entries below open with the sixteen appended 2026-08-18 by the deep
+adversarial review (`docs/REVIEW-2026-08-18.md`, which carries the evidence, the
+ranked order and the costed experiment designs), and continue with the ones
+raised since by review of the work that discharged them. Each carries a named
+acceptance criterion under **Gate.** (in the `test_aNN` form `scripts/status.py`
+tracks), a **Rank.** giving its place in the build order, and an effort estimate
+under its cost line. Gate numbers from A25 up extend §6's namespace through this
 file, per SPEC §13; none of them grades an already-built system: every gate
 below binds framework apparatus on constructed cases, and wherever a change
 would move a number a recorded campaign already reported, the entry says so
@@ -939,11 +944,45 @@ snapshot-hash → byte-identical `EventLog` segments across processes;
 the declared censoring model is applied and versioned; the consensus edit is
 preregistered in the environment before any system runs on a segment.
 
-**Rank.** 6
+**Rank.** 7
 **Cost.** XL (pipeline + calibration ≈ 1–2 weeks). Compute: conventional arms
 $0; V7 on 20 found segments ≈ 40 calls ≈ $4–8 live.
 
-## D4 is identically zero by construction, and D2 is not a proper score
+## DONE (2026-08-19, gate A26) — D4 is identically zero by construction, and
+## D2 is not a proper score
+
+**Done as specified, with one departure: the version term.** This entry asked
+for both fixes to ride a `METRIC_VERSION` bump. They ride a new
+`sciagent.eval.scoring.DIMENSION_VERSION` (`"spec8/2"`) instead, carried in the
+cell key's `config` exactly as `MATRIX_VERSION` already is, and checked by
+`report._at_address` so two readings cannot be pooled. The reason is measured
+rather than stylistic: `METRIC_VERSION` reaches every `Discretisation`'s content
+hash through `str(MetricRef)`, so it addresses the *empirical tables* as well as
+the ledger — bumping it would invalidate every cached table and force a 3m11s
+rebuild to reproduce bit-identical rows, in every worktree and on every machine,
+for a change that touches no estimator. Probed before the change: `1.2.0` gives
+`outcomes/6cf306b0f598cf0f` and `1.3.0` gives `outcomes/a29d5b818d9d3634`. No
+ledger schema change was needed and no `CampaignAddress` field was added.
+
+Both defects are fixed as described. D4 excludes the candidate's own structure
+from the set it is compared against — by `Defect` equality, so a duplicate id
+cannot reinstate it — and D2 is now the expected log score under the truth's
+whole distribution, `_predictive_log_score`, with the `-inf` rule unchanged.
+
+**The gate is wider than the line below asked for**, on a `/test-review` finding.
+As first written the propriety clause exercised only the kernel, so a call site
+that transposed its two arguments passed 7/7 while reinstating the exact defect —
+demonstrated by execution, not argued. `test_a26_d2_is_the_proper_score_off_the_diagonal`
+closes it: at `candidate == truth` the proper score and its transpose are
+numerically identical, so only an off-diagonal case separates them. A
+two-observation D4 case was added for the same reason — one observation cannot
+tell per-observation clipping from clipping the total.
+
+Nine tests in `tests/acceptance/test_a26.py`. `scripts/status.py` learned to read
+`**Gate.**` lines from this file, since SPEC §6 stops at A24 and is frozen, and
+reports post-freeze gates in their own block.
+
+### As proposed
 
 **Idea.** Fix D4 by excluding the candidate's own hypothesis from the
 entertained set it is compared against (`eval/matrix.py:543` passes the full
@@ -973,7 +1012,55 @@ among all candidate distributions on a constructed grid.
 **Rank.** 1
 **Cost.** M (≤ 2 days including the metric-version plumbing and tests).
 
-## A preregistered held-out battery, so arms are scored on one question set
+## DONE (2026-08-19, gate A27) — A preregistered held-out battery, so arms are
+## scored on one question set
+
+**Done as specified.** `Scenario.held_out` carries the battery, `held_out_battery`
+reads it and nothing else, and `cell_key` gained a `battery` term through a new
+`matrix.battery_key`. `run_matrix` takes a `battery` callback beside the existing
+`scenario_seed`, for the same reason that one is a callback: the declaration lives
+on the environment's scenarios and `sciagent` may not import one. The environment
+declares it once in `outcomes.held_out_designs`, and `tests/test_scoring.py`'s
+`HELD_OUT` — the precedent this entry named — is now an alias for that rather than
+a second list. Eleven tests in `tests/acceptance/test_a27.py`.
+
+**The reading the entry did not fix, taken deliberately.** The battery is a
+declared *subset of the offered designs*, not a set withheld from the offer. The
+slice has exactly one intervention and SPEC §4.2 makes it the only design
+separating Hawkes from regime switching, so reserving it would break S5's
+intervention planning, the oracle policy lengths behind A24, and S10's derived
+budget. The cost is that an arm which ran a battery design is scored on a question
+it asked; §8's "unused during the investigation" is honoured in intent rather than
+mechanically. That is a weaker guarantee than the derivation gave and a better
+instrument, because the derivation bought its guarantee by making the question set
+depend on the arm. Stated at `Scenario.held_out` rather than left to be
+rediscovered.
+
+**No `METRIC_VERSION` or `DIMENSION_VERSION` bump, and every cell address moves
+anyway.** Battery membership is in the address itself, which is what the entry
+asked for, so two readings cannot be pooled without either version moving. The
+1,120 recorded rows survive at their old addresses under append-only and are not
+re-derivable under the new one without a re-run — which is what the re-derivation
+entry below exists for, and which names this entry as its prerequisite.
+
+**The gate is wider than the line below asked for**, on a `/test-review` finding,
+and the finding was demonstrated rather than argued. As first written the address
+clause compared batteries of *different sizes*, so `battery_key = str(len(battery))`
+passed all ten assertions while leaving two batteries of three different designs
+sharing one address — reinstating exactly the stale-row failure the term exists to
+stop. The same defect appeared a second time on the scoring side: the arm-scored
+clause asserted `n_held_out`, a length, so `reading_of` could have been handed any
+three offered designs and computed D3 on a battery holding no intervention. Both
+are closed by comparing same-cardinality, different-membership batteries;
+`_swap_one_observational` is that construction.
+
+**The reversal is recorded rather than silent.** `docs/DECISIONS.md` (2026-08-17)
+closed off the derivation deliberately — `dimension_vector` cannot check that a
+battery excludes what was run and `reading_of` could. That closure was real, and
+this undoes it. `held_out_battery`'s docstring says so and says why the property
+it bought was worth less than the one it spent.
+
+### As proposed
 
 **Idea.** Fix the D2/D3 held-out battery per scenario (a function of the
 scenario declaration only), instead of deriving it per run from leftover
@@ -998,7 +1085,114 @@ membership appears in the recorded address.
 **Rank.** 2
 **Cost.** M.
 
-## The criterion-5 comparator that was never built
+## DONE (2026-08-19, gate A28) — The criterion-5 comparator that was never
+## built
+
+**Done, with one departure and one deferral, both named below.** B6 is
+`systems/hybrid.Hybrid` — V7's class — holding a
+`systems/baselines/uniform.UniformProposer` in place of an LLM proposal layer.
+`Hybrid`'s `layer` parameter, which named `ProposalLayer` concretely, is now the
+`ProposalSource` protocol that both satisfy. Nothing reimplements the loop, so
+"drawn at the same Stage A gate under the same budget split as V7" is a fact
+about construction and not a claim to audit — the same argument `memory_ablation`
+already makes for V3 and V4, and the reason `Hybrid.name` was parameterised.
+Thirty-six tests in `tests/acceptance/test_a28.py`.
+
+**Departure: the draw is the entry's second form, not its first.** The entry
+named the 48-corner `enumerate_edits(1)` stratification as the cheap first form.
+It is cheap, and it is the wrong comparator. A grid box's corners are where the
+degenerate parameterisations live — `BeamSearch` says so at `_UNSCORABLE`, having
+found them by enumerating exactly those corners — so a B6 confined to them would
+lose for a reason unrelated to random generation. A deflator that is too easy to
+beat flatters V7, which is the direction SPEC §12's "beating B4 or B5 is the
+research question rather than an exit criterion" can least afford. So the draw is
+uniform over the menu cell and then over each of that cell's grid indices: V7's
+action space exactly, which makes the two arms differ in how a point in it is
+chosen and in nothing else. Decided with the user before implementation; the cost
+is bounded at ≤40 novel table rows for the whole cell and is stated at
+`uniform_draft`.
+
+**Deferral: the "while here" half of the 2×2 is A34's, not this entry's.**
+B4-with-BOED-selection is what "Comparator parity: selection policy is confounded
+with proposal source" (gate A34, below) exists to decide, and doing it here would
+have settled A34's question in a change nobody was reviewing for it.
+
+**B6 is not a fifty-seventh cell of SPEC §9.** `environments/pointproc/matrix.py`
+says "Do not add an arm" three lines above `SPEC9_CELLS`, and the rule held: the
+comparator is `CRITERION5_CELLS`, a separate declaration of one cell — B6 on S11
+at twenty replicates, which is what criterion 5 names and what makes an interval
+comparable with the V7 cell it deflates. `ALL_CELLS` is the union for the runner.
+`--systems` still defaults to §9's seven arms, so a default `run_matrix.py` pass
+records §9's matrix and nothing beside it; B6 is opt-in.
+
+**Nothing was run.** This lands the arm and its wiring, not a reading. Criterion
+5's cell is executable — `uv run python scripts/run_matrix.py <ledger> --systems
+B6`, no provider, API $0 — and deliberately unexecuted: A40 ("Re-derivation of
+the recorded matrix under fixed metrics") is where readings are produced under
+the post-A26/A27 metric and battery versions, and a B6 reading filed before it
+would be re-derived immediately.
+
+**The contradiction this resolves, per SPEC §13.** §5 lists B6 under "deferred to
+the full benchmark"; §12 criterion 5 requires B6 to score the slice. Both are
+frozen and they cannot both be satisfied, which is §13's own trigger for a change
+— "a case where two frozen decisions cannot both be satisfied". The entry
+anticipated this as "a §13 note that criterion 5 implicitly amended §5".
+`docs/SPEC.md` is untouched: §13 puts the note in the backlog and in
+`docs/DECISIONS.md`, which is where it is.
+
+**The gate is wider than the line below asked for, on a `/test-review` finding,
+and the finding was executed rather than argued.** The first version of the test
+was reviewed before any implementation existed, and came back too weak with three
+wrong implementations that each passed all 24 assertions: a proposer that ignored
+its seed and indexed from a module-level counter (every determinism assertion
+pointed at the free function `uniform_draft`, and `UniformProposer.propose` was
+never called); a proposer whose every draw was malformed, which `Hybrid` records
+as an outcome and carries on from, so the run still looked like one that proposed;
+and a draw confined to grid indices 0 and 1, which satisfied both guards meant to
+pin the full-grid form, because the grids hold 64 points and "more distinct
+indices than grids" needed only 17. The test now drives the class, names the
+outcomes a draw may legitimately have, and states the distribution's own
+statistics normalised by grid size. The three variants and what stops each are
+recorded in the test module's header, because they are the failure modes this
+gate is actually exposed to. Each was then re-executed against the corrected
+test and each is now rejected — A by
+`test_a28_b6_is_built_fresh_for_each_replicate`, B by
+`test_a28_a_drawn_proposal_never_fails_to_decode`, C by
+`test_a28_most_of_every_grid_is_actually_drawn`.
+
+**`/preflight`'s review then found a fourth, and one thing this change gave
+away.** `/code-review` constructed a proposer whose call counter increments but
+never reaches the draw — `uniform_draft(menu, seed, 0)` every time — which
+survived the rewrite because every remaining test read either the free function
+or a *fresh* proposer's first call, and both agree with a constant index. In a
+run B6 would propose one structure twice, `Hybrid._admit` would record the second
+as `"duplicate"` — a legitimate outcome — and the arm would quietly take half
+V7's effective proposal budget with the gate green.
+`test_a28_the_proposer_draws_the_function_s_sequence` closes it. The same review
+found the module had no golden pin at all, so a changed draw formula would leave
+everything green while silently invalidating recorded readings; the determinism
+lens had raised the same gap independently, and
+`test_a28_the_draw_stream_is_pinned_to_recorded_values` now exists to go red.
+
+The thing given away was in `hybrid.py`: `_slug` lived inside `ProposalLayer`, so
+while `Hybrid` held that class concretely, every name reaching the graph had been
+through it. Widening to `ProposalSource` turned that into a guarantee each source
+had to remember — and `eval/scoring.py` reserves the id `__candidate__` for D5's
+candidate slot, so a hypothesis carrying it would have its structure overwritten
+and its mass dropped from the comparison belief. Not reachable through either
+shipped source, but SPEC's second invariant asks for a runtime assertion rather
+than a convention, so the slug is now applied in `Hybrid._admit` and is public as
+`slug_hypothesis_name`. It is idempotent, so V7's node ids do not move.
+
+Two further review findings are worth naming because they were wrong in the
+*documentation* rather than the code. The `min` clamp in `_uniform_index` was
+justified by a rounding carry that does not exist — `int((1 - 2**-53) * size)` is
+below `size` for every size from 2 to 300000, and at 3 the product is
+`2.9999999999999996` — so the guard stays, unreachable, and now says so. And the
+two grid-coverage tests pooled every grid into one list while their names claimed
+a per-grid property; they are per grid now, each against its own size.
+
+### As proposed
 
 **Idea.** Build the B6-equivalent arm SPEC §12 criterion 5 names: a uniform
 proposer over the agent grammar, drawn at the same Stage A gate under the
@@ -1078,7 +1272,7 @@ constructed runs yields an adjudication rate and a per-run contradiction
 count in its recorded output; an injected zombie claim is counted, not
 silently absent.
 
-**Rank.** 7
+**Rank.** 8
 **Cost.** M–L.
 
 ## The ledger payload omits what three §12 criteria read
@@ -1104,7 +1298,7 @@ Couples to the criterion-4 entry (which flag) and the re-derivation entry
 run's payload carries autonomy fraction, both detection flags and both
 masses; render shows the autonomy fraction beside every dimension block.
 
-**Rank.** 8
+**Rank.** 9
 **Cost.** M.
 
 ## Append-only is breached by a foreign REPLACE, and A14 has a module-scope blind spot
@@ -1134,7 +1328,7 @@ a fresh raw connection with default pragmas fails and the row is unchanged;
 the A14 analyser finds a planted module-level violation; no module under
 `sciagent.systems` references the store or ledger types.
 
-**Rank.** 9
+**Rank.** 10
 **Cost.** M.
 
 ## The verification substrate has unversioned randomness, caches and dependencies
@@ -1164,7 +1358,7 @@ that verify it.
 registered and in force under pytest; a table cached under one simulator-code
 digest is refused under another; the rendered report names the numpy version.
 
-**Rank.** 10
+**Rank.** 11
 **Cost.** M.
 
 ## Comparator parity: selection policy is confounded with proposal source
@@ -1195,7 +1389,7 @@ the contrast declaration records the bounding comparison; and a self-serving
 explicit prediction that contradicts the structure's table row is refused or
 marked agent-authored.
 
-**Rank.** 11
+**Rank.** 12
 **Cost.** M.
 
 ## Refusals break replay, and the corpus has no in-repo hash
@@ -1222,7 +1416,7 @@ the scheme).
 a refusal replays byte-identically with zero misses; the corpus hash is
 resolvable from the repository.
 
-**Rank.** 12
+**Rank.** 13
 **Cost.** S–M.
 
 ## Elicitation hygiene: a priming example, a cold cache, one sample
@@ -1254,7 +1448,7 @@ menu mechanism name appears anywhere in the schema or its examples; the
 address version differs from the recorded campaign's; k-sample mode stores k
 indexed calls and admits deterministically.
 
-**Rank.** 13
+**Rank.** 14
 **Cost.** M. Live cost of k-sampling: (k−1) × $0.098 per firing at current
 rates.
 
@@ -1277,10 +1471,48 @@ difference on one dimension is still one dimension.
 constructed paired rows the report carries the within-seed difference and its
 interval, and refuses the paired reading when the seed sets differ.
 
-**Rank.** 14
+**Rank.** 15
 **Cost.** S.
 
-## A LICENSE and a CI gate, before any third party reads this
+## DONE (2026-08-19, gate A38) — A LICENSE and a CI gate, before any third
+## party reads this
+
+**Done as specified.** `LICENSE` carries the Apache-2.0 text with the appendix
+boilerplate completed; `pyproject` declares `license = "Apache-2.0"` and
+`license-files = ["LICENSE"]` in the PEP 639 form hatchling supports.
+`.github/workflows/check.yml` runs `uv run mypy`, `uv run ruff check .`,
+`uv run ruff format --check .` and `uv run pytest -n 4 --dist loadfile` on push
+and pull request. Seven tests in `tests/acceptance/test_a38.py`.
+
+**The licence is the user's choice, taken rather than inferred.** Apache-2.0 over
+MIT and BSD-3 for the patent grant, which is what legal review at an institution
+looks for.
+
+**Two `/test-review` findings, both demonstrated by execution rather than argued.**
+(1) The workflow clause enumerated *mechanisms* — `upload-artifact`, the literal
+`cache/tables`, `git push`, `git commit` — and a workflow caching `path: .cache`
+passed all four while persisting Ubuntu-built tables into every later job. That is
+not a contrived bypass: table acquisition is 3m11s cold against 1.055s warm, so
+whoever watches CI spend three extra minutes a push reaches for exactly that step.
+The clause now states the condition — no cross-job cache, no mention of the
+repository's cache directory — and the workflow deliberately has no `actions/cache`
+step at all. (2) `-n 4` was never asserted, and `--dist loadfile` does nothing
+without it: `uv run pytest --dist loadfile` alone runs serially, so the gate would
+have accepted a job at 262.44s claiming the 151.30s invocation. Both flags are now
+asserted on the same line. The review also found the `pyproject` parameter of the
+tracked-path test could never go red, since no implementation of A38 could untrack
+it; it was dropped rather than counted.
+
+**One thing the module learned about itself.** The forbidden-token scan first read
+the raw YAML and failed on the workflow's *own comment* explaining that it
+deliberately has no `actions/cache` step. Comment lines are stripped now: an
+assertion that a mechanism is absent must not be satisfiable or breakable by prose
+describing its absence.
+
+**What this cannot check, and does not claim to.** Whether CI passes lives in the
+forge. The gate line says so, and the assertions are about the workflow's content.
+
+### As proposed
 
 **Idea.** Add a LICENSE (and the `pyproject` license field), and a minimal
 check-only CI workflow: `uv run pytest -n 4 --dist loadfile` plus
@@ -1303,7 +1535,39 @@ mypy. (The green run itself lives in the forge, not the test.)
 **Rank.** 16
 **Cost.** S.
 
-## The scale-up document §12 criterion 12 asks for
+## DONE (2026-08-19, gate A39) — The scale-up document §12 criterion 12 asks for
+
+**Done as specified.** `docs/SCALE-UP.md` consolidates all six fragments the entry
+names, each with the contract it moves: the Stage A battery (§4.6 gains a
+combination rule; `Scenario.stage_a` becomes a sequence), `ENV_VERSION` as the
+content hash §3.2 already promises and does not keep, the `Environment` protocol's
+disposition (no `class Environment(Protocol)` exists; the surface is module
+functions reached through callbacks, so F4 is either implemented or amended),
+model tier, grammar sensitivity, and F12's staging rule for the likelihood-free
+engine. Eight tests in `tests/acceptance/test_a39.py`.
+
+**The model-tier entry is in the document reporting *no* interface change, and
+that is deliberate.** The tier already reaches the transcript address through
+`Provider.model`. A scale-up document that omitted it would imply a contract has
+to move where none does.
+
+**A `/test-review` finding that mattered more than it looks.** The module's
+docstring claimed each item was checked "named together with the thing it is
+about" and the code checked substring membership over one blob of the whole file —
+which is a different statement, and both senses of "battery" and of "content hash"
+already coexist in this repository's own docs. The reviewer built a passing
+counterexample: a 3,245-character *index* of six note titles with pointers, which
+documents zero interface changes and says so, and which passed the module
+unchanged. Closed three ways — the pairing is now scoped to a `##` section, each
+item must name its *claim* and not only its subject (`not yet`/`becomes` near the
+version promise, `convention` near the protocol), and at least four sections must
+name an interface. The same review found the anti-skeleton guard read the raw text
+while every other check went through a lowercased helper, so a document ending
+"todo: everything above this line" passed the whole gate; it is case-insensitive
+now. The length floor is kept and explicitly not load-bearing — the counterexample
+cleared it on filler.
+
+### As proposed
 
 **Idea.** Write `docs/SCALE-UP.md`: the interface changes the slice showed
 are required for the 104-scenario benchmark, consolidated from the fragments
@@ -1353,5 +1617,127 @@ sequencing: instruments first, decided cold; re-derivation second, labelled.
 holding rows under two metric versions renders them separately, refuses to
 pool them, and the replayed campaign reports `store.misses == 0`.
 
-**Rank.** 5
+**Rank.** 6
 **Cost.** M (≈ 20 min conventional + ≈ 2 h replay + report plumbing). API $0.
+
+## The ground truth is on the `Investigation` public surface, twice
+
+**Idea.** Close two read paths by which a research system can reach the
+scenario's truth, and replace the comments that currently claim it cannot with
+enforcement. (1) `ExecutionResult.defect` **is** the truth
+(`experiments/executor.py:394-404`), and `Investigation.run` appends that object
+to `_history`, which `Investigation.history` republishes as a public property
+(`systems/base.py:170-172, 256-261`) — so `investigation.history[-1].defect`
+hands a system D1 = 0, D2/D3 maximal and `log_score` = 0. (2) `EngineView.table`
+gives a system the whole `EmpiricalTable`, whose `structures` are *readable*
+renderings rather than hashes (`inference/empirical.py:200, 226-231, 298-300`),
+and the campaign table is threaded from cell to cell — so every previous cell's
+truth, parameters and all, is in the artefact each campaign loads. Fixes: project
+the history a system sees onto a record without `defect`, and give the table
+handed through `EngineView` opaque structure keys.
+
+**Rationale.** Found by `invariant-auditor` lens 2 during A26's preflight, and
+confirmed at runtime rather than argued: `history[0].defect is truth` returns
+`True`, and `AddDependency(size->arrival|size|exponential|base_rate=...,decay=...,
+excitation=...)` — S11's out-of-library truth — appears six times in
+`.cache/tables/matrix-2000-20260803-e084e2009916.json`, the table `matrix_table()`
+loads at the start of every campaign. Both are **pre-existing** and neither is
+read by any shipped system (`rg "\.defect"` over `src/` returns nothing), so
+no recorded result is known to be affected. What makes them worth an entry is
+that four separate docstrings state the opposite as a guarantee —
+`systems/base.py:74-76` ("cannot reach the ground truth through any public
+attribute or method"), `systems/base.py:14-16`, `eval/scoring.py:19-21` and
+`:379-381` — and invariant 2 says to enforce with runtime assertions, not
+comments. `tests/test_llm.py:390` asserts the brief is clean and gives as its
+reason "the only path to it is `Scenario.truth` and an `Investigation` has none",
+which is false; the assertion passes, the reason does not.
+`test_the_truths_parameters_do_not_appear_when_it_is_not_entertained` checks the
+brief, and the table behind the brief is the leak.
+
+**Touches.** No frozen decision — invariant 2 already demands this. Touches
+`systems/base.py`'s public surface (a system reading `history[i].defect` would
+break, and none does) and the `EngineView` table contract.
+
+**Gate.** `test_a41_the_truth_is_not_on_the_investigation_surface` — no public
+attribute or method of `Investigation` returns, contains or renders the
+scenario's truth, checked by traversal rather than by name; and a structure key
+reachable from `EngineView.table` does not disclose a defect's parameters.
+
+**Rank.** 18
+**Cost.** M. No API the shipped systems use is affected.
+
+## D4 now rewards entertaining fewer alternatives
+
+**Idea.** Decide, cold, what D4's comparison set is: the system's own entertained
+hypotheses (what A26 implemented) or a fixed per-scenario reference set. If the
+former stands, report the size of the comparison set beside D4 the way
+`n_held_out` accompanies D2 and D3, so a figure cannot be read without knowing
+what it was compared against.
+
+**Rationale.** Raised by `invariant-auditor` lens 2 against the A26 fix, as a
+suspicion rather than a violation: no number is authored by a system — D4 is
+derived in the framework from structure, the same sanctioned channel as D1 and
+D6 — but the surface is *newly live*, because D4 was identically zero before
+A26. With the candidate excluded, `best` is a max over the other entertained
+structures, so entertaining an additional alternative can only raise `best` and
+therefore only lower D4. A system with a rich library (V1) is penalised relative
+to one entertaining a single weak alternative, and a system whose leader is the
+null with nothing else entertained scores 0.0 through the empty-set branch —
+indistinguishable in the ledger from the identically-zero bug A26 fixed. SPEC
+§8's wording, "likelihood improvement on previously poorly-explained registered
+results", does not say whose set the improvement is over. This is the moment to
+say so, before the re-derivation entry below fixes a reading into recorded rows.
+
+**Touches.** §8's D4 reading, in its computed form. A fixed reference set would
+be a change to what the dimension means; reporting the set size alongside is
+additive and touches nothing. Couples to the payload entry above and to the
+re-derivation entry below, which should not run before this is settled.
+
+**Gate.** `test_a42_d4_names_the_set_it_improved_on` — the payload carries the
+size of the comparison set beside D4, and a candidate scoring 0.0 because the set
+was empty is distinguishable from one scoring 0.0 because it was outperformed.
+
+**Rank.** 19
+**Held.** a cold decision on D4's comparison set
+**Cost.** S for the reporting; the semantic decision is the user's.
+
+## The report layer checks the battery's presence, not its value
+
+**Idea.** Give `summarise` a `battery: Callable[[ScenarioId], Sequence[ExperimentDesign]]`
+parameter, the sibling of the `scenario_class` callback it already takes and of
+the `battery` callback `run_matrix` takes, and have `_at_address` compare each
+row's battery term against the expected one for its scenario instead of merely
+requiring the term to be present.
+
+**Rationale.** Raised by `/code-review` against the A27 change, as the one
+finding that landed with the fix rather than being closed by it. `battery` is
+the only address term checked for presence: `dimensions` is compared against a
+module constant, and the battery cannot be, because a battery is declared per
+scenario on an environment and `sciagent` may not import one. So a report built
+*entirely* on rows scored under a superseded battery is accepted and rendered as
+though it were current. `_refuse_mixed_batteries` does not catch it — it fires
+only when two batteries coexist for one scenario — and the case is not exotic:
+any future battery change makes every earlier row exactly that.
+
+Two halves were taken with A27 and this is the half that was not. The term is
+now rendered per cell (`CellSummary.battery`), so a reader holding the
+declaration can compare, and the "no row matches" diagnostic names a row
+excluded for its battery instead of listing the terms it matched. Both make the
+failure visible; neither makes it refuse. Deferred rather than done because the
+parameter is required to be worth anything — an optional one defaulting to the
+present behaviour reproduces the defect for every caller who forgets it, which
+is the argument `cell_key`'s own `battery` parameter is written on — and making
+it required touches every `summarise` call site.
+
+Sequencing: before A40. The re-derivation is what first puts two generations of
+battery in one ledger, and this is the check that keeps them apart.
+
+**Touches.** No frozen decision. `summarise`'s signature, and every caller.
+
+**Gate.** `test_a43_a_superseded_battery_is_refused_rather_than_rendered` — a
+ledger holding only rows scored under a battery the scenario no longer declares
+raises rather than reporting, and the message names both terms; a ledger at the
+declared battery reports unchanged.
+
+**Rank.** 5
+**Cost.** S.

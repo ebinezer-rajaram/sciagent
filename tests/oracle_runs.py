@@ -66,7 +66,11 @@ def _entertained(
     engine = EmpiricalTableEngine(graph, table, simulate=simulator(GRAMMAR))
     investigation = Investigation(
         scenario_id=scenario.id,
-        designs=scenario.designs,
+        # `brief()` and not `.designs`, for the reason `eval/campaign.py` gives:
+        # it is the documented whitelist of what a system may be told, and a
+        # second door into `Investigation` that bypasses it makes the whitelist
+        # true of the campaign path alone. Identical tuples today.
+        designs=scenario.brief(),
         truth=scenario.executed,
         executor=executor(
             GRAMMAR, store=ExperimentStore.in_memory(), budget=scenario.budget

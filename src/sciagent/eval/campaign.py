@@ -221,7 +221,14 @@ def run_scenario(
     """
     investigation = Investigation(
         scenario_id=scenario.id,
-        designs=scenario.designs,
+        # `brief()` and not `.designs`, and the two are the same tuple today.
+        # `Scenario.brief` is documented as the one whitelist of what a system may
+        # be told -- "adding a field here cannot accidentally widen what leaks" --
+        # and it had **no call site anywhere in the repository**, so the mechanism
+        # holding that line was a docstring. Found by the invariant auditor when
+        # `held_out` became the first field added to `Scenario` since the claim
+        # was written. Routing through it makes the stated property true.
+        designs=scenario.brief(),
         truth=scenario.executed,
         executor=executor,
         engine=engine,

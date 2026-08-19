@@ -774,8 +774,18 @@ class TestAddressingIsDeterministic:
             import transcript_child
         finally:
             sys.path.pop(0)
+        # `check=True` raised `CalledProcessError` with the child's stderr
+        # captured and never shown, so a child that died reported only its exit
+        # status. That happened once under `-n 4` on 2026-08-19 and left nothing
+        # to diagnose from. The status is still asserted; what changed is that
+        # the failure now carries the reason.
         completed = subprocess.run(
-            [sys.executable, str(CHILD)], capture_output=True, text=True, check=True
+            [sys.executable, str(CHILD)], capture_output=True, text=True, check=False
+        )
+        assert completed.returncode == 0, (
+            f"{CHILD.name} exited {completed.returncode}\n"
+            f"--- stderr ---\n{completed.stderr}\n"
+            f"--- stdout ---\n{completed.stdout}"
         )
         expected = "".join(
             f"{name} {address}\n"

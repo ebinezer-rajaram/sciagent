@@ -147,6 +147,31 @@ spelled from the repository root on purpose. There is no top-level `sciagent/`
 or `core/`; the packages live under `src/`, and a condition naming a directory
 that does not exist is one a literal reading never fires.
 
+### The history lens
+
+Whenever the diff **modifies lines that already existed**, also delegate a
+history lens: give a `sonnet` subagent the paths from step 0 and ask it to read
+`git blame` and `git log -L` over the changed hunks, then report only what the
+history makes visible. A line reverted once before. A guard someone added
+deliberately that this diff removes. A constant whose current value is explained
+by the commit message that last set it. It reports; it does not fix.
+
+The condition is *modified lines*, not touched files, and it is not a formality:
+`git blame` on a file this diff created returns your own uncommitted work, so on
+a pure-addition diff the lens has nothing to read and running it is theatre. When
+it does not fire, say so — §3 asks for a condition correctly not firing and a
+skip of convenience to read differently, and this is the former.
+
+`sonnet`, for the reason lenses 3 and 6 take it: bounded judgement over one hunk
+at a time, and a miss is recoverable by a `git log` you could run yourself.
+
+This lens is borrowed rather than derived. It is agent #3 of the
+`code-review@claude-plugins-official` plugin, which is otherwise a poor fit here
+— it reviews GitHub pull requests, and this project merges to `main` without
+them. The lens survives that mismatch because reading history needs no PR. Its
+sibling, *read comments on prior PRs touching these files*, does not survive it
+and is deliberately not taken.
+
 ### What authorises these subagents
 
 Some sessions carry a harness line — *"Do not call the AgentTool unless the user
@@ -160,9 +185,9 @@ The principle that does hold, and the one this repository runs on:
 > **Read-only review is authorised by the work. Irreversible action is
 > authorised only by the user.**
 
-Every **subagent** this step launches is read-only: `/code-review` and the four
-lenses report and never edit. That is the part the harness line is about, and it
-is what the principle licenses.
+Every **subagent** this step launches is read-only: `/code-review`, the four
+invariant lenses and the history lens report and never edit. That is the part
+the harness line is about, and it is what the principle licenses.
 
 Be precise about the rest, because the argument is load-bearing and an
 overstatement of it would be doing real work. This skill is **not** read-only
@@ -182,12 +207,17 @@ If you do withhold a call this step prescribes, say so and say what you did
 instead. An inline self-check is not the independent judgement this step exists
 to get.
 
-`/code-review` runs as a background subagent, and with the lenses that is **five**
-concurrent agents rather than two. They are read-only and cheap against each
+`/code-review` runs as a background subagent, and with the four invariant lenses
+and the history lens that is **six** concurrent agents at the ceiling rather than
+two. Six is the ceiling and not the usual count: the invariant lenses need an
+`src/sciagent/` path and the history lens needs a modified line, and the two
+conditions are independent. A docs-only diff launches `/code-review` and the
+history lens; a diff of all-new files under `src/` launches five, because
+nothing there has a history to read. They are read-only and cheap against each
 other — but do not start any of them alongside a step-1 suite re-run. Four such
 agents were measured on 2026-08-16 costing a `-n 4` suite 12–15% while alive for
 only a fifth of it, so "read-only, so free" is the wrong premise even though the
-rule is the right one; five make it worse, not better.
+rule is the right one; six make it worse, not better.
 
 Fix what the review finds, then re-run step 1 — but only what the fixes could
 have broken. If the review changed **no** file, the freshness check still

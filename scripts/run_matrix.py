@@ -21,6 +21,18 @@ the way you want rather than the way you might fear: the replicate index is part
 of the address, so ``--replicates 1`` records replicate 00 and a later full pass
 runs 01 through 19 and skips 00.
 
+Which arms a bare invocation runs
+---------------------------------
+
+``--systems`` defaults to section 9's seven arms and to those alone, so a
+default pass records section 9's matrix and nothing beside it. B6 -- the
+comparator SPEC section 12 criterion 5 names, which section 5 defers -- is
+buildable and is opt-in: ``--systems B6`` runs its one cell, twenty
+replicates of S11, with no provider and no API cost. It is opt-in rather
+than default because its cell is not part of what section 9 preregistered,
+and a flag that quietly widened the recorded matrix would make every later
+"the matrix says" ambiguous about which matrix.
+
 Why there is no scripted provider here
 --------------------------------------
 
@@ -51,12 +63,15 @@ import time
 from collections.abc import Sequence
 from pathlib import Path
 
-from environments.pointproc.matrix import SPEC9_CELLS
+from environments.pointproc.matrix import ALL_CELLS
 from environments.pointproc.runner import (
+    ALL_SYSTEMS,
+    CRITERION5_SYSTEMS,
     LLM_SYSTEMS,
     MATRIX_SYSTEMS,
     MatrixRunner,
     ProviderFactory,
+    scenario_battery,
     scenario_seed,
 )
 from environments.pointproc.tables import matrix_table, save_matrix_table
@@ -75,8 +90,12 @@ def _parser() -> argparse.ArgumentParser:
         default=",".join(MATRIX_SYSTEMS),
         help=(
             "comma-separated arms to run, from "
-            f"{','.join(MATRIX_SYSTEMS)}. Defaults to all of them, so a run "
-            "that omits a provider refuses rather than quietly running a "
+            f"{','.join(ALL_SYSTEMS)}. Defaults to section 9's "
+            f"{','.join(MATRIX_SYSTEMS)} and not to all of them: "
+            f"{','.join(sorted(CRITERION5_SYSTEMS))} is criterion 5's "
+            "comparator, is not part of section 9's preregistered matrix, and "
+            "is opt-in for that reason. A default run refuses rather than "
+            "quietly running a "
             "smaller matrix than section 9's"
         ),
     )
@@ -116,31 +135,32 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _selected(argv: argparse.Namespace) -> tuple[Cell, ...]:
-    """Return the cells this invocation asks for, in section 9's order."""
+    """Return the cells this invocation asks for, section 9 first."""
     systems = {name.strip() for name in argv.systems.split(",") if name.strip()}
-    unknown = systems - set(MATRIX_SYSTEMS)
+    unknown = systems - set(ALL_SYSTEMS)
     if unknown:
         raise ValueError(
             f"unknown arm(s) {', '.join(sorted(unknown))}; "
-            f"section 9's are {', '.join(MATRIX_SYSTEMS)}"
+            f"this environment builds {', '.join(ALL_SYSTEMS)}"
         )
     wanted = {name.strip() for name in argv.scenarios.split(",") if name.strip()}
     # Validated for the same reason `--systems` is, and missing here until a
     # review reproduced it: `--scenarios S9,S13,s11` ran S9 alone and exited 0
     # reporting "ran 1". A typo that silently yields a smaller matrix and calls
     # it complete is the worst failure this script has available.
-    offered = {str(cell.scenario) for cell in SPEC9_CELLS}
+    offered = {str(cell.scenario) for cell in ALL_CELLS}
     unknown_scenarios = wanted - offered
     if unknown_scenarios:
         raise ValueError(
             f"unknown scenario(s) {', '.join(sorted(unknown_scenarios))}; "
-            f"section 9 runs {', '.join(sorted(offered, key=_scenario_order))}"
+            f"this environment runs "
+            f"{', '.join(sorted(offered, key=_scenario_order))}"
         )
     if argv.replicates < 0:
         raise ValueError(f"--replicates {argv.replicates} is not a shorter campaign")
     chosen = [
         cell
-        for cell in SPEC9_CELLS
+        for cell in ALL_CELLS
         if cell.system in systems and (not wanted or str(cell.scenario) in wanted)
     ]
     if argv.replicates:
@@ -149,6 +169,52 @@ def _selected(argv: argparse.Namespace) -> tuple[Cell, ...]:
             for cell in chosen
         ]
     return tuple(chosen)
+
+
+def _recorded_systems(ledger_path: Path) -> set[str]:
+    """Return the arms a ledger already holds rows for, or an empty set."""
+    if not ledger_path.exists():
+        return set()
+    with CampaignLedger.open(ledger_path) as ledger:
+        return {entry.key.config.get("system", "") for entry in ledger.entries()}
+
+
+def _refuse_mixed_ledger(cells: Sequence[Cell], ledger_path: Path) -> None:
+    """Refuse to put section 9's matrix and criterion 5's comparator in one file.
+
+    The separation `environments.pointproc.matrix` declares is between two cell
+    *sets*, and on its own that separation stops at cell selection. Every cell
+    of either set is addressed under the same `CampaignAddress`, and
+    `sciagent.eval.report.summarise` groups whatever rows an address matches --
+    so a B6 row written into section 9's ledger comes back out of
+    `report_matrix.py` as a section 9 cell, indistinguishable from a
+    preregistered arm. That is exactly the ambiguity the separate declaration
+    exists to prevent, arriving one layer downstream of where it was prevented.
+    Found by review, not by a test.
+
+    Two invocations against one path are the case that matters, so this reads
+    what the ledger already holds rather than only what this invocation asks
+    for. Refusing is right rather than harsh: the alternative fixes are a term
+    in the campaign address, which would move every recorded cell, or a filter
+    in `summarise`, which would put a section 9 concept inside the framework.
+    A second ledger file costs nothing and keeps both readings honest.
+    """
+    wanted = {cell.system for cell in cells}
+    criterion5 = set(CRITERION5_SYSTEMS)
+    recorded = _recorded_systems(ledger_path)
+    for label, here, there in (
+        ("criterion 5's comparator", wanted & criterion5, recorded - criterion5),
+        ("section 9's matrix", wanted - criterion5, recorded & criterion5),
+    ):
+        if here and there:
+            raise ValueError(
+                f"refusing to record {label} ({', '.join(sorted(here))}) into "
+                f"{ledger_path}, which already holds "
+                f"{', '.join(sorted(there))}. Section 9's matrix and "
+                f"criterion 5's comparator share a campaign address, so one "
+                f"ledger holding both reports them as one matrix. Use a "
+                f"separate ledger file for each"
+            )
 
 
 def _scenario_order(name: str) -> tuple[int, str]:
@@ -184,6 +250,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     if not cells:
         print("no cells selected", file=sys.stderr)
+        return 2
+
+    try:
+        _refuse_mixed_ledger(cells, args.ledger)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
         return 2
 
     blocked = {cell.system for cell in cells} & LLM_SYSTEMS
@@ -265,6 +337,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 cells,
                 address=runner.address,
                 scenario_seed=scenario_seed,
+                battery=scenario_battery,
                 execute=execute,
                 ledger=ledger,
                 skip_recorded=not args.verify,

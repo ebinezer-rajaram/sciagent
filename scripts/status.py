@@ -1,8 +1,11 @@
 """Report where the build stands, derived entirely from the repository.
 
-Prints the SPEC §11 cursor, per-gate acceptance coverage and working-tree state.
-Every figure comes from the spec text, from pytest or from git; nothing in the
-report is hand-maintained, so it cannot drift from the code it describes.
+Prints two backlogs in build order -- SPEC §11, then ``docs/BACKLOG.md``'s gated
+entries -- with the cursor, per-gate acceptance coverage and working-tree state.
+Every figure comes from those two documents, from pytest or from git; nothing in
+the report is hand-maintained, so it cannot drift from the code it describes. A
+malformed backlog file is an error rather than a quietly shorter report, since
+every way of losing an entry looks like a clean one.
 
 Guarantees: the script writes nothing inside the repository, and in the default
 mode it never claims a gate passes, only that tests for it exist. Pass ``--run``
@@ -23,6 +26,7 @@ from typing import Final
 
 ROOT = Path(__file__).resolve().parent.parent
 SPEC = ROOT / "docs" / "SPEC.md"
+BACKLOG = ROOT / "docs" / "BACKLOG.md"
 
 #: ``- **A1** Determinism: ...`` and ``- **A6 Likelihood estimation.** ...``
 GATE_DEFINITION = re.compile(r"^-\s+\*\*A(\d+)\b(.*)$")
@@ -38,6 +42,16 @@ BACKLOG_ROW = re.compile(r"^\|\s*(\d+)\s*\|(.+?)\|(.+?)\|\s*$")
 #: ``PASSED tests/acceptance/test_a01_a05.py::TestA5Descendants::test_a5_x``
 OUTCOME_LINE = re.compile(r"^(PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)\s+(\S+)")
 
+#: ``docs/BACKLOG.md``'s three machine-read fields. All three are anchored at
+#: the line start on purpose: the file's own prose names ``**Gate.**``
+#: mid-sentence where it explains the convention, and a searching match would
+#: read that paragraph as a seventeenth entry.
+ENTRY_GATE = re.compile(r"^\*\*Gate\.\*\*\s+`(test_a0*(\d+)_\w+)`")
+ENTRY_RANK = re.compile(r"^\*\*Rank\.\*\*\s+(\d+)")
+ENTRY_HELD = re.compile(r"^\*\*Held\.\*\*\s+(.+?)\s*$")
+#: A landed or withdrawn entry keeps its fields and marks its heading.
+ENTRY_CLOSED = re.compile(r"^(DONE|STRUCK)\b")
+
 TITLE_WIDTH = 44
 
 
@@ -48,6 +62,24 @@ class BacklogItem:
     number: int
     title: str
     gates: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class BacklogEntry:
+    """One gated entry of ``docs/BACKLOG.md``, the backlog after SPEC §11.
+
+    SPEC is frozen and §13 sends new work here, so an entry that carries a
+    ``**Gate.**`` is build work rather than an idea, and its ``**Rank.**`` is
+    where it falls in the order. An entry ``held`` on an open decision is not
+    the cursor's to take.
+    """
+
+    rank: int
+    title: str
+    gate: int
+    test_name: str
+    held: str | None
+    closed: bool
 
 
 @dataclass(frozen=True)
@@ -139,6 +171,231 @@ def parse_backlog(spec_text: str) -> list[BacklogItem]:
             )
         )
     return sorted(items, key=lambda item: item.number)
+
+
+def markdown_sections(text: str) -> list[tuple[str, list[str]]]:
+    """Return ``(heading, body)`` per ``##`` section, fences excluded.
+
+    Two shapes in ``docs/BACKLOG.md`` defeat a line-by-line split and are
+    handled here rather than by every caller. A heading too long for one line is
+    written as consecutive ``##`` lines and is one heading, not two -- and since
+    the fields sit below both, a naive split hands the entry's gate and rank to
+    the phantom. The file also documents its own entry format in a fenced block
+    that contains a ``##`` line and a ``**Gate.**`` line, which is an example and
+    not an entry.
+    """
+    sections: list[tuple[str, list[str]]] = []
+    heading: list[str] = []
+    body: list[str] = []
+    fenced = False
+    previous_was_heading = False
+    for line in text.splitlines():
+        if line.lstrip().startswith("```") or fenced:
+            # A fence is not nothing: two ``##`` lines with one between them are
+            # not consecutive and are two headings. Leaving the flag set merges
+            # them, and the merged section then holds two gate lines of which
+            # only the first is read -- losing an entry silently, which is the
+            # failure this whole function exists to prevent.
+            fenced = fenced != line.lstrip().startswith("```")
+            previous_was_heading = False
+            continue
+        if line.startswith("## "):
+            if previous_was_heading:
+                heading.append(line[3:].strip())
+            else:
+                if heading:
+                    sections.append((" ".join(heading), body))
+                heading, body = [line[3:].strip()], []
+            previous_was_heading = True
+            continue
+        previous_was_heading = False
+        body.append(line)
+    if fenced:
+        raise SystemExit(
+            f"{BACKLOG.name}: an unclosed ``` fence swallows every section after "
+            "it, and entries would go missing from the report without a word"
+        )
+    if heading:
+        sections.append((" ".join(heading), body))
+    return sections
+
+
+def held_value(body: list[str]) -> str | None:
+    """Return a section's ``**Held.**`` value, continuation lines included.
+
+    The blocker is free prose and the file's own format block wraps its fields,
+    so reading only the first line would print a fragment and name the wrong
+    blocker. Continuations run to the next blank line or the next bold field.
+    """
+    for index, line in enumerate(body):
+        match = ENTRY_HELD.match(line)
+        if match is None:
+            continue
+        parts = [match.group(1)]
+        for continuation in body[index + 1 :]:
+            if not continuation.strip() or continuation.startswith("**"):
+                break
+            parts.append(continuation.strip())
+        return " ".join(parts)
+    return None
+
+
+def parse_backlog_entries(backlog_text: str) -> list[BacklogEntry]:
+    """Return ``docs/BACKLOG.md``'s gated entries, in build order.
+
+    A section is build work exactly when it carries a ``**Gate.**`` line;
+    everything else in the file is an idea and is not tracked. Rank is required
+    of a gated entry -- without one it has no position in the order -- and two
+    entries may not share a rank.
+
+    Every way of *losing* an entry raises rather than returning quietly. A
+    section carrying a rank but no readable gate is a mistyped field, not an
+    idea: demoting it silently is how a promoted entry would drop out of the
+    backlog it was just added to. Two gate lines in one section mean two
+    headings merged -- adjacent ``##`` lines are one wrapped heading by design --
+    and only the first would ever be read.
+    """
+    entries: list[BacklogEntry] = []
+    seen: dict[int, str] = {}
+    for heading, body in markdown_sections(backlog_text):
+        gates = [match for match in map(ENTRY_GATE.match, body) if match]
+        ranks = [match for match in map(ENTRY_RANK.match, body) if match]
+        if len(gates) > 1 or len(ranks) > 1:
+            raise SystemExit(
+                f"{BACKLOG.name}: {heading!r} carries two **Gate.**/**Rank.** "
+                "fields. Two adjacent ## lines are read as one wrapped heading, "
+                "so this is probably two entries merged -- separate them with a "
+                "blank line, and only the first would have been read"
+            )
+        gate_field = gates[0] if gates else None
+        rank_field = ranks[0] if ranks else None
+        if gate_field is None:
+            if rank_field is not None:
+                raise SystemExit(
+                    f"{BACKLOG.name}: {heading!r} has a **Rank.** but no readable "
+                    "**Gate.**; check the field spelling, since without one this "
+                    "would be silently demoted to an untracked idea"
+                )
+            continue
+        if rank_field is None:
+            raise SystemExit(
+                f"{BACKLOG.name}: {heading!r} has a **Gate.** but no **Rank.**, "
+                "so it has no place in the build order"
+            )
+        rank = int(rank_field.group(1))
+        if rank in seen:
+            raise SystemExit(
+                f"{BACKLOG.name}: rank {rank} is claimed by both {seen[rank]!r} "
+                f"and {heading!r}"
+            )
+        seen[rank] = heading
+        entries.append(
+            BacklogEntry(
+                rank=rank,
+                title=heading,
+                gate=int(gate_field.group(2)),
+                test_name=gate_field.group(1),
+                held=held_value(body),
+                closed=ENTRY_CLOSED.match(heading) is not None,
+            )
+        )
+    return sorted(entries, key=lambda entry: entry.rank)
+
+
+def merge_gate_titles(
+    spec_titles: Mapping[int, str], entries: list[BacklogEntry]
+) -> dict[int, str]:
+    """Return the whole acceptance namespace: SPEC §6's gates, then BACKLOG's.
+
+    This is what stops a gate outside §6 from disappearing. ``gate_of``
+    attributes ``test_a26_...`` to gate 26 whatever declares it, so a criterion
+    the report does not know about is counted into no row *and* excluded from
+    the "not named for a gate" tally. Numbering is one namespace across two
+    files, so a collision is an error rather than a silent overwrite.
+    """
+    titles = dict(spec_titles)
+    claimed: dict[int, str] = {}
+    for entry in entries:
+        if entry.gate in titles:
+            owner = claimed.get(entry.gate, f"{SPEC.name} §6")
+            raise SystemExit(
+                f"{BACKLOG.name}: {entry.title!r} claims A{entry.gate}, "
+                f"which {owner} already declares"
+            )
+        titles[entry.gate] = entry.title[:TITLE_WIDTH]
+        claimed[entry.gate] = repr(entry.title)
+    return titles
+
+
+def entry_row(
+    entry: BacklogEntry, gate: GateStatus | None, *, execute: bool
+) -> tuple[str, str]:
+    """Return the ``(marker, detail)`` one BACKLOG entry renders as.
+
+    A ``DONE``/``STRUCK`` heading is the author's marker and is not evidence.
+    It may keep the entry out of the cursor, since somebody decided the work is
+    behind us -- but it may not speak for the gate, or this script would claim a
+    criterion passes on the strength of a word in a heading. So a landed entry
+    whose gate has no tests renders as a discrepancy rather than as a tick.
+    """
+    if gate is None or gate.total == 0:
+        evidence = "no tests"
+    elif not execute:
+        evidence = "tests written"
+    elif gate.green:
+        evidence = "passing"
+    else:
+        evidence = f"FAILING {gate.passed}/{gate.total}"
+    ready = gate is not None and (gate.green if execute else gate.written)
+
+    if entry.held is not None:
+        return "-", f"A{entry.gate}, held: {entry.held}"
+    if entry.closed:
+        return (
+            ("x", f"A{entry.gate}, landed")
+            if ready
+            else (
+                "?",
+                f"A{entry.gate}, marked landed but {evidence}",
+            )
+        )
+    if ready:
+        return ("x" if execute else "~"), f"A{entry.gate}, {evidence}"
+    return " ", f"A{entry.gate}, {evidence}"
+
+
+def no_open_summary(entries: list[BacklogEntry]) -> str:
+    """Return the cursor line for when nothing is open.
+
+    "Everything is satisfied" and "everything left is waiting on somebody" are
+    different states, and the statusline compresses the first to
+    ``all gates satisfied``. Reporting the second as the first would show a
+    green cursor over work that is blocked.
+    """
+    held = [entry for entry in entries if entry.held is not None and not entry.closed]
+    if not held:
+        return "every gate-tracked backlog item is satisfied"
+    noun = "entry" if len(held) == 1 else "entries"
+    return f"nothing open; {len(held)} BACKLOG {noun} held on a decision"
+
+
+def backlog_cursor(
+    entries: list[BacklogEntry], gates: Mapping[int, GateStatus], *, execute: bool
+) -> BacklogEntry | None:
+    """Return the next BACKLOG entry to build, or ``None`` if none is open.
+
+    Lowest rank first. A closed entry is behind us; a held one is waiting on a
+    decision that is not the agent's to take, so neither is ever the cursor.
+    """
+    for entry in entries:
+        if entry.closed or entry.held is not None:
+            continue
+        status = gates.get(entry.gate)
+        if status is None:
+            return entry
+        if not (status.green if execute else status.written):
+            return entry
+    return None
 
 
 def gate_of(node_id: str) -> int | None:
@@ -233,9 +490,15 @@ def run_tests(root: Path) -> tuple[dict[int, int], dict[int, int], int]:
     return passed, total, other
 
 
-def gate_statuses(spec_text: str, *, execute: bool) -> tuple[list[GateStatus], int]:
-    """Return one status per acceptance criterion named in the spec."""
-    titles = parse_gate_titles(spec_text)
+def gate_statuses(
+    titles: Mapping[int, str], *, execute: bool
+) -> tuple[list[GateStatus], int]:
+    """Return one status per acceptance criterion in the whole namespace.
+
+    Takes the merged titles rather than the spec text, because a criterion
+    declared in ``docs/BACKLOG.md`` is as real as one declared in SPEC §6 and
+    a status list built from §6 alone drops it without saying so.
+    """
     if execute:
         passed, total, other = run_tests(ROOT)
     else:
@@ -324,7 +587,10 @@ def compress_ranges(numbers: list[int]) -> str:
 def report(*, execute: bool) -> int:
     """Print the status report; return a process exit code."""
     spec_text = SPEC.read_text(encoding="utf-8")
-    statuses, other = gate_statuses(spec_text, execute=execute)
+    backlog_text = BACKLOG.read_text(encoding="utf-8")
+    entries = parse_backlog_entries(backlog_text)
+    titles = merge_gate_titles(parse_gate_titles(spec_text), entries)
+    statuses, other = gate_statuses(titles, execute=execute)
     gates = {status.number: status for status in statuses}
     backlog = parse_backlog(spec_text)
     description, dirty = git_state(ROOT)
@@ -366,6 +632,22 @@ def report(*, execute: bool) -> int:
         )
     print()
 
+    # SPEC §11 is the build backlog; this is the one that continues it, so it
+    # prints second and only takes the cursor when §11 has nothing open.
+    print(f"{BACKLOG.parent.name}/{BACKLOG.name} gated entries")
+    entry_cursor = (
+        None if cursor is not None else backlog_cursor(entries, gates, execute=execute)
+    )
+    for entry in entries:
+        marker, detail = entry_row(entry, gates.get(entry.gate), execute=execute)
+        print(
+            f"  [{marker}] {entry.rank:>2}  "
+            f"{entry.title[:TITLE_WIDTH]:<{TITLE_WIDTH}}  {detail}"
+        )
+    ideas = len(markdown_sections(backlog_text)) - len(entries)
+    print(f"       {ideas} ungated idea(s) in the same file, not build work")
+    print()
+
     # Gates the cursor item is waiting on are named in full; the rest of the
     # unwritten space is compressed. Listing twenty-odd "absent" lines every
     # session costs context and says nothing.
@@ -377,6 +659,8 @@ def report(*, execute: bool) -> int:
             if number not in gates
             or not (gates[number].green if execute else gates[number].written)
         ]
+    elif entry_cursor is not None:
+        blocking = [entry_cursor.gate]
 
     print("Acceptance gates")
     for status in statuses:
@@ -402,12 +686,20 @@ def report(*, execute: bool) -> int:
         print(f"  (+{other} test(s) not named for a gate)")
     print()
 
-    if cursor is None:
-        print("cursor: every gate-tracked backlog item is satisfied")
-    else:
-        blocked_by = ", ".join(f"A{number}" for number in blocking)
+    blocked_by = ", ".join(f"A{number}" for number in blocking)
+    if cursor is not None:
         print(f"cursor: item {cursor.number} — {cursor.title}")
         print(f"        blocked on {blocked_by}")
+    elif entry_cursor is not None:
+        print(f"cursor: BACKLOG rank {entry_cursor.rank} — {entry_cursor.title}")
+        print(f"        blocked on {blocked_by}")
+    else:
+        print(f"cursor: {no_open_summary(entries)}")
+    for entry in entries:
+        if entry.held is not None and not entry.closed:
+            print(
+                f"        BACKLOG rank {entry.rank} waits on {entry.held}, not on code"
+            )
     untracked = [
         item.number
         for item in backlog

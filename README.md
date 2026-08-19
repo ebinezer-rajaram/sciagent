@@ -25,7 +25,7 @@ non-trivial.
 The build state is derived from the repository, never hand-maintained here:
 
 ```sh
-uv run python scripts/status.py          # SPEC §11 cursor, A-gate coverage (~1s)
+uv run python scripts/status.py          # SPEC §11 then BACKLOG cursor, A-gate coverage
 uv run python scripts/status.py --run    # verify gates by execution, not by existence
 ```
 

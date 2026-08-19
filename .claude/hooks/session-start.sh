@@ -37,7 +37,13 @@ stable=$(printf '%s\n' "$report" | grep -vE '^  [^ ]+ @ [0-9a-f]{7}|uncommitted 
 
 # Feed the statusline: the cursor line, trimmed, plus how many gates have tests.
 cursor=$(printf '%s\n' "$report" | sed -n 's/^cursor: //p' | head -1)
-gates=$(printf '%s\n' "$report" | grep -cE '^  A[0-9]+ ')
+# Gates with tests, which is not the same as gate rows printed. The report also
+# names the cursor's blocking gate in full, marked "next up, not yet written",
+# so counting rows overstates by one. That used to be invisible: with SPEC §11
+# satisfied there was no cursor and no blocking gate. Since the cursor falls
+# through to docs/BACKLOG.md there is always one, and the count was one high
+# for every session until this excluded it.
+gates=$(printf '%s\n' "$report" | grep -E '^  A[0-9]+ ' | grep -cv 'not yet written')
 printf '%s\n%s\n' "${cursor:-unknown}" "${gates:-0}" > "$LINE" 2>/dev/null
 
 if [ -f "$PREV" ] && printf '%s\n' "$stable" | diff -q - "$PREV" >/dev/null 2>&1; then

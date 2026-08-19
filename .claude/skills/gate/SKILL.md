@@ -36,7 +36,10 @@ is not green.
 
 ## Report
 
-- The criterion's text from `docs/SPEC.md` §6.
+- The criterion's text. SPEC §6 declares A1–A24; A25 onward are declared in
+  `docs/BACKLOG.md`, on the entry's `**Gate.**` line — one namespace, two files,
+  and `scripts/status.py` refuses a number claimed twice. If §6 does not have
+  the number, `grep -n "test_aN_" docs/BACKLOG.md` does.
 - Real pytest output. Paste it.
 - Pass/fail per test, and for a failure the assertion, not a paraphrase.
 

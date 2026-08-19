@@ -292,8 +292,10 @@ eight. Anything new that reads a cached artefact should go through the same door
 
 ## Skills
 
-- `/next` (or `/next 12`) — drive one SPEC §11 backlog item: resolve the
-  cursor, A-test first, watch it fail, review the test, implement, verify.
+- `/next` (or `/next 12`) — drive one backlog item: resolve the cursor, A-test
+  first, watch it fail, review the test, implement, verify. The cursor covers
+  two backlogs in order — SPEC §11, then `docs/BACKLOG.md`'s gated entries by
+  `**Rank.**` once §11 is satisfied, which is where it sits now.
 - `/test-review` — review a freshly written failing test against the standard it
   is meant to encode, before the implementation exists. `/next` calls it at
   step 3; on the ad-hoc path you call it yourself. The only moment anything

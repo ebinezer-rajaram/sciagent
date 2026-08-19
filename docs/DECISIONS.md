@@ -7051,3 +7051,126 @@ found at least one, and the last found the oldest instance of the pattern in cod
 the change did not touch. The rate is the finding worth carrying: a guard whose
 `except` clause was written from memory of a failure rather than from the
 boundary's contract is a recurring defect in this repository, not an incident.
+
+---
+
+## 2026-08-19 — docs/BACKLOG.md becomes the second build backlog, and one gate namespace spans two files
+
+**The ambiguity.** SPEC §13 sends new work to `docs/BACKLOG.md`; SPEC §11 is
+"the ordered build backlog" and is what `scripts/status.py` reads. Nothing said
+what happens when the new work is *gated* — as the 2026-08-18 review's sixteen
+entries are, each carrying a `**Gate.**` naming a `test_aNN` for A25–A40.
+
+**Decision.** `BACKLOG.md` is a second build backlog, after §11. An entry is
+build work exactly when it carries a `**Gate.**`; everything else there stays an
+idea. Acceptance numbering is one namespace across two files — A1–A24 in SPEC
+§6, A25 onward in BACKLOG entries — and a number claimed twice is an error.
+Order comes from an explicit `**Rank.**`, transcribed from `REVIEW-2026-08-18.md`
+§5, so the numbers run {1–14, 16, 17}; the gaps are that table's ungated rows.
+
+**Three measurements the change itself destroys.** All taken before any code
+moved, none reproducible afterwards:
+
+- `/next` resolved to **no item at all**. Untracked §11 items are
+  {1, 7, 9, 11, 12, 13, 14, 15}; item 1 is deferred; 7 and 9–15 each have a
+  `backlog item N` commit. The skill's fallback — lowest untracked number with
+  no commit naming it — yielded the empty set. The skill had read "this is now
+  the normal path, not the exception" since item 14 landed, and by 52f193e that
+  path terminated in nothing.
+- A gate outside §6 **disappeared**, rather than merely miscounting.
+  `parse_gate_titles` returned 1–24; `gate_of("…test_a25_…")` returned 25;
+  `gate_statuses` iterated `sorted(titles)`. So the test reached no gate row —
+  and because `gate_of` *did* match, it was excluded from the
+  `(+N not named for a gate)` tally as well. `test-review/SKILL.md` described
+  this as "counted but never reported against anything", which understated it.
+- Suite after the change: `1400 passed, 7 skipped in 151.47s` at
+  `-n 4 --dist loadfile`. Recorded because CLAUDE.md's `1109 passed` is stale by
+  far more than this change adds, and a future session reading 1400 should not
+  treat the gap as a defect. It cross-checks against `status.py`'s own
+  collection: 201 gate tests + 1206 others = 1407 = 1400 + 7. Two earlier drafts
+  of this entry carried figures that did not cross-check; `/code-review` caught
+  the arithmetic both times, before either was committed.
+
+**Three approaches declined, with what each would have cost.**
+
+- **Add SPEC §11 rows 16–31 and A25–A40 to §6.** Strictly smaller — `status.py`
+  needed no code at all. Declined because §13 puts new work in `BACKLOG.md` and
+  the review put it there deliberately; amending a frozen document to satisfy a
+  tool is the wrong direction, so the tool moved instead.
+- **Use file order as build order**, avoiding the sixteen `**Rank.**` edits. The
+  file's tail is in *gate* order A25→A40, which is not the ranked order: A25
+  (QTM real-data grounding, XL, ~1–2 weeks) is first on the page and rank **6**,
+  and the review's narrative forbids producing its results before ranks 1–2
+  land. A file-order cursor would have opened `/next` with the most expensive
+  item in the set.
+- **Reorder the file's sections into rank order** instead of adding a field.
+  Declined: it loses the appended-by-the-review provenance, and a
+  priority-ordered tail under a chronological head is incoherent.
+
+**What `/test-review` caught, which no diff now recovers.** The first version of
+`tests/test_status.py` asserted only over the three new pure functions, and the
+lens returned TOO WEAK on the implementation that gap admits: a *correct* parser
+never called from `report()` ships 21/21 green with the whole user-visible
+deliverable absent — no second section, no backlog cursor, A25–A40 still
+vanishing. Two smaller gaps went with it: the fixture's `STRUCK` and
+wrapped-header sections carried no gate, so a parser recognising only `DONE`, and
+one splitting naively at every `##`, both passed. The general form is worth
+carrying: **a test suite over new pure functions is silent about whether anything
+calls them**, and on this change that silence covered the entire point.
+
+**What `/code-review` then found, and the one worth carrying.** Six findings on
+this change, all real. The one that matters: `markdown_sections` skipped fenced
+lines without clearing `previous_was_heading`, so `## Alpha` followed directly by
+a fence and then `## Beta` merged into one heading `Alpha Beta` — one section
+holding two `**Gate.**` lines, of which only the first is read, losing the second
+entry silently. **That is the same failure the unclosed-fence guard three lines
+below it was written to prevent**, left open by the author of the guard in the
+same sitting. A guard is evidence that a failure mode was understood, and no
+evidence at all that every path to it was closed.
+
+The other five, briefly: the report test pinned the live cursor to rank 1, so
+writing `test_a26_` — literally the next thing anyone does here — would have
+turned the suite red for correct work; `/next`'s new §2 snippet referenced an
+undefined `RANK_POSITION` and indexed sections by file position, which the same
+change documents as not being rank order; `session-start.sh` counts printed gate
+rows as "gates with tests", and since the cursor's blocking gate is always
+printed, the count went one high permanently the moment a backlog cursor always
+existed; four assertions hard-coded the set at sixteen, so promoting an idea to
+a gated entry — the workflow this file documents — would have failed them; and
+the arithmetic above.
+
+**The second review round, and why re-running it was not ceremony.** `/ship` §0
+is stricter than the freshness hook: the hook watches `.py` under `src`, `tests`
+and `scripts`, so a tree it calls FRESH can still carry edits the *review* never
+saw. Fixing the first round's six findings changed parser behaviour, four tests,
+a hook and a skill, so the review was re-run before committing. It found seven
+more, and two of them justify the rule on their own:
+
+- **A second path to the same silent entry loss.** Round one closed it via
+  fences; round two found it via two adjacent `##` headings, which the
+  wrapped-heading convention reads as one section — so a merged body holding two
+  `**Gate.**` lines drops the second entry. Both paths now raise. The pattern
+  across the rounds is the finding: a guard is evidence that a failure mode was
+  *understood*, and no evidence that every path to it was closed.
+- **A heading word was speaking for a gate.** `DONE`/`STRUCK` rendered `[x]
+  landed` and skipped the cursor with zero tests, and did so under `--run` too —
+  against this script's stated guarantee that it "never claims a gate passes,
+  only that tests for it exist". A marker may order the backlog, since somebody
+  decided the work is behind us, but it may not stand in for evidence. It now
+  renders `[?] marked landed but no tests`, and a failing gate reads
+  `FAILING 1/3` rather than being flattened into "not written".
+
+The rest: `**Rank.**` without a parseable `**Gate.**` silently demoted an entry
+to an idea, which is how a mistyped field would drop work out of the backlog it
+was just added to; a wrapped `**Held.**` value truncated to a fragment and named
+the wrong blocker; and "every gate-tracked backlog item is satisfied" printed
+when only *held* entries remained, which the statusline compresses to `all gates
+satisfied` — a green cursor over blocked work.
+
+**Closes off.** `/next` has a real criterion to build against again, so the
+self-written-standard path in its closing paragraph is now the rare case rather
+than the only one. One item is deliberately not startable: rank 3 (A29,
+criterion 4's observable) carries `**Held.** OPEN-DECISIONS §1`, and the cursor
+names it and passes over it — that decision is the user's, is written up cold,
+and until it is taken the entry is not work an agent may begin. Ranks 1, 2, 4
+are unblocked and in order.

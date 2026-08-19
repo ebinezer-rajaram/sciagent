@@ -1,6 +1,6 @@
 ---
 name: next
-description: Drive one SPEC §11 backlog item end to end — resolve the cursor, write the A-test first, watch it fail, review the test, implement, verify. Invoke as /next, or /next 12 for a specific item.
+description: Drive one backlog item end to end — resolve the cursor across SPEC §11 then docs/BACKLOG.md's gated entries, write the A-test first, watch it fail, review the test, implement, verify. Invoke as /next, or /next 12 for a specific item.
 ---
 
 # Next backlog item
@@ -13,12 +13,24 @@ The statusline carries the cursor continuously, and the hook prints the full
 report whenever the backlog or gates have moved.
 
 1. Read the cursor from the session-start output or the statusline.
-2. If it names `item N — title`, that is the item.
-3. If it reads `every gate-tracked backlog item is satisfied` — which it has
-   since item 14 landed — the remaining items carry no A-gate and the script
-   cannot order them. Take the untracked numbers it lists, then
+2. If it names `item N — title`, that is the SPEC §11 item.
+3. If it names `BACKLOG rank N — title`, that is a `docs/BACKLOG.md` gated
+   entry, and it is the item. SPEC §11 is satisfied when this form appears —
+   the cursor falls through to the second backlog only then, so there is no
+   §11 work being skipped. **This is the normal path now.** The entry carries
+   its own gate, so unlike an untracked §11 item it is fully tracked; §3 below
+   applies unchanged.
+4. If it reads `every gate-tracked backlog item is satisfied`, *both* backlogs
+   are exhausted: §11's gated items are green and `docs/BACKLOG.md` has no
+   open gated entry. Before concluding that, check the two things the cursor
+   deliberately passes over — an entry the report says `waits on <blocker>,
+   not on code` needs that decision taken first and is the user's to make, not
+   yours; and §11's untracked numbers carry no A-gate at all. For the latter,
+   take the untracked numbers the report lists, then
    `git log --oneline --grep='backlog item'`, and pick the lowest-numbered item
-   with no commit naming it. This is now the normal path, not the exception.
+   with no commit naming it. On the current backlog that set is empty, so
+   reaching this branch usually means the honest answer is "nothing is open" —
+   say so rather than inventing work.
 
 Only re-run `scripts/status.py` if you need `--run`, which verifies gates by
 execution rather than by their tests merely existing.
@@ -27,11 +39,33 @@ State the item number and title before touching anything.
 
 ## 2. Read only what the item needs
 
+**For a SPEC §11 item:**
+
 - The §11 row for this item in `docs/SPEC.md`.
 - The §6 definition of each gate that row names — those, and no others.
 - `grep -n "item N" docs/DECISIONS.md` for prior decisions on this item.
 
+**For a `docs/BACKLOG.md` entry:** the entry itself, and nothing else. Its
+**Idea / Rationale / Touches** replace the §11 row and its **Gate.** replaces
+the §6 text — the criterion is written there, in the same `test_aNN` form, and
+§6 does not define it. Read the *one* entry:
+
+```sh
+grep -n 'test_a26_' docs/BACKLOG.md      # the cursor's gate; one hit, the **Gate.** line
+```
+
+then read from the `## ` above that line to the `## ` below it. **Do not index
+sections by position** — the file is chronological and its gated tail is in
+*gate* order, neither of which is rank order, so "the Nth section" is not
+"rank N". The gate number from the cursor is the only reliable key.
+
+Then `grep -n "A26\b" docs/DECISIONS.md` for prior decisions. The
+entry's **Touches.** line names any frozen decision the work would move — if it
+names one, say so before building, because that is a question for the user.
+
 Do not read SPEC.md end to end. It is 540 lines and the item needs one row.
+Do not read BACKLOG.md end to end either — it is over 1,300 lines and the entry
+is one section.
 
 ## 3. Build
 
@@ -63,10 +97,12 @@ Tests first, for anything with an acceptance criterion:
    nothing tells them apart, and `/preflight`'s `/code-review` sees the test only
    in that final form.
 
-   Hand it the three inputs it requires — the SPEC §6 text for each gate (or,
-   for an untracked item, its §11 row plus your own statement of what the test
-   is meant to establish), the test's absolute path and class, and the pytest
-   output from step 2 in full. That skill carries the brief, the agent and model
+   Hand it the three inputs it requires — the standard, the test's absolute
+   path and class, and the pytest output from step 2 in full. The standard is
+   the SPEC §6 text for each gate; for a `docs/BACKLOG.md` entry it is that
+   entry's **Gate.** line plus its **Idea.**, which is a written-in-advance
+   criterion and as strong a standard as §6; for an untracked §11 item it is
+   the §11 row plus your own statement of what the test is meant to establish. That skill carries the brief, the agent and model
    choice, the path-not-excerpt rule, and what to do with a finding.
 
    This runs before step 5's suite, never beside it — the contention rule below
@@ -118,18 +154,23 @@ Tests first, for anything with an acceptance criterion:
      usually your *own* edit while the suite ran in the background — re-run on a
      settled tree rather than recording anyway.
 
-6. If a gate is still red, **stop**. SPEC §6 is the contract; do not proceed
+6. If a gate is still red, **stop**. The criterion is the contract — SPEC §6's
+   for a §11 item, the entry's **Gate.** line for a BACKLOG one. Do not proceed
    past a gate.
 
 An item with no A-gate still needs tests — it just has no gate to name them
 for. Say explicitly that the item is untracked and what you tested instead.
-**Step 3's `/test-review` still applies**, and on the current backlog it is the
-only way this skill ever reaches it: the cursor reads *"every gate-tracked
-backlog item is satisfied"*, so every remaining item is untracked. Give it the
-§11 row and your own statement of what the test is meant to establish, in place
-of a §6 criterion — that skill's §0 covers this case and says what makes a
-self-written standard worth anything. A test with no gate to name it for is held
-to the claim you made for it instead.
+**Step 3's `/test-review` still applies.** Give it the §11 row and your own
+statement of what the test is meant to establish, in place of a §6 criterion —
+that skill's §0 covers this case and says what makes a self-written standard
+worth anything. A test with no gate to name it for is held to the claim you made
+for it instead.
+
+This paragraph is now the rarer path, not the usual one. It was written when the
+cursor read *"every gate-tracked backlog item is satisfied"* and every remaining
+item was untracked; `docs/BACKLOG.md`'s gated entries changed that, and the
+cursor names a real criterion again. Do not reach for the self-written-standard
+route while a `BACKLOG rank N` cursor is offering you a written one.
 
 ## 4. Close out
 

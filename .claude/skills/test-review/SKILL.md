@@ -163,13 +163,17 @@ the code, run the suite, or commit anything.
 
 ## Naming, on the ad-hoc path
 
-`test_aN_` names are for SPEC §6 criteria and nothing else. `scripts/status.py`
-reads `^test_a0*(\d+)_` off the final `::` component and attributes the test to
-gate N; §11 items then report coverage as "does gate N have any test at all". So
-a test named `test_a7_` for unrelated ad-hoc work makes A7 read as covered when
-nothing new covers it. A number SPEC does not declare is less harmful — no item
-claims it, so it is counted but never reported against anything — but it still
-leaves the tally wrong.
+`test_aN_` names are for declared acceptance criteria and nothing else — SPEC §6
+declares A1–A24, and `docs/BACKLOG.md`'s gated entries declare A25 onward on
+their `**Gate.**` lines. `scripts/status.py` reads `^test_a0*(\d+)_` off the
+final `::` component and attributes the test to gate N; backlog rows then report
+coverage as "does gate N have any test at all". So a test named `test_a7_` for
+unrelated ad-hoc work makes A7 read as covered when nothing new covers it.
+
+A number *neither* file declares is worse than it used to look. It reaches no
+row — the report is built from the declared namespace — and `gate_of` still
+matched it, so it is excluded from the "not named for a gate" tally as well. It
+disappears rather than merely miscounting.
 
 Name ad-hoc tests for what they check. The gate namespace is not a general
 prefix.

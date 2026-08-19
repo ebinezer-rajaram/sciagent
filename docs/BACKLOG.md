@@ -5,11 +5,20 @@ note on which frozen decision they would touch. Architecture changes only on a
 demonstrated contradiction — a case where two frozen decisions cannot both be
 satisfied, documented with the failing test.
 
-This is not the build backlog. The ordered build backlog is SPEC §11, and its
-live cursor comes from `scripts/status.py`. Decisions already taken go in
+Most of this file is ideas. Some of it is build work, and the difference is one
+field: **an entry carrying a `**Gate.**` is tracked by `scripts/status.py` as
+build work, and everything else here is not.** SPEC §11 is still the first
+backlog and still goes first; the gated entries here are the backlog that
+continues it, ordered by `**Rank.**`, and the live cursor falls through to them
+once every §11 item is satisfied. Decisions already taken go in
 `docs/DECISIONS.md`.
 
-Entry format:
+Gate numbers extend SPEC §6's namespace through this file rather than forking
+it — A1–A24 are declared there, A25 onward here, and `status.py` refuses a
+number claimed twice. SPEC itself stays frozen: §13 puts new work in this file,
+so nothing here is a reason to edit it.
+
+Entry format. The first three fields are all an idea needs:
 
 ```
 ## Short title
@@ -18,6 +27,20 @@ Entry format:
 **Rationale.** Why it might be worth doing.
 **Touches.** Which frozen decision it would change, or "none".
 ```
+
+Adding the next two promotes it to build work, and both are then required:
+
+```
+**Gate.** `test_aNN_named_for_its_criterion` — what it must establish.
+**Rank.** N          — position in the build order; no two entries share one.
+**Held.** <blocker>  — optional: waiting on a decision, not on code. The
+                       cursor names it and passes over it.
+**Cost.** S/M/L/XL   — prose, not read by anything.
+```
+
+An entry stays in place when it lands: prefix the heading with
+`DONE (date) —`, or `STRUCK (date, why) —` if it was withdrawn, and leave the
+fields alone. The report marks it closed and the cursor moves past it.
 
 ---
 
@@ -916,6 +939,7 @@ snapshot-hash → byte-identical `EventLog` segments across processes;
 the declared censoring model is applied and versioned; the consensus edit is
 preregistered in the environment before any system runs on a segment.
 
+**Rank.** 6
 **Cost.** XL (pipeline + calibration ≈ 1–2 weeks). Compute: conventional arms
 $0; V7 on 20 found segments ≈ 40 calls ≈ $4–8 live.
 
@@ -946,6 +970,7 @@ where a candidate explains an observation the entertained set fits poorly,
 D4 > 0; on a case where it adds nothing, D4 = 0; and the truth maximises D2
 among all candidate distributions on a constructed grid.
 
+**Rank.** 1
 **Cost.** M (≤ 2 days including the metric-version plumbing and tests).
 
 ## A preregistered held-out battery, so arms are scored on one question set
@@ -970,6 +995,7 @@ arms with different run histories on one scenario receive identical
 batteries; every scenario's battery contains an intervention; battery
 membership appears in the recorded address.
 
+**Rank.** 2
 **Cost.** M.
 
 ## The criterion-5 comparator that was never built
@@ -998,6 +1024,7 @@ a §13 note that criterion 5 implicitly amended §5. No other frozen decision.
 proposal is grammar-licensed, on-grid, and a pure function of (scenario seed,
 replicate index); two processes produce identical proposal sequences.
 
+**Rank.** 4
 **Cost.** S–M. Compute: corner form minutes; full-grid form bounded by the
 preregistered budget. API $0.
 
@@ -1023,6 +1050,8 @@ ledger payload (the implementation). Couples to the payload entry below.
 (scenario, seed), the harness-evaluated probe verdict is identical whichever
 system ran, and both flags are recorded and distinguishable in the payload.
 
+**Rank.** 3
+**Held.** OPEN-DECISIONS §1
 **Cost.** M for the implementation; the decision is the user's.
 
 ## The verifier has no production caller
@@ -1049,6 +1078,7 @@ constructed runs yields an adjudication rate and a per-run contradiction
 count in its recorded output; an injected zombie claim is counted, not
 silently absent.
 
+**Rank.** 7
 **Cost.** M–L.
 
 ## The ledger payload omits what three §12 criteria read
@@ -1074,6 +1104,7 @@ Couples to the criterion-4 entry (which flag) and the re-derivation entry
 run's payload carries autonomy fraction, both detection flags and both
 masses; render shows the autonomy fraction beside every dimension block.
 
+**Rank.** 8
 **Cost.** M.
 
 ## Append-only is breached by a foreign REPLACE, and A14 has a module-scope blind spot
@@ -1103,6 +1134,7 @@ a fresh raw connection with default pragmas fails and the row is unchanged;
 the A14 analyser finds a planted module-level violation; no module under
 `sciagent.systems` references the store or ledger types.
 
+**Rank.** 9
 **Cost.** M.
 
 ## The verification substrate has unversioned randomness, caches and dependencies
@@ -1132,6 +1164,7 @@ that verify it.
 registered and in force under pytest; a table cached under one simulator-code
 digest is refused under another; the rendered report names the numpy version.
 
+**Rank.** 10
 **Cost.** M.
 
 ## Comparator parity: selection policy is confounded with proposal source
@@ -1162,6 +1195,7 @@ the contrast declaration records the bounding comparison; and a self-serving
 explicit prediction that contradicts the structure's table row is refused or
 marked agent-authored.
 
+**Rank.** 11
 **Cost.** M.
 
 ## Refusals break replay, and the corpus has no in-repo hash
@@ -1188,6 +1222,7 @@ the scheme).
 a refusal replays byte-identically with zero misses; the corpus hash is
 resolvable from the repository.
 
+**Rank.** 12
 **Cost.** S–M.
 
 ## Elicitation hygiene: a priming example, a cold cache, one sample
@@ -1219,6 +1254,7 @@ menu mechanism name appears anywhere in the schema or its examples; the
 address version differs from the recorded campaign's; k-sample mode stores k
 indexed calls and admits deterministically.
 
+**Rank.** 13
 **Cost.** M. Live cost of k-sampling: (k−1) × $0.098 per firing at current
 rates.
 
@@ -1241,6 +1277,7 @@ difference on one dimension is still one dimension.
 constructed paired rows the report carries the within-seed difference and its
 interval, and refuses the paired reading when the seed sets differ.
 
+**Rank.** 14
 **Cost.** S.
 
 ## A LICENSE and a CI gate, before any third party reads this
@@ -1263,6 +1300,7 @@ one-day credibility items an external reader hits in the first five minutes.
 `pyproject` field names it, and the CI workflow file invokes the suite and
 mypy. (The green run itself lives in the forge, not the test.)
 
+**Rank.** 16
 **Cost.** S.
 
 ## The scale-up document §12 criterion 12 asks for
@@ -1286,6 +1324,7 @@ that has in fact done most of the thinking.
 document exists and names, at minimum, the Stage A battery, the version-hash
 promise, and the Environment protocol disposition.
 
+**Rank.** 17
 **Cost.** S.
 
 ## Re-derivation of the recorded matrix under fixed metrics
@@ -1314,4 +1353,5 @@ sequencing: instruments first, decided cold; re-derivation second, labelled.
 holding rows under two metric versions renders them separately, refuses to
 pool them, and the replayed campaign reports `store.misses == 0`.
 
+**Rank.** 5
 **Cost.** M (≈ 20 min conventional + ≈ 2 h replay + report plumbing). API $0.

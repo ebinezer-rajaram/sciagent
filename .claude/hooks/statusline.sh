@@ -50,10 +50,14 @@ if [ -f "$LINE" ]; then
     gates=$(sed -n '2p' "$LINE")
 fi
 
-# Compress the two long cursor forms status.py emits into something that fits.
+# Compress the three long cursor forms status.py emits into something that fits.
+# The third appears once SPEC §11 is satisfied and the cursor falls through to
+# docs/BACKLOG.md's gated entries; without an arm of its own it renders as a
+# whole entry title and pushes the branch off the line.
 case "$cursor" in
     "every gate-tracked backlog item is satisfied") cursor="all gates satisfied" ;;
     "item "*) cursor="${cursor%% —*}" ;;
+    "BACKLOG rank "*) cursor="${cursor%% —*}" ;;
 esac
 
 if [ "$dirty" -gt 0 ] 2>/dev/null; then

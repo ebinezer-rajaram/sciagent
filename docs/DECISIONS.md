@@ -7051,3 +7051,162 @@ found at least one, and the last found the oldest instance of the pattern in cod
 the change did not touch. The rate is the finding worth carrying: a guard whose
 `except` clause was written from memory of a failure rather than from the
 boundary's contract is a recurring defect in this repository, not an incident.
+
+## 2026-08-19 — editor and terminal setup: what the files cannot tell you
+
+Most of this session's work is derivable from its own diff — the settings, the
+extension list, the palettes and the reasoning are all in the files, commented.
+Four things are not, and one of them is a trap that fails silently.
+
+**The installed Nerd Font is not called what the documentation says.** The
+upstream Nerd Fonts patcher names families `<CamelCase> Nerd Font`, and its
+readme states the rule explicitly with a worked example. The winget package
+`DEVCOM.JetBrainsMonoNerdFont` 3.3.0 does **not** follow it: enumerating
+`System.Drawing.Text.InstalledFontCollection` after installing shows
+`JetBrainsMono NF` (double-width icons), `JetBrainsMono NFM` (single-width),
+`JetBrainsMono NFP` (proportional), plus a `JetBrainsMonoNL` no-ligature flavour
+of each — 42 families, none of them named `JetBrainsMono Nerd Font`.
+
+**Why that matters more than a naming quibble.** A `fontFamily` naming a font
+that does not exist produces no error, no warning and no log line; the editor
+falls through to the next entry in the chain. The first version of
+`%APPDATA%\Code\User\settings.json` written this session asked for
+`JetBrainsMono Nerd Font` and would have rendered as Cascadia Code indefinitely,
+looking merely disappointing rather than broken. Verify a font by enumerating the
+installed collection, never by trusting the package name or the upstream docs.
+
+**Tokyo Night was chosen as the default theme and then abandoned before it
+shipped.** It ships `semanticTokenColors` with eight selectors but never sets
+`"semanticHighlighting": true`. VS Code's `editor.semanticHighlighting.enabled`
+defaults to `configuredByTheme` and the theme-side property defaults to false, so
+every one of those rules is inert unless the setting is forced on. Its repository
+was last pushed 2025-02-05 with 13 unanswered issues. Catppuccin was pushed
+2026-08-18 and carries genuinely Python-aware selectors — `class:python`,
+`class.builtin:python`, `variable.typeHint:python`, `function.decorator:python`.
+For a Python repository that made the choice evidential rather than aesthetic.
+Both are installed; Mocha is active. `editor.semanticHighlighting.enabled` is
+forced true regardless, which also revives Tokyo Night's dormant rules if it is
+ever selected. Note also that `Avetis.tokyo-night` is a different publisher
+shipping an identically-named extension — `enkia.tokyo-night` is the one meant.
+
+**Work left deliberately incomplete: the global Claude Code settings are
+unwired, and this repository is why.** `.claude/settings.json` denies
+`Edit(~/.claude/settings.json)`. That is a hard block rather than a prompt, so no
+session working in this repository can write global Claude Code settings, and
+verbal permission does not lift it. Consequently `~/.claude/statusline.sh` and
+`~/.claude/themes/{catppuccin-mocha,tokyo-night}.json` exist and are valid but
+nothing references the statusline, and `preferredNotifChannel` is unset — which
+matters because the VS Code integrated terminal receives no desktop notification
+(only Ghostty, Kitty and iTerm2 do). Waiting on either a paste into that file by
+hand, `/statusline` and `/config` run from inside a session, or a deliberate
+relaxation of the deny rule. Routing around it via `WebClient` or
+`Start-BitsTransfer` was available and declined: a deny rule the user wrote is
+not an obstacle to be engineered past.
+
+**Two smaller facts that would cost a future session time.** `winget install
+Microsoft.PowerShell` delivers 7.6.5 as an **MSIX** package, so `pwsh.exe` lives
+under `%LOCALAPPDATA%\Microsoft\WindowsApps\Microsoft.PowerShell_8wekyb3d8bbwe\`
+and **not** `C:\Program Files\PowerShell\7\` — a hardcoded Program Files path
+fails. And measured on this desktop: pwsh 7 starts in **804ms** with the starship
+profile against **299ms** at `-NoProfile`, so the prompt costs about 505ms per
+shell. Windows PowerShell 5.1 is deliberately left with no profile, because
+Claude Code's PowerShell tool runs 5.1 and should not pay that on every call.
+
+**Closes off.** The font finding generalises past fonts: three of this session's
+surfaces fail silently rather than loudly — an unknown Claude Code theme token is
+ignored, an invalid theme colour is ignored, and a missing font family falls
+back. In all three "it looks like nothing happened" is the failure mode, so each
+was verified by enumerating what the system actually accepted rather than by
+reading the file back. Nothing here touches `src/` or the acceptance gates; the
+suite was not run, and no test covers `.claude/hooks/`, so `bash -n` plus direct
+execution against captured payloads is the whole of the available check.
+
+## 2026-08-19 — statusline render cost, and a guard written from intent
+
+Follow-up to the entry above, recording what its review found. Both items are
+things the diff no longer shows, because the review's fixes removed them.
+
+**Measured: the first version doubled statusline render time.** Twenty renders,
+warm, identical payload, two trials each. Before the change **296–366ms** per
+render; with three `hook_field`-style extractions **581–596ms**; after replacing
+them with `BASH_REMATCH` **367–368ms**. The extractions alone accounted for
+~168ms, from nine subprocesses per render — three `printf|sed|head` chains. The
+figure matters because the script's own header rejects `scripts/status.py` at 4.2s
+on precisely this ground, and a statusline is debounced at 300ms, so a 200ms
+regression sits inside the interval it re-renders on. `hook_field` remains
+`sed`-based and is correct to: a PostToolUse hook fires once per edit and can
+afford three subprocesses, where this cannot. Cost is per-*call-site*, not
+per-helper.
+
+**A guard whose comment asserted the opposite of the measured behaviour.** The
+context-percentage segment guarded on `printf '%.0f' "$ctx"` producing empty
+output for a non-numeric value, and said so in a comment. `printf '%.0f' abc`
+prints `0` with a nonzero status; the status was discarded, so the guard was dead
+and a malformed value would have rendered a confident red `0%` rather than being
+skipped. Fixed by validating the shape at extraction instead, which makes the
+condition unreachable rather than merely unlikely.
+
+**Why that is worth an entry rather than a line in the diff.** The entry
+immediately above this one closes by nominating exactly this defect class as
+recurring in this repository — "a guard whose `except` clause was written from
+memory of a failure rather than from the boundary's contract". This is the same
+error in `bash` rather than Python, committed one entry later, in a file whose
+whole purpose was to be verified by direct execution. Reaching for what a
+primitive *ought* to do on bad input, instead of running it once, is the shape to
+watch for; `printf` was two seconds away from being tested.
+
+**Also fixed, without needing an entry each.** `hook_field_num` truncated
+exponential notation, so a cost of `1e-7` rendered as `$1.00` — a seven-decade
+error, now `$0.00`. `.vscode/settings.json` had excluded `.claude/worktrees/**`
+from `files.watcherExclude` two blocks after a comment explaining why worktrees
+must stay visible; the watcher does not read `.gitignore`, so that would have
+blinded the editor to the only tree that changes mid-session. And its interpreter
+pin was Windows-only in a file tracked specifically so Ubuntu cloud sessions read
+it; removed entirely, since deleting the *global* override was the actual fix and
+the Python extension auto-discovers `.venv` on every platform.
+
+**Closes off.** Nothing here is covered by a test, and nothing can be: no test in
+this repository reaches `.claude/hooks/`, which is why the review's method —
+extracting the payload constructor from the shipped `claude.exe` to confirm
+`remaining_percentage` is an integer 0–100 rather than a 0–1 fraction — was the
+only way to establish that the `<10` and `<25` thresholds point the right way.
+That contract is now depended upon by two scripts and is not written down
+anywhere in the repository except here.
+
+## 2026-08-19 — tried and failed: env-var venv activation in the VS Code terminal
+
+**Symptom.** Opening an integrated terminal shows the Starship prompt in about
+700ms, and then several seconds later
+`(Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned) ; (& ...\.venv\Scripts\Activate.ps1)`
+appears at that prompt and runs. The delay is not the shell starting: measured
+here, `pwsh -NoProfile` is ~330ms and the Starship profile adds ~380ms, both of
+which are spent before the prompt is drawn. The visible junk arrives afterwards,
+because the Python extension activates an environment with `sendText` — it waits
+for shell integration, then types the command.
+
+**Tried, and it did not work.** `ms-python.python` 2026.4.0 offers an opt-in
+experiment, `pythonTerminalEnvVarActivation`, whose stated purpose is to activate
+by setting environment variables at terminal creation instead of typing a
+command. Enabled it as `"python.experiments.optInto":
+["pythonTerminalEnvVarActivation"]` in user settings, with
+`python.experiments.enabled` at its default true. After a window reload and a new
+terminal, **the typed command and the delay both persisted.** The enum member is
+spelled correctly — it is one of six the extension declares — so this is the
+experiment not taking effect rather than a typo.
+
+**Left deliberately incomplete.** The setting is still in
+`%APPDATA%\Code\User\settings.json`, where it is currently inert and carries a
+comment claiming it fixes the problem. That comment now overclaims, which is the
+defect the entry two above this one nominates as recurring here, so it is written
+down rather than left to be rediscovered. Untouched for now at the user's
+explicit direction — the next attempt should either delete the key and its
+comment, or replace both with a platform-keyed
+`terminal.integrated.env.windows` / `.linux` block injecting `VIRTUAL_ENV` and a
+`PATH` prefix directly, which needs no experiment and no typed command.
+
+**Closes off.** Do not re-enable the experiment expecting a different result, and
+do not reach for `python.terminal.activateEnvironment: false` on its own: a
+Windows Store Python 3.11 is on this machine's PATH, so switching activation off
+without also injecting the venv leaves bare `python` resolving to 3.11 inside a
+project pinned to >=3.12. That is a worse failure than the cosmetic one being
+fixed.

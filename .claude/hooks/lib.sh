@@ -127,6 +127,42 @@ hook_field() {
         | sed 's|\\\\|/|g'
 }
 
+# Numeric sibling of hook_field, for the statusline payload's unquoted values --
+# context_window.remaining_percentage and cost.total_cost_usd.
+#
+# Deliberately a second function rather than widening hook_field to accept either
+# shape. A pattern loose enough to match both a quoted and an unquoted value also
+# matches a *string* whose content happens to be numeric, so widening it would
+# make every existing caller sensitive to a payload field it does not want.
+#
+# WHY BASH_REMATCH RATHER THAN THE `sed` PIPELINE hook_field USES
+#
+# hook_field pays three subprocesses per call, which a PostToolUse hook can
+# afford because it fires once per edit. The statusline re-renders on every
+# assistant message, and the first version of this function cost it 168ms across
+# three calls -- measured against a whole render budget of ~300ms, in a script
+# whose own header rejects `status.py` at 4.2s for exactly this reason. A bash
+# regex spawns nothing at all.
+#
+# The exponent clause is not decoration. JSON serialisers emit very small floats
+# in exponential form, and a pattern of `[0-9][0-9.]*` stops dead at the `e`:
+# 1e-7 returned 1, which rendered as a session cost of $1.00. A seven-decade
+# silent error is the wrong failure mode for a shared helper.
+#
+# Matches the leftmost occurrence, where the `sed` form matched the rightmost.
+# Nothing in the statusline payload repeats a key across objects, so the two agree
+# there; a caller reading a payload that does repeat one should say which it wants
+# rather than relying on either.
+#
+# Emits nothing when the field is absent, which is the normal case rather than an
+# error: before the first API response the payload carries `null` for both of
+# these, which is not a number and correctly does not match. Callers test for
+# empty.
+hook_field_num() {
+    local re="\"$1\"[[:space:]]*:[[:space:]]*(-?[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?)"
+    [[ $hook_payload =~ $re ]] && printf '%s' "${BASH_REMATCH[1]}"
+}
+
 # True when the path is one the determinism invariant governs. These mirror
 # RANDOMNESS_ROOTS in tests/test_invariants.py -- (src, scripts, tests) -- and
 # must keep mirroring it: a guard scoped narrower than the gate it enforces

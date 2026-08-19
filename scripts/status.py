@@ -399,7 +399,7 @@ def entry_row(
         # Rendering it as a discrepancy would demand tests for a decision to
         # build nothing.
         return "-", f"A{entry.gate}, withdrawn"
-    if entry.held is not None:
+    if entry.held is not None and not entry.closed:
         return "-", f"A{entry.gate}, held: {entry.held}"
     if entry.closed:
         return (
@@ -541,6 +541,29 @@ def run_tests(root: Path) -> tuple[dict[int, int], dict[int, int], int]:
     return passed, total, other
 
 
+def refuse_undeclared_gates(
+    total: Mapping[int, int], titles: Mapping[int, str]
+) -> None:
+    """Raise unless every gate the tests name is declared somewhere.
+
+    This is the failure the module exists to prevent, arriving from the side the
+    backlog parser cannot see. ``gate_of`` attributes a test by its name alone,
+    and the report iterates the *declared* numbers -- so a test named for a
+    number nothing declares is counted into no row and excluded from the "not
+    named for a gate" tally as well. It disappears. A criterion struck after its
+    tests were written reaches here, and so does a typo in a test name.
+    """
+    undeclared = sorted(number for number in total if number not in titles)
+    if not undeclared:
+        return
+    numbers = ", ".join(f"A{number}" for number in undeclared)
+    raise SystemExit(
+        f"tests are named for {numbers}, which neither {SPEC.name} §6 nor "
+        f"{BACKLOG.name} declares. Declare the criterion or rename the test -- "
+        "as it stands the report would drop it silently."
+    )
+
+
 def gate_statuses(
     titles: Mapping[int, str], post_freeze: frozenset[int], *, execute: bool
 ) -> tuple[list[GateStatus], int]:
@@ -557,6 +580,7 @@ def gate_statuses(
     else:
         total, other = collect_tests(ROOT)
         passed = {}
+    refuse_undeclared_gates(total, titles)
     return [
         GateStatus(
             number=number,

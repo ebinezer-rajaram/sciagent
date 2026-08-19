@@ -20,12 +20,17 @@ report whenever the backlog or gates have moved.
    §11 work being skipped. **This is the normal path now.** The entry carries
    its own gate, so unlike an untracked §11 item it is fully tracked; §3 below
    applies unchanged.
-4. If it reads `every gate-tracked backlog item is satisfied`, *both* backlogs
-   are exhausted: §11's gated items are green and `docs/BACKLOG.md` has no
-   open gated entry. Before concluding that, check the two things the cursor
+4. Two forms mean *both* backlogs are exhausted — §11's gated items are green
+   and `docs/BACKLOG.md` has no open gated entry — and they are not the same
+   state. `every gate-tracked backlog item is satisfied` means what it says.
+   `nothing open; N BACKLOG entr{y,ies} held on a decision` means the rest is
+   **blocked on the user**, and reading it as the first would report a green
+   cursor over work nobody may start. Neither is a licence to invent work.
+   Before concluding anything, check the two things the cursor
    deliberately passes over — an entry the report says `waits on <blocker>,
    not on code` needs that decision taken first and is the user's to make, not
-   yours; and §11's untracked numbers carry no A-gate at all. For the latter,
+   yours, and the second form above exists precisely to say that some do; and
+   §11's untracked numbers carry no A-gate at all. For the latter,
    take the untracked numbers the report lists, then
    `git log --oneline --grep='backlog item'`, and pick the lowest-numbered item
    with no commit naming it. On the current backlog that set is empty, so

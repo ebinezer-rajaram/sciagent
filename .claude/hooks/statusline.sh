@@ -63,6 +63,10 @@ case "$cursor" in
     "every gate-tracked backlog item is satisfied") cursor="all gates satisfied" ;;
     "item "*) cursor="${cursor%% —*}" ;;
     "BACKLOG rank "*) cursor="${cursor%% —*}" ;;
+    # Nothing open, but not satisfied either: what is left waits on a
+    # decision. Rendering it whole is ~48 characters and pushes the branch
+    # off the line, which is what the arm above exists to prevent.
+    "nothing open; "*) cursor="${cursor#nothing open; }"; cursor="${cursor%% BACKLOG*} held" ;;
 esac
 
 if [ "$dirty" -gt 0 ] 2>/dev/null; then

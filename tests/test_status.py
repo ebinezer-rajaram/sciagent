@@ -534,6 +534,58 @@ class TestAClosedEntryDoesNotClaimEvidence:
         assert marker != "x"
         assert "1/3" in detail
 
+    def test_a_landed_entry_that_kept_its_held_field_still_reads_as_landed(
+        self,
+    ) -> None:
+        """``**Held.**`` is stale the moment the decision is taken and it lands.
+
+        The file's own convention is that an entry keeps its fields when it
+        lands and gains only a heading marker, so this is the documented path
+        rather than an abuse of one. Every other reader of ``held`` guards it
+        with ``and not closed``; this one did not, so a held entry that landed
+        green would have reported as blocked while the cursor summary below it
+        said nothing was held.
+        """
+        entry = status.BacklogEntry(
+            rank=3,
+            title="DONE (2026-08-20, gate A29) — the decision was taken",
+            gate=29,
+            test_name="test_a29_x",
+            held="OPEN-DECISIONS §1",
+            closed=True,
+        )
+        gate = status.GateStatus(number=29, title="T", total=4, passed=4)
+        marker, detail = status.entry_row(entry, gate, execute=True)
+        assert marker == "x"
+        assert "landed" in detail and "held" not in detail
+
+
+class TestATestForAnUndeclaredGateIsRefused:
+    """The vanishing bug, arriving from the side the parser cannot see.
+
+    ``gate_of`` attributes a test by its name alone, and ``gate_statuses``
+    iterates the declared numbers. So a test named for a number *nothing*
+    declares is counted into no row and excluded from the "not named for a
+    gate" tally as well -- which is the exact failure this module was changed
+    to close, reached by writing the test rather than by omitting the entry.
+    """
+
+    def test_a_gate_with_tests_that_nothing_declares_is_an_error(self) -> None:
+        with pytest.raises(SystemExit, match="A99"):
+            status.refuse_undeclared_gates({1: 3, 99: 2}, {1: "Determinism"})
+
+    def test_a_declared_gate_with_no_tests_is_not_an_error(self) -> None:
+        """Unwritten is the normal state of a gate; only unattributable is not."""
+        status.refuse_undeclared_gates({1: 3}, {1: "Determinism", 99: "Later"})
+
+    def test_the_real_tree_declares_every_gate_it_names_a_test_for(self) -> None:
+        """The guard above is worth nothing if the repository already trips it."""
+        total, _ = status.collect_tests(status.ROOT)
+        entries = status.parse_backlog_entries(BACKLOG.read_text(encoding="utf-8"))
+        spec = status.parse_gate_titles(status.SPEC.read_text(encoding="utf-8"))
+        declared = status.merge_gate_titles(spec, entries)
+        assert sorted(set(total) - set(declared)) == []
+
 
 class TestFieldValidationIsSymmetric:
     """A field that fails to parse must say so, not reclassify the entry."""

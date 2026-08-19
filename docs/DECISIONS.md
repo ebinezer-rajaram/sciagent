@@ -7931,3 +7931,47 @@ waiting cost nothing, and the thing waited on arrived as an ordinary commit.
 the battery's presence, not its value`, blocked on A43. Ranks 1, 2, 4, 16 and 17
 are landed, 3 and 19 are held on decisions that are the user's, and 5 onward are
 open in order.
+
+## 2026-08-19 — The merge's review round, and a guard written from the wrong side
+
+**Four findings on the merge resolution**, all real, all fixed. Two are worth
+recording because the fix is not the one that was proposed.
+
+**A landed entry's stale `**Held.**` blockaded it.** `entry_row` tested `held`
+before `closed`, while every other reader of the field guards it with
+`and not closed`. The file's own convention is that an entry keeps its fields
+when it lands and gains only a heading marker, so this was the documented path,
+not an abuse of one: the moment the OPEN-DECISIONS §1 decision is taken and A29
+lands green, rank 3 would have reported as blocked while the cursor summary
+below it said nothing was held. The asymmetry is the lesson — a field read in
+four places and guarded in three is a defect waiting for the fourth caller.
+
+**The struck-gate exclusion reopened the vanishing hole from the other side.**
+Keeping a withdrawn criterion out of the namespace is right, and it has a cost
+the change did not see: `gate_of` attributes a test by its name alone and the
+report iterates the *declared* numbers, so a test still named `test_a37_…` after
+entry 37 is struck is counted into no row and excluded from the "not named for a
+gate" tally as well. It disappears — which is the exact failure this whole
+change exists to close, arriving by writing the test rather than by omitting the
+entry.
+
+The review proposed a struck-specific guard. **`refuse_undeclared_gates` is
+general instead**, refusing any gate number the tests name that neither SPEC §6
+nor BACKLOG declares. Struck entries are one way to reach it; a typo in a test
+name is another, and a number nobody ever declared is a third. A guard shaped to
+the one path that was noticed is how this change acquired three separate ways to
+lose a section, each found by a different review round. Verified empty against
+the tree before the guard went in, so it refuses nothing that exists today.
+
+**One half of one finding was declined.** The statusline now compresses the
+fourth cursor form — `nothing open; N BACKLOG entries held on a decision`, 48
+characters rendered verbatim before this — down to `N held`. The review also
+asked for the dim colour that `all gates satisfied` gets. That was not taken:
+dim reads as *done*, and this state is the opposite of done — nothing is
+startable because the remaining work waits on the user. It keeps the cyan
+"outstanding" colour, which is what it is.
+
+**Closes off.** The two-review pattern recorded on this change holds for a third
+round: every round found something, and what it found was another path to a
+failure mode the previous round had already named and guarded. The guard is
+evidence the mode was understood. It is no evidence the paths were enumerated.

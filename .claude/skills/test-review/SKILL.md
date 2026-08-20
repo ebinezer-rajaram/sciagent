@@ -1,6 +1,7 @@
 ---
 name: test-review
 description: Review a freshly written test against the standard it is meant to encode, while the test is still the only thing that exists. Invoke as /test-review after watching a new test fail and before writing the code that makes it pass. /next calls it once at its §3 step 3; ad-hoc work that has any testable claim calls it directly.
+effort: max
 ---
 
 # Review the test, before you build to it

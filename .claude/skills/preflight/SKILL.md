@@ -105,7 +105,8 @@ anyway. What the merge invalidated is the *suite*, not the review — which is w
 This is a condition correctly not firing, not a skip of convenience; §3 asks for
 those to read differently.
 
-Otherwise: run `/code-review`, scoped to the paths from step 0. Do not review or
+Otherwise: run `/code-review`, scoped to the paths from step 0, and tell it to
+do the reading itself rather than delegating sweeps of its own. Do not review or
 fix another session's files — reporting findings on work you cannot see the
 intent of wastes effort and invites you to "fix" something deliberate.
 
@@ -152,7 +153,9 @@ that does not exist is one a literal reading never fires.
 Whenever the diff **modifies lines that already existed**, also delegate a
 history lens: give a `sonnet` subagent the paths from step 0 and ask it to read
 `git blame` and `git log -L` over the changed hunks, then report only what the
-history makes visible. A line reverted once before. A guard someone added
+history makes visible. **Tell it to do the reading itself and not delegate
+further** — see the ceiling below; without that clause it fans out over the
+changed files and returns before its own children. A line reverted once before. A guard someone added
 deliberately that this diff removes. A constant whose current value is explained
 by the commit message that last set it. It reports; it does not fix.
 
@@ -214,10 +217,23 @@ two. Six is the ceiling and not the usual count: the invariant lenses need an
 conditions are independent. A docs-only diff launches `/code-review` and the
 history lens; a diff of all-new files under `src/` launches five, because
 nothing there has a history to read. They are read-only and cheap against each
-other — but do not start any of them alongside a step-1 suite re-run. Four such
-agents were measured on 2026-08-16 costing a `-n 4` suite 12–15% while alive for
-only a fifth of it, so "read-only, so free" is the wrong premise even though the
-rule is the right one; six make it worse, not better.
+other.
+
+**Six is the ceiling only if you say so, and by default you do not get it.**
+Measured 2026-08-20 over two runs of this exact fan-out: the history lens spawned
+three subagents of its own and returned at 67.6s *without results*, leaving them
+running; `/code-review` spawned two, returned at 350.0s announcing they were
+still going, and one ran a further 471s. Seventeen agents across two runs, not
+twelve. The cost is not only wall-clock — a parent that returns before its
+children makes completion unobservable, so this step can report done with work
+still in flight. The clause above is what closes it: adding it cut the history
+lens from ~253s to 162.1s and returned one coherent report instead of three
+fragments.
+
+On overlapping a step-1 suite re-run, see `CLAUDE.md`'s carve-out: these lenses
+read a diff, not a test result, so they may run beside it. The suite pays 4-18%
+depending on how long the lenses stay alive, and finishes first regardless;
+serialising costs more than the tax.
 
 Fix what the review finds, then re-run step 1 — but only what the fixes could
 have broken. If the review changed **no** file, the freshness check still

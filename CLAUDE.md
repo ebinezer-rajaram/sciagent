@@ -131,9 +131,14 @@ personal config file because cloud sessions clone the repo and see nothing from
 - Before repeating the suite, ask `bash .claude/hooks/suite-freshness.sh check`.
   Pin with `begin` before pytest and `record` after — `record` refuses if a
   tracked file moved mid-run, since such a run describes no single tree.
-- **Never run a subagent alongside the suite.** The cost is measured;
-  "read-only, so no CPU work" is false as a premise even though the rule it was
-  offered for is right. `mypy` is fast and needs no such care.
+- **Do not start a subagent alongside the suite — except review that never
+  reads the suite's result.** The tax is real (**4-18%** for six agents,
+  scaling with how much of the run they are alive for) and
+  "read-only, so no CPU work" is false as a premise. But it lands inside a
+  review fan-out that outlasts the suite, while serialising adds the suite's
+  *whole* duration to the critical path. `/preflight`'s lenses read a diff, so
+  they may overlap; anything that reads a test result waits. `mypy` is fast and
+  needs no such care.
 
 <!--
 Suite timings, the `-n 4 --dist loadfile` adoption, the `-n auto` MemoryError,
@@ -141,6 +146,15 @@ the per-test evidence for `loadfile`, and the 12-15% cost of four read-only
 agents alongside a `-n 4` run are all in docs/DECISIONS.md, 2026-08-16,
 "pytest-xdist adopted at -n 4, and what the contention rule actually is". Every
 figure in DECISIONS.md before that date is serial and not comparable.
+
+The carve-out above is measured on 2026-08-20: 200.65s idle against 236.59s
+under six `/preflight`-shaped agents, 1505 passed / 7 skipped in both, so the
+tax is time and not correctness. The mechanism the 2026-08-16 entry did not
+name is that the agents are bound on *inference latency*, not local CPU — under
+full suite load `/code-review` ran 350.0s against 360.6s idle. That is why the
+suite pays 17.9% and the agents pay nothing, and why the fan-out, not the suite,
+is the critical path. Do not quote a net saving: agent depth varies run to run
+by up to 2.6x, which swamps the effect.
 
 That entry also disowns the 30m37s contention figure this file used to carry: it
 was a 4 vCPU cloud-VM measurement against a 7m50s baseline on that same VM,
@@ -167,8 +181,9 @@ the read/write race are guarded. docs/DECISIONS.md, 2026-08-16.
   clothing. Three places clear the bar — `/preflight` step 2's four invariant
   lenses plus `/code-review`, `/recall`'s four `decisions-sweeper` slices, and
   triaging a run with more than about three unrelated failures. The contention
-  is **CPU**, so what this forbids is an agent running *alongside the suite*;
-  concurrent read-only agents are affordable, which is not the same as free.
+  is **CPU**, and concurrent read-only agents are affordable, which is not the
+  same as free. What it forbids is an agent that must *read the suite's result*
+  running beside it; review that reads only a diff is the carve-out above.
 - **Read-only review is authorised by the work; irreversible action only by the
   user.** That licenses `/preflight`'s subagents without asking, including when
   you invoked `/preflight` yourself: `/code-review`, plus `invariant-auditor`'s

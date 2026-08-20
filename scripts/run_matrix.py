@@ -176,7 +176,17 @@ def _recorded_systems(ledger_path: Path) -> set[str]:
     if not ledger_path.exists():
         return set()
     with CampaignLedger.open(ledger_path) as ledger:
-        return {entry.key.config.get("system", "") for entry in ledger.entries()}
+        # A row with no `system` term names no arm. Defaulting to `""` and
+        # keeping it leaves `recorded - criterion5` holding `{""}` -- an empty
+        # string, but a non-empty *set*, and `if here and there` tests the set.
+        # So such a row reads as a section 9 arm and refuses a legitimate B6
+        # run against a ledger holding nothing of section 9's: the guard's own
+        # false positive.
+        return {
+            system
+            for entry in ledger.entries()
+            if (system := entry.key.config.get("system", ""))
+        }
 
 
 def _refuse_mixed_ledger(cells: Sequence[Cell], ledger_path: Path) -> None:
@@ -192,19 +202,34 @@ def _refuse_mixed_ledger(cells: Sequence[Cell], ledger_path: Path) -> None:
     exists to prevent, arriving one layer downstream of where it was prevented.
     Found by review, not by a test.
 
-    Two invocations against one path are the case that matters, so this reads
-    what the ledger already holds rather than only what this invocation asks
-    for. Refusing is right rather than harsh: the alternative fixes are a term
+    Two invocations against one path are one of the two cases, so this reads
+    what the ledger already holds as well as what this invocation asks for. The
+    second case is a single invocation naming both sets: it never becomes
+    something the ledger "already holds", so reading history alone admitted
+    ``--systems V1,B6`` against a fresh path. Found by review, again, after the
+    first version shipped with only the history half.
+
+    Refusing is right rather than harsh: the alternative fixes are a term
     in the campaign address, which would move every recorded cell, or a filter
     in `summarise`, which would put a section 9 concept inside the framework.
     A second ledger file costs nothing and keeps both readings honest.
     """
     wanted = {cell.system for cell in cells}
     criterion5 = set(CRITERION5_SYSTEMS)
+    asked_for, alongside = wanted & criterion5, wanted - criterion5
+    if asked_for and alongside:
+        raise ValueError(
+            f"refusing both cell sets in one invocation: criterion 5's "
+            f"comparator ({', '.join(sorted(asked_for))}) alongside section 9's "
+            f"arms ({', '.join(sorted(alongside))}). Section 9's "
+            f"matrix and criterion 5's comparator share a campaign address, so "
+            f"one ledger holding both reports them as one matrix. Run each cell "
+            f"set separately, into its own ledger file"
+        )
     recorded = _recorded_systems(ledger_path)
     for label, here, there in (
-        ("criterion 5's comparator", wanted & criterion5, recorded - criterion5),
-        ("section 9's matrix", wanted - criterion5, recorded & criterion5),
+        ("criterion 5's comparator", asked_for, recorded - criterion5),
+        ("section 9's matrix", alongside, recorded & criterion5),
     ):
         if here and there:
             raise ValueError(

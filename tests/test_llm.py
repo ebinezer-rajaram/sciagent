@@ -79,6 +79,7 @@ from sciagent.systems.llm import (
     structural_menu,
     tool_schema,
 )
+from sciagent.systems.llm.provider import slug_hypothesis_name
 
 CHILD = Path(__file__).parent / "transcript_child.py"
 
@@ -865,8 +866,8 @@ class TestTheProposalLayer:
         }
 
     def test_a_model_chosen_name_is_slugged(self) -> None:
-        """A ``HypothesisId`` ends up in paths and orderings, so the framework
-        decides which characters it may carry."""
+        """A ``HypothesisId`` ends up in claim ids and orderings, so the
+        framework decides which characters it may carry."""
         payload = fixed_payload(0, (1, 2, 3), name="Self  Excitation!! / v2")
         layer = _layer(ScriptedProvider([payload]))
         assert layer.propose(_investigation("S1")).name == "self__excitation_____v2"
@@ -1032,6 +1033,80 @@ def _agent_sdk_failure(name: str) -> Exception:
         return claude_agent_sdk.CLIJSONDecodeError("not json", ValueError("boom"))
     build: Callable[..., Exception] = getattr(claude_agent_sdk, name)
     return build(name)
+
+
+class TestSlugHypothesisName:
+    """The function itself, rather than the layer that calls it.
+
+    Two properties belong here and not to ``TestTheProposalLayer``: the slug is
+    applied twice on the path a proposal actually takes -- once in
+    :meth:`ProposalLayer._build` and again in
+    :meth:`~sciagent.systems.hybrid.Hybrid._admit` -- and it is the only thing
+    standing between a source-chosen name and an id the framework reserves.
+    Neither is visible through ``layer.propose``.
+
+    What the slug does *not* guarantee, so that nothing here reads as wider than
+    it is: it forecloses reserved ids that open with an underscore, which is the
+    shape ``__candidate__`` has, and not reserved ids in general.
+    :data:`~sciagent.systems.base` reserves ``"null"`` too, a name a model could
+    write directly and a slug would pass through untouched. That one is held by
+    ``Hybrid._admit``'s rename-on-collision instead, since the null hypothesis is
+    always seeded into the graph -- a different mechanism, and not this one's job.
+    """
+
+    @pytest.mark.parametrize("breaker", [" ", "_", "-"])
+    def test_slugging_is_idempotent_at_the_truncation_boundary(
+        self, breaker: str
+    ) -> None:
+        """Both call sites' docstrings promise the second application changes
+        nothing, and ``Hybrid._admit`` relies on it to keep V7's node ids where
+        they are.
+
+        The boundary is the case that breaks it: truncation runs *after* the
+        strip, so a name whose 48th character is strippable keeps it once and
+        loses it twice. Prose long enough to reach the cap is ordinary, so this
+        is not a contrived input -- it is any model-written name of forty-eight
+        characters or more that happens to break on a word.
+
+        Parametrised over the boundary character because the mechanism has
+        exactly two instances and pinning one is not pinning the mechanism: the
+        allowed set is alphanumerics plus ``-`` and ``_``, so a cut can land on
+        either. Only the underscore cases are red today; ``-`` is here so that a
+        later ``rstrip("-")`` -- an ordinary slug convention to add -- cannot
+        reintroduce the same defect through the other door.
+
+        The guard checks the *input* rather than the output length. Asserting
+        the slug is exactly 48 characters would reject a correct fix, since
+        trimming after the cut legitimately returns 47.
+        """
+        name = "a" * 47 + breaker + "beta gamma"
+        assert len(name) > 48, "the input must be long enough to reach the cap"
+        once = slug_hypothesis_name(name)
+        assert slug_hypothesis_name(once) == once
+
+    def test_no_name_reaches_the_reserved_candidate_id(self) -> None:
+        """``sciagent.eval.scoring`` reserves ``__candidate__`` for D5's
+        candidate slot, and an entertained hypothesis carrying that id would
+        have its structure overwritten and its mass dropped from the comparison
+        belief -- a scored dimension moved by a name a source chose.
+
+        ``Hybrid._admit``'s docstring argues for the slug on exactly this
+        ground. Nothing asserted it until here.
+        """
+        for name in (
+            "__candidate__",
+            "  __CANDIDATE__  ",
+            "_ _candidate_ _",
+            "..__candidate__..",
+        ):
+            assert slug_hypothesis_name(name) != "__candidate__"
+
+    def test_a_slug_never_opens_with_an_underscore(self) -> None:
+        """The property the test above rests on, stated directly: no input can
+        produce a leading underscore, so no input can reach any reserved
+        ``__dunder__`` id, the one above or a later one."""
+        for name in ("___leading", "_ _ _", "!!!weird", "  _x  "):
+            assert not slug_hypothesis_name(name).startswith("_")
 
 
 class TestTheAnthropicProvider:

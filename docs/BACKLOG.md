@@ -982,6 +982,51 @@ Nine tests in `tests/acceptance/test_a26.py`. `scripts/status.py` learned to rea
 `**Gate.**` lines from this file, since SPEC §6 stops at A24 and is frozen, and
 reports post-freeze gates in their own block.
 
+**Amended 2026-08-20, after a measurement of `/preflight` turned the fan-out on
+this commit twice.** The gate was sound; six of its tests were not, and two
+defects were in the code it grades. Fixed in place rather than under a new gate
+number: invariant 6 licenses fixing an instrument that has never been read, and
+nothing has been run against A28 — so there is no measurement these corrections
+could have been fitted to. Ten tests added, forty-six in
+`tests/acceptance/test_a28.py` and five more in `tests/test_llm.py`.
+
+Two were defects in landed code, both confirmed by execution rather than by
+reading alone, and both reproduced by two independent review passes:
+
+- `slug_hypothesis_name` was **not idempotent**, which is the one property both
+  its call sites' docstrings assert and `Hybrid._admit` relies on. Truncation
+  ran after the trim, so a name whose forty-eighth character was strippable kept
+  it once and lost it twice. The fix trims after cutting, which makes a single
+  application byte-identical to the double application `Hybrid` was already
+  performing — so **no node id moves**, and no transcript corpus is invalidated.
+  The other fix direction would have moved real ids and forfeited the
+  `__candidate__` guard.
+- `_refuse_mixed_ledger` read only what a ledger *already held*, so a single
+  invocation naming both sets — `--systems V1,B6` against a fresh path — was
+  admitted, writing §9 and criterion-5 rows under one `CampaignAddress`. The
+  state the function exists to prevent, reached by the one route it did not
+  read. `_recorded_systems` also counted a row with no `system` term as a §9
+  arm, the same guard's false positive in the other direction.
+
+Four were tests that did not test what they claimed. The `"refused"` exclusion
+named a provider declining as the only producer, when `Hybrid._admit` also
+returns it on `BudgetExhaustedError` — a path B6 owns outright, and one
+`Hybrid._extend` stops the proposal loop on, so the failure message would have
+blamed the proposer for the half-budget failure this gate exists to catch.
+`match="criterion 5"` matched both branches of the guard it discriminated: with
+the labels swapped it still passed, verified by mutation, while its sibling
+caught the same inversion only by the accident of a capital `S`.
+`pytest.raises(SystemConfigurationError)` carried no `match=` against an
+exception this neighbourhood raises for four unrelated reasons. And
+`assert proposal.name` / `assert proposal.rationale` were truthiness checks on
+unconditional f-strings, unfalsifiable by construction.
+
+The composition's census was wrong by one: the module claimed two joints and
+pinned two, but `system_for` builds the proposer at a seed of its own choosing
+between them. It could have passed `Seed(0)` with every test green and all
+twenty replicates drawing one sequence — mutation-verified, and the new test is
+the module's only killer of it.
+
 ### As proposed
 
 **Idea.** Fix D4 by excluding the candidate's own hypothesis from the
@@ -1096,7 +1141,8 @@ membership appears in the recorded address.
 "drawn at the same Stage A gate under the same budget split as V7" is a fact
 about construction and not a claim to audit — the same argument `memory_ablation`
 already makes for V3 and V4, and the reason `Hybrid.name` was parameterised.
-Thirty-six tests in `tests/acceptance/test_a28.py`.
+Thirty-six tests in `tests/acceptance/test_a28.py` (forty-six after the
+2026-08-20 amendment below).
 
 **Departure: the draw is the entry's second form, not its first.** The entry
 named the 48-corner `enumerate_edits(1)` stratification as the cheap first form.

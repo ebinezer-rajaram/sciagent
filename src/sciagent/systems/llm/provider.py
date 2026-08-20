@@ -13,6 +13,18 @@ caller hands that to :meth:`~sciagent.systems.base.Investigation.propose`, which
 derives the prior from the grammar's code length and the predictions from the
 table. The chain from model output to posterior contains no step at which a
 value the model chose becomes a value the framework reports.
+
+One qualification, because the absolute form is not quite true and the gap is
+worth knowing rather than papering over: the model chooses its proposal's
+*name*, that name becomes a ``HypothesisId``, and three sites break an exact
+tie on that id lexicographically -- ``closed_world_score`` and
+``leading_structure`` in :mod:`sciagent.eval.scoring`, and ``leader`` in
+:mod:`sciagent.eval.campaign`. Every mass in those comparisons is
+framework-derived, so this is influence on which of two equal readings is
+reported and never a value the model set. No recorded tie has turned on it: a
+sweep of all 1,120 rows of the section 9 campaign found no row where the truth
+tied the leader and lost. Recorded so the sentence above is read as the strong
+claim it is and not a wider one.
 """
 
 from __future__ import annotations
@@ -274,9 +286,9 @@ class ProposalLayer:
 def slug_hypothesis_name(name: str) -> str:
     """Return a hypothesis-id-safe rendering of a source-chosen name.
 
-    A model writes prose, and a ``HypothesisId`` ends up in file paths, claim
-    ids and sorted orderings, so the characters it may carry are the
-    framework's decision and not the model's.
+    A model writes prose, and a ``HypothesisId`` ends up in claim ids and in
+    sorted orderings that decide an exact tie, so the characters it may carry
+    are the framework's decision and not the model's.
 
     Public, and applied by :meth:`~sciagent.systems.hybrid.Hybrid._admit`
     rather than only here. While ``Hybrid`` held a ``ProposalLayer``
@@ -287,15 +299,23 @@ def slug_hypothesis_name(name: str) -> str:
     which is the shape of guarantee SPEC's second invariant says to enforce
     with an assertion rather than a convention. Idempotent, so a source that
     slugs its own names -- as ``ProposalLayer`` still does -- is unchanged by
-    the second application. Anything outside a conservative
-    set becomes an underscore; an empty result becomes ``"proposal"`` rather
-    than an id that sorts before everything and reads as absent.
+    the second application. The trim runs *after* the cut for that reason and
+    not for tidiness: cutting last leaves a name whose forty-eighth character
+    is strippable longer on its first application than on its second -- by one
+    character, or by as many as the run of underscores the cut lands in the
+    middle of. That difference is the whole of what the second call site relies
+    on not existing.
+    ``TestSlugHypothesisName`` pins it at both boundary characters.
+
+    Anything outside a conservative set becomes an underscore; an empty result
+    becomes ``"proposal"`` rather than an id that sorts before everything and
+    reads as absent.
     """
     cleaned = "".join(
         character if character.isalnum() or character in "-_" else "_"
         for character in name.strip().lower()
     ).strip("_")
-    return cleaned[:48] or "proposal"
+    return cleaned[:48].strip("_") or "proposal"
 
 
 #: What the model is told its job is. Deliberately short and deliberately about

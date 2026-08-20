@@ -120,11 +120,20 @@ function alone leaves the class free to do anything at all.
 
 The seed handed to B6 is ``CellTask.seed``, which
 :func:`~sciagent.eval.matrix.replicate_seeds` already guarantees is a pure
-function of ``(scenario_seed, replicate index)``. That composition has two
-joints, and this module pins both: that the proposer draws at the seed it was
-given, and that
-:meth:`~environments.pointproc.runner.MatrixRunner.execute` gives it
-``task.seed`` rather than the scenario's own.
+function of ``(scenario_seed, replicate index)``. That composition has three
+joints, and this module pins all three: that
+:meth:`~environments.pointproc.runner.MatrixRunner.execute` gives the arm
+``task.seed`` rather than the scenario's own; that
+:func:`~environments.pointproc.runner.system_for` builds the proposer *at* that
+seed rather than at one of its own; and that the proposer then draws at the
+seed it was built with.
+
+The middle one was missing until 2026-08-20, and its absence was not visible
+from either side: ``system_for`` could have passed ``Seed(0)`` while every test
+here stayed green and all twenty replicates drew one sequence -- the exact
+failure the refusal in ``system_for`` exists to prevent, one line further in.
+The call index is a fourth thing the sequence depends on, pinned separately
+above; it is not a joint in this chain because no handoff carries it.
 """
 
 from __future__ import annotations
@@ -185,6 +194,7 @@ from sciagent.systems.llm import (
     TranscriptStore,
 )
 from sciagent.systems.llm.encoding import MenuEntry, decode, structural_menu
+from sciagent.systems.llm.provider import slug_hypothesis_name
 
 #: A seed with no significance beyond being fixed. Every draw checked here is
 #: taken under it or under a stated neighbour, so a test that changed behaviour
@@ -226,10 +236,21 @@ IN_LIBRARY = "S1"
 
 #: The outcomes a uniform draw may legitimately have.
 #: :class:`~sciagent.systems.hybrid.ProposalAttempt` also admits ``"malformed"``
-#: -- a draft that does not denote a licensed structure -- and ``"refused"``, a
-#: provider declining. Neither is available to a draw taken from the grammar's
-#: own menu with no provider behind it, so either one appearing means the
-#: proposer is not drawing.
+#: -- a draft that does not denote a licensed structure -- and ``"refused"``.
+#: A draw taken from the grammar's own menu cannot be malformed, so that one
+#: appearing means the proposer is not drawing.
+#:
+#: ``"refused"`` is the one that needs care, because it has **two** producers
+#: and only one of them is a provider declining. ``Hybrid._propose_once``
+#: returns it on a ``ProviderError``, which B6 cannot reach -- there is no
+#: provider behind a draw. ``Hybrid._admit`` also returns it on a
+#: ``BudgetExhaustedError``, which B6 owns outright: it inherits V7's budget
+#: split by construction. That path says nothing about drawing, and
+#: ``Hybrid._extend`` breaks out of the proposal loop at the first
+#: ``"refused"`` -- so a budget-exhausted B6 stops proposing early, which is
+#: the silent half-budget failure this module exists to catch, arriving
+#: through the door the exclusion leaves open. Keep it excluded, and say which
+#: one fired.
 DRAWABLE_OUTCOMES = frozenset({"admitted", "duplicate", "unmeasurable"})
 
 
@@ -431,6 +452,19 @@ def _first_replicate_seed(scenario_id: str) -> Seed:
     return replicate_seeds(scenario(scenario_id).seed, 1)[0]
 
 
+def _b6_source(seed: Seed) -> UniformProposer:
+    """Return the proposal source ``system_for`` builds B6 around.
+
+    Reaches through ``Hybrid``'s slot because that is the seam under test: the
+    question is what ``system_for`` put there, not what ``Hybrid`` does with it.
+    """
+    system = system_for("B6", seed=seed)
+    assert isinstance(system, Hybrid)
+    source = system._layer
+    assert isinstance(source, UniformProposer)
+    return source
+
+
 @cache
 def _b6_run(scenario_id: str) -> ScenarioRun:
     """Run B6 once on one scenario, growing and saving the shared gate table.
@@ -570,12 +604,26 @@ class TestA28UniformProposer:
         """
         proposer = UniformProposer(AGENT_GRAMMAR, SEED)
         investigation = _investigation()
+        names: list[str] = []
+        rationales: list[str] = []
         for _ in range(DRAWS):
             proposal = proposer.propose(investigation)
             assert len(proposal.program_edit) == 1
             AGENT_GRAMMAR.validate_defect(proposal.program_edit)
-            assert proposal.name
-            assert proposal.rationale
+            names.append(proposal.name)
+            rationales.append(proposal.rationale)
+        # `uniform_draft` builds both from unconditional f-strings, but this is
+        # a `Proposal` and not that `ProposalDraft`: `UniformProposer.propose`
+        # copies the two fields across, and a copy that dropped one would be
+        # invisible here without a check. So the rationale keeps a truthiness
+        # assertion, which is the whole of what can fail at that copy.
+        assert all(rationales), "a draw carried no rationale across the copy"
+        # The name gets a stronger one instead, because a stronger one exists.
+        # B6 hands its names over unslugged, so these are the strings
+        # `Hybrid._admit`'s slug has to survive, and two draws sharing a name
+        # would be recorded as a duplicate rather than an admission.
+        assert len(set(names)) == len(names), "two draws shared a name"
+        assert all(slug_hypothesis_name(name) != "__candidate__" for name in names)
 
     def test_a28_the_draw_stream_is_pinned_to_recorded_values(self) -> None:
         """The first four draws, recorded. This test exists to go red.
@@ -719,14 +767,47 @@ class TestA28UniformProposer:
         assert "B6" in CRITERION5_SYSTEMS
         assert system_for("B6", seed=SEED).name == "B6"
 
+    def test_a28_the_arm_is_built_at_the_seed_it_was_handed(self) -> None:
+        """The third joint, which the two above do not close.
+
+        ``test_a28_the_runner_hands_the_arm_the_replicate_seed`` stops at
+        ``system_for``'s keyword and asserts nothing about what happens to it;
+        ``test_a28_b6_without_a_seed_is_refused`` arrives one line later and
+        only pins that *some* seed is required. Between them sits
+        ``system_for``'s own construction --
+        ``UniformProposer(AGENT_GRAMMAR, seed)`` -- and nothing reads
+        ``UniformProposer.seed``, whose docstring says it is published so "a
+        recorded B6 reading is only reproducible if the seed behind it can be
+        read back off the arm that produced it".
+
+        So ``system_for`` could pass ``Seed(0)`` and every test in this module
+        stays green while all twenty replicates draw one sequence -- the exact
+        failure the refusal one line below exists to prevent, arriving through
+        the door the refusal leaves open.
+        """
+        seed = _first_replicate_seed(OUT_OF_LIBRARY)
+        source = _b6_source(seed)
+        assert source.seed == seed
+        # Non-vacuous only if a different seed reaches a different arm: an
+        # implementation ignoring the argument would satisfy the line above if
+        # `seed` happened to equal whatever it substituted.
+        assert _b6_source(Seed(int(seed) + 1)).seed != source.seed
+
     def test_a28_b6_without_a_seed_is_refused(self) -> None:
         """An unseeded B6 raises rather than picking a seed for itself.
 
         A default would make the arm's draws a function of whatever the default
         was, identically across all twenty replicates, and nothing downstream
         would say so.
+
+        Matched on the message because ``SystemConfigurationError`` is the
+        wrong-arm error, the no-provider error and ``uniform_draft``'s two
+        argument errors as well. A bare ``pytest.raises`` here stays green if
+        B6 falls out of ``CRITERION5_SYSTEMS`` entirely and reaches the
+        unknown-arm branch -- the arm ceasing to exist, read as the arm
+        refusing correctly.
         """
-        with pytest.raises(SystemConfigurationError):
+        with pytest.raises(SystemConfigurationError, match="was offered no seed"):
             system_for("B6")
 
     def test_a28_b6_is_built_fresh_for_each_replicate(self) -> None:
@@ -784,10 +865,12 @@ class TestA28UniformProposer:
 
         The run this item exists to make possible, and the assertion that
         separates a working comparator from the review's second variant: a
-        uniform draw over the grammar's own menu cannot be malformed, and with
-        no provider behind it cannot be refused. Either outcome appearing means
+        uniform draw over the grammar's own menu cannot be malformed, and a
+        refusal cannot be a provider declining. Either outcome appearing means
         nothing was drawn -- which ``Hybrid`` reports as an attempt and carries
-        on from, so it is invisible unless something looks.
+        on from, so it is invisible unless something looks. The two are
+        asserted separately because a refusal has a second cause B6 can reach
+        and malformedness does not; see ``DRAWABLE_OUTCOMES``.
 
         What is *not* asserted is that a draw was admitted. Measurability is
         stochastic -- ``BeamSearch`` says so at ``_UNSCORABLE`` -- so an
@@ -796,9 +879,22 @@ class TestA28UniformProposer:
         """
         run = _b6_run(OUT_OF_LIBRARY)
         assert run.attempts, "the Stage A gate did not open on S11, so B6 never drew"
-        assert {attempt.outcome for attempt in run.attempts} <= DRAWABLE_OUTCOMES, (
-            f"{[attempt.outcome for attempt in run.attempts]} contains an "
-            f"outcome no draw can have; the proposer is not drawing"
+        outcomes = [attempt.outcome for attempt in run.attempts]
+        # Split from the set comparison below so the message names the cause.
+        # "refused" is reachable for B6 through `BudgetExhaustedError`, which is
+        # a budget fact and not a drawing fact; reporting it as "the proposer is
+        # not drawing" would send the next reader to `uniform.py` for a bug that
+        # is not there. See DRAWABLE_OUTCOMES.
+        refused = [a for a in run.attempts if a.outcome == "refused"]
+        assert not refused, (
+            f"B6 was refused ({[a.detail for a in refused]}). With no provider "
+            f"behind a draw this is `BudgetExhaustedError`, not a declining "
+            f"provider -- a budget fact. `Hybrid._extend` stops proposing at "
+            f"the first one, so the arm ran on less than its share"
+        )
+        assert set(outcomes) <= DRAWABLE_OUTCOMES, (
+            f"{outcomes} contains an outcome no draw can have; the proposer is "
+            f"not drawing"
         )
         for node_id, defect in run.proposed.items():
             AGENT_GRAMMAR.validate_defect(defect)
@@ -1045,7 +1141,7 @@ class TestA28TheTwoCellSetsStayInTwoLedgers:
         """B6 will not be recorded where §9's arms already are."""
         ledger = tmp_path / "spec9.db"
         _ledger_holding(ledger, "V1")
-        with pytest.raises(ValueError, match="criterion 5"):
+        with pytest.raises(ValueError, match="record criterion 5's comparator"):
             _run_matrix_cli()._refuse_mixed_ledger(
                 [Cell("B6", ScenarioId(OUT_OF_LIBRARY), 1)], ledger
             )
@@ -1056,7 +1152,7 @@ class TestA28TheTwoCellSetsStayInTwoLedgers:
         """And the converse, so the guard is not one-directional."""
         ledger = tmp_path / "criterion5.db"
         _ledger_holding(ledger, "B6")
-        with pytest.raises(ValueError, match="section 9"):
+        with pytest.raises(ValueError, match="record section 9's matrix"):
             _run_matrix_cli()._refuse_mixed_ledger(
                 [Cell("V1", ScenarioId(OUT_OF_LIBRARY), 1)], ledger
             )
@@ -1079,6 +1175,96 @@ class TestA28TheTwoCellSetsStayInTwoLedgers:
         _run_matrix_cli()._refuse_mixed_ledger(
             [Cell("B6", ScenarioId(OUT_OF_LIBRARY), 1)], criterion5
         )
+
+    @pytest.mark.parametrize("spec9_arm", ["V1", "B4"])
+    def test_a28_one_invocation_may_not_ask_for_both_cell_sets(
+        self, tmp_path: Path, spec9_arm: str
+    ) -> None:
+        """Two invocations against one path are not the only way to mix them.
+
+        The guard reads what the ledger *already holds*, and a single
+        invocation asking for both sets never becomes something it already
+        holds -- so ``--systems V1,B6`` against a fresh path selects both cell
+        sets and is admitted, writing §9 and criterion-5 rows under one
+        ``CampaignAddress``. That is the state the function exists to prevent,
+        reached by the one route it does not read.
+
+        Every other test in this class passes a single-element ``cells`` list,
+        and ``test_a28_a_ledger_that_does_not_exist_yet_is_admitted`` pins the
+        empty-``recorded`` fall-through that hides it.
+
+        Parametrised over the §9 arm because every other test in this class
+        names V1, and a guard spelled ``"V1" in wanted and wanted &
+        CRITERION5_SYSTEMS`` passes all of them while ``--systems B4,B6`` still
+        mixes.
+        """
+        with pytest.raises(ValueError, match="one invocation"):
+            _run_matrix_cli()._refuse_mixed_ledger(
+                [
+                    Cell(spec9_arm, ScenarioId(OUT_OF_LIBRARY), 1),
+                    Cell("B6", ScenarioId(OUT_OF_LIBRARY), 1),
+                ],
+                tmp_path / "absent.db",
+            )
+
+    def test_a28_a_multi_arm_section_nine_invocation_is_still_admitted(
+        self, tmp_path: Path
+    ) -> None:
+        """The refusal is about the two *sets*, not about breadth.
+
+        A guard spelled ``len(wanted) > 1`` refuses the mixed case and passes
+        every other test in this class -- while making the §9 campaign
+        unrunnable, since ``--systems`` defaults to all seven arms. Nothing
+        here exercised a multi-element list until this test, so nothing
+        distinguished the two.
+        """
+        _run_matrix_cli()._refuse_mixed_ledger(
+            [
+                Cell("V1", ScenarioId(OUT_OF_LIBRARY), 1),
+                Cell("B4", ScenarioId(OUT_OF_LIBRARY), 1),
+                Cell("B5", ScenarioId(OUT_OF_LIBRARY), 1),
+            ],
+            tmp_path / "absent.db",
+        )
+
+    def test_a28_the_cli_consults_the_guard_before_it_records(
+        self, tmp_path: Path
+    ) -> None:
+        """A correct helper is worth nothing if ``main`` stops calling it.
+
+        ``scripts/run_matrix.py`` holds the only call site, and no test in this
+        repository drives ``main`` -- so deleting that one line leaves this
+        class green while ``--systems V1,B6`` records both sets under one
+        ``CampaignAddress``. The logic and the wiring are separate failures and
+        need separate tests.
+
+        The guard is replaced with one that always refuses, so this pins the
+        wiring alone and nothing is simulated whatever the real guard does.
+        """
+        cli = _run_matrix_cli()
+        ledger = tmp_path / "mixed.db"
+        seen: list[tuple[str, ...]] = []
+
+        def always_refuse(cells: list[Cell], path: Path) -> None:
+            seen.append(tuple(sorted(cell.system for cell in cells)))
+            raise ValueError("refusing in one invocation, for this test")
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(cli, "_refuse_mixed_ledger", always_refuse)
+            code = cli.main(
+                [
+                    str(ledger),
+                    "--systems",
+                    "V1,B6",
+                    "--scenarios",
+                    OUT_OF_LIBRARY,
+                    "--replicates",
+                    "1",
+                ]
+            )
+        assert seen == [("B6", "V1")], "main did not hand the guard both arms"
+        assert code == 2
+        assert not ledger.exists(), "the ledger was opened before the guard ran"
 
     def test_a28_a_ledger_that_does_not_exist_yet_is_admitted(
         self, tmp_path: Path

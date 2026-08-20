@@ -8123,3 +8123,205 @@ stands on its broad one:** compressing a prohibition changes what it prohibits,
 and invariant 6 is still the test case. The check this change actually needs is
 behavioural and cannot be run from the session that made it: one full `/next`
 item, watching for a convention silently forgotten rather than an error.
+
+## 2026-08-20 — gate A28: the contention rule is measured wrong-way-round, and the fan-out that measured it found six defects
+
+**Decision.** `CLAUDE.md`'s contention rule gains a carve-out: review work that
+never reads the suite's result may run beside it. Gate A28 is amended in place —
+two defects in landed code, four tests that did not test what they claimed, ten
+tests added. No new gate number, no `METRIC_VERSION` bump.
+
+**Why the carve-out, and the one number worth keeping.** Six `/preflight`-shaped
+agents cost a `-n 4 --dist loadfile` run **200.65s → 236.59s, +17.9%**, with
+**identical result sets** (1505 passed, 7 skipped both times) — so the tax is
+time and not correctness, and the 2026-08-16 rule is right that "read-only, so
+free" is the wrong premise. What that entry did not name is the mechanism:
+the agents are bound on **inference latency, not local CPU**. Under full suite
+load `/code-review` ran **350.0s against 360.6s idle**, a 3% *decrease*. That is
+why the suite pays the whole tax and the agents pay none, and why the fan-out —
+not the suite — is the critical path. Serialising therefore adds the suite's
+entire duration to that path to avoid a tax that lands inside time the agents
+were spending anyway.
+
+**Abandoned: the wall-clock comparison this set out to make.** Serialised
+against overlapped was scored at 610s vs 536s and **withdrawn as unsound**.
+`/code-review` spawned nested sweeps in the overlapped condition and not in the
+idle one — one ran a further 471s after its parent returned — so the two
+conditions did different amounts of work and the difference measures that.
+Deeper: **the fan-out has no stable duration.** Lens 6 ran 328.8s at 50 tool
+uses, then 126.3s at 15; lens 2 ran 312.5s, then 500.6s. Agents choose their own
+depth, and that moves wall-clock by up to **2.6x** — far more than 17.9% ever
+could. Do not quote a net saving; the case for overlapping is structural, not a
+stopwatch. Anyone re-running this must pin nesting off in both conditions first:
+the uncontrolled variable was not the CPU, it was how many agents each condition
+decided to become.
+
+**The finding that outranks the one it was looking for.** Running the fan-out
+twice was an unintended reproducibility check on the review apparatus, and it
+failed. The **invariant-6 lens returned opposite verdicts** on the same commit,
+same model, same prompt, thirty minutes apart: "a real violation, well-evidenced"
+(arguing the B6 comparator's rationale cited V7's already-measured D3/S11 score),
+then "clean, no violation found" (arguing SPEC §12 criterion 5's text predates
+V7 by three days at `7f69717` vs `a380a21`, which is correct and decisive). The
+split is not random. Everything verifiable **by execution or grep** reproduced
+exactly — `/code-review` found the same two bugs both times, lenses 3 and 4 were
+clean both times. Only the lens requiring **interpretation of intent and
+chronology** flipped. A single pass on lens 6 is a coin flip on the finding that
+matters most; it needs an adversarial or multi-vote verify, and the reproducible
+lenses do not.
+
+**Why the slug fix moves nothing.** `Hybrid`'s node ids were already the product
+of a *double* application of `slug_hypothesis_name` — trim, cut, trim, cut. The
+fix trims **after** cutting, which makes one application byte-identical to that
+double one, so **no node id moves and no transcript corpus is invalidated**. The
+other direction — preserving the trailing underscore — would have moved real ids
+*and* forfeited the `__candidate__` guard, which is the only thing keeping a
+model-chosen name out of D5's reserved candidate slot and which
+`grep -rn "__candidate__" tests/` showed was **untested**. Nothing recorded was
+at risk either way: campaign ledgers store sixteen named floats and no id text.
+
+**`"refused"` has two producers, and only one is a provider.** `Hybrid._admit`
+returns it on `BudgetExhaustedError`, a path B6 owns outright since it inherits
+V7's budget split by construction. A28's exclusion comment named only the
+provider case, and its failure message said "the proposer is not drawing" — so a
+budget fact would have sent the next reader to `uniform.py` for a bug that is not
+there. Worse, `Hybrid._extend` **breaks the proposal loop at the first
+`"refused"`**, so a budget-exhausted B6 stops proposing early: the silent
+half-budget failure this gate exists to catch, arriving through the door the
+exclusion left open. This is invisible in a test-file diff, which is why it is
+here.
+
+**Amending a landed gate was in bounds, and the reasoning is worth keeping.**
+Invariant 6 forbids a gate written after the system it grades; `CLAUDE.md`'s
+`DO NOT COMPRESS` comment already records that the absolute reading is wrong.
+The operative rule is 2026-08-16's — *fix the instrument when it cannot measure;
+do not touch the bar in the session that reads it.* **A28 has never been read**
+(2026-08-19, "nothing was run"), so no measurement exists that these corrections
+could have been fitted to. That is the strongest available position, and it will
+not be available again: once A40 produces a B6 reading, the same corrections
+would be a bar touched after the fact.
+
+**Measured, for the record.** Full suite green at `-n 4 --dist loadfile`:
+**183.35s**, 1515 passed, 7 skipped. The 2026-08-19 figure of 1272 tests is
+superseded by growth, not by a speed-up; the 1505-test baseline in this entry and
+the 1515 after it are the comparable pair.
+
+**Left incomplete, and what it waits on.** Four A28 findings were deferred rather
+than fixed, all documentation or coupling rather than behaviour, and none of them
+red: the grid-coverage docstring justifies a **per-grid** test with the **pooled**
+arithmetic (~200 expected per point against an actual ~13, a survivor of the very
+pooling `/code-review` removed); two different standard-error figures are stated
+for one quantity, both conservative against an actual ~12 SE; `DRAWABLE_OUTCOMES`
+is a **third**, hand-maintained copy of an outcome vocabulary `hybrid.py`
+documents as closed and cross-checked in two other places, so a sixth outcome
+added correctly in both would turn A28 red saying "the proposer is not drawing";
+and `test_a28_the_proposer_leaves_the_investigation_alone` claims a draw "reads
+no investigation state and writes none" while asserting only the write half —
+which `uniform.py` then cites as its guarantee. They want a ranked backlog entry,
+not a hurried pass.
+
+**Closes off.** The 30m37s figure stays disowned and the 12–15% figure stands for
+four agents; **17.9% is the six-agent number and neither supersedes the other.**
+`/preflight`'s "six concurrent agents at the ceiling" is now false by default —
+across two runs the fan-out was **seventeen** agents, because the history lens
+and `/code-review` each delegate further unless told not to. The skill now tells
+them not to, which cut the history lens from ~253s to 162.1s and returned one
+report instead of three fragments. The cost was never only wall-clock: a parent
+that returns before its children makes completion **unobservable**, so the step
+whose whole job is to say whether the tree is ready could say yes with work still
+in flight.
+
+**Addendum, same day — what the history lens found, and a second contention
+figure.** Two corrections to the entry above, both from `/preflight`'s own
+review of it.
+
+**The carve-out reverses a sentence that no longer existed to argue with.**
+CLAUDE.md carried an explicit boundary from 2026-08-17 (`5b15978`): *"four such
+agents cost a `-n 4` suite 12–15% (measured 2026-08-16), so the exemption is for
+agents running beside* each other, *never beside pytest."* That is precisely the
+line this carve-out crosses, and the entry above never cites it — because it was
+**already gone**. `f6fc85e`, this morning's CLAUDE.md trim, dropped it while
+compressing the rule, hours before this work began. So the reversal was built on
+top of a silent deletion rather than against the argument the deletion removed.
+Recorded because a later reader of the entry above would otherwise never learn
+that a sharper prohibition once existed. The reversal stands, and is now
+deliberate rather than accidental: the 2026-08-17 wording rested on the
+four-agent 12–15% figure and drew the boundary at *pytest*, where the measurement
+since shows the boundary belongs at *whether the agent reads the suite's result*.
+It was right about the cost and wrong about where to cut.
+
+This is also the second time in two days that `f6fc85e`'s trim has been found to
+have removed something load-bearing — the entry immediately above this one
+records the first. A whole-file rewrite defeats a probe-based check, and it
+defeats memory too.
+
+**17.9% is not a constant; it scales with overlap.** The same six-agent fan-out
+run against this change's own diff cost **183.35s → 190.97s, +4.2%**, not 17.9%.
+Nothing about the configuration differed. What differed is how long the agents
+were *alive*: against a whole commit they ran 350–500s each and overlapped the
+entire suite, while against this smaller diff lens 3 finished at 61.2s and lens 4
+at 133.5s. The tax is proportional to the overlap, which is the same shape as
+2026-08-16's "alive for only ~38s of it" and was the reason that entry's figure
+and this one's differ. **Quote the range 4–18%, and quote what the agents were
+reading.** A single number here invites the same splice this file already
+disowns once.
+
+**Second addendum — two sharpenings the invariant-6 lens asked for, and one it
+did not.**
+
+**"Nothing was run" covers two senses and the argument needs only one of them.**
+A28's own tests execute B6 for real: `_b6_run` drives `Hybrid.investigate`, and
+has done on every green suite run since 2026-08-19. What has never happened is a
+**scored reading** -- no ledger anywhere holds a B6 row, confirmed by grep over
+`.cache/campaign/*.db`. The invariant-6 argument rests on the second sense only,
+and should say so: the confound invariant 6 prevents is a bar moved to fit a
+*measurement*, and a passing assertion is not one. Stated loosely, "nothing was
+run" is false; stated precisely, "nothing has been scored" is true and is what
+carries the case.
+
+**The numbering was never the argument.** Amending in place rather than claiming
+gate A44 sidesteps invariant 6's *narrow* clause on a technicality, and the lens
+was right that it does not by itself answer the *broad* one -- amending
+apparatus is moving apparatus however it is numbered. What actually carries
+compliance is that **not one of the sixteen changes is looser**: the three
+`match=` tightenings and the outcome split leave every pass/fail boundary
+exactly where it was, the ten added tests are pure additions, and the two code
+fixes are id-generation and ledger bookkeeping rather than anything that feeds a
+score. That is the test 2026-08-16 sets, and it is the one that should be quoted
+if this is ever questioned -- not the gate number.
+
+**What no static read can exclude**, recorded because the lens was honest enough
+to name it: an unrecorded interactive run of the pre-amendment tests could in
+principle have shown a real `BudgetExhaustedError` and shaped how the `"refused"`
+split was written. Nothing in the tree suggests it, and the split's strictness is
+identical either way, so the exposure is to the *account* rather than to the
+gate.
+
+**Third addendum — the reservation is guarded at the wrong end, and that is
+deferred rather than fixed.** Lens 2 found the sharper form of what this
+session's slug work was circling. `sciagent.eval.scoring._enabled_value`
+reserves `HypothesisId("__candidate__")` and then, if the entertained set
+already carries that id, **silently overwrites its structure and replaces its
+posterior mass** -- D5 moves and nothing raises. What prevents it today is a
+string transformation in one system class, `Hybrid._admit`'s call to
+`slug_hypothesis_name`. `Investigation.propose` and `HypothesisGraph.propose`
+both accept any `HypothesisId` without a check, and a grep for the reserved id
+across `src/` and `tests/` finds the reservation, three docstrings and two tests
+of the slug -- and no assertion at the boundary it protects.
+
+So the guarantee lives at a call site far from the thing it guards, which is
+precisely the shape invariant 2 says to enforce with a runtime assertion rather
+than a convention. One line at the point of reservation -- refusing an
+entertained set that already holds the id -- moves it from argument to check.
+**Not done here**, because it changes scoring behaviour and this session's scope
+was the A28 amendment; it wants its own entry and its own gate. Recorded now
+because the session that added two tests pinning the *slug* end of this is the
+session most likely to believe the question closed.
+
+Two further things lens 2 established that are worth not re-deriving: the
+`__candidate__` foreclosure is **exhaustively verified**, not sampled -- every
+string up to length 4 over an 11-character alphabet including Unicode
+case-changing forms, plus 400,000 random printable strings, 0 violations. And
+the lexicographic tie-break by which an agent-chosen name could influence D1-D6
+**has never fired**: all 1,120 rows of the section 9 campaign hold no row where
+the truth tied the leader and lost.

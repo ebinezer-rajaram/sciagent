@@ -7975,3 +7975,151 @@ startable because the remaining work waits on the user. It keeps the cyan
 round: every round found something, and what it found was another path to a
 failure mode the previous round had already named and guarded. The guard is
 evidence the mode was understood. It is no evidence the paths were enumerated.
+
+## 2026-08-20 — infrastructure: the CLAUDE.md trim, re-proposed against a close-off that ruled it out, and what made it land this time
+
+**Decision.** `CLAUDE.md` goes from **376 injected lines / 23,180 chars** to
+**230 / 13,471** — a 42% reduction in what is billed on every turn of every
+session — with every rule preserved and invariant 6 left untouched. The raw file
+is 315 lines, of which 85 are HTML comment.
+
+**This overrides the 2026-08-18 close-off, knowingly and with the user's
+decision.** That entry — *"the CLAUDE.md trim was attempted, reviewed twice, and
+abandoned"* — says plainly: *"It rules out re-proposing a CLAUDE.md size
+reduction on token-saving grounds alone."* This change was re-proposed on exactly
+those grounds and the agent driving it **did not consult that entry**, having
+grepped the file for measurements and stopped. The collision was found by the
+`/preflight` history lens reading `git log` over the changed hunks, not by the
+work that caused it. That ordering is the finding: a `/recall` for *"was this
+already tried"* costs seconds, is prescribed by `CLAUDE.md` for this exact
+question shape, and was skipped.
+
+**Why it stands anyway, which is a different argument from the one 2026-08-18
+rejected.** The abandoned trim **deleted**: ten slash-command bullets, two
+`Stack` lines, and the forensic receipts behind four rules — 6.5%, ~400 tokens a
+session, with content leaving the repository. This one **relocates**, and the
+distinction is mechanical rather than rhetorical:
+
+- Block HTML comments are **documented** as stripped before injection while
+  remaining visible to `Read`, so justification prose stays adjacent to its rule
+  at no context cost. **This is still not measured here — see the caveat below,
+  which is load-bearing rather than a hedge.**
+- `## Cloud sessions` moved to a tracked `docs/CLOUD.md`, reached by a pointer
+  and by `session-start.sh` printing it when `CLAUDE_CODE_REMOTE=true`.
+- Measurements became pointers into *this* file, which already held them with
+  better provenance.
+
+Nothing left the repository. A 93-probe check over every rule and figure in the
+old file found all of them still reachable. 42% against 6.5% is also a different
+proposition from the one judged not worth the risk.
+
+**The headline figure is contingent, and 2026-08-18 said so first.** That entry's
+second open item reads: *"Whether block-level HTML comments are stripped from
+`CLAUDE.md` before injection: documented at `code.claude.com/docs/en/memory.md`,
+never measured here… the next audit that reaches for the mechanism should measure
+it with `/context` first rather than inherit the assumption."* This audit reached
+for the mechanism and **inherited the assumption anyway** — it verified the
+documentation, which is what that entry already had, and the documentation was
+never the gap. Caught by the second `/code-review` pass, not by the work.
+
+So both figures, honestly:
+
+| | chars | lines |
+|---|---|---|
+| raw file, certain either way | 23,294 → **18,101** (−22%) | 376 → 315 |
+| injected, **if** stripping happens | 23,180 → **13,471** (−42%) | 376 → 230 |
+
+The 22% is a floor that holds regardless. The 42% — and with it the claim that
+justification prose costs nothing, which is the argument overriding 2026-08-18 —
+rests on a mechanism no one here has observed. **It cannot be measured from the
+session that made the change**: `/context` reports injected size and needs a
+fresh session. The measurement is owed, and it is the first thing to do in the
+next session rather than a nice-to-have. If it comes back showing no stripping,
+the comments are still valid markdown and nothing breaks — the saving is 22% and
+this entry's framing, not the change, is what needs correcting.
+
+**Invariant 6 is byte-identical to its pre-change text, and now carries a
+banner.** The first draft of this change reworded its headline to *"Evaluation
+apparatus is never written after the system it grades."* — **verbatim the
+wording 2026-08-18 quotes and rejects as too broad**, the absolute that
+`c4dcee3` already violates. It is restored exactly, with a comment naming both
+clauses that must survive, both rejected wordings, and the instruction not to
+compress it. 2026-08-18 nominated invariant 6 as the test case for any future
+attempt; it failed that test on the first draft and passes it now only because
+the lens caught it.
+
+**Measured, and the reason half this entry exists.** Auditing what `CLAUDE.md`
+asserted against what this file records found almost everything already here —
+the xdist table, the 12–15% contention figure, 3m11s/1.055s, the 18:05:56 false
+green, the worktree/agent visibility rule, the Windows pin. **Three numbers
+existed nowhere but `CLAUDE.md`** and would have been lost with it:
+
+| measurement | value |
+|---|---|
+| the `cd <project dir> &&` prefix, across 50 transcripts | **1,141 of 1,402** commands carried it; none needed it |
+| `mypy` on the configured file set | **1.9s** |
+| shared-cache read probe, before the reader guard | **4 lost reads in 900**, at four writers / six readers |
+| the same probe, after the guard | **0 in 900**, and **0 in 1200** at six and eight readers |
+
+The probe figures belong beside the 2026-08-16 entry on the unguarded reader,
+which recorded the defect and the fix but not the numbers that closed it.
+
+`docs/DECISIONS.md` is now **~485KB across 169 entries**, by the colon test that
+2026-08-18 records — `grep -c '^## '` returns 170, one more, because the
+preamble's fenced template matches. The 90k-token figure that entry measured was
+taken at ~6,180 lines against 8,035 now, so `CLAUDE.md` no longer restates it as
+a number: it says *well over 100k, treat any figure as a floor*.
+
+**What the review caught that the diff alone would not have.** Seventeen findings
+across two `/code-review` passes and two history-lens passes, all fixed. The
+pattern is worth more than the list: **every round found something, and four of
+the five most serious were sentences deleted whose commit messages record the
+defect they were added to prevent.** The 2026-08-18 entry predicted exactly this
+— *"this file's prose is densely cross-referential in ways not visible from the
+line being cut"* — and it was right again. The five:
+
+- Invariant 6's headline was reworded to a phrase 2026-08-18 quotes and rejects.
+- *"Cloud sessions run Ubuntu 24.04, where neither caution applies"* was dropped,
+  returning the platform rule to the unconditional assertion `8dd0690` fixed.
+- The delegation bullet's carve-out — *"the one exception is work that does not
+  fit one context at all"*, added by `b3b01a5` — was dropped entirely, leaving
+  the general test standing while the Skills section two screens later still
+  prescribes the excepted behaviour, `/recall`'s `decisions-sweeper` fan-out.
+  **Found by the second history pass, after the first had cleared the file.**
+- A **rule** ("batch related work into one worktree session") was placed inside a
+  stripped comment, where the model would never see it — the one thing a comment
+  must not hold. It was also the one rule here with no evidence anywhere tracked,
+  and is now dropped rather than restated.
+- `pre-compact.sh` wrote its state with `{ … } > "$STATE"`, which truncates
+  first, so a hook killed at its 30s timeout left a file still carrying the
+  `session:` line the reader matches on. Two more doors to the same false green
+  turned up behind it: a failed atomic replace kept the *previous* compaction's
+  state, and `session-start.sh` replayed the file without consuming it, so a
+  second compaction whose hook failed would reprint the first one's tree verdict
+  as current. The state file is now written with a retry, removed rather than
+  left stale on failure, and consumed on read.
+
+The general lesson, which is not the same as 2026-08-18's: a whole-file rewrite
+defeats a probe-based check. A 93-probe sweep over the old file's rules passed
+while three of the above were already broken, because a probe list is written
+from what its author remembers to look for. `git log -S` over the changed hunks
+found what the probes could not, and it took **two** passes — the second found
+what the first had cleared.
+
+**Two premises in the plan did not survive checking**, recorded so they are not
+re-proposed. No subagent frontmatter field suppresses the `CLAUDE.md` hierarchy —
+`Explore` and `Plan` are the only agents that omit it, so routing
+`decisions-sweeper` through `Explore` costs the sweeper's prompt, which is what
+makes it work. And `--plugin-dir` cannot make a worktree-authored skill visible
+to its own session: skills in `.claude/skills/` are not a plugin, and 2026-08-16
+already settles that the remedy is the merge.
+
+**Closes off.** The 200-line target was not reached and should not be chased
+further by cutting prose: what remains is 230 lines of rules, and the next 30
+would come out of the six invariants, the conventions, or the worktree safety
+rules. The lever left is structural, not another editing pass. **2026-08-18's
+close-off is superseded on its narrow point — relocation is not deletion — and
+stands on its broad one:** compressing a prohibition changes what it prohibits,
+and invariant 6 is still the test case. The check this change actually needs is
+behavioural and cannot be run from the session that made it: one full `/next`
+item, watching for a convention silently forgotten rather than an error.

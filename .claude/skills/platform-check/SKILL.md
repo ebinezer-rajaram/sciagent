@@ -2,6 +2,7 @@
 name: platform-check
 description: Dormant. Run the cross-platform determinism instrument and diff it against the other platform's baseline, to localise the measured Windows/Ubuntu divergence to either the event loop or the metric layer. The project is pinned to Windows and this is not part of ordinary work — invoke it only when deliberately lifting that pin, or when a number produced on one platform is about to be compared with one produced on the other.
 allowed-tools: Bash, Read, Grep
+disable-model-invocation: true
 ---
 
 # Cross-platform determinism check
@@ -11,7 +12,8 @@ allowed-tools: Bash, Read, Grep
 The project is **pinned to Windows**: every registry entry, cached table and
 reported number comes from the desktop, and cloud sessions edit code without
 producing results. Under that pin the divergence below cannot bite, because
-nothing else produces a number to disagree with. See CLAUDE.md, "Cloud sessions".
+nothing else produces a number to disagree with. See `docs/CLOUD.md`, which
+carries the pin and the three remedies it chose between.
 
 So this is not a precondition on anything, and nothing routine should invoke it.
 It is the instrument for two situations only:

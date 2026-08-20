@@ -2,6 +2,7 @@
 name: matrix
 description: Drive SPEC §11 item 15, the first experiment matrix — 56 cells over twelve slice scenarios at twenty seeds each. Invoke as /matrix to plan, run, or resume it. Covers running it all on the one reference platform, the preregistered contrast, and the rule against collapsing D1–D6.
 allowed-tools: Bash, Read, Grep, Write, Edit
+disable-model-invocation: true
 ---
 
 # First experiment matrix — SPEC §11 item 15

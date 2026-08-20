@@ -1,5 +1,8 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "env": {
+    "BASH_DEFAULT_TIMEOUT_MS": "300000"
+  },
   "permissions": {
     "allow": [
       "Bash(uv run pytest*)",
@@ -7,14 +10,6 @@
       "Bash(uv run ruff*)",
       "Bash(uv run python scripts/status.py*)",
       "Bash(uv run python tests/acceptance/determinism_child.py*)",
-      "Bash(time uv run pytest*)",
-      "Bash(time uv run mypy*)",
-      "Bash(time uv run ruff*)",
-      "Bash(timeout 300 uv run ruff*)",
-      "Bash(timeout 600 uv run mypy*)",
-      "Bash(timeout 600 uv run pytest*)",
-      "Bash(timeout 900 uv run pytest*)",
-      "Bash(timeout 1200 uv run pytest*)",
       "Bash(git status*)",
       "Bash(git diff*)",
       "Bash(git log*)",
@@ -74,7 +69,7 @@
   "hooks": {
     "SessionStart": [
       {
-        "matcher": "startup|resume|clear",
+        "matcher": "startup|resume|clear|compact|fork",
         "hooks": [
           {
             "type": "command",
@@ -103,8 +98,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'Before this context is lost: append anything not derivable from the repository to docs/DECISIONS.md via /decide - spec ambiguities and how they were resolved, approaches tried and abandoned, measured numbers, and work left deliberately incomplete. Append only; do not edit existing entries.'",
-            "timeout": 10
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-compact.sh\"",
+            "timeout": 30,
+            "statusMessage": "Saving state across the compaction"
           }
         ]
       }

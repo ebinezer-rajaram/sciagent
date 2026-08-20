@@ -1,6 +1,7 @@
 ---
 name: ship
 description: Commit, merge and push work that /preflight has already checked. Invoke as /ship when an item is finished. Invoking it is the authorisation to commit and push.
+disable-model-invocation: true
 ---
 
 # Ship

@@ -1,0 +1,22 @@
+# Gitignored files to copy into every worktree Claude Code creates.
+#
+# .gitignore syntax. Only a file that BOTH matches a pattern here AND is
+# gitignored is copied, so nothing tracked is ever duplicated.
+#
+# WHY THIS FILE EXISTS
+#
+# A worktree is a fresh checkout, so an untracked file simply is not in it. That
+# is structurally the 136550a defect: `SCIAGENT_TABLE_CACHE` was set in an
+# untracked `.claude/settings.local.json`, no worktree checkout could contain it,
+# and every worktree silently took the 3m11s cold-cache path against 1.055s warm
+# (docs/DECISIONS.md, 2026-08-16). The cache lookup itself is now resolved from
+# `git rev-parse --git-common-dir` and needs no variable, but the file still
+# carries machine-local permissions and any future env, and the failure mode --
+# a setting that is simply absent, silently -- is the one worth closing.
+#
+# Belt and braces rather than strictly necessary: since v2.1.211 a permission
+# approval granted in a worktree is saved to the main checkout's
+# settings.local.json and applies everywhere. That statement is about where
+# *approvals* are written, not about how an `env` block in that file resolves,
+# so this stays.
+.claude/settings.local.json

@@ -42,6 +42,24 @@ fixtures, and a ledger is a durable research artefact with no field saying "thes
 numbers came from a fixture". The refusal is the feature. Arms needing a provider
 are simply not run without one -- see ``--systems``.
 
+``--replay`` is not an exception to that, and the distinction is worth stating
+because it looks like one. A scripted provider *invents* an answer; a replay
+resolves every answer from a corpus of calls that really happened, and refuses
+rather than inventing one when the corpus does not hold it. The ledger a replay
+writes is addressed identically to the one the recording pass wrote and carries
+the same numbers -- which is the point of it, since re-scoring a recorded
+campaign under fixed instruments is the only way to read evidence already paid
+for without paying for it again. What would reopen the hole is a replay that
+filled its misses, so it does not: the store is opened in ``REPLAY``, where a
+miss raises, and the provider handed to the proposal layer is a
+``RefusingProvider`` that raises if it is called at all.
+
+For the same reason ``--replay`` refuses ``--provider`` and ``--transcripts``
+rather than ordering them: with a live backend beside it a miss would be filled
+by a fresh call and the result reported as a replay, and with a ``--transcripts``
+target the per-replicate checkpoint would write back over the corpus being
+audited.
+
 One platform
 ------------
 
@@ -58,6 +76,7 @@ a Windows console at cp1252, which is why this docstring spells it out.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from collections.abc import Sequence
@@ -75,11 +94,11 @@ from environments.pointproc.runner import (
     scenario_seed,
 )
 from environments.pointproc.tables import matrix_table, save_matrix_table
-from sciagent.core.errors import SciAgentError
+from sciagent.core.errors import ProposalError, SciAgentError
 from sciagent.eval.matrix import Cell, CellReading, CellTask, run_matrix
 from sciagent.registry.ledger import CampaignLedger
-from sciagent.systems.llm import RECORD, TranscriptStore
-from sciagent.systems.llm.provider import Provider
+from sciagent.systems.llm import RECORD, REPLAY, TranscriptStore
+from sciagent.systems.llm.provider import Provider, RefusingProvider
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -121,6 +140,17 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="where model calls are recorded; required with a live provider",
+    )
+    parser.add_argument(
+        "--replay",
+        type=Path,
+        default=None,
+        help=(
+            "re-run the campaign against a recorded corpus instead of a live "
+            "backend. Every model call is resolved from the corpus and a miss "
+            "stops the run; no call reaches a network. Mutually exclusive with "
+            "--provider and --transcripts"
+        ),
     )
     parser.add_argument(
         "--verify",
@@ -247,6 +277,50 @@ def _scenario_order(name: str) -> tuple[int, str]:
     return (int(name[1:]), name) if name[1:].isdigit() else (0, name)
 
 
+def _replay_provider(store: TranscriptStore) -> ProviderFactory:
+    """Return a factory for the backend that recorded ``store``.
+
+    A replay must present the *recording* backend's identity, not a stand-in's.
+    :func:`~sciagent.systems.llm.transcripts.call_address` hashes a provider's
+    ``id``, ``model`` and ``settings`` along with the brief, so a stand-in
+    computes a different address for every call and misses the entire corpus --
+    a replay that cannot replay anything, reported as a corpus that does not
+    match the code.
+
+    Raises :class:`~sciagent.core.errors.ProposalError` if the corpus holds more
+    than one identity, because then there is no single answer and picking one
+    would silently replay part of it. One is what a campaign leaves behind: the
+    recorded section 9 corpus holds 112 calls under
+    ``claude-agent-sdk``/``claude-opus-5``/``effort=high``.
+
+    Raises the same for an empty corpus, where there is no identity to read at
+    all. That case would otherwise reach ``next(iter(...))`` as a ``StopIteration``
+    inside a generator-driven call stack, which is the least legible way this
+    could fail.
+    """
+    identities = sorted({(call.provider, call.model, call.settings) for call in store})
+    if not identities:
+        raise ProposalError(
+            "the corpus holds no calls, so there is no backend identity to "
+            "replay under. A replay resolves every call from the corpus; an "
+            "empty one replays nothing and would miss on the first address"
+        )
+    if len(identities) > 1:
+        raise ProposalError(
+            f"the corpus holds {len(identities)} backend identities "
+            f"({identities!r}) and a replay presents exactly one. A transcript "
+            f"address covers the backend, so replaying under one identity would "
+            f"miss every call recorded under the others -- replay each backend's "
+            f"corpus separately"
+        )
+    backend, model, settings = identities[0]
+
+    def refusing() -> Provider:
+        return RefusingProvider(id=backend, model=model, settings=settings)
+
+    return refusing
+
+
 def _provider_factory(name: str) -> ProviderFactory:
     """Return a factory for a live backend, imported only when one is asked for."""
     if name == "anthropic":
@@ -283,8 +357,35 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(str(exc), file=sys.stderr)
         return 2
 
+    if args.replay is not None:
+        # Both refusals are about the same hazard from opposite ends. A live
+        # provider beside a replay would fill the corpus's gaps with fresh calls
+        # and report the result as a replay; a `--transcripts` target beside one
+        # would hand `checkpoint` the corpus to write back, and the corpus is the
+        # artefact being audited. Refusing beats resolving a precedence, because
+        # either precedence is a rule someone has to remember.
+        if args.provider != "none":
+            print(
+                f"--replay and --provider {args.provider} ask for opposite "
+                f"things: a replay resolves every call from the corpus and "
+                f"reaches no network. Drop one",
+                file=sys.stderr,
+            )
+            return 3
+        if args.transcripts is not None:
+            print(
+                "--replay and --transcripts ask for opposite things: "
+                "--transcripts is where a recording pass writes its calls, and "
+                "a replay must not write the corpus it is auditing. Drop one",
+                file=sys.stderr,
+            )
+            return 3
+        if not args.replay.exists():
+            print(f"no corpus at {args.replay}", file=sys.stderr)
+            return 2
+
     blocked = {cell.system for cell in cells} & LLM_SYSTEMS
-    if blocked and args.provider == "none":
+    if blocked and args.provider == "none" and args.replay is None:
         # Refused here rather than on the first such cell. Failing partway
         # through leaves a ledger that looks like a finished campaign missing
         # some arms, which is the state hardest to notice later.
@@ -296,14 +397,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 3
-    if blocked and args.transcripts is None:
+    if blocked and args.provider != "none" and args.transcripts is None:
         print("--transcripts is required with a live provider", file=sys.stderr)
         return 3
 
     provider = _provider_factory(args.provider) if args.provider != "none" else None
     store: TranscriptStore | None = None
     try:
-        if args.transcripts is not None:
+        if args.replay is not None:
+            # REPLAY, not RECORD, and that is the whole difference between this
+            # branch and the one below: in REPLAY a miss raises instead of
+            # reaching a backend, so a corpus that does not cover the campaign
+            # stops it rather than quietly re-deriving the part it lacks. The
+            # provider comes from the corpus for the reason `_replay_provider`
+            # gives -- the address covers the backend's identity.
+            store = TranscriptStore.load(args.replay, mode=REPLAY)
+            provider = _replay_provider(store)
+        elif args.transcripts is not None:
             # Loaded rather than started empty, so a resumed campaign keeps the
             # calls an earlier pass recorded. RECORD, not REPLAY: a miss must
             # reach the backend, because the cells this pass adds have never
@@ -319,6 +429,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     except SciAgentError as exc:
         print(f"could not start: {exc}", file=sys.stderr)
         return 1
+    except (OSError, json.JSONDecodeError) as exc:
+        # `exists()` above answers "is there a file", which is not "is there a
+        # corpus". A truncated or hand-edited JSON file, or one that cannot be
+        # read, reaches the operator as a traceback without this -- and the
+        # branch that says "your transcripts do not match this code" already
+        # exists one clause up for the `SciAgentError` half of the same
+        # question. Found by review, by driving `main` at a malformed file.
+        print(f"could not read the corpus at {args.replay}: {exc}", file=sys.stderr)
+        return 2
 
     replicates = sum(cell.replicates for cell in cells)
     print(
@@ -383,6 +502,42 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"simulated {runner.simulations} row(s)",
         flush=True,
     )
+    if args.replay is not None and store is not None:
+        # Reported because the backlog entry names it, and the number is worth
+        # printing even though a REPLAY store cannot make it non-zero: `resolve`
+        # increments the counter only on the branch that calls out, which REPLAY
+        # never reaches. So this line says "nothing was re-derived" about a run
+        # whose real evidence is that it *finished* -- a corpus short of the
+        # campaign raises long before here. The check is kept rather than
+        # simplified away because it is what would notice if this branch were
+        # ever handed a RECORD store, which is the one mistake that would turn a
+        # replay into a live run.
+        # `len(store)` is the size of the *corpus*, not the number of calls this
+        # pass resolved, and printing it alone was a false green a review caught:
+        # a second run against a ledger that already holds every replicate skips
+        # every cell, resolves nothing, and would still have announced a
+        # full-corpus replay with `misses 0` and exit 0. What the operator needs
+        # to read is how many replicates actually executed, so that is said
+        # first and the corpus size is labelled as what it is.
+        print(
+            f"replay: {outcome.ran} replicate(s) executed against a corpus of "
+            f"{len(store)} recorded call(s), misses {store.misses}"
+        )
+        if not outcome.ran:
+            print(
+                f"no replicate executed -- every cell was already recorded in "
+                f"{args.ledger}, so nothing was replayed and this run audits "
+                f"nothing. Point --replay at a fresh ledger to audit the corpus",
+                file=sys.stderr,
+            )
+            return 1
+        if store.misses:
+            print(
+                f"{store.misses} call(s) were re-derived rather than replayed, "
+                f"so this run is not a replay of the recorded campaign",
+                file=sys.stderr,
+            )
+            return 1
     return 0
 
 

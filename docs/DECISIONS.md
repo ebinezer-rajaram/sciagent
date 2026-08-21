@@ -8396,3 +8396,136 @@ indistinguishable by any test that does not substitute a declaration.
 per-scenario consultation on the *refuse* path, where it is observable. Making
 it observable on the accept path needs A27's `substitute_battery_ids`
 monkeypatch fixture and was not taken here.
+
+## 2026-08-21 — gate A40: the entry says bump `METRIC_VERSION`, and the mechanism that landed the next day says do not
+
+**Decision.** `METRIC_VERSION` stays at 1.2.0. The re-derivation of the recorded
+matrix is separated from the campaign it re-derives by `dimensions` and
+`battery`, both already in the cell address, and by nothing else. Taken with the
+user before any code was written, because the backlog entry instructs the
+opposite in as many words.
+
+**Why.** The A40 entry was written 2026-08-18. `DIMENSION_VERSION` landed
+2026-08-19, at gate A26, and exists *precisely* so that a change to what D1–D6
+mean does not have to move a version column that addresses the environment. Its
+own comment records the measurement: `METRIC_VERSION` reaches every
+`Discretisation`'s content hash through `str(MetricRef)`, so bumping it
+invalidates every cached empirical table and forces a full rebuild on every
+machine and in every worktree — for a change that touches no estimator. The
+entry's premise was correct when written and was superseded a day later by
+apparatus built for exactly this case.
+
+The bump also buys nothing here. All 1,120 recorded rows carry `battery = None`
+and `dimensions = None`, so `_at_address` already excludes every one of them on
+two terms. A third term would separate rows that are separated twice over.
+
+**The consequence is what made the entry's "labels the re-derivation as such"
+load-bearing rather than cosmetic**, and it is worth stating because it inverts.
+Under this decision the metric version is the one generation term that does
+**not** move between the two generations — and it was the only one `render`
+printed. `battery` had been rendered per cell since A27; the dimension reading
+was rendered nowhere. So a re-derived report was textually indistinguishable
+from one built on the superseded campaign, and the term that would tell them
+apart was the one term absent from the page. `render`'s header now carries it.
+
+**Closes off.** Do not "restore" the `METRIC_VERSION` bump later on the strength
+of the entry's wording, and do not read the gate's name —
+`test_a40_rederivation_selects_by_metric_version` — as requiring one: selection
+by metric version is a property of `_at_address` that is tested as written, and
+is independent of whether this repository's own ledger ever holds two metric
+versions. If the entry is ever treated as the operative instruction on its own,
+it should be amended to name the dimension reading instead.
+
+## 2026-08-21 — gate A40: the proposal outcome taxonomy is T3, and the condition that would have favoured T2 did not arrive
+
+**Decision.** `docs/OPEN-DECISIONS.md` §2 is settled: **T3**. Keep
+`ProposalRecord`'s five fields, so `yield_fraction`'s denominator never moves,
+and add a parallel non-scoring breakdown of causes for reporting. Taken cold, in
+the window the A40 entry names for it.
+
+**Why.** §2 recommended T3 while flagging that "T2 is the right answer if the
+matrix is going to be re-run anyway", and asked for the decision to be taken
+*after* the re-scoring question rather than before. That sequencing is what made
+it decidable: T2's whole appeal was that a metric-version bump would be free
+because one was happening anyway, and the decision above means none is. Nor
+would `DIMENSION_VERSION` have covered T2 as a cheaper substitute —
+`yield_fraction` is an agency metric computed in `eval/agency.py`, not one of
+§8's six dimensions, so the constant that exists for dimension changes does not
+address it. With the bump not free, T3's parallel structure is not redundant,
+and T3's own argument — separating what a system *did* from why a call failed —
+is the split the framework already enforces everywhere else.
+
+**Closes off.** The decision is what gate A40 owed; the **implementation is not
+A40's**. It belongs to `docs/BACKLOG.md`'s *"Audit the proposal path's failure
+taxonomy"*, whose text already says the retiering is what remains of it, and
+which carries the sequencing constraint that matters — not mid-campaign, and not
+in a session that has just watched a particular arm fail against a particular
+tier. `max_proposals` stays at 2 until the break asymmetry is settled in that
+same change. Do not reopen T2 on the grounds that a future re-run makes the bump
+free again without first re-reading why this one did not.
+
+## 2026-08-21 — gate A40: the recorded corpus holds exactly one backend identity, and a replay presenting another misses everything
+
+**Decision.** `scripts/run_matrix.py --replay` reads the backend identity off the
+corpus rather than accepting one, and refuses a corpus holding more than one.
+`sciagent.systems.llm.provider.RefusingProvider` therefore carries an
+`id`/`model`/`settings` triple instead of being a bare stub.
+
+**Why, and the measurement behind it.** A transcript address is a hash over the
+brief **and** the backend's `id`, `model` and `settings`. Counted over
+`.cache/transcripts/spec9.json`: **112 calls under exactly one triple**,
+`("claude-agent-sdk", "claude-opus-5", "effort=high")`. So a replay offering a
+stand-in under a stand-in's name computes a different address for every call and
+misses the entire corpus — not a degraded replay but no replay at all, surfacing
+as "your corpus does not match this code". This is not recoverable from the
+diff: the corpus is gitignored, and the number is what rules out the obvious
+implementation of handing the replay any convenient provider.
+
+**Closes off.** Do not give `RefusingProvider` default identity fields. A default
+would make the wrong replay silent again, and the guard against it —
+`test_a40_a_replay_carries_the_recorded_backends_identity` — asserts the
+provider's triple equals the corpus's, which a default would satisfy only by
+coincidence. If a corpus ever legitimately spans two backends, the answer is one
+replay per backend, not a precedence rule.
+
+## 2026-08-21 — gate A40: the re-derivation is built and deliberately not run, and the gate's own third clause cannot fail
+
+**Work left deliberately incomplete.** A40's instrument is built; the
+re-derivation itself has not been executed. The entry costs it at ≈20 min for the
+38 conventional cells plus ≈2 h to replay the 18 LLM cells, at API $0. The user's
+decision was to land and gate the machinery first and start the run as a separate
+deliberate act, on the reasoning that a 2h20m job is worth beginning knowingly and
+that a replay miss mid-run is a finding rather than a failure.
+
+Until it runs, §12's capability criteria stay undecidable and the preregistered
+contrast stays unanswered — the same state the entry describes, now blocked on an
+operator rather than on code. Nothing in the ledger has moved: the 1,120 recorded
+rows are untouched and remain unreportable, since they carry no `battery` and no
+`dimensions`.
+
+**What was actually missing, which the gate line does not say.** The report layer
+already selected by metric version — `_at_address` has compared
+`key.metric_version` since it was written — and `TranscriptStore` already
+implemented replay-with-raise-on-miss. Both of the gate line's outer clauses were
+satisfied by standing code. What did not exist was the operator path:
+`scripts/run_matrix.py` opened its store in `RECORD` unconditionally and refused
+an LLM arm without a live provider, so the corpus could not be replayed through a
+campaign at all.
+
+**The gate's third clause is unfalsifiable as written, and this is the note that
+matters most.** `store.misses == 0` holds of **every** `REPLAY` store that has
+ever existed, including an empty one that replayed nothing:
+`TranscriptStore.resolve` increments `_misses` only on the branch that calls out,
+which is reachable only in `RECORD`. Asserting it alone would pass against an
+implementation that never opened the corpus — and `/test-review` demonstrated
+exactly that by building one, which passed every CLI test in the class until the
+store's *addresses* were compared against the corpus's rather than only its mode.
+
+**Closes off.** The assertions surrounding `store.misses == 0` in
+`tests/acceptance/test_a40.py` are not redundant with it and must not be
+"simplified" away: that the campaign *finished* under a `REPLAY` store, that the
+store the CLI built holds the corpus's addresses, and that a short corpus *stops*
+the campaign are what carry the meaning the counter does not. If the gate line is
+ever treated as the operative criterion on its own it should be amended to say
+that the replayed campaign *completes*, which is the falsifiable form of what it
+was reaching for.

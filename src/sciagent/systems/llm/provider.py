@@ -34,7 +34,11 @@ from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from sciagent.core.edits import Defect, EditGrammar
-from sciagent.core.errors import GrammarError, MalformedProposalError
+from sciagent.core.errors import (
+    GrammarError,
+    MalformedProposalError,
+    SystemConfigurationError,
+)
 from sciagent.systems.base import Investigation
 from sciagent.systems.llm.encoding import (
     Memory,
@@ -52,7 +56,13 @@ from sciagent.systems.llm.transcripts import (
     call_address,
 )
 
-__all__ = ["Proposal", "ProposalLayer", "Provider", "slug_hypothesis_name"]
+__all__ = [
+    "Proposal",
+    "ProposalLayer",
+    "Provider",
+    "RefusingProvider",
+    "slug_hypothesis_name",
+]
 
 
 @runtime_checkable
@@ -120,6 +130,61 @@ class Provider(Protocol):
         a throttled account's silence in the corpus as a scientific result.
         """
         ...
+
+
+@dataclass(frozen=True, slots=True)
+class RefusingProvider:
+    """A backend that answers nothing, under a recorded backend's identity.
+
+    Guarantees that being *called* raises, and that its identity is whatever it
+    was constructed with rather than a stand-in's.
+
+    What it is for. A replay resolves every call out of a
+    :class:`~sciagent.systems.llm.transcripts.TranscriptStore` in
+    :data:`~sciagent.systems.llm.transcripts.REPLAY` mode, which returns a hit
+    or raises :class:`~sciagent.core.errors.TranscriptMissError`; the ``call``
+    thunk it is handed is never invoked either way. But a
+    :class:`~sciagent.systems.base.ResearchSystem` on a proposal arm cannot be
+    *built* without a provider, so something has to be passed. This is that
+    something, and it turns "the provider is never called" from a property of
+    the control flow into one the object enforces -- invariant 2's "runtime
+    assertions, not comments" applied to the seam where a replay could otherwise
+    quietly become a live run.
+
+    **The identity is required and is not decorative.** A transcript address
+    hashes :attr:`Provider.id`, :attr:`Provider.model` and
+    :attr:`Provider.settings` along with the brief, so a replay presenting a
+    stand-in's name computes a different address for every call and misses the
+    whole corpus. The identity a replay carries has to be the *recording*
+    backend's, read back off the corpus -- see
+    ``scripts/run_matrix.py``'s ``_replay_provider``.
+
+    Raises :class:`~sciagent.core.errors.SystemConfigurationError` from
+    :meth:`complete`, and deliberately **not**
+    :class:`~sciagent.core.errors.ProviderError`: that one is a legitimate
+    research outcome which
+    :meth:`~sciagent.systems.hybrid.Hybrid._propose_once` catches and records as
+    a refusal, so raising it here would turn a harness fault into a scored datum
+    and a replay into a matrix built on refusals nobody made. Nor
+    :class:`~sciagent.core.errors.ProviderUnavailableError`, which says a real
+    backend could not be reached. Reaching this method at all means the run was
+    configured to replay and did not.
+    """
+
+    id: str
+    model: str
+    settings: str
+
+    def complete(
+        self, system: str, brief: str, schema: Mapping[str, Any]
+    ) -> Completion:
+        """Raise. A replay must resolve every call from the corpus."""
+        raise SystemConfigurationError(
+            f"a replay asked {self.id}/{self.model} for a completion. A replay "
+            f"resolves every call from the transcript corpus and a miss raises "
+            f"before reaching a provider, so this is a run that was configured "
+            f"to replay and did not -- not a model declining to answer"
+        )
 
 
 @dataclass(frozen=True, slots=True)

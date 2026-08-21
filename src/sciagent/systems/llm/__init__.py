@@ -45,7 +45,12 @@ from sciagent.systems.llm.encoding import (
     structural_menu,
     tool_schema,
 )
-from sciagent.systems.llm.provider import Proposal, ProposalLayer, Provider
+from sciagent.systems.llm.provider import (
+    Proposal,
+    ProposalLayer,
+    Provider,
+    RefusingProvider,
+)
 from sciagent.systems.llm.scripted import ScriptedProvider, fixed_payload
 from sciagent.systems.llm.transcripts import (
     RECORD,
@@ -67,6 +72,7 @@ __all__ = [
     "ProposalDraft",
     "ProposalLayer",
     "Provider",
+    "RefusingProvider",
     "ScriptedProvider",
     "Transcript",
     "TranscriptStore",

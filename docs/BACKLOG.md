@@ -853,6 +853,15 @@ than a diagnostic one: `docs/OPEN-DECISIONS.md` §2 lists all twenty conditions
 recommends T3 — but recommends taking it *after* the R5 re-scoring question,
 since a matrix that is re-run anyway makes the metric-version bump free.
 
+**The decision was taken 2026-08-21, with gate A40: T3.** The condition that
+would have favoured T2 did not arrive — A40 re-derives under `dimensions` and
+`battery` rather than bumping `METRIC_VERSION`, so the bump is not free, and
+`yield_fraction` is an agency metric rather than a §8 dimension, so
+`DIMENSION_VERSION` does not cover it either. What remains here is unchanged in
+shape and now has its answer: keep `ProposalRecord`'s five fields so
+`yield_fraction`'s denominator never moves, and add the parallel non-scoring
+breakdown of causes beside it.
+
 **Touches.** No frozen decision. It is enumeration and test coverage over an
 existing boundary. Sequencing: **not** mid-campaign, and not in a session that
 has just watched a particular arm fail against a particular tier — the same
@@ -1637,7 +1646,69 @@ promise, and the Environment protocol disposition.
 **Rank.** 17
 **Cost.** S.
 
-## Re-derivation of the recorded matrix under fixed metrics
+## DONE (2026-08-21, gate A40) — Re-derivation of the recorded matrix under
+## fixed metrics
+
+**The instrument is built; the re-derivation itself is deliberately not run.**
+`--replay` did not exist, so the entry's central step was not merely unperformed
+but unreachable: `scripts/run_matrix.py` opened its transcript store in `RECORD`
+unconditionally and refused an LLM arm without a live provider, so the 18 LLM
+cells could not be replayed at all. That is what landed, with the report-layer
+half beside it. Executing the ~20 min conventional pass and the ~2 h replay is a
+separate, deliberate act — see `docs/DECISIONS.md`.
+
+**One premise of the entry below is superseded, and the decision was to keep the
+instrument rather than the wording.** It says to bump `METRIC_VERSION`.
+`DIMENSION_VERSION` landed the day *after* this entry was written, at gate A26,
+and `eval/scoring.py` records — measured, not argued — that bumping
+`METRIC_VERSION` for an eval-layer re-scoring is the wrong instrument: it reaches
+every `Discretisation`'s content hash, invalidating every cached table on every
+machine and in every worktree for a change that touches no estimator. The
+recorded 1,120 rows need no such bump to stay separable, since every one of them
+carries `battery = None` and `dimensions = None` and `_at_address` already
+excludes them on two terms. So the re-derivation rides `dimensions` and
+`battery`, and `METRIC_VERSION` is untouched.
+
+**That decision is what made the labelling half load-bearing.** Under it the
+metric version is the one generation term that does *not* move between the two
+generations — and it was the only one `render` printed. `battery` had been
+per-cell since A27; the dimension reading was rendered nowhere, so a re-derived
+report was textually indistinguishable from one built on the campaign it
+re-derives. It is on the header now.
+
+**The taxonomy decision the entry defers to was taken in the same window: T3.**
+`OPEN-DECISIONS` §2 recommended T3 while noting that "T2 is the right answer if
+the matrix is going to be re-run anyway" — an argument premised on a version bump
+being free. The decision above removes that premise, and `yield_fraction` is an
+agency metric rather than a §8 dimension, so `DIMENSION_VERSION` would not have
+covered T2 either. T3's *implementation* belongs to *"Audit the proposal path's
+failure taxonomy"* above, whose own text already says the retiering is what
+remains.
+
+**What `/test-review` caught, since it changed the test rather than the code.**
+The reviewer built working and broken `--replay` variants and executed them
+rather than arguing. Three findings were real: the test's `_Stop` sentinel
+subclassed `Exception`, which `main` does not catch, so two CLI tests were red
+against a *working* implementation with assertions nothing could reach; a
+`--replay` that parsed the flag, built an *empty* `REPLAY` store and never opened
+the corpus passed every CLI test, because they asserted the store's mode and
+never its contents; and the corpus-write test could not fail, since `save` is
+reachable only through the `run_matrix` the test patched out and a `REPLAY` store
+re-saves byte-identically in any case. The gate line's own third clause is
+likewise unfalsifiable — `store.misses == 0` holds of every `REPLAY` store that
+has ever existed, because `resolve` increments the counter only on the `RECORD`
+call-out branch. What carries the meaning is that the campaign *finished* and
+that a short corpus *stops* it.
+
+**A design point that could not have been guessed from the entry.** A transcript
+address hashes the backend's `id`, `model` and `settings` along with the brief,
+and the recorded corpus holds all 112 calls under exactly one triple
+(`claude-agent-sdk` / `claude-opus-5` / `effort=high`). A replay presenting any
+other identity misses *every* address. So `--replay` reads its identity off the
+corpus and refuses one holding more than one, and `RefusingProvider` carries an
+identity rather than being a bare stub.
+
+### As proposed
 
 **Idea.** After the D4/D2 fix and the battery preregistration land: bump
 `METRIC_VERSION`, re-run the 38 conventional cells (deterministic), and

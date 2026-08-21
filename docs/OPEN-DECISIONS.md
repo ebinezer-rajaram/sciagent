@@ -1,7 +1,8 @@
 # Open decisions
 
-Two decisions this repository has deliberately not taken, written up so they can
-be taken **cold**.
+Two decisions this repository deliberately did not take when they arose, written
+up so they could be taken **cold**. §2 was taken on 2026-08-21, with gate A40,
+and its section records what settled it; §1 is still open.
 
 Neither is here because it is hard to find the answer. Both are here because of
 CLAUDE.md's invariant 6: they touch apparatus that scores a system already
@@ -235,7 +236,23 @@ fields exactly as they are, so `yield_fraction`'s denominator never moves, and
 add a parallel non-scoring breakdown of causes for reporting. Nothing §12
 criterion 11 reads changes; the diagnostic question gets its own answer.
 
-### Recommendation
+### Decided 2026-08-21, with gate A40: T3
+
+Taken cold, as this file exists to allow, and in the window the A40 entry names.
+The reasoning below stands; what settled it is that the condition favouring T2
+did not arrive. A40 re-derives the recorded matrix under `dimensions` and
+`battery` rather than by bumping `METRIC_VERSION` — `eval/scoring.py` records the
+measured cost of that bump, which reaches every `Discretisation`'s content hash —
+so the metric-version bump T2 needs is not free after all. Nor would
+`DIMENSION_VERSION` have covered it: `yield_fraction` is an agency metric, not
+one of §8's six dimensions.
+
+Implementation belongs to `docs/BACKLOG.md`'s *"Audit the proposal path's failure
+taxonomy"*, not to A40. The decision is what A40 owed; the retiering is that
+entry's remaining work. `max_proposals` stays at 2 until the break asymmetry is
+settled in the same change, exactly as below.
+
+### Recommendation, as written before the decision
 
 **T3.** It is the only option that gets the aggregation without moving a number
 a frozen matrix has already reported, and the split it draws — what a system did

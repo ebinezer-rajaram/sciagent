@@ -83,7 +83,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Final
 
 import numpy as np
@@ -936,12 +936,45 @@ def summarise(
             if pre_battery
             else ""
         )
+        # The metric version gets the same treatment as the dimension reading,
+        # and needs it more. A caller *chooses* this one -- it is
+        # `--metric-version` on `scripts/report_matrix.py`'s command line -- so
+        # naming the versions actually present turns "no row matches" into an
+        # argument they can retype. Without it the message lists the version
+        # asked for and stays silent about the generation the ledger is full of,
+        # which is precisely the state a re-derivation leaves behind: two
+        # generations in one ledger, one of them the answer.
+        # Only rows the metric version is the *sole* obstacle for. A row failing
+        # on the battery as well is not a `--metric-version` away from being
+        # reported, and saying so would send an operator to retype an argument
+        # that changes nothing -- worse, on the recorded 1,120-row ledger it
+        # would contradict the `unbatteried` clause standing beside it in the
+        # same message. Found by review; the first version filtered on the
+        # metric version alone.
+        recorded_versions = sorted(
+            {
+                str(row.key.metric_version)
+                for row in recorded
+                if row.key.metric_version != address.metric_version
+                and _at_address(
+                    row, replace(address, metric_version=row.key.metric_version)
+                )
+            }
+        )
+        generations = (
+            f" The ledger holds rows differing only in their metric version, at "
+            f"{recorded_versions!r}: rows scored under another metric version "
+            f"are excluded rather than pooled, and asking for one of those is a "
+            f"--metric-version away."
+            if recorded_versions
+            else ""
+        )
         raise MalformedDesignError(
             f"no row matches campaign {MATRIX_VERSION} under dimension reading "
             f"{DIMENSION_VERSION} at {address.env_version}/"
             f"{address.data_version}/{address.metric_version} on "
             f"{address.partition.value}. An empty report reads as a matrix that "
-            f"ran and produced nothing.{elsewhere}{unbatteried}"
+            f"ran and produced nothing.{elsewhere}{generations}{unbatteried}"
         )
 
     grouped: dict[tuple[str, str], list[LedgerEntry]] = {}
@@ -1192,6 +1225,16 @@ def render(report: MatrixReport) -> str:
         f"  {'env / data':<16s}"
         f"{report.address.env_version} / {report.address.data_version}",
         f"  {'metric':<16s}{report.address.metric_version}",
+        # The dimension reading is on the header for the same reason every other
+        # generation term is, and it earns its line by being the one that
+        # *moves*. D1-D6 are computed in `sciagent.eval.scoring` from the truth
+        # and the table, so no version column above changes when their
+        # definition does -- which is why `DIMENSION_VERSION` exists at all. A
+        # re-derivation under fixed instruments therefore differs from the
+        # campaign it re-derives in this term and in the battery, and in nothing
+        # printed here; without it the two generations render identically and a
+        # reader comparing two reports has no way to tell which is which.
+        f"  {'dimensions':<16s}{DIMENSION_VERSION}",
         f"  {'partition':<16s}{report.address.partition.value}",
         f"  {'cells':<16s}{len(report.cells)} ({len(report.rows)} replicates)",
         "",

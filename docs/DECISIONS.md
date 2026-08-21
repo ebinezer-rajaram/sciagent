@@ -8325,3 +8325,74 @@ case-changing forms, plus 400,000 random printable strings, 0 violations. And
 the lexicographic tie-break by which an agent-chosen name could influence D1-D6
 **has never fired**: all 1,120 rows of the section 9 campaign hold no row where
 the truth tied the leader and lost.
+
+## 2026-08-20 — gate A43: a spec ambiguity resolved against the entry's own stated mechanism, and a gate line looser than the idea above it
+
+**Spec ambiguity, resolved.** The backlog entry for A43 says to have
+`report._at_address` "compare each row's battery term against the expected one
+for its scenario instead of merely requiring the term to be present". Built the
+way it is written, that filters superseded rows out *before*
+`_refuse_mixed_batteries` sees them — which makes that A27 guard unreachable by
+construction and turns `test_a27_two_batteries_are_not_pooled_into_one_cell` red.
+The entry's **Touches.** line does not mention A27, so this was not a foreseen
+cost.
+
+**Decision.** `_at_address` is unchanged and still decides presence only. A new
+`report._refuse_superseded_battery` runs between `_refuse_mixed_batteries` and
+`_refuse_reseeded`. Mixed ledger → A27's message, unchanged; a scenario entirely
+at a replaced battery → the new message naming both terms; declared battery →
+reports unchanged.
+
+**Why, beyond A27.** The mechanical collision is the smaller half. The real
+argument is an asymmetry that is easy to get backwards: excluding a stale
+`dimensions` row is honest because the caller *chose* the reading they asked for
+— `scripts/report_matrix.py` takes `--metric-version` on the command line — but
+**nothing names a battery**. The callback returns whatever the scenario declares
+now, so there is no argument by which an operator could ask for the other
+generation. Excluding would therefore drop rows they cannot ask back and hand
+them a report whose replicate counts had quietly fallen. A27's reasoning carries
+over verbatim: under the fourth invariant the recorded rows are legitimate and
+the module cannot pick which campaign was meant.
+
+The entry's sequencing note — "before A40; the re-derivation is what first puts
+two generations of battery in one ledger, and this is the check that keeps them
+apart" — reads as an argument for *selection*, and was the reason this looked
+ambiguous rather than obvious. It is not: A40's two generations are separated by
+`METRIC_VERSION`, which is already on `CampaignAddress` and already selected on.
+The generations A43 is about are the ones that arise with **no version column
+moving at all**, which is exactly why they have to be refused rather than
+sorted.
+
+**The gate line is looser than the idea it sits under, and the idea is what was
+built.** `/test-review` established this with executable evidence rather than
+argument: it ran eight candidate implementations against the four tests written
+first, and two passed everything while still being wrong — refuse only when
+*every* row at the address is superseded, and check only the first scenario and
+stop. Both render a cell built wholly on a replaced battery whenever a sibling
+scenario happens to be current. Read literally, "a ledger holding **only** rows
+scored under a battery the scenario no longer declares" admits them, because
+such an implementation does raise on that ledger. The **Idea.**'s "each row …
+for its scenario" does not, and per-scenario is the unit
+`_refuse_mixed_batteries` already uses. Built to the idea.
+
+Worth keeping because the loose reading is not a strawman: it is the ledger a
+re-derivation holds partway through — one scenario re-derived, the next not yet
+— so the case A43 was sequenced before A40 to catch is precisely the one the
+gate line, read on its own, would have let through.
+
+**Closes off.** Do not "simplify" the check into `_at_address` later on the
+grounds that it belongs beside the other address terms. The comparison and the
+exclusion are different operations on different failures, and the docstrings at
+both ends now say so. Do not weaken the per-scenario unit to a whole-ledger one
+on the strength of the gate line's wording; if that line is ever treated as the
+operative criterion on its own it should be amended to say *the scenario's* rows
+rather than *the ledger's*.
+
+**One latent weakness, recorded rather than fixed.** All twelve slice scenarios
+currently declare the same battery, so on the *accept* path a callback consulted
+per scenario and one consulted once with an arbitrary `ScenarioId` are
+indistinguishable by any test that does not substitute a declaration.
+`test_a43_each_scenario_is_checked_against_its_own_declaration` pins the
+per-scenario consultation on the *refuse* path, where it is observable. Making
+it observable on the accept path needs A27's `substitute_battery_ids`
+monkeypatch fixture and was not taken here.

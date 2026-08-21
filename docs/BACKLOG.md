@@ -1747,7 +1747,40 @@ was empty is distinguishable from one scoring 0.0 because it was outperformed.
 **Held.** a cold decision on D4's comparison set
 **Cost.** S for the reporting; the semantic decision is the user's.
 
-## The report layer checks the battery's presence, not its value
+## DONE (2026-08-20, gate A43) — The report layer checks the battery's presence,
+## not its value
+
+**Done, with one departure: the comparison is a refusal, not a filter.** This
+entry asked for `_at_address` to compare each row's battery term against the
+expected one. It does not; `_at_address` still decides presence only, and a new
+`_refuse_superseded_battery` runs after `_refuse_mixed_batteries` and before
+`_refuse_reseeded`. Two reasons, and the first is mechanical: comparing inside
+`_at_address` filters superseded rows out *before* `_refuse_mixed_batteries` sees
+them, which makes that A27 guard unreachable by construction and turns
+`test_a27_two_batteries_are_not_pooled_into_one_cell` red. The second is the one
+that would matter even without A27. Excluding a stale `dimensions` row is honest
+because the caller *chose* the reading they asked for — `scripts/report_matrix.py`
+takes `--metric-version` on the command line — but nothing names a battery: the
+callback returns whatever the scenario declares now. So exclusion would drop rows
+the operator cannot ask for back and hand them a report whose replicate counts
+had quietly fallen. A27's reasoning survives unchanged: under the fourth
+invariant the recorded rows are legitimate and the module cannot pick.
+
+Observable behaviour, which the departure changes: a ledger holding both
+generations for one scenario still raises A27's "two held-out batteries"; one
+holding a scenario entirely at a replaced battery raises the new message naming
+both terms; one at the declared battery reports unchanged.
+
+**The gate line is looser than the Idea, and the Idea is what was built.**
+`/test-review` found this: read literally, "a ledger holding **only** rows scored
+under a battery the scenario no longer declares" is satisfied by an
+implementation that refuses when *every* row at the address is superseded and
+renders otherwise — which still renders a cell built wholly on a replaced battery
+whenever a sibling scenario happens to be current, and that is the ledger a
+re-derivation holds partway through. The Idea's "each row … for its scenario" is
+unambiguous and per-scenario is what `_refuse_mixed_batteries` already uses, so
+that is the unit. `test_a43_each_scenario_is_checked_against_its_own_declaration`
+exists because the first four tests admitted the loose reading.
 
 **Idea.** Give `summarise` a `battery: Callable[[ScenarioId], Sequence[ExperimentDesign]]`
 parameter, the sibling of the `scenario_class` callback it already takes and of

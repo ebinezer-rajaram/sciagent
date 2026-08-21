@@ -207,6 +207,7 @@ def report_of(
         tuple(entries),
         address=address,
         scenario_class=scenario_class,
+        battery=lambda _s: BATTERY,
         platform=PLATFORM,
         grammar=GRAMMAR,
     )
@@ -601,6 +602,7 @@ class TestProvenanceIsRefusedRatherThanDefaulted:
                 rows("V7", "S11", [reading()] * 4),
                 address=ADDRESS,
                 scenario_class=lambda _s: "out_of_library",
+                battery=lambda _s: BATTERY,
                 platform="   ",
                 grammar=GRAMMAR,
             )
@@ -614,6 +616,7 @@ class TestProvenanceIsRefusedRatherThanDefaulted:
                 rows("V7", "S11", [reading()] * 4),
                 address=ADDRESS,
                 scenario_class=lambda _s: "out_of_library",
+                battery=lambda _s: BATTERY,
                 platform=PLATFORM,
                 grammar=GrammarVersion(""),
             )
@@ -671,6 +674,7 @@ class TestProvenanceIsRefusedRatherThanDefaulted:
                 rows("V7", "S11", [reading()] * 4),
                 address=ADDRESS,
                 scenario_class=lambda _s: "out_of_library",
+                battery=lambda _s: BATTERY,
                 platform=bad,
                 grammar=GRAMMAR,
             )
@@ -681,6 +685,7 @@ class TestProvenanceIsRefusedRatherThanDefaulted:
                 rows("V7", "S11", [reading()] * 4),
                 address=ADDRESS,
                 scenario_class=lambda _s: "out_of_library",
+                battery=lambda _s: BATTERY,
                 platform=PLATFORM,
                 grammar=GrammarVersion(f"pointproc{chr(0x2013)}edits/1.0.0"),
             )
@@ -1194,6 +1199,7 @@ class TestGuardsAgainstAHandBuiltReport:
                 # cast, not `type: ignore`: the invalid value is the point of the
                 # test, and CLAUDE.md forbids suppressing a checker to pass.
                 scenario_class=lambda _s: cast("ScenarioClass", "invented"),
+                battery=lambda _s: BATTERY,
                 platform=PLATFORM,
                 grammar=GRAMMAR,
             )

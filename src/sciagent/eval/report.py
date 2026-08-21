@@ -92,9 +92,10 @@ from sciagent.core.errors import MalformedDesignError
 from sciagent.core.reductions import mean as exact_mean
 from sciagent.core.reductions import variance as exact_variance
 from sciagent.core.types import FrozenDict, GrammarVersion, ScenarioId
-from sciagent.eval.matrix import MATRIX_VERSION, CampaignAddress
+from sciagent.eval.matrix import MATRIX_VERSION, CampaignAddress, battery_key
 from sciagent.eval.scenarios import SCENARIO_CLASSES, ScenarioClass
 from sciagent.eval.scoring import DIMENSION_VERSION, primary_dimension
+from sciagent.experiments.dsl import ExperimentDesign
 from sciagent.registry.ledger import LedgerEntry
 from sciagent.verify.numerical import CONFIDENCE_LEVEL, Z_TWO_SIDED
 
@@ -223,18 +224,18 @@ class CellSummary:
 
     Rendered rather than merely carried. D2, D3 and D5 are defined over the
     battery, so a figure for any of the three means nothing without knowing
-    which battery it is a figure *under* -- and this module cannot check the
-    term against a current one, because a battery is declared per scenario on
-    an environment and :mod:`sciagent` may not import one. Presence is checked
-    by :func:`_at_address` and agreement within a scenario by
-    :func:`_refuse_mixed_batteries`; **neither can tell a current battery from a
-    superseded one**, so a report built entirely on rows scored under a battery
-    that has since been replaced is accepted. Printing the term is what stops
-    that being silent: a reader who has the declaration can compare, which is
-    strictly more than they could do before. Raised by review; the check that
-    would close it rather than expose it wants a battery callback on
-    :func:`summarise`, and that is recorded in ``docs/BACKLOG.md`` rather than
-    taken here.
+    which battery it is a figure *under*.
+
+    Three checks stand behind the term by the time it is printed, and they ask
+    three different questions: :func:`_at_address` that a row carries one at all,
+    :func:`_refuse_mixed_batteries` that a scenario's rows agree with each other,
+    and :func:`_refuse_superseded_battery` that what they agree on is what the
+    scenario declares *now*. The third arrived a gate later than the other two,
+    because it is the only one needing a declaration passed in; until it existed
+    a report built entirely on rows scored under a replaced battery was accepted,
+    and printing the term was what kept that from being silent. It is still
+    printed, and the reason is no longer that: a reader comparing figures across
+    two reports needs to see which question set each was scored on.
     """
 
     dimensions: FrozenDict[str, DimensionSummary]
@@ -561,11 +562,19 @@ def _at_address(row: LedgerEntry, address: CampaignAddress) -> bool:
     the same reason, but it cannot be compared against a constant the way
     ``dimensions`` is: a battery is declared per scenario on the environment's
     :class:`~sciagent.eval.scenarios.Scenario`, and this module may not import an
-    environment. So presence is checked here -- which drops every row recorded
-    before gate A27, since those were scored on a battery derived from whatever
-    the arm happened not to run -- and *agreement* is checked by
-    :func:`_refuse_mixed_batteries`, which needs no such constant because it asks
-    only whether the surviving rows say the same thing.
+    environment. So presence is all that is decided here -- which drops every row
+    recorded before gate A27, since those were scored on a battery derived from
+    whatever the arm happened not to run -- and the term's *value* is decided
+    downstream, by :func:`_refuse_mixed_batteries` for agreement within a
+    scenario and by :func:`_refuse_superseded_battery` against the declaration
+    :func:`summarise` is handed.
+
+    Downstream rather than here, and deliberately: those two **refuse** where
+    this function **excludes**. A row this filter drops is not this campaign and
+    the caller asked for the campaign; a row carrying a replaced battery is a
+    campaign nobody can ask for, because there is no argument that names a
+    battery. Folding the comparison in here would have made it disappear
+    quietly.
     """
     key = row.key
     return (
@@ -698,6 +707,104 @@ def _refuse_mixed_batteries(rows: Sequence[LedgerEntry]) -> None:
             )
 
 
+def _refuse_superseded_battery(
+    rows: Sequence[LedgerEntry],
+    battery: Callable[[ScenarioId], Sequence[ExperimentDesign]],
+) -> None:
+    """Raise if a scenario's rows carry a battery it no longer declares.
+
+    The third of this module's refusals and the one that needed a parameter.
+    :func:`_at_address` compares every address term it can against a known value
+    but can only require ``battery`` to be *present*, because a battery is
+    declared per scenario on an environment's
+    :class:`~sciagent.eval.scenarios.Scenario` and the first invariant forbids
+    this package from importing one. :func:`_refuse_mixed_batteries` asks a
+    different question -- whether the surviving rows agree with *each other* --
+    and so fires only when two batteries coexist for one scenario. A ledger
+    whose rows agree unanimously on a battery that has since been replaced
+    passes both, and was rendered as the current campaign. Not an exotic case:
+    any change to a battery's membership makes every earlier row exactly this,
+    and no version *column* moves to say so.
+
+    So the declaration arrives as a callback, the sibling of ``scenario_class``
+    and of the one :func:`~sciagent.eval.matrix.run_matrix` takes, and it is
+    **required** for the reason :func:`~sciagent.eval.matrix.cell_key` gives for
+    its own: a default reproduces the defect for every caller who forgets it.
+
+    **Refusing rather than selecting**, and the difference is not stylistic. A
+    stale ``dimensions`` row is excluded silently because the caller *chose* the
+    reading they asked for; a caller cannot choose a battery, since the callback
+    returns whatever the scenario declares now. Excluding would therefore drop
+    rows the operator has no way to ask for back and hand them a report whose
+    replicate counts had quietly fallen. A27's reasoning binds unchanged: under
+    the fourth invariant the recorded rows are legitimate and this module cannot
+    pick which campaign was meant.
+
+    Per **scenario**, for the reason :func:`_refuse_mixed_batteries` is. A ledger
+    holding one scenario at its declared battery beside another entirely at a
+    superseded one is refused on the second: the first being current says
+    nothing about the second, and a cell built wholly on a replaced battery is
+    the defect whether or not a sibling scenario is up to date. That ledger is
+    what a battery change leaves behind when the cells are re-scored scenario by
+    scenario -- the state between the first and the last.
+
+    Not what a *re-derivation* leaves behind, and the difference is worth
+    stating because the backlog entry this gate came from conflates them. A40's
+    two generations are separated by ``METRIC_VERSION``, which is on
+    :class:`~sciagent.eval.matrix.CampaignAddress` and which :func:`_at_address`
+    already selects on, so its old rows never reach this check. The generations
+    this function exists for are the ones that arise with **no version column
+    moving at all**, which is exactly why they have to be refused rather than
+    sorted.
+
+    The offending scenarios are sorted before one is named. :func:`summarise`
+    promises its rendering does not depend on the order rows arrived in, and an
+    exception string is output too -- the same care :func:`_refuse_reseeded`
+    takes with the two seeds it names.
+    """
+    recorded: dict[str, str] = {}
+    declared: dict[str, str] = {}
+    for row in rows:
+        _system, scenario = _coordinate(row)
+        if scenario in recorded:
+            # One term per scenario: `_refuse_mixed_batteries` has already
+            # raised if this scenario's rows disagree, so reading the first is
+            # reading all of them -- and the callback is asked once per
+            # scenario rather than once per row.
+            continue
+        recorded[scenario] = row.key.config["battery"]
+        declared[scenario] = battery_key(battery(ScenarioId(scenario)))
+
+    offending = sorted(name for name in recorded if recorded[name] != declared[name])
+    if not offending:
+        return
+    name = offending[0]
+    # Named one at a time rather than all at once, but the count is not
+    # incidental: every scenario of a slice may share one declaration, so a
+    # single membership change makes all of them offending together and a
+    # message naming one would read as an isolated fault.
+    others = (
+        " "
+        + "; ".join(f"{other} carries {recorded[other]}" for other in offending[1:])
+        + f" -- {len(offending)} scenarios in all carry a battery they do not "
+        f"declare."
+        if len(offending) > 1
+        else ""
+    )
+    raise MalformedDesignError(
+        f"scenario {name} has rows scored on held-out battery {recorded[name]}, "
+        f"which it does not declare -- it declares {declared[name]}. D2, D3 and "
+        f"D5 are defined over the battery, so these rows answer a question set "
+        f"that has since been replaced, and reporting them would render a "
+        f"superseded campaign as the current one. No version column moves when a "
+        f"battery's membership changes, which is why nothing else here excludes "
+        f"them. The battery is part of the cell address, so the rows are "
+        f"legitimate under the fourth invariant and are not stale rows to be "
+        f"dropped; re-deriving them is a campaign re-run and not a report "
+        f"option.{others}"
+    )
+
+
 def _coordinate(row: LedgerEntry) -> tuple[str, str]:
     """Return a row's ``(system, scenario)``, raising if its config lacks either."""
     config = row.key.config
@@ -720,6 +827,7 @@ def summarise(
     *,
     address: CampaignAddress,
     scenario_class: Callable[[ScenarioId], ScenarioClass],
+    battery: Callable[[ScenarioId], Sequence[ExperimentDesign]],
     platform: str,
     grammar: GrammarVersion,
 ) -> MatrixReport:
@@ -744,6 +852,17 @@ def summarise(
     earlier reading of SPEC §8's dimensions are all excluded by construction
     rather than by the caller filtering first. See this module's docstring for
     why that job lands here.
+
+    ``battery`` returns the scenario's preregistered held-out battery and is
+    **required**, the sibling of ``scenario_class`` and of the callback
+    :func:`~sciagent.eval.matrix.run_matrix` takes. It is a callback for the
+    reason that one is -- the declaration lives on the environment's
+    :class:`~sciagent.eval.scenarios.Scenario` and this package may not reach it
+    -- and required rather than defaulted because a default would reproduce the
+    defect it closes for every caller who forgot it. Rows carrying a battery
+    their scenario no longer declares are **refused**, not excluded; see
+    :func:`_refuse_superseded_battery` for why that asymmetry with ``dimensions``
+    is the right way round.
 
     ``platform`` and ``grammar`` are **required and validated**, not defaulted.
     Neither is recoverable from the ledger and both must appear wherever these
@@ -830,8 +949,16 @@ def summarise(
         grouped.setdefault(_coordinate(row), []).append(row)
     # Batteries before seeds: a mixed-battery pair also trips the seed check
     # when its replicate indices collide, and the message it gives there blames
-    # a re-seed that did not happen.
+    # a re-seed that did not happen. A superseded campaign does the same, so it
+    # goes on the same side of that line.
+    #
+    # Agreement before currency, and this order is load-bearing too. A ledger
+    # holding both generations for one scenario is A27's case and keeps A27's
+    # diagnosis -- two batteries coexist and the module cannot pick. Checked the
+    # other way round it would be reported as a superseded campaign, saying
+    # nothing about the current rows sitting beside it.
     _refuse_mixed_batteries(rows)
+    _refuse_superseded_battery(rows, battery)
     _refuse_reseeded(rows)
 
     cells = tuple(
@@ -856,11 +983,21 @@ def _cell(
 ) -> CellSummary:
     """Return one cell's summary over the rows selected for it.
 
-    The classification is checked, not trusted. It is the one semantic input this
-    layer takes from a callback, and it decides which figure is the headline --
-    :func:`~sciagent.eval.scoring.primary_dimension` indexes a mapping with it, so
-    an unknown class raised a bare ``KeyError`` out of ``scoring.py`` rather than a
-    typed error from here.
+    The classification is checked, not trusted. It is one of the two semantic
+    inputs this layer takes from a callback, and it decides which figure is the
+    headline -- :func:`~sciagent.eval.scoring.primary_dimension` indexes a
+    mapping with it, so an unknown class raised a bare ``KeyError`` out of
+    ``scoring.py`` rather than a typed error from here.
+
+    The other is ``summarise``'s ``battery``, and it is checked differently
+    rather than not at all: a wrong return there produces a term matching no row
+    and :func:`_refuse_superseded_battery` refuses, so it fails closed without
+    needing a constant to validate against. The one case neither catches is a
+    caller who reads the ledger and hands back what it already holds, which
+    makes the check vacuous -- the same shape as the known
+    :class:`Preregistration` limit this module documents, and pinned nowhere for
+    the same reason: it cannot be closed from inside ``sciagent``, which may not
+    hold the declaration.
     """
     kind = scenario_class(scenario)
     if kind not in SCENARIO_CLASSES:

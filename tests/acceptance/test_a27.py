@@ -546,6 +546,7 @@ class TestA27PreregisteredBattery:
                 platform="Windows-11-x86_64",
                 grammar=GrammarVersion("pointproc-edits/1.0.0"),
                 scenario_class=lambda target: scenario(str(target)).scenario_class,
+                battery=lambda target: scenario(str(target)).held_out,
             )
 
     def test_a27_only_the_manipulating_operations_are_interventions(self) -> None:
@@ -671,12 +672,14 @@ class TestA27PreregisteredBattery:
     def test_a27_the_report_names_the_battery_it_read(self) -> None:
         """D2, D3 and D5 mean nothing without the battery they are figures under.
 
-        ``summarise`` cannot check the term against a current one -- a battery is
-        declared per scenario on an environment, and :mod:`sciagent` may not
-        import one -- so a report built entirely on rows under a *superseded*
-        battery is accepted. Rendering the term is what keeps that from being
-        silent: a reader holding the declaration can compare, which is strictly
-        more than they could do before.
+        A battery is declared per scenario on an environment and :mod:`sciagent`
+        may not import one, so at this gate ``summarise`` could not check the
+        term against a current one at all, and rendering it was what kept a
+        report built entirely on rows under a *superseded* battery from being
+        silently accepted. Gate A43 later closed that by taking the declaration
+        as a required callback and refusing; the term is still rendered, because
+        a reader comparing two reports needs to see which question set each was
+        scored on.
         """
         cell = Cell("B1", ScenarioId("S9"), 1)
         task = CellTask(cell=cell, replicate=0, seed=Seed(3))
@@ -693,6 +696,7 @@ class TestA27PreregisteredBattery:
             platform="test",
             grammar=GrammarVersion("pointproc-edits/1.0.0"),
             scenario_class=lambda target: scenario(str(target)).scenario_class,
+            battery=lambda target: scenario(str(target)).held_out,
         )
         term = battery_key(scenario("S9").held_out)
         assert report.cells[0].battery == term
@@ -734,6 +738,7 @@ class TestA27PreregisteredBattery:
                 platform="test",
                 grammar=GrammarVersion("pointproc-edits/1.0.0"),
                 scenario_class=lambda target: scenario(str(target)).scenario_class,
+                battery=lambda target: scenario(str(target)).held_out,
             )
         assert "before gate A27" in str(raised.value)
 

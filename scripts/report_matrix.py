@@ -49,6 +49,7 @@ from sciagent.core.types import (
 from sciagent.eval.matrix import CampaignAddress
 from sciagent.eval.report import Contrast, contrast, render, summarise
 from sciagent.eval.scenarios import ScenarioClass
+from sciagent.experiments.dsl import ExperimentDesign
 from sciagent.registry.ledger import CampaignLedger
 from sciagent.registry.partitions import DataPartition
 
@@ -103,14 +104,18 @@ def main(argv: list[str] | None = None) -> int:
         entries = ledger.entries()
 
     # A script may import an environment; the first invariant is about
-    # ``sciagent`` not doing so. This is the domain-specific line.
+    # ``sciagent`` not doing so. These are the domain-specific lines.
     def scenario_class(name: ScenarioId) -> ScenarioClass:
         return scenario(str(name)).scenario_class
+
+    def battery(name: ScenarioId) -> tuple[ExperimentDesign, ...]:
+        return scenario(str(name)).held_out
 
     report = summarise(
         entries,
         address=address,
         scenario_class=scenario_class,
+        battery=battery,
         platform=args.platform,
         grammar=GrammarVersion(args.grammar),
     )

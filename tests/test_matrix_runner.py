@@ -360,6 +360,7 @@ class TestTheRunnerDrivesTheRealMatrix:
             entries,
             address=address,
             scenario_class=scenario_class_of,
+            battery=scenario_battery,
             platform="Windows",
             grammar=GrammarVersion(str(AGENT_GRAMMAR.version)),
         )

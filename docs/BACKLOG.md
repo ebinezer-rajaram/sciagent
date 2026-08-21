@@ -867,6 +867,14 @@ existing boundary. Sequencing: **not** mid-campaign, and not in a session that
 has just watched a particular arm fail against a particular tier — the same
 hazard the `unmeasurable` entry names and the §12 criterion 4 entry insists on.
 
+**Constrained by A40, 2026-08-21.** This entry retiers the very catch the
+constraint lands on. `SystemConfigurationError` is deliberately outside
+`ProposalError` (`core/errors.py:357`) so a harness fault cannot be caught and
+scored — the A40 worktree chose it there for exactly that reason. The retiering
+must widen the catch by *kind*, never by moving up the hierarchy to
+`ProposalError`, which would swallow `TranscriptMissError` and record a replay
+miss as a refusal.
+
 **Gate.** `test_a44_a_fault_is_not_scored_as_a_refusal` — a constructed
 failure of each enumerated kind reaches exactly one tier: a model declining
 scores as `refused`, a dead session as `transport`, and a fault of the machine
@@ -1477,6 +1485,17 @@ executed; the replay claim is the reproducibility story for every LLM number.
 **Touches.** No frozen decision. `transcripts.py`, `anthropic_provider.py`,
 and the address scheme (a refusal transcript is a new record kind — version
 the scheme).
+
+**Constrained by A40, 2026-08-21.**
+`test_a40_a_replay_stops_on_a_miss_rather_than_recording_a_refusal` pins that a
+REPLAY miss raises and is **not** converted into a recorded refusal. Fill the
+hole — the route the **Idea.** above already takes — and the two agree. Widening
+`Hybrid._propose_once`'s `except ProviderError` to `ProposalError`, or making
+`TranscriptMissError` a subclass of `ProviderError`, contradicts A40 and lands a
+harness fault in the ledger as a scored datum, which is the failure this entry
+exists to close arriving from the other direction. The hierarchy as built:
+`TranscriptMissError` and `ProviderError` are siblings under `ProposalError`
+(`core/errors.py:374`, `:394`, `:433`), and only the latter is caught.
 
 **Gate.** `test_a35_a_refused_replicate_replays` — a recorded run containing
 a refusal replays byte-identically with zero misses; the corpus hash is

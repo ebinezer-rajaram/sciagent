@@ -8522,3 +8522,54 @@ the ranks differ from what was described: ranks 4 and 5 are **not** free. A28
 and A43 landed and, per this file's convention, keep their ranks; only the
 heading gains a marker. A44 therefore took 6 and the rest shifted down, rather
 than A44 taking 4 with A40 at 10.
+
+## 2026-08-21 — A40 and A35 meet at one catch clause, and the boundary is pinned before either lands
+
+**Decision.** A35 fixes the replay hole by **filling the corpus** — recording
+refusals as first-class transcripts — and never by widening
+`Hybrid._propose_once`'s `except ProviderError` to `ProposalError` or by making
+`TranscriptMissError` a subclass of `ProviderError`. Written into both the A35
+and A44 entries in `docs/BACKLOG.md`, because A44 retiers that same catch.
+
+**Why.** The A40 worktree, building the re-derivation concurrently, raised the
+question: its
+`test_a40_a_replay_stops_on_a_miss_rather_than_recording_a_refusal` pins that a
+REPLAY miss raises rather than being converted into a recorded refusal, and if
+A35's design were to widen the catch instead, the two gates would contradict.
+
+It is not, and the hierarchy says so. Verified in `src/sciagent/core/errors.py`:
+
+```
+ResearchSystemError
+├── SystemConfigurationError   :357   <- RefusingProvider raises this
+└── ProposalError              :374
+    ├── TranscriptMissError    :394
+    └── ProviderError          :433   <- the only class hybrid.py catches
+```
+
+A35's **Idea.** already names the compatible route and describes the sibling
+relationship as a fact rather than as something to change. So the contradiction
+is reachable only by an implementation choice, which is why it is now pinned in
+prose in both entries rather than left to be discovered by a red gate.
+
+**The reason it matters is the same one T1a rests on.** A40's `RefusingProvider`
+raises `SystemConfigurationError` and not `ProviderError` deliberately: the
+latter is caught at `hybrid.py` and recorded as `"refused"`, so raising it there
+would turn a harness fault into a scored datum. That is the identical principle
+T2/T1a settled hours earlier from the other end — machine faults propagate, they
+do not score — arrived at independently by a session that had not read the
+decision. Two routes to one boundary is the strongest evidence available that
+the boundary is real.
+
+**Closes off.** A44 must widen the catch by *kind* — adding `transport` and
+`faulted` beside `refused` — and never by moving up the hierarchy. Any later
+change to `core/errors.py`'s `ProposalError` subtree now has two gates reading
+it and should check both.
+
+**On sequencing, from the same exchange.** T2's version-bump argument bears on
+*running* the re-derivation, not on A40's code, and the run was always a
+separate step — so nothing in the A40 worktree is stranded by the re-ranking.
+What it does invert is the premise for the run itself: re-deriving before the
+retiering lands means re-deriving twice, which is the outcome the rank order
+exists to avoid. The build order stands as re-cut earlier today at the user's
+direction; A40's code may land out of rank, its run may not.

@@ -1,8 +1,15 @@
 # Open decisions
 
-Two decisions this repository deliberately did not take when they arose, written
-up so they could be taken **cold**. §2 was taken on 2026-08-21, with gate A40,
-and its section records what settled it; §1 is still open.
+> **Both decisions were taken 2026-08-21** — §1 as **C1**, §2 as **T3**, the
+> recommendation each section makes. §2 was briefly recorded as T2 and corrected
+> the same day: that reading turned on A40 bumping `METRIC_VERSION`, which
+> `DIMENSION_VERSION` had already made unnecessary a day before. T1a's
+> fault-column triage survives the correction and rides with T3. All of it is in
+> `docs/DECISIONS.md`. The text below is left as it stood when the decisions were
+> taken: the record of what was known at the time, not a live question.
+
+Two decisions this repository deliberately did not take while it was measuring,
+written up so they could be taken **cold**.
 
 Neither is here because it is hard to find the answer. Both are here because of
 CLAUDE.md's invariant 6: they touch apparatus that scores a system already

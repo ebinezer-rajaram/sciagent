@@ -8529,3 +8529,235 @@ the campaign are what carry the meaning the counter does not. If the gate line i
 ever treated as the operative criterion on its own it should be amended to say
 that the replayed campaign *completes*, which is the falsifiable form of what it
 was reaching for.
+## 2026-08-21 — both cold decisions taken, and A25 deferred behind the reporting fixes
+
+**Decision.** Three, settled in one session after both write-ups in
+`docs/OPEN-DECISIONS.md` were read in full. That file said it existed so a later
+session would not have to take these hot; this is that session.
+
+1. **SPEC §12 criterion 4 — C1.** Power against size on the named Stage A
+   probe: on S11, V7's probe fires at a rate at least matching B1's on the same
+   probe, at a false-positive rate on S1–S7 and S9 no higher than B1's. The
+   harness evaluates the probe for **every** arm regardless of whether the arm
+   consults it. The honesty cost — "B1 detected" names a check B1 never
+   consulted — goes into §12's wording rather than being left for a reader to
+   find. The user's choice, and the document's own recommendation.
+
+2. **The proposal outcome taxonomy — T2, with T1a folded in.** Split the tier:
+   `transport` and `faulted` beside `refused`, on a metric-version bump. While
+   in the file, apply T1a to the fault column — the conditions at
+   `agent_sdk_provider.py` 267, 327, 361, 448, 456, 462 and
+   `anthropic_provider.py` 182 are faults of the machine that a campaign should
+   stop on rather than score, so they leave the tier instead of being recounted
+   inside it. `max_proposals` stays at **2** until the break asymmetry is
+   settled in the same change. Recommended by me, accepted by the user, who
+   asked for a recommendation rather than choosing from the four.
+
+3. **A25 (QTM real-data grounding) drops from rank 7 to rank 15**, behind
+   A30/A31/A34/A37. The user's call, in their words: answer the research
+   question on synthetic data first.
+
+**Why.** On C1 there is nothing to add to the write-up; it was taken as
+recommended.
+
+T2 is the interesting one, because the document recommends **T3** and this goes
+against it. It also names its own defeater in the next sentence: *"T2 is the
+right answer if the matrix is going to be re-run anyway, in which case the
+metric-version bump is free and T3's parallel structure is redundant."* A40 is
+that re-run and bumps `METRIC_VERSION` regardless, so T3 would buy avoidance of
+a cost already being paid, at the price of carrying a parallel non-scoring
+structure forever. The document's further instruction — take this *after* the R5
+re-scoring question — is satisfied rather than pending: R5 is sequenced after
+item 15 and would itself force another re-derivation, so there is no future in
+which the bump gets cheaper by waiting. T1a rides along because a condition that
+propagates was never scored, so moving it costs nothing in recorded numbers.
+
+A25's deferral is a sequencing call, not a judgement on the entry. At rank 7 it
+sat between the re-derivation and every item that makes the recorded matrix
+readable — a 1–2 week track opening before the 1,120 rows already paid for could
+be reported. Its own risks are unchanged and still recorded in `docs/BACKLOG.md`
+(no formal SCEDC licence text; template-matching false detections that mimic the
+consensus edit's signature).
+
+**Closes off.** A29 is no longer held: OPEN-DECISIONS §1 was its only blocker,
+and at rank 3 it already sits ahead of A40. It goes first — re-deriving before
+the probe is arm-symmetric would produce a matrix that still cannot answer the
+preregistered contrast, which is the thing the re-derivation exists to make
+answerable.
+
+The break asymmetry is now load-bearing rather than latent: `Hybrid._extend`
+breaks on `"refused"` and continues on the other four, so any retiering changes
+which outcomes break. It must be settled inside the T2 change, not after it.
+
+**Not decided here, and deliberately.** A42 stays held on the D4 comparison-set
+question; nothing in this session touched D4's semantics. Nor does anything here
+schedule the F11 TEST campaign — three exist for the life of the project, none
+is in SPEC §11's list, and the slice matrix remains exploratory by construction
+whatever it says. What the plan above buys is the right to spend the first one,
+not the spending of it.
+
+## 2026-08-21 — A40 is ranked sixth and is logically last: the build order re-cut around what a replay needs
+
+**Decision.** Gate **A44** is minted for the retiering T2 decided earlier today,
+on the previously ungated entry "Audit the proposal path's failure taxonomy",
+and the open entries are re-ranked so that **everything touching a number the
+recorded campaign reported lands before A40's version bump**, not after it:
+
+```
+ 3  A29  probe arm-symmetry (C1)          10  A33  substrate versioning
+ 6  A44  retiering (T2 + T1a)             11  A34  comparator parity
+ 7  A31  payload: agency, flags, masses   12  A40  re-derivation
+ 8  A30  verifier adjudication            13  A32  16  A38 (landed)
+ 9  A35  refusals replay                  14  A37  17  A39 (landed)
+                                          15  A36  18  A25  19  A41  20  A42 (held)
+```
+
+**Why.** A40 sat at rank 6 with four entries behind it that each move something
+it re-derives, so `/next` walking the ranks in order would have paid for the
+re-derivation and then invalidated it. Three couplings, in descending severity:
+
+**A35 is a hard blocker, and was ranked six places behind A40.** A40's gate
+requires `store.misses == 0` across a replay of all 18 LLM cells; A35 records
+that "any replicate the ledger scored as *refused* is currently unreplayable —
+replay of the recorded campaign would crash at the first refusal-containing
+address". `/next` would have re-run the 38 conventional cells, entered the
+replay, and died.
+
+**Whether that crash is certain or vacuous cannot be determined from the
+artefacts, which is itself the finding.** Checked directly rather than assumed:
+the ledger's reading carries sixteen fields over all 1,120 rows — `correct`,
+`d1`–`d6`, `experiments`, `identified`, `inadequate`, `leading_mass`,
+`log_score`, `n_held_out`, `ppc_p_value`, `structural_distance`, `truth_mass` —
+and **not one proposal-outcome field**; `.cache/transcripts/spec9.json` holds
+112 calls whose record kind has no `stop_reason` and no outcome. A refusal in
+the recorded campaign stored nothing anywhere, so the number of them is
+unrecoverable from the tree. That is A31's omission and A35's missing record
+kind observed from the other end, and it is why both now precede A40.
+
+**A31 and A30 feed the payload A40 renders.** Landing them after the bump leaves
+the re-derived matrix without the autonomy fraction, the gate flag and the mass
+decomposition, so §12 criteria 4, 9 and 11 stay undecidable from the very report
+the re-derivation exists to produce — and a second bump would be needed.
+**A34** moves D3 if the parity route rather than the bounding-declaration route
+is taken, which stales the re-derivation the same way.
+
+A44's gate is written to be gradeable on constructed failures with no live call,
+which keeps it framework apparatus rather than a grade of a built system.
+
+**Closes off.** A36 must stay *after* A40 and does, at 15: it bumps the
+transcript address version, which is what makes the recorded corpus unreplayable
+by design. Anything later moved ahead of A40 needs the same question asked of
+it — does it move a number A40 re-derives — and the answer written in the entry.
+
+**A correction against the table proposed in conversation**, recorded because
+the ranks differ from what was described: ranks 4 and 5 are **not** free. A28
+and A43 landed and, per this file's convention, keep their ranks; only the
+heading gains a marker. A44 therefore took 6 and the rest shifted down, rather
+than A44 taking 4 with A40 at 10.
+
+## 2026-08-21 — A40 and A35 meet at one catch clause, and the boundary is pinned before either lands
+
+**Decision.** A35 fixes the replay hole by **filling the corpus** — recording
+refusals as first-class transcripts — and never by widening
+`Hybrid._propose_once`'s `except ProviderError` to `ProposalError` or by making
+`TranscriptMissError` a subclass of `ProviderError`. Written into both the A35
+and A44 entries in `docs/BACKLOG.md`, because A44 retiers that same catch.
+
+**Why.** The A40 worktree, building the re-derivation concurrently, raised the
+question: its
+`test_a40_a_replay_stops_on_a_miss_rather_than_recording_a_refusal` pins that a
+REPLAY miss raises rather than being converted into a recorded refusal, and if
+A35's design were to widen the catch instead, the two gates would contradict.
+
+It is not, and the hierarchy says so. Verified in `src/sciagent/core/errors.py`:
+
+```
+ResearchSystemError
+├── SystemConfigurationError   :357   <- RefusingProvider raises this
+└── ProposalError              :374
+    ├── TranscriptMissError    :394
+    └── ProviderError          :433   <- the only class hybrid.py catches
+```
+
+A35's **Idea.** already names the compatible route and describes the sibling
+relationship as a fact rather than as something to change. So the contradiction
+is reachable only by an implementation choice, which is why it is now pinned in
+prose in both entries rather than left to be discovered by a red gate.
+
+**The reason it matters is the same one T1a rests on.** A40's `RefusingProvider`
+raises `SystemConfigurationError` and not `ProviderError` deliberately: the
+latter is caught at `hybrid.py` and recorded as `"refused"`, so raising it there
+would turn a harness fault into a scored datum. That is the identical principle
+T2/T1a settled hours earlier from the other end — machine faults propagate, they
+do not score — arrived at independently by a session that had not read the
+decision. Two routes to one boundary is the strongest evidence available that
+the boundary is real.
+
+**Closes off.** A44 must widen the catch by *kind* — adding `transport` and
+`faulted` beside `refused` — and never by moving up the hierarchy. Any later
+change to `core/errors.py`'s `ProposalError` subtree now has two gates reading
+it and should check both.
+
+**On sequencing, from the same exchange.** T2's version-bump argument bears on
+*running* the re-derivation, not on A40's code, and the run was always a
+separate step — so nothing in the A40 worktree is stranded by the re-ranking.
+What it does invert is the premise for the run itself: re-deriving before the
+retiering lands means re-deriving twice, which is the outcome the rank order
+exists to avoid. The build order stands as re-cut earlier today at the user's
+direction; A40's code may land out of rank, its run may not.
+
+## 2026-08-21 — supersedes today's T2: the bump it called free was never going to be paid
+
+**Supersedes** the taxonomy half of *"both cold decisions taken, and A25
+deferred behind the reporting fixes"* (02a4e3d) earlier today. Its §12
+criterion 4 half — **C1** — is untouched and stands. The taxonomy is **T3**, as
+`docs/OPEN-DECISIONS.md` §2 recommended, and the A40 worktree's concurrent
+decision to the same effect is the one that governs.
+
+**Decision.** T3: `ProposalRecord`'s five fields stay exactly as they are,
+`yield_fraction`'s denominator never moves, and a parallel non-scoring breakdown
+of causes carries the diagnostic question. **T1a survives** — machine faults
+leave the tier by propagating, which moves no recorded number because a
+condition that propagates was never scored. Gate A44 stays minted; its gate line
+loses the `METRIC_VERSION` clause and gains the pin that the recorded campaign's
+`yield_fraction` is bit-identical across the change.
+
+**Why the earlier entry was wrong.** Its whole argument was one conditional
+lifted from the write-up — *"T2 is the right answer if the matrix is going to be
+re-run anyway, in which case the metric-version bump is free"* — plus the claim
+that A40 bumps `METRIC_VERSION` regardless. The second half is false. It was
+read out of the A40 backlog entry, written **2026-08-18**, and
+`DIMENSION_VERSION` landed at gate A26 on **2026-08-19** precisely so that a
+change to what D1–D6 mean need not move a column that also addresses the
+empirical tables. `eval/scoring.py:71-77` records the measurement, not an
+argument: `METRIC_VERSION` reaches every `Discretisation`'s content hash through
+`str(MetricRef)`, so bumping it invalidates every cached table and forces a
+**3m11s rebuild on every machine and in every worktree**. A40 re-derives on
+`dimensions` and `battery` and bumps nothing.
+
+So the bump T2 needs is not free; it is that rebuild, everywhere, for a change
+that touches no estimator. `DIMENSION_VERSION` would not have absorbed it either
+— `yield_fraction` is an agency metric under §12 criterion 11, not one of §8's
+six dimensions.
+
+**What this says about how the earlier decision was taken.** The premise was
+checkable in the source at the time and was checked only against the backlog
+entry that the source had superseded a day earlier. A decision resting on one
+conditional is only as good as the conditional's antecedent, and that antecedent
+was a fact about the code, not about the write-up. Recorded because the failure
+mode is reusable: this file's entries age against the tree, and an entry written
+three days ago describing apparatus is evidence about intent, not about what is
+there now.
+
+**Closes off.** Do not re-open T2 on the grounds that some later change bumps
+`METRIC_VERSION` anyway — R5 included. The bump's cost is the table rebuild and
+it is paid by whoever forces it; T3 removes the reason to force it at all, which
+is a better position than waiting for someone else to pay.
+
+The rank order set earlier today stands, but two of its four reasons were T2's
+and are now void: A44 no longer *must* precede A40 because it no longer moves
+`yield_fraction`. What still binds is unchanged and independently confirmed by
+the A40 session's own report — **A35 blocks the re-derivation run**, which "is
+expected to crash at the first refusal-containing address", and A31/A30 must
+land before the run or the re-derived payload cannot answer §12 criteria 4, 9
+and 11. A40's *code* is finished and may land out of rank; its *run* waits.

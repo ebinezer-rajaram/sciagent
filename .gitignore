@@ -27,3 +27,8 @@ wheels/
 # search out of them (`search.useIgnoreFiles` defaults true) while leaving them
 # browsable in the explorer (`explorer.excludeGitIgnore` defaults false).
 .claude/worktrees/
+
+# Working notes for harness/workflow changes. Untracked: these are plans and
+# scratch analysis about how Claude Code is configured, not project artefacts.
+# The record of what was decided belongs in docs/DECISIONS.md.
+docs/notes/

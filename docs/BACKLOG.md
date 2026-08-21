@@ -853,19 +853,51 @@ than a diagnostic one: `docs/OPEN-DECISIONS.md` §2 lists all twenty conditions
 recommends T3 — but recommends taking it *after* the R5 re-scoring question,
 since a matrix that is re-run anyway makes the metric-version bump free.
 
-**The decision was taken 2026-08-21, with gate A40: T3.** The condition that
-would have favoured T2 did not arrive — A40 re-derives under `dimensions` and
-`battery` rather than bumping `METRIC_VERSION`, so the bump is not free, and
-`yield_fraction` is an agency metric rather than a §8 dimension, so
-`DIMENSION_VERSION` does not cover it either. What remains here is unchanged in
-shape and now has its answer: keep `ProposalRecord`'s five fields so
-`yield_fraction`'s denominator never moves, and add the parallel non-scoring
-breakdown of causes beside it.
+**Decided 2026-08-21 — T3**, as this file's write-up recommended. Taken twice:
+first as T2 on the premise that A40 bumps `METRIC_VERSION` and the bump is
+therefore free, then corrected the same day when the A40 worktree showed the
+premise false. `DIMENSION_VERSION` landed at A26 the day *after* the A40 entry
+was written and exists so a dimension change need not move a column that
+addresses the empirical tables; A40 re-derives on `dimensions` and `battery` and
+bumps nothing. `yield_fraction` is an agency metric rather than one of §8's six,
+so `DIMENSION_VERSION` would not carry it either — T2 would need the real bump,
+measured at a 3m11s table rebuild on every machine, for a change touching no
+estimator. **T1a survives** the correction: a condition that propagates was
+never scored, so moving machine faults out of the tier moves no recorded number
+and needs no bump. `max_proposals` stays at 2 until the break asymmetry is
+settled in the same change, and the `EditNotInGrammarError` escape above is
+decided with the retiering as this entry already asks. Both decisions and the
+correction are in `docs/DECISIONS.md`.
+
+What that leaves this entry to do is unchanged in shape and now has its answer:
+keep `ProposalRecord`'s five fields, so `yield_fraction`'s denominator never
+moves, and add the parallel non-scoring breakdown of causes beside it. That is
+A44's gate.
 
 **Touches.** No frozen decision. It is enumeration and test coverage over an
 existing boundary. Sequencing: **not** mid-campaign, and not in a session that
 has just watched a particular arm fail against a particular tier — the same
 hazard the `unmeasurable` entry names and the §12 criterion 4 entry insists on.
+
+**Constrained by A40, 2026-08-21.** This entry retiers the very catch the
+constraint lands on. `SystemConfigurationError` is deliberately outside
+`ProposalError` (`core/errors.py:357`) so a harness fault cannot be caught and
+scored — the A40 worktree chose it there for exactly that reason. The retiering
+must widen the catch by *kind*, never by moving up the hierarchy to
+`ProposalError`, which would swallow `TranscriptMissError` and record a replay
+miss as a refusal.
+
+**Gate.** `test_a44_a_fault_is_not_scored_as_a_refusal` — a constructed
+failure of each enumerated kind reaches exactly one cause in the parallel
+non-scoring breakdown: a model declining reads as a refusal, a dead session as
+transport, and a fault of the machine propagates rather than reaching
+`ProposalRecord` at all; `EditNotInGrammarError` from `apply` lands where this
+entry decides rather than escaping `_admit`; and `ProposalRecord`'s five fields
+are untouched, pinned by the recorded campaign's `yield_fraction` coming out
+bit-identical across the change. No `METRIC_VERSION` bump: that is what T3 buys
+and what the gate must not quietly spend.
+**Rank.** 6
+**Cost.** M. Constructed cases throughout; no live call is needed to grade it.
 
 ## Four defects in `scripts/rate_limit_pilot.py`'s reporting, found by review
 ## after its measurements were already taken
@@ -953,7 +985,7 @@ snapshot-hash → byte-identical `EventLog` segments across processes;
 the declared censoring model is applied and versioned; the consensus edit is
 preregistered in the environment before any system runs on a segment.
 
-**Rank.** 7
+**Rank.** 18
 **Cost.** XL (pipeline + calibration ≈ 1–2 weeks). Compute: conventional arms
 $0; V7 on 20 found segments ≈ 40 calls ≈ $4–8 live.
 
@@ -1279,8 +1311,11 @@ preregistered budget. API $0.
 
 ## Criterion 4's observable, implemented arm-symmetrically once decided cold
 
-**Idea.** After the OPEN-DECISIONS §1 decision is taken (C1 recommended
-there: power against size on the named Stage A probe), implement it: the
+**Decided 2026-08-21 — C1**, as recommended, in `docs/DECISIONS.md`. The hold
+is off and this entry is now buildable as written.
+
+**Idea.** The OPEN-DECISIONS §1 decision is taken — C1: power against size on
+the named Stage A probe. Implement it: the
 harness evaluates the named probe for every arm uniformly at the gate point,
 records both flags (probe verdict and whole-record PPC) clearly labelled, and
 reports detection with a false-positive term.
@@ -1300,8 +1335,7 @@ ledger payload (the implementation). Couples to the payload entry below.
 system ran, and both flags are recorded and distinguishable in the payload.
 
 **Rank.** 3
-**Held.** OPEN-DECISIONS §1
-**Cost.** M for the implementation; the decision is the user's.
+**Cost.** M. The decision it was held on was taken 2026-08-21.
 
 ## The verifier has no production caller
 
@@ -1353,7 +1387,7 @@ Couples to the criterion-4 entry (which flag) and the re-derivation entry
 run's payload carries autonomy fraction, both detection flags and both
 masses; render shows the autonomy fraction beside every dimension block.
 
-**Rank.** 9
+**Rank.** 7
 **Cost.** M.
 
 ## Append-only is breached by a foreign REPLACE, and A14 has a module-scope blind spot
@@ -1383,7 +1417,7 @@ a fresh raw connection with default pragmas fails and the row is unchanged;
 the A14 analyser finds a planted module-level violation; no module under
 `sciagent.systems` references the store or ledger types.
 
-**Rank.** 10
+**Rank.** 13
 **Cost.** M.
 
 ## The verification substrate has unversioned randomness, caches and dependencies
@@ -1413,7 +1447,7 @@ that verify it.
 registered and in force under pytest; a table cached under one simulator-code
 digest is refused under another; the rendered report names the numpy version.
 
-**Rank.** 11
+**Rank.** 10
 **Cost.** M.
 
 ## Comparator parity: selection policy is confounded with proposal source
@@ -1444,7 +1478,7 @@ the contrast declaration records the bounding comparison; and a self-serving
 explicit prediction that contradicts the structure's table row is refused or
 marked agent-authored.
 
-**Rank.** 12
+**Rank.** 11
 **Cost.** M.
 
 ## Refusals break replay, and the corpus has no in-repo hash
@@ -1467,11 +1501,22 @@ executed; the replay claim is the reproducibility story for every LLM number.
 and the address scheme (a refusal transcript is a new record kind — version
 the scheme).
 
+**Constrained by A40, 2026-08-21.**
+`test_a40_a_replay_stops_on_a_miss_rather_than_recording_a_refusal` pins that a
+REPLAY miss raises and is **not** converted into a recorded refusal. Fill the
+hole — the route the **Idea.** above already takes — and the two agree. Widening
+`Hybrid._propose_once`'s `except ProviderError` to `ProposalError`, or making
+`TranscriptMissError` a subclass of `ProviderError`, contradicts A40 and lands a
+harness fault in the ledger as a scored datum, which is the failure this entry
+exists to close arriving from the other direction. The hierarchy as built:
+`TranscriptMissError` and `ProviderError` are siblings under `ProposalError`
+(`core/errors.py:374`, `:394`, `:433`), and only the latter is caught.
+
 **Gate.** `test_a35_a_refused_replicate_replays` — a recorded run containing
 a refusal replays byte-identically with zero misses; the corpus hash is
 resolvable from the repository.
 
-**Rank.** 13
+**Rank.** 9
 **Cost.** S–M.
 
 ## Elicitation hygiene: a priming example, a cold cache, one sample
@@ -1503,7 +1548,7 @@ menu mechanism name appears anywhere in the schema or its examples; the
 address version differs from the recorded campaign's; k-sample mode stores k
 indexed calls and admits deterministically.
 
-**Rank.** 14
+**Rank.** 15
 **Cost.** M. Live cost of k-sampling: (k−1) × $0.098 per firing at current
 rates.
 
@@ -1526,7 +1571,7 @@ difference on one dimension is still one dimension.
 constructed paired rows the report carries the within-seed difference and its
 interval, and refuses the paired reading when the seed sets differ.
 
-**Rank.** 15
+**Rank.** 14
 **Cost.** S.
 
 ## DONE (2026-08-19, gate A38) — A LICENSE and a CI gate, before any third
@@ -1734,7 +1779,7 @@ sequencing: instruments first, decided cold; re-derivation second, labelled.
 holding rows under two metric versions renders them separately, refuses to
 pool them, and the replayed campaign reports `store.misses == 0`.
 
-**Rank.** 6
+**Rank.** 12
 **Cost.** M (≈ 20 min conventional + ≈ 2 h replay + report plumbing). API $0.
 
 ## The ground truth is on the `Investigation` public surface, twice
@@ -1780,7 +1825,7 @@ attribute or method of `Investigation` returns, contains or renders the
 scenario's truth, checked by traversal rather than by name; and a structure key
 reachable from `EngineView.table` does not disclose a defect's parameters.
 
-**Rank.** 18
+**Rank.** 19
 **Cost.** M. No API the shipped systems use is affected.
 
 ## D4 now rewards entertaining fewer alternatives
@@ -1814,7 +1859,7 @@ re-derivation entry below, which should not run before this is settled.
 size of the comparison set beside D4, and a candidate scoring 0.0 because the set
 was empty is distinguishable from one scoring 0.0 because it was outperformed.
 
-**Rank.** 19
+**Rank.** 20
 **Held.** a cold decision on D4's comparison set
 **Cost.** S for the reporting; the semantic decision is the user's.
 

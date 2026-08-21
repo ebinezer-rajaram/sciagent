@@ -1,10 +1,12 @@
 # Open decisions
 
-> **Both decisions were taken 2026-08-21** — §1 as **C1**, §2 as **T2** with
-> T1a's fault-column triage folded in. The reasoning, and why §2 went against
-> this file's own recommendation, are in `docs/DECISIONS.md`. The text below is
-> left exactly as it stood when the decisions were taken: it is the record of
-> what was known at the time, not a live question. Nothing here is still open.
+> **Both decisions were taken 2026-08-21** — §1 as **C1**, §2 as **T3**, the
+> recommendation each section makes. §2 was briefly recorded as T2 and corrected
+> the same day: that reading turned on A40 bumping `METRIC_VERSION`, which
+> `DIMENSION_VERSION` had already made unnecessary a day before. T1a's
+> fault-column triage survives the correction and rides with T3. All of it is in
+> `docs/DECISIONS.md`. The text below is left as it stood when the decisions were
+> taken: the record of what was known at the time, not a live question.
 
 Two decisions this repository deliberately did not take while it was measuring,
 written up so they could be taken **cold**.

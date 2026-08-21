@@ -853,14 +853,21 @@ than a diagnostic one: `docs/OPEN-DECISIONS.md` §2 lists all twenty conditions
 recommends T3 — but recommends taking it *after* the R5 re-scoring question,
 since a matrix that is re-run anyway makes the metric-version bump free.
 
-**Decided 2026-08-21 — T2, with T1a folded in**, against the write-up's own
-recommendation of T3 and on the defeater it names: A40 re-runs the matrix and
-bumps `METRIC_VERSION` regardless, so T3 would buy avoidance of a cost already
-being paid. The R5 condition is satisfied rather than pending — R5 is sequenced
-after item 15 and would force another re-derivation, so no future makes the bump
-cheaper. `max_proposals` stays at 2 until the break asymmetry is settled in the
-same change, and the `EditNotInGrammarError` escape above is decided with the
-retiering as this entry already asks. Reasoning in `docs/DECISIONS.md`.
+**Decided 2026-08-21 — T3**, as this file's write-up recommended. Taken twice:
+first as T2 on the premise that A40 bumps `METRIC_VERSION` and the bump is
+therefore free, then corrected the same day when the A40 worktree showed the
+premise false. `DIMENSION_VERSION` landed at A26 the day *after* the A40 entry
+was written and exists so a dimension change need not move a column that
+addresses the empirical tables; A40 re-derives on `dimensions` and `battery` and
+bumps nothing. `yield_fraction` is an agency metric rather than one of §8's six,
+so `DIMENSION_VERSION` would not carry it either — T2 would need the real bump,
+measured at a 3m11s table rebuild on every machine, for a change touching no
+estimator. **T1a survives** the correction: a condition that propagates was
+never scored, so moving machine faults out of the tier moves no recorded number
+and needs no bump. `max_proposals` stays at 2 until the break asymmetry is
+settled in the same change, and the `EditNotInGrammarError` escape above is
+decided with the retiering as this entry already asks. Both decisions and the
+correction are in `docs/DECISIONS.md`.
 
 **Touches.** No frozen decision. It is enumeration and test coverage over an
 existing boundary. Sequencing: **not** mid-campaign, and not in a session that
@@ -876,11 +883,14 @@ must widen the catch by *kind*, never by moving up the hierarchy to
 miss as a refusal.
 
 **Gate.** `test_a44_a_fault_is_not_scored_as_a_refusal` — a constructed
-failure of each enumerated kind reaches exactly one tier: a model declining
-scores as `refused`, a dead session as `transport`, and a fault of the machine
-propagates rather than being scored at all; `requested` sums the scoring tiers
-only; `EditNotInGrammarError` from `apply` lands where this entry decides
-rather than escaping `_admit`; and the change carries a `METRIC_VERSION` bump.
+failure of each enumerated kind reaches exactly one cause in the parallel
+non-scoring breakdown: a model declining reads as a refusal, a dead session as
+transport, and a fault of the machine propagates rather than reaching
+`ProposalRecord` at all; `EditNotInGrammarError` from `apply` lands where this
+entry decides rather than escaping `_admit`; and `ProposalRecord`'s five fields
+are untouched, pinned by the recorded campaign's `yield_fraction` coming out
+bit-identical across the change. No `METRIC_VERSION` bump: that is what T3 buys
+and what the gate must not quietly spend.
 **Rank.** 6
 **Cost.** M. Constructed cases throughout; no live call is needed to grade it.
 

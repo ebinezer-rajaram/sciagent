@@ -8573,3 +8573,59 @@ What it does invert is the premise for the run itself: re-deriving before the
 retiering lands means re-deriving twice, which is the outcome the rank order
 exists to avoid. The build order stands as re-cut earlier today at the user's
 direction; A40's code may land out of rank, its run may not.
+
+## 2026-08-21 — supersedes today's T2: the bump it called free was never going to be paid
+
+**Supersedes** the taxonomy half of *"both cold decisions taken, and A25
+deferred behind the reporting fixes"* (02a4e3d) earlier today. Its §12
+criterion 4 half — **C1** — is untouched and stands. The taxonomy is **T3**, as
+`docs/OPEN-DECISIONS.md` §2 recommended, and the A40 worktree's concurrent
+decision to the same effect is the one that governs.
+
+**Decision.** T3: `ProposalRecord`'s five fields stay exactly as they are,
+`yield_fraction`'s denominator never moves, and a parallel non-scoring breakdown
+of causes carries the diagnostic question. **T1a survives** — machine faults
+leave the tier by propagating, which moves no recorded number because a
+condition that propagates was never scored. Gate A44 stays minted; its gate line
+loses the `METRIC_VERSION` clause and gains the pin that the recorded campaign's
+`yield_fraction` is bit-identical across the change.
+
+**Why the earlier entry was wrong.** Its whole argument was one conditional
+lifted from the write-up — *"T2 is the right answer if the matrix is going to be
+re-run anyway, in which case the metric-version bump is free"* — plus the claim
+that A40 bumps `METRIC_VERSION` regardless. The second half is false. It was
+read out of the A40 backlog entry, written **2026-08-18**, and
+`DIMENSION_VERSION` landed at gate A26 on **2026-08-19** precisely so that a
+change to what D1–D6 mean need not move a column that also addresses the
+empirical tables. `eval/scoring.py:71-77` records the measurement, not an
+argument: `METRIC_VERSION` reaches every `Discretisation`'s content hash through
+`str(MetricRef)`, so bumping it invalidates every cached table and forces a
+**3m11s rebuild on every machine and in every worktree**. A40 re-derives on
+`dimensions` and `battery` and bumps nothing.
+
+So the bump T2 needs is not free; it is that rebuild, everywhere, for a change
+that touches no estimator. `DIMENSION_VERSION` would not have absorbed it either
+— `yield_fraction` is an agency metric under §12 criterion 11, not one of §8's
+six dimensions.
+
+**What this says about how the earlier decision was taken.** The premise was
+checkable in the source at the time and was checked only against the backlog
+entry that the source had superseded a day earlier. A decision resting on one
+conditional is only as good as the conditional's antecedent, and that antecedent
+was a fact about the code, not about the write-up. Recorded because the failure
+mode is reusable: this file's entries age against the tree, and an entry written
+three days ago describing apparatus is evidence about intent, not about what is
+there now.
+
+**Closes off.** Do not re-open T2 on the grounds that some later change bumps
+`METRIC_VERSION` anyway — R5 included. The bump's cost is the table rebuild and
+it is paid by whoever forces it; T3 removes the reason to force it at all, which
+is a better position than waiting for someone else to pay.
+
+The rank order set earlier today stands, but two of its four reasons were T2's
+and are now void: A44 no longer *must* precede A40 because it no longer moves
+`yield_fraction`. What still binds is unchanged and independently confirmed by
+the A40 session's own report — **A35 blocks the re-derivation run**, which "is
+expected to crash at the first refusal-containing address", and A31/A30 must
+land before the run or the re-derived payload cannot answer §12 criteria 4, 9
+and 11. A40's *code* is finished and may land out of rank; its *run* waits.

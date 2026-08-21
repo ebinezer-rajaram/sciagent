@@ -862,15 +862,19 @@ cheaper. `max_proposals` stays at 2 until the break asymmetry is settled in the
 same change, and the `EditNotInGrammarError` escape above is decided with the
 retiering as this entry already asks. Reasoning in `docs/DECISIONS.md`.
 
-**This entry now needs a `**Gate.**` and a `**Rank.**` it does not have.** The
-retiering is a scoring change that moves `yield_fraction`, so it must land on
-the same version bump as A40 rather than after it, and an ungated entry is
-invisible to `scripts/status.py`.
-
 **Touches.** No frozen decision. It is enumeration and test coverage over an
 existing boundary. Sequencing: **not** mid-campaign, and not in a session that
 has just watched a particular arm fail against a particular tier — the same
 hazard the `unmeasurable` entry names and the §12 criterion 4 entry insists on.
+
+**Gate.** `test_a44_a_fault_is_not_scored_as_a_refusal` — a constructed
+failure of each enumerated kind reaches exactly one tier: a model declining
+scores as `refused`, a dead session as `transport`, and a fault of the machine
+propagates rather than being scored at all; `requested` sums the scoring tiers
+only; `EditNotInGrammarError` from `apply` lands where this entry decides
+rather than escaping `_admit`; and the change carries a `METRIC_VERSION` bump.
+**Rank.** 6
+**Cost.** M. Constructed cases throughout; no live call is needed to grade it.
 
 ## Four defects in `scripts/rate_limit_pilot.py`'s reporting, found by review
 ## after its measurements were already taken
@@ -958,7 +962,7 @@ snapshot-hash → byte-identical `EventLog` segments across processes;
 the declared censoring model is applied and versioned; the consensus edit is
 preregistered in the environment before any system runs on a segment.
 
-**Rank.** 15
+**Rank.** 18
 **Cost.** XL (pipeline + calibration ≈ 1–2 weeks). Compute: conventional arms
 $0; V7 on 20 found segments ≈ 40 calls ≈ $4–8 live.
 
@@ -1334,7 +1338,7 @@ constructed runs yields an adjudication rate and a per-run contradiction
 count in its recorded output; an injected zombie claim is counted, not
 silently absent.
 
-**Rank.** 7
+**Rank.** 8
 **Cost.** M–L.
 
 ## The ledger payload omits what three §12 criteria read
@@ -1360,7 +1364,7 @@ Couples to the criterion-4 entry (which flag) and the re-derivation entry
 run's payload carries autonomy fraction, both detection flags and both
 masses; render shows the autonomy fraction beside every dimension block.
 
-**Rank.** 8
+**Rank.** 7
 **Cost.** M.
 
 ## Append-only is breached by a foreign REPLACE, and A14 has a module-scope blind spot
@@ -1390,7 +1394,7 @@ a fresh raw connection with default pragmas fails and the row is unchanged;
 the A14 analyser finds a planted module-level violation; no module under
 `sciagent.systems` references the store or ledger types.
 
-**Rank.** 9
+**Rank.** 13
 **Cost.** M.
 
 ## The verification substrate has unversioned randomness, caches and dependencies
@@ -1478,7 +1482,7 @@ the scheme).
 a refusal replays byte-identically with zero misses; the corpus hash is
 resolvable from the repository.
 
-**Rank.** 12
+**Rank.** 9
 **Cost.** S–M.
 
 ## Elicitation hygiene: a priming example, a cold cache, one sample
@@ -1510,7 +1514,7 @@ menu mechanism name appears anywhere in the schema or its examples; the
 address version differs from the recorded campaign's; k-sample mode stores k
 indexed calls and admits deterministically.
 
-**Rank.** 13
+**Rank.** 15
 **Cost.** M. Live cost of k-sampling: (k−1) × $0.098 per firing at current
 rates.
 
@@ -1679,7 +1683,7 @@ sequencing: instruments first, decided cold; re-derivation second, labelled.
 holding rows under two metric versions renders them separately, refuses to
 pool them, and the replayed campaign reports `store.misses == 0`.
 
-**Rank.** 6
+**Rank.** 12
 **Cost.** M (≈ 20 min conventional + ≈ 2 h replay + report plumbing). API $0.
 
 ## The ground truth is on the `Investigation` public surface, twice
@@ -1725,7 +1729,7 @@ attribute or method of `Investigation` returns, contains or renders the
 scenario's truth, checked by traversal rather than by name; and a structure key
 reachable from `EngineView.table` does not disclose a defect's parameters.
 
-**Rank.** 18
+**Rank.** 19
 **Cost.** M. No API the shipped systems use is affected.
 
 ## D4 now rewards entertaining fewer alternatives
@@ -1759,7 +1763,7 @@ re-derivation entry below, which should not run before this is settled.
 size of the comparison set beside D4, and a candidate scoring 0.0 because the set
 was empty is distinguishable from one scoring 0.0 because it was outperformed.
 
-**Rank.** 19
+**Rank.** 20
 **Held.** a cold decision on D4's comparison set
 **Cost.** S for the reporting; the semantic decision is the user's.
 

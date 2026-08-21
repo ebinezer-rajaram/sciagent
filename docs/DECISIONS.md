@@ -8463,3 +8463,62 @@ schedule the F11 TEST campaign — three exist for the life of the project, none
 is in SPEC §11's list, and the slice matrix remains exploratory by construction
 whatever it says. What the plan above buys is the right to spend the first one,
 not the spending of it.
+
+## 2026-08-21 — A40 is ranked sixth and is logically last: the build order re-cut around what a replay needs
+
+**Decision.** Gate **A44** is minted for the retiering T2 decided earlier today,
+on the previously ungated entry "Audit the proposal path's failure taxonomy",
+and the open entries are re-ranked so that **everything touching a number the
+recorded campaign reported lands before A40's version bump**, not after it:
+
+```
+ 3  A29  probe arm-symmetry (C1)          10  A33  substrate versioning
+ 6  A44  retiering (T2 + T1a)             11  A34  comparator parity
+ 7  A31  payload: agency, flags, masses   12  A40  re-derivation
+ 8  A30  verifier adjudication            13  A32  16  A38 (landed)
+ 9  A35  refusals replay                  14  A37  17  A39 (landed)
+                                          15  A36  18  A25  19  A41  20  A42 (held)
+```
+
+**Why.** A40 sat at rank 6 with four entries behind it that each move something
+it re-derives, so `/next` walking the ranks in order would have paid for the
+re-derivation and then invalidated it. Three couplings, in descending severity:
+
+**A35 is a hard blocker, and was ranked six places behind A40.** A40's gate
+requires `store.misses == 0` across a replay of all 18 LLM cells; A35 records
+that "any replicate the ledger scored as *refused* is currently unreplayable —
+replay of the recorded campaign would crash at the first refusal-containing
+address". `/next` would have re-run the 38 conventional cells, entered the
+replay, and died.
+
+**Whether that crash is certain or vacuous cannot be determined from the
+artefacts, which is itself the finding.** Checked directly rather than assumed:
+the ledger's reading carries sixteen fields over all 1,120 rows — `correct`,
+`d1`–`d6`, `experiments`, `identified`, `inadequate`, `leading_mass`,
+`log_score`, `n_held_out`, `ppc_p_value`, `structural_distance`, `truth_mass` —
+and **not one proposal-outcome field**; `.cache/transcripts/spec9.json` holds
+112 calls whose record kind has no `stop_reason` and no outcome. A refusal in
+the recorded campaign stored nothing anywhere, so the number of them is
+unrecoverable from the tree. That is A31's omission and A35's missing record
+kind observed from the other end, and it is why both now precede A40.
+
+**A31 and A30 feed the payload A40 renders.** Landing them after the bump leaves
+the re-derived matrix without the autonomy fraction, the gate flag and the mass
+decomposition, so §12 criteria 4, 9 and 11 stay undecidable from the very report
+the re-derivation exists to produce — and a second bump would be needed.
+**A34** moves D3 if the parity route rather than the bounding-declaration route
+is taken, which stales the re-derivation the same way.
+
+A44's gate is written to be gradeable on constructed failures with no live call,
+which keeps it framework apparatus rather than a grade of a built system.
+
+**Closes off.** A36 must stay *after* A40 and does, at 15: it bumps the
+transcript address version, which is what makes the recorded corpus unreplayable
+by design. Anything later moved ahead of A40 needs the same question asked of
+it — does it move a number A40 re-derives — and the answer written in the entry.
+
+**A correction against the table proposed in conversation**, recorded because
+the ranks differ from what was described: ranks 4 and 5 are **not** free. A28
+and A43 landed and, per this file's convention, keep their ranks; only the
+heading gains a marker. A44 therefore took 6 and the rest shifted down, rather
+than A44 taking 4 with A40 at 10.

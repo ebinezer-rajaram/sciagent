@@ -853,6 +853,20 @@ than a diagnostic one: `docs/OPEN-DECISIONS.md` §2 lists all twenty conditions
 recommends T3 — but recommends taking it *after* the R5 re-scoring question,
 since a matrix that is re-run anyway makes the metric-version bump free.
 
+**Decided 2026-08-21 — T2, with T1a folded in**, against the write-up's own
+recommendation of T3 and on the defeater it names: A40 re-runs the matrix and
+bumps `METRIC_VERSION` regardless, so T3 would buy avoidance of a cost already
+being paid. The R5 condition is satisfied rather than pending — R5 is sequenced
+after item 15 and would force another re-derivation, so no future makes the bump
+cheaper. `max_proposals` stays at 2 until the break asymmetry is settled in the
+same change, and the `EditNotInGrammarError` escape above is decided with the
+retiering as this entry already asks. Reasoning in `docs/DECISIONS.md`.
+
+**This entry now needs a `**Gate.**` and a `**Rank.**` it does not have.** The
+retiering is a scoring change that moves `yield_fraction`, so it must land on
+the same version bump as A40 rather than after it, and an ungated entry is
+invisible to `scripts/status.py`.
+
 **Touches.** No frozen decision. It is enumeration and test coverage over an
 existing boundary. Sequencing: **not** mid-campaign, and not in a session that
 has just watched a particular arm fail against a particular tier — the same
@@ -944,7 +958,7 @@ snapshot-hash → byte-identical `EventLog` segments across processes;
 the declared censoring model is applied and versioned; the consensus edit is
 preregistered in the environment before any system runs on a segment.
 
-**Rank.** 7
+**Rank.** 15
 **Cost.** XL (pipeline + calibration ≈ 1–2 weeks). Compute: conventional arms
 $0; V7 on 20 found segments ≈ 40 calls ≈ $4–8 live.
 
@@ -1270,8 +1284,11 @@ preregistered budget. API $0.
 
 ## Criterion 4's observable, implemented arm-symmetrically once decided cold
 
-**Idea.** After the OPEN-DECISIONS §1 decision is taken (C1 recommended
-there: power against size on the named Stage A probe), implement it: the
+**Decided 2026-08-21 — C1**, as recommended, in `docs/DECISIONS.md`. The hold
+is off and this entry is now buildable as written.
+
+**Idea.** The OPEN-DECISIONS §1 decision is taken — C1: power against size on
+the named Stage A probe. Implement it: the
 harness evaluates the named probe for every arm uniformly at the gate point,
 records both flags (probe verdict and whole-record PPC) clearly labelled, and
 reports detection with a false-positive term.
@@ -1291,8 +1308,7 @@ ledger payload (the implementation). Couples to the payload entry below.
 system ran, and both flags are recorded and distinguishable in the payload.
 
 **Rank.** 3
-**Held.** OPEN-DECISIONS §1
-**Cost.** M for the implementation; the decision is the user's.
+**Cost.** M. The decision it was held on was taken 2026-08-21.
 
 ## The verifier has no production caller
 
@@ -1318,7 +1334,7 @@ constructed runs yields an adjudication rate and a per-run contradiction
 count in its recorded output; an injected zombie claim is counted, not
 silently absent.
 
-**Rank.** 8
+**Rank.** 7
 **Cost.** M–L.
 
 ## The ledger payload omits what three §12 criteria read
@@ -1344,7 +1360,7 @@ Couples to the criterion-4 entry (which flag) and the re-derivation entry
 run's payload carries autonomy fraction, both detection flags and both
 masses; render shows the autonomy fraction beside every dimension block.
 
-**Rank.** 9
+**Rank.** 8
 **Cost.** M.
 
 ## Append-only is breached by a foreign REPLACE, and A14 has a module-scope blind spot
@@ -1374,7 +1390,7 @@ a fresh raw connection with default pragmas fails and the row is unchanged;
 the A14 analyser finds a planted module-level violation; no module under
 `sciagent.systems` references the store or ledger types.
 
-**Rank.** 10
+**Rank.** 9
 **Cost.** M.
 
 ## The verification substrate has unversioned randomness, caches and dependencies
@@ -1404,7 +1420,7 @@ that verify it.
 registered and in force under pytest; a table cached under one simulator-code
 digest is refused under another; the rendered report names the numpy version.
 
-**Rank.** 11
+**Rank.** 10
 **Cost.** M.
 
 ## Comparator parity: selection policy is confounded with proposal source
@@ -1435,7 +1451,7 @@ the contrast declaration records the bounding comparison; and a self-serving
 explicit prediction that contradicts the structure's table row is refused or
 marked agent-authored.
 
-**Rank.** 12
+**Rank.** 11
 **Cost.** M.
 
 ## Refusals break replay, and the corpus has no in-repo hash
@@ -1462,7 +1478,7 @@ the scheme).
 a refusal replays byte-identically with zero misses; the corpus hash is
 resolvable from the repository.
 
-**Rank.** 13
+**Rank.** 12
 **Cost.** S–M.
 
 ## Elicitation hygiene: a priming example, a cold cache, one sample
@@ -1494,7 +1510,7 @@ menu mechanism name appears anywhere in the schema or its examples; the
 address version differs from the recorded campaign's; k-sample mode stores k
 indexed calls and admits deterministically.
 
-**Rank.** 14
+**Rank.** 13
 **Cost.** M. Live cost of k-sampling: (k−1) × $0.098 per firing at current
 rates.
 
@@ -1517,7 +1533,7 @@ difference on one dimension is still one dimension.
 constructed paired rows the report carries the within-seed difference and its
 interval, and refuses the paired reading when the seed sets differ.
 
-**Rank.** 15
+**Rank.** 14
 **Cost.** S.
 
 ## DONE (2026-08-19, gate A38) — A LICENSE and a CI gate, before any third

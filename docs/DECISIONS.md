@@ -8396,3 +8396,70 @@ indistinguishable by any test that does not substitute a declaration.
 per-scenario consultation on the *refuse* path, where it is observable. Making
 it observable on the accept path needs A27's `substitute_battery_ids`
 monkeypatch fixture and was not taken here.
+
+## 2026-08-21 — both cold decisions taken, and A25 deferred behind the reporting fixes
+
+**Decision.** Three, settled in one session after both write-ups in
+`docs/OPEN-DECISIONS.md` were read in full. That file said it existed so a later
+session would not have to take these hot; this is that session.
+
+1. **SPEC §12 criterion 4 — C1.** Power against size on the named Stage A
+   probe: on S11, V7's probe fires at a rate at least matching B1's on the same
+   probe, at a false-positive rate on S1–S7 and S9 no higher than B1's. The
+   harness evaluates the probe for **every** arm regardless of whether the arm
+   consults it. The honesty cost — "B1 detected" names a check B1 never
+   consulted — goes into §12's wording rather than being left for a reader to
+   find. The user's choice, and the document's own recommendation.
+
+2. **The proposal outcome taxonomy — T2, with T1a folded in.** Split the tier:
+   `transport` and `faulted` beside `refused`, on a metric-version bump. While
+   in the file, apply T1a to the fault column — the conditions at
+   `agent_sdk_provider.py` 267, 327, 361, 448, 456, 462 and
+   `anthropic_provider.py` 182 are faults of the machine that a campaign should
+   stop on rather than score, so they leave the tier instead of being recounted
+   inside it. `max_proposals` stays at **2** until the break asymmetry is
+   settled in the same change. Recommended by me, accepted by the user, who
+   asked for a recommendation rather than choosing from the four.
+
+3. **A25 (QTM real-data grounding) drops from rank 7 to rank 15**, behind
+   A30/A31/A34/A37. The user's call, in their words: answer the research
+   question on synthetic data first.
+
+**Why.** On C1 there is nothing to add to the write-up; it was taken as
+recommended.
+
+T2 is the interesting one, because the document recommends **T3** and this goes
+against it. It also names its own defeater in the next sentence: *"T2 is the
+right answer if the matrix is going to be re-run anyway, in which case the
+metric-version bump is free and T3's parallel structure is redundant."* A40 is
+that re-run and bumps `METRIC_VERSION` regardless, so T3 would buy avoidance of
+a cost already being paid, at the price of carrying a parallel non-scoring
+structure forever. The document's further instruction — take this *after* the R5
+re-scoring question — is satisfied rather than pending: R5 is sequenced after
+item 15 and would itself force another re-derivation, so there is no future in
+which the bump gets cheaper by waiting. T1a rides along because a condition that
+propagates was never scored, so moving it costs nothing in recorded numbers.
+
+A25's deferral is a sequencing call, not a judgement on the entry. At rank 7 it
+sat between the re-derivation and every item that makes the recorded matrix
+readable — a 1–2 week track opening before the 1,120 rows already paid for could
+be reported. Its own risks are unchanged and still recorded in `docs/BACKLOG.md`
+(no formal SCEDC licence text; template-matching false detections that mimic the
+consensus edit's signature).
+
+**Closes off.** A29 is no longer held: OPEN-DECISIONS §1 was its only blocker,
+and at rank 3 it already sits ahead of A40. It goes first — re-deriving before
+the probe is arm-symmetric would produce a matrix that still cannot answer the
+preregistered contrast, which is the thing the re-derivation exists to make
+answerable.
+
+The break asymmetry is now load-bearing rather than latent: `Hybrid._extend`
+breaks on `"refused"` and continues on the other four, so any retiering changes
+which outcomes break. It must be settled inside the T2 change, not after it.
+
+**Not decided here, and deliberately.** A42 stays held on the D4 comparison-set
+question; nothing in this session touched D4's semantics. Nor does anything here
+schedule the F11 TEST campaign — three exist for the life of the project, none
+is in SPEC §11's list, and the slice matrix remains exploratory by construction
+whatever it says. What the plan above buys is the right to spend the first one,
+not the spending of it.

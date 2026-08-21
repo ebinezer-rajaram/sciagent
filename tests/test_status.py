@@ -465,8 +465,23 @@ class TestTheReportRendersIt:
         gate = {entry.rank: entry for entry in entries}[int(cursor.group(1))].gate
         assert re.search(rf"^  A{gate}\s+\S", rendered, re.M) is not None
 
-    def test_the_held_entry_names_its_holder(self, rendered: str) -> None:
-        assert "OPEN-DECISIONS §1" in _section(rendered)
+    def test_every_held_entry_names_what_it_waits_on(self, rendered: str) -> None:
+        """A hold that does not say what it waits on is a row nobody can act on.
+
+        Derived from the live file rather than naming one holder. Holds come
+        off as the decisions behind them are taken -- A29's did, on 2026-08-21,
+        when OPEN-DECISIONS §1 was settled -- and an assertion pinned to a
+        particular holder string fails on the decision rather than on the
+        behaviour it means to guard. Counting both ways keeps it biting when
+        nothing is held: a row rendered as held that the file does not hold
+        fails the second assertion.
+        """
+        entries = status.parse_backlog_entries(BACKLOG.read_text(encoding="utf-8"))
+        held = [e for e in entries if e.held is not None and not e.closed]
+        section = _section(rendered)
+        for entry in held:
+            assert f"A{entry.gate}, held: {entry.held}" in section
+        assert section.count(", held: ") == len(held)
 
 
 class TestAMalformedFileIsAnError:

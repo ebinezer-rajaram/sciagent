@@ -1,7 +1,13 @@
 # Open decisions
 
-Two decisions this repository has deliberately not taken, written up so they can
-be taken **cold**.
+> **Both decisions were taken 2026-08-21** — §1 as **C1**, §2 as **T2** with
+> T1a's fault-column triage folded in. The reasoning, and why §2 went against
+> this file's own recommendation, are in `docs/DECISIONS.md`. The text below is
+> left exactly as it stood when the decisions were taken: it is the record of
+> what was known at the time, not a live question. Nothing here is still open.
+
+Two decisions this repository deliberately did not take while it was measuring,
+written up so they could be taken **cold**.
 
 Neither is here because it is hard to find the answer. Both are here because of
 CLAUDE.md's invariant 6: they touch apparatus that scores a system already

@@ -79,6 +79,7 @@ from sciagent.core.errors import (
     ProposalError,
     ProviderError,
     ProviderUnavailableError,
+    SystemConfigurationError,
 )
 from sciagent.core.types import ExperimentTemplateId, HypothesisId, Seed
 from sciagent.eval.campaign import stage_a_id
@@ -482,7 +483,22 @@ def run_pilot(
         # `_save_transcripts` entirely and losing every call already billed in
         # this process — in the one script whose stated purpose is to be running
         # when a cap bites.
-        except (ProviderError, ProviderUnavailableError) as error:
+        #
+        # ``SystemConfigurationError`` joined the list at gate A44, which moved
+        # five machine faults out of the scored tier and into it -- a
+        # contaminated environment, a call from inside an event loop, a foreign
+        # provider, unverifiable provenance, a substitute model. Those propagate
+        # by design, and ``Hybrid`` is right not to catch them. **This script is
+        # not Hybrid.** It is the process holding the billed transcripts, so the
+        # identical regression the paragraph above describes reopened for those
+        # five the moment they changed class. Stopping the pilot is the correct
+        # response to all three families; losing the corpus on the way out is
+        # not, and that is the distinction this clause keeps.
+        except (
+            ProviderError,
+            ProviderUnavailableError,
+            SystemConfigurationError,
+        ) as error:
             records.append(
                 _record(
                     index=index,

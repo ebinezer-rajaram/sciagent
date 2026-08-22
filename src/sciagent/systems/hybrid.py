@@ -53,13 +53,33 @@ A :class:`~sciagent.core.errors.TranscriptMissError` is
 **not** caught: that one means the harness was asked to replay a call nobody
 recorded, which is a configuration fault rather than a scientific event, and
 swallowing it would turn a broken replay into a quietly worse result.
+
+Neither is a fault of the *machine*. Gate A44 moved five conditions out of the
+recorded tier for the same reason -- a contaminated environment, a call from
+inside a running event loop, a turn served by another provider or another model,
+a session whose provenance cannot be verified -- and they now raise
+:class:`~sciagent.core.errors.SystemConfigurationError`, which sits outside
+``ProposalError`` and so cannot be caught here at all.
+
+Five tiers were not enough to say what happened
+-----------------------------------------------
+
+Every attempt also carries a :attr:`ProposalAttempt.cause`, in a vocabulary
+finer than :attr:`~ProposalAttempt.outcome`: ``"refused"`` alone held a model
+declining, an output ceiling, a dead session, an unreadable payload and an
+exhausted expansion budget, and only the first is unambiguously a fact about the
+model. The causes are counted **beside** the scored record and never inside it
+(:class:`~sciagent.eval.agency.ProposalCauses`) -- ``ProposalRecord``'s five
+fields are what SPEC §12 criterion 11 reads, so a sixth would have moved
+``yield_fraction``'s denominator and re-scored 1,120 frozen rows for a change
+touching no estimator. ``docs/DECISIONS.md`` (2026-08-21) records that as **T3**.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Final, Protocol, runtime_checkable
 
 from sciagent.core.edits import Defect
 from sciagent.core.errors import (
@@ -76,7 +96,28 @@ from sciagent.hypothesis.validator import find_duplicate
 from sciagent.systems.base import Investigation, entertain
 from sciagent.systems.llm.provider import Proposal, slug_hypothesis_name
 
-__all__ = ["Hybrid", "ProposalAttempt", "ProposalSource"]
+__all__ = ["MAX_PROPOSALS", "Hybrid", "ProposalAttempt", "ProposalSource"]
+
+#: The largest proposal allowance a :class:`Hybrid` may be built with.
+#:
+#: A ceiling rather than a default, because of an asymmetry in
+#: :meth:`Hybrid._extend`: it breaks on ``"refused"`` and continues on the other
+#: four outcomes, so :attr:`~sciagent.eval.agency.ProposalRecord.requested` --
+#: and therefore ``yield_fraction`` -- depends on which outcome arrives. At 2
+#: this is harmless, since declining can only lower the ratio. At 3 or more a
+#: model unable to produce a second admission would score **strictly higher by
+#: declining**, which is a metric rewarding the thing it exists to measure the
+#: absence of.
+#:
+#: Gate A44 was required to settle this in the same change as the retiering
+#: (``docs/OPEN-DECISIONS.md`` §2, ``docs/DECISIONS.md`` 2026-08-21). It is
+#: settled by *not* changing the break rule -- which outcome breaks decides how
+#: many requests a run makes, so moving it would move a number the recorded
+#: matrix reported, which is the whole of what T3 declines to spend -- and by
+#: making the allowance a guarded ceiling instead. Raising it is then a decision
+#: somebody takes with the asymmetry in front of them, rather than a constructor
+#: argument nobody reads.
+MAX_PROPOSALS: Final = 2
 
 
 @runtime_checkable
@@ -154,6 +195,29 @@ class ProposalAttempt:
     so a new outcome here needs a field there in the same change.
     """
 
+    cause: str
+    """Why the attempt ended, in a vocabulary finer than :attr:`outcome`.
+
+    The scored side of the record has five tiers and five is not enough to say
+    what happened: ``"refused"`` alone held a model declining, an output ceiling,
+    a dead session, an unreadable payload and an exhausted expansion budget.
+    :data:`sciagent.eval.agency.PROPOSAL_CAUSES` is the vocabulary and
+    :data:`~sciagent.eval.agency.OUTCOME_OF_CAUSE` maps each cause to the one
+    tier it belongs to; :func:`~sciagent.eval.agency.proposal_causes` raises both
+    on an unknown cause and on a cause disagreeing with the outcome beside it.
+
+    **This is not a second outcome, and nothing scored may read it.** Gate A44's
+    T3 keeps ``ProposalRecord``'s five fields frozen precisely so
+    ``yield_fraction``'s denominator cannot move; a cause that reached a score
+    would reintroduce the denominator change T3 exists to avoid
+    (``docs/DECISIONS.md``, 2026-08-21).
+
+    Written by the framework, never by a source. For a failure it is the raise
+    site's own tag, read off the exception rather than parsed out of its message
+    -- prose a provider authored may not decide a number the framework reports
+    (SPEC's second invariant), and :attr:`detail` is that prose.
+    """
+
     detail: str
     """The rationale for an admitted proposal, or the reason it failed."""
 
@@ -176,13 +240,23 @@ class Hybrid:
         library: Mapping[str, Defect],
         layer: ProposalSource,
         *,
-        max_proposals: int = 2,
+        max_proposals: int = MAX_PROPOSALS,
         name: str = "V7",
     ) -> None:
         if max_proposals < 0:
             raise SystemConfigurationError(
                 f"a system cannot make {max_proposals} proposals; pass 0 for a V7 "
                 f"that never extends its hypothesis space"
+            )
+        if max_proposals > MAX_PROPOSALS:
+            raise SystemConfigurationError(
+                f"a system cannot be built with {max_proposals} proposals while "
+                f"_extend breaks on 'refused' and continues on the other four "
+                f"outcomes: the break asymmetry makes declining score strictly "
+                f"higher than failing to admit at any allowance above "
+                f"{MAX_PROPOSALS}. Raising the ceiling means settling which "
+                f"outcomes break, which moves yield_fraction on every recorded "
+                f"run -- see MAX_PROPOSALS"
             )
         if not name.strip():
             raise SystemConfigurationError(
@@ -313,9 +387,15 @@ class Hybrid:
         try:
             proposal = self._layer.propose(investigation)
         except ProviderError as error:
-            return ProposalAttempt(None, None, "refused", str(error))
+            # The tag comes off the exception, not off its message. Both classes
+            # carry one: ``ProviderError``'s is required at every raise site, and
+            # ``MalformedProposalError``'s is fixed, since every way that one is
+            # raised is the same diagnostic fact.
+            return ProposalAttempt(None, None, "refused", error.cause, str(error))
         except MalformedProposalError as error:
-            return ProposalAttempt(None, None, "malformed", str(error))
+            return ProposalAttempt(
+                None, None, "malformed", MalformedProposalError.cause, str(error)
+            )
         return self._admit(investigation, proposal)
 
     @staticmethod
@@ -343,7 +423,11 @@ class Hybrid:
         existing = find_duplicate(investigation.graph, proposal.program_edit)
         if existing is not None:
             return ProposalAttempt(
-                proposal.address, existing, "duplicate", proposal.rationale
+                proposal.address,
+                existing,
+                "duplicate",
+                "duplicate",
+                proposal.rationale,
             )
         if node_id in investigation.graph.nodes:
             node_id = HypothesisId(f"{node_id}/{len(investigation.proposed)}")
@@ -354,7 +438,9 @@ class Hybrid:
                 rationale=proposal.rationale,
             )
         except BudgetExhaustedError as error:
-            return ProposalAttempt(proposal.address, None, "refused", str(error))
+            return ProposalAttempt(
+                proposal.address, None, "refused", "budget", str(error)
+            )
         except StructureNotMeasurableError as error:
             # The candidate is well-formed, on-grid and executes; what fails is
             # a *design* in the table's set, which yields no row on it. That is
@@ -363,9 +449,11 @@ class Hybrid:
             # ``BeamSearch._UNSCORABLE`` costs a candidate its rank. Counted in
             # its own tier because folding it into "refused" would attribute a
             # measurement limit to a provider that declined nothing.
-            return ProposalAttempt(proposal.address, None, "unmeasurable", str(error))
+            return ProposalAttempt(
+                proposal.address, None, "unmeasurable", "measurement", str(error)
+            )
         return ProposalAttempt(
-            proposal.address, node_id, "admitted", proposal.rationale
+            proposal.address, node_id, "admitted", "admitted", proposal.rationale
         )
 
 

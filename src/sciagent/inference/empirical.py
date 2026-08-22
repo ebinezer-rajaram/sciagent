@@ -148,6 +148,20 @@ _SEED_MODULUS = 1 << 63
 #: failure this whole class of change exists to prevent. Enumerating lets it
 #: escape and stop the run, which is loud, recoverable and wrong in the safe
 #: direction.
+#:
+#: **``EditNotInGrammarError`` is deliberately absent, decided at gate A44.**
+#: ``simulate`` reaches :meth:`~sciagent.core.edits.EditGrammar.apply`, which
+#: raises it -- a ``GrammarError`` rather than a ``ProgramError``, so nothing here
+#: converts it and it propagates. ``docs/BACKLOG.md`` left the reading open and
+#: A44 took it: reaching apply-time refusal means the *agent* grammar licensed a
+#: structure the *edit* grammar refuses, which is a divergence between two
+#: framework-supplied grammars and not a fact about the candidate. Widening this
+#: tuple would file it as ``"unmeasurable"``, which ``Hybrid._admit`` catches, so
+#: a campaign would carry on and score a wiring bug as a scientific outcome --
+#: the same failure ``DeterminismError``'s absence prevents, reached from the
+#: other family. It is unreachable today only because
+#: ``agent_grammar()`` is a subset of ``edit_grammar()``, which is wiring rather
+#: than a promise; the decision is written down for the day that stops holding.
 CANDIDATE_FAULTS: Final = (
     ExecutionError,
     UnknownComponentError,

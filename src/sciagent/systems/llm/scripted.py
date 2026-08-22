@@ -105,7 +105,16 @@ class ScriptedProvider:
         if index >= len(self._policy):
             raise ProviderError(
                 f"scripted provider was asked for completion {index} but only "
-                f"{len(self._policy)} were scripted"
+                f"{len(self._policy)} were scripted",
+                # **Not** ``"declined"``, though the outcome is the same
+                # ``"refused"`` and the break behaviour therefore identical.
+                # ``declined`` is the one bin gate A44 calls unambiguously a
+                # fact about a model, and the whole retiering is worth nothing
+                # if a fixture one entry short of its script inflates it. A
+                # ``_layer(script=())`` is how this repository simulates a
+                # refusal -- see ``tests/test_hybrid.py`` -- so the phantom
+                # would have been in every such run.
+                cause="exhausted",
             )
         return Completion(self._policy[index])
 

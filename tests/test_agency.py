@@ -317,7 +317,9 @@ class TestTheProposalRecord:
         run = _extending_run()
         refused = replace(
             run,
-            attempts=(ProposalAttempt(None, None, "refused", "provider declined"),),
+            attempts=(
+                ProposalAttempt(None, None, "refused", "declined", "provider declined"),
+            ),
             proposed=FrozenDict[HypothesisId, Defect]({}),
         )
         record = agency_metrics(refused).proposals
@@ -340,7 +342,7 @@ class TestTheProposalRecord:
             run,
             attempts=(
                 *run.attempts,
-                ProposalAttempt("addr", None, "admitted", "never proposed"),
+                ProposalAttempt("addr", None, "admitted", "admitted", "never proposed"),
             ),
         )
         with pytest.raises(InvestigationError, match="admitted"):
@@ -393,7 +395,10 @@ class TestTheProposalRecord:
         """Dropping it would silently understate what was requested."""
         run = _extending_run()
         bogus = replace(
-            run, attempts=(ProposalAttempt(None, None, "considered", "not an outcome"),)
+            run,
+            attempts=(
+                ProposalAttempt(None, None, "considered", "declined", "not an outcome"),
+            ),
         )
         with pytest.raises(InvestigationError, match="considered"):
             agency_metrics(bogus)

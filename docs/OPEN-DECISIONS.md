@@ -256,7 +256,15 @@ one of §8's six dimensions.
 
 Implementation belongs to `docs/BACKLOG.md`'s *"Audit the proposal path's failure
 taxonomy"*, not to A40. The decision is what A40 owed; the retiering is that
-entry's remaining work. `max_proposals` stays at 2 until the break asymmetry is
+entry's remaining work.
+
+**Implemented 2026-08-22 at gate A44.** T3 as a parallel `ProposalCauses`
+breakdown, T1a as five conditions retiered out of the scored tier. Two rows this
+section calls "arguably misfiled" — 405 and 432, the dead-session pair — were
+kept **in** the record as the cause `transport`, because A44's gate text says a
+dead session reads as transport rather than propagating; that is a decision
+against this section's aside and is recorded as one. `max_proposals` stays at 2,
+now as a guarded ceiling rather than a default. `max_proposals` stays at 2 until the break asymmetry is
 settled in the same change, exactly as below.
 
 ### Recommendation, as written before the decision

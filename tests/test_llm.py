@@ -54,6 +54,7 @@ from sciagent.core.errors import (
     ProposalError,
     ProviderError,
     ProviderUnavailableError,
+    SystemConfigurationError,
     TranscriptMissError,
     UnknownParameterError,
 )
@@ -1485,13 +1486,22 @@ class TestTheAgentSdkProvider:
         (billing the wrong one while appearing to succeed, the failure this
         backend was chosen to avoid) or changes the artefact itself under an
         address that does not cover it.
+
+        ``SystemConfigurationError`` rather than ``ProviderError`` since gate
+        A44. A contaminated environment is a fault of the *machine* and says
+        nothing about the model's ability to propose, so under T1a it leaves the
+        scored tier by propagating: the class sits outside ``ProposalError``,
+        which is what ``Hybrid._propose_once`` catches, so this condition can no
+        longer be recorded as a refusal and fed to ``yield_fraction``. The
+        ``match`` is unchanged -- the message boundary did not move, only the
+        tier.
         """
         from sciagent.systems.llm.agent_sdk_provider import AgentSdkProvider
 
         _clear_contaminants(monkeypatch)
         monkeypatch.setenv(variable, "1")
         provider = AgentSdkProvider(runner=_stub_runner(_result()))
-        with pytest.raises(ProviderError, match=variable):
+        with pytest.raises(SystemConfigurationError, match=variable):
             provider.complete("s", "b", SCHEMA)
 
     def test_a_turn_served_by_another_provider_is_refused(
@@ -1510,7 +1520,7 @@ class TestTheAgentSdkProvider:
         provider = AgentSdkProvider(
             runner=_stub_runner(_result(model_usage={"claude-opus-5": usage}))
         )
-        with pytest.raises(ProviderError, match="bedrock"):
+        with pytest.raises(SystemConfigurationError, match="bedrock"):
             provider.complete("s", "b", SCHEMA)
 
     def test_an_alias_whose_canonical_id_differs_is_refused(
@@ -1522,6 +1532,11 @@ class TestTheAgentSdkProvider:
         ``"opus"`` that priced as a different model: the key is the string the
         CLI was invoked with, and the canonical id is what actually served the
         turn. Accepting either would let the echo vouch for the substitution.
+
+        ``SystemConfigurationError`` since gate A44, with the three siblings
+        around it and for the reason given on the environment check above: which
+        account served a turn, and whether it can be verified at all, are facts
+        about the machine rather than outcomes of an investigation.
         """
         from sciagent.systems.llm.agent_sdk_provider import AgentSdkProvider
 
@@ -1532,7 +1547,7 @@ class TestTheAgentSdkProvider:
                 _result(model_usage={"opus": _model_usage(canonical="claude-sonnet-5")})
             ),
         )
-        with pytest.raises(ProviderError, match="claude-sonnet-5"):
+        with pytest.raises(SystemConfigurationError, match="claude-sonnet-5"):
             provider.complete("s", "b", SCHEMA)
 
     def test_the_api_key_refusal_can_be_overridden_deliberately(
@@ -1563,7 +1578,7 @@ class TestTheAgentSdkProvider:
                 _result(model_usage={"claude-sonnet-5": _model_usage()})
             )
         )
-        with pytest.raises(ProviderError, match="not by 'claude-opus-5'"):
+        with pytest.raises(SystemConfigurationError, match="not by 'claude-opus-5'"):
             provider.complete("s", "b", SCHEMA)
 
     def test_an_alias_that_resolved_to_the_pinned_model_is_accepted(
@@ -1598,7 +1613,7 @@ class TestTheAgentSdkProvider:
 
         _clear_contaminants(monkeypatch)
         provider = AgentSdkProvider(runner=_stub_runner(_result(model_usage=None)))
-        with pytest.raises(ProviderError, match="no per-model usage"):
+        with pytest.raises(SystemConfigurationError, match="no per-model usage"):
             provider.complete("s", "b", SCHEMA)
 
     @pytest.mark.parametrize(

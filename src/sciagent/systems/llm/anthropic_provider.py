@@ -184,13 +184,15 @@ class AnthropicProvider:
                 f"{self._model} declined to answer "
                 f"(category {getattr(details, 'category', None)!r}). Nothing is "
                 f"recorded: a refusal is an outcome of the investigation, not a "
-                f"call to be retried on a different model"
+                f"call to be retried on a different model",
+                cause="declined",
             )
         if response.stop_reason == "max_tokens":
             raise ProviderError(
                 f"{self._model} hit the {self._max_tokens}-token ceiling before "
                 f"finishing; thinking counts against the same allowance, so raise "
-                f"max_tokens rather than lowering effort"
+                f"max_tokens rather than lowering effort",
+                cause="output_ceiling",
             )
         return Completion(
             payload=_payload_of(response, self._model),
@@ -235,18 +237,21 @@ def _payload_of(response: Any, model: str) -> Mapping[str, Any]:
         kinds = [getattr(block, "type", "?") for block in response.content]
         raise ProviderError(
             f"{model} returned no text block to read a proposal from; the "
-            f"response carried {kinds!r}"
+            f"response carried {kinds!r}",
+            cause="malformed_response",
         )
     try:
         payload = json.loads(text)
     except json.JSONDecodeError as error:
         raise ProviderError(
             f"{model} returned a text block that is not JSON, though "
-            f"output_config.format was set: {text[:200]!r}"
+            f"output_config.format was set: {text[:200]!r}",
+            cause="malformed_response",
         ) from error
     if not isinstance(payload, dict):
         raise ProviderError(
             f"{model} returned a JSON {type(payload).__name__} where the schema "
-            f"declares an object"
+            f"declares an object",
+            cause="malformed_response",
         )
     return payload

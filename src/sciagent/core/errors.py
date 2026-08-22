@@ -7,6 +7,8 @@ distinguish framework faults from interpreter faults by type alone.
 
 from __future__ import annotations
 
+from typing import Any, Final
+
 
 class SciAgentError(Exception):
     """Base of every error the framework raises deliberately."""
@@ -357,10 +359,25 @@ class EngineTamperError(ResearchSystemError):
 class SystemConfigurationError(ResearchSystemError):
     """A research system was built with arguments it cannot be run under.
 
-    Covers a negative proposal allowance, a system with no SPEC §5 identifier,
-    and a library naming a structure that does not exist. All three are faults in
-    how the system was *constructed*, decided before any investigation begins and
-    without reference to a model, a grammar or a draft.
+    Covers a negative proposal allowance, a proposal allowance above
+    :data:`~sciagent.systems.hybrid.MAX_PROPOSALS`, a system with no SPEC §5
+    identifier, and a library naming a structure that does not exist. Those are
+    faults in how the system was *constructed*, decided before any investigation
+    begins and without reference to a model, a grammar or a draft.
+
+    **Gate A44 widened it past construction time, and the name now covers more
+    than it says.** Five conditions in
+    :mod:`sciagent.systems.llm.agent_sdk_provider` raise it *mid-call*: a
+    contaminated environment, a call from inside a running event loop, a turn
+    served by a foreign provider, a session reporting no per-model usage, and a
+    response served by a substitute model. The last three are emphatically
+    *about* a model, so the clause above no longer describes the whole class.
+
+    What unifies it is the consequence rather than the timing: **this class sits
+    outside** :class:`ProposalError`, so ``Hybrid._propose_once`` cannot catch it
+    and no fault reaching here can be recorded as a proposal outcome and scored.
+    That is the property T1a needed and the reason these five were moved here
+    rather than into a new sibling of their own.
 
     Split out from :class:`MalformedProposalError`, which these once shared.
     That class is for a draft that failed to decode into a licensed structure --
@@ -369,6 +386,13 @@ class SystemConfigurationError(ResearchSystemError):
     ``except MalformedProposalError`` around a call to the model catch a fault
     that could only have happened before it.
     """
+
+
+def _rebuild_provider_error(
+    cls: type[ProviderError], message: str, cause: str
+) -> ProviderError:
+    """Reconstruct a :class:`ProviderError` from its pickled parts."""
+    return cls(message, cause=cause)
 
 
 class ProposalError(ResearchSystemError):
@@ -388,7 +412,15 @@ class MalformedProposalError(ProposalError):
     :class:`~sciagent.core.errors.EditNotInGrammarError`, which is a well-formed
     structure outside the licensed space -- that is SPEC §3.2's out-of-library
     condition and a finding, not a fault.
+
+    Carries the fixed cause ``"undecodable"``. Fixed rather than passed, because
+    every way this class is raised is the same diagnostic fact -- the draft never
+    became a defect -- so a per-site tag would be a parameter with one value.
+    :class:`ProviderError`'s is passed, because its raise sites mean genuinely
+    different things.
     """
+
+    cause: Final = "undecodable"
 
 
 class TranscriptMissError(ProposalError):
@@ -445,7 +477,40 @@ class ProviderError(ProposalError):
     response carrying no tool call" until then, and that middle clause was the
     defect rather than the contract: a 429 is not an outcome of an
     investigation, and recording one as though it were is what the split fixes.
+
+    Every raise site states a ``cause``, and the argument is required rather than
+    defaulted. Gate A44 keeps :class:`~sciagent.eval.agency.ProposalRecord`'s
+    five scoring fields frozen and carries the diagnostic question in a parallel
+    breakdown beside them (``docs/DECISIONS.md``, 2026-08-21, **T3**), so the tag
+    is what tells a model that declined apart from a session that died -- both of
+    which are recorded as ``"refused"`` and must stay that way, since moving
+    either would move ``yield_fraction``'s denominator.
+
+    A default would defeat the whole of it: un-tagged raise sites would pool into
+    one bin that reads as a measurement of nothing, which is the conflation this
+    class was split for, one level further down.
+    :data:`sciagent.eval.agency.PROPOSAL_CAUSES` is the vocabulary and
+    :func:`~sciagent.eval.agency.proposal_causes` refuses anything outside it.
+    The tag is a plain string here rather than that tuple's member type because
+    ``core`` may not import from ``eval``, which is the same shape as ``outcome``
+    on :class:`~sciagent.systems.hybrid.ProposalAttempt`.
     """
+
+    def __init__(self, message: str, *, cause: str) -> None:
+        super().__init__(message)
+        self.cause = cause
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        """Return a picklable reconstruction, ``cause`` included.
+
+        The default for an exception rebuilds it from ``args``, which holds the
+        message alone -- so without this, ``pickle`` and ``copy`` of any
+        instance raise ``TypeError`` for the missing keyword. Nothing pickles
+        exceptions today; the guard is here because the failure would surface as
+        an unrelated ``TypeError`` in whatever first did, and the cost of not
+        needing to diagnose that is three lines.
+        """
+        return (_rebuild_provider_error, (type(self), str(self), self.cause))
 
 
 # --------------------------------------------------------------------------

@@ -799,8 +799,8 @@ deliberately rather than at the moment somebody needs the answer.
 **Touches.** No frozen decision. Completing a measurement and choosing where to
 run it; neither changes what item 15 is.
 
-## Audit the proposal path's failure taxonomy, rather than extending it one
-## crash at a time
+## DONE (2026-08-22, gate A44) — Audit the proposal path's failure taxonomy,
+## rather than extending it one crash at a time
 
 **Idea.** Enumerate the exceptions reachable from `ProposalLayer.propose` and
 `Investigation.propose`, decide for each whether it is a proposal *outcome* or a
@@ -903,6 +903,16 @@ entry decides rather than escaping `_admit`; and `ProposalRecord`'s five fields
 are untouched, pinned by the recorded campaign's `yield_fraction` coming out
 bit-identical across the change. No `METRIC_VERSION` bump: that is what T3 buys
 and what the gate must not quietly spend.
+
+**Landed 2026-08-22, with one clause substituted.** The `yield_fraction` half of
+the third clause cannot be evaluated: `.cache/campaign/spec9.db`'s 1,120 readings
+carry sixteen keys and no proposal-outcome field, so the recorded campaign's
+`yield_fraction` cannot come out bit-identical because it cannot come out at all
+— A31's omission, seen from a third side. Substituted with literal fractions
+under the pre-change taxonomy plus retagging invariance across every
+refused-tier cause; the `METRIC_VERSION` half was recovered exactly, against the
+digest all 1,120 rows carry. `docs/DECISIONS.md` (2026-08-22) records both, and
+the two sub-decisions this entry deferred to the change.
 **Rank.** 6
 **Cost.** M. Constructed cases throughout; no live call is needed to grade it.
 

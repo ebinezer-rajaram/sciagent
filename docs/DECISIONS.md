@@ -8871,3 +8871,100 @@ contrast conditions on is its own decision rather than a consequence of this one
 It belongs with A31, which this entry's own **Touches** line says it couples to.
 Not recorded here and deliberately: the `DIMENSION_VERSION` bump to `spec8/3`,
 which is visible in the diff and argued in the constant's own comment.
+
+## 2026-08-22 — gate A44: the taxonomy splits by cause beside the record, and the clause meant to pin it cannot be read
+
+**Decision.** T3 and T1a are implemented as `docs/OPEN-DECISIONS.md` §2 and the
+2026-08-21 supersession settled them. What is recorded here is only what the diff
+does not say: four resolutions, one measurement, and two things left undone on
+purpose.
+
+**The gate's third clause is unsatisfiable as written, and the substitution is
+recorded rather than quietly made.** It asks that `ProposalRecord`'s five fields
+be *"pinned by the recorded campaign's `yield_fraction` coming out bit-identical
+across the change"*. Checked rather than assumed: `.cache/campaign/spec9.db`
+holds 1,120 rows whose `reading` carries **sixteen keys and not one
+proposal-outcome field** — `correct`, `d1`–`d6`, `experiments`, `identified`,
+`inadequate`, `leading_mass`, `log_score`, `n_held_out`, `ppc_p_value`,
+`structural_distance`, `truth_mass`. `yield_fraction` cannot come out
+bit-identical because it cannot come out at all. That is A31's omission seen from
+a third side, after A35 and A40 each found it from their own. Recomputing it
+would mean replaying the eighteen LLM cells, which A35 records as crashing at the
+first refusal and which contradicts the entry's own *"no live call is needed to
+grade it"*. Substituted: literal fractions under the pre-change taxonomy, plus
+the property a recorded campaign would have been evidence **of** — retagging a
+refusal across all five refused-tier causes moves the fraction nowhere.
+
+**One half of the clause was recovered exactly, and is a measurement worth
+keeping.** `METRIC_VERSION` reaches the recorded address through
+`MetricRegistry.version`, and every one of the 1,120 rows carries
+`metrics/9b1c54c9d49f49f656c30e32d21d4a7b`; the live catalogue still addresses to
+it. Asserting *that* rather than the constant is the stronger check, because the
+constant goes green on any change that leaves the string alone while moving what
+the catalogue addresses over. The ledger's `env_version` beside it is
+`pointproc/pointproc/1.1.0+1.2.0+1.1.0`.
+
+**Two rows `docs/OPEN-DECISIONS.md` §2 calls "arguably misfiled" were kept in the
+record, and this is a decision against that aside.** A stream draining with no
+`ResultMessage` and a session ending `is_error`/non-`success` are dead-session
+conditions, and §2 floats moving them out behind transport. A44's gate text says
+a dead session reads **as transport** — a cause in the breakdown, not a
+propagation — and the gate is the criterion. Pinned by type rather than by
+intent: `ProviderError` and `ProviderUnavailableError` are siblings, so the
+enumeration test fails if either row is later moved out. Anyone revisiting this
+is revisiting the gate, not tidying a loose end.
+
+**Nothing is re-filed *between* the five tiers, and the constraint is sharper
+than it looks.** A provider response that will not parse stays under `refused`
+and gains a cause beside it, which reads wrong and is not: `_extend` breaks on
+`"refused"` and continues on `"malformed"`, so re-filing it moves no field
+definition and still moves how many requests a run makes. That is T2 wearing T3's
+clothes, and it is the one way this change could have spent the bump it exists to
+save.
+
+**The two sub-decisions the entry deferred, taken at the user's direction.**
+`EditNotInGrammarError` at apply time **propagates**: reaching it means the agent
+grammar licensed a structure the edit grammar refuses, which is a divergence
+between two framework-supplied grammars rather than a fact about the candidate,
+so `CANDIDATE_FAULTS` is *not* widened — the same reasoning that keeps
+`DeterminismError` out of it, reached from the `GrammarError` family instead. The
+break asymmetry is settled by **not** moving the break rule, since which outcome
+breaks decides how many requests a run makes; the allowance becomes a guarded
+ceiling instead, so raising it reopens the question in the same change.
+
+**Two test-first defects, found by `/test-review` before any implementation
+existed, and the first is worth the space because it is self-fulfilling.** The
+draft imported `METRIC_VERSION` from `sciagent.eval.scoring`, where no such name
+exists — the real one is in `environments/pointproc/catalogue.py`, and invariant
+1 is why it is not in `sciagent/` — and asserted it equalled `"m1"`, a literal
+invented to look like a version. The cheapest way to green that red is to *add*
+`METRIC_VERSION = "m1"` to `eval/scoring.py`, at which point the assertion is a
+tautology over a constant created to satisfy it and the gate reports green over
+exactly the bump it was written to forbid. **A test-first red that names a
+missing symbol is an invitation to create it**; watching one `ImportError` and
+stopping is how the rest of the missing-name set goes unexamined. The second: the
+propagation check was written as `not isinstance(error, ProposalError)`, which is
+false as a premise — `ProviderUnavailableError` *is* a `ProposalError` by design —
+and worse than absent, since the obvious way to satisfy it is to reparent that
+class off the family, silently changing the `except ProposalError` guards in
+`systems/llm/transcripts.py` and breaking the very A35/A40 boundary this gate
+holds. The reusable shape: **a red that points at the wrong fix is more dangerous
+than no test**, and a test that reads the catch set from the code under test
+cannot notice the catch set widening.
+
+**Eleven existing tests moved tier, and none moved boundary.** The five retiered
+conditions had assertions in `tests/test_llm.py` naming `ProviderError`. Every
+`match=` string is byte-identical and only the class changed — to one *outside*
+`ProposalError`, which makes each assertion stricter in the sense that matters,
+since it now pins that `Hybrid` cannot catch the condition and score it. Recorded
+because "eleven tests edited in the change that made them fail" is the shape
+invariant 6 exists to be suspicious of, and the answer to that suspicion is that
+not one of them is looser.
+
+**Closes off.** `max_proposals` cannot be raised without reopening the break-set
+question in the same change, which is what the ceiling is for. Nothing here moves
+a number A40 re-derives, so the re-ranking that put A44 at 6 and A40 at 12 is
+discharged for this entry. The unreadable third clause is A31's business: until
+the ledger payload carries a proposal-outcome field, no gate after this one can
+pin anything against a recorded `yield_fraction` either, and A31 should be read
+as owing that.

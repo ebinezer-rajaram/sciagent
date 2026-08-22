@@ -99,6 +99,7 @@ from sciagent.core.errors import (
     ProviderError,
     ProviderUnavailableError,
     SciAgentError,
+    SystemConfigurationError,
 )
 from sciagent.systems.llm.transcripts import Completion
 
@@ -221,9 +222,21 @@ class AgentSdkProvider:
         """Return a payload conforming to ``schema``.
 
         Raises :class:`~sciagent.core.errors.ProviderError` for a refusal, a
-        truncated response, a failed run, a body that is not the JSON object the
-        schema demands, or a response served by a model other than the one this
-        provider is pinned to.
+        truncated response, a failed run, or a body that is not the JSON object
+        the schema demands. Each carries a ``cause`` naming which of those it
+        was; the class is what ``Hybrid`` catches and records, the cause is what
+        a report can say about it.
+
+        Raises :class:`~sciagent.core.errors.SystemConfigurationError` when the
+        *machine* is at fault rather than the model: a contaminated environment,
+        a call made from inside a running event loop, a turn served by another
+        provider, a session whose provenance cannot be verified, or a response
+        served by a model other than the one this provider is pinned to. Gate
+        A44 moved these five out of ``ProviderError``, because a fault of the
+        harness recorded as a proposal outcome is a scored datum about nothing.
+        Like the class below it, this one propagates -- which callers holding
+        billed artefacts must handle, since propagating past them loses the
+        corpus; see the guard in ``scripts/rate_limit_pilot.py``.
 
         Raises :class:`~sciagent.core.errors.ProviderUnavailableError` when the
         session could not be reached or died under us -- a missing CLI, a dead
@@ -273,7 +286,7 @@ class AgentSdkProvider:
         if not found:
             return
         listed = "; ".join(f"{name} ({why})" for name, why in found)
-        raise ProviderError(
+        raise SystemConfigurationError(
             f"the environment carries {len(found)} variable(s) that would change "
             f"what this run produces: {listed}. They are inherited by the spawned "
             f"process and cannot be unset from here, so the call is refused rather "
@@ -372,7 +385,7 @@ class AgentSdkProvider:
         except RuntimeError:
             pass
         else:
-            raise ProviderError(
+            raise SystemConfigurationError(
                 "a completion was requested from inside a running event loop; "
                 "this provider drives the async SDK with asyncio.run, which "
                 "cannot nest. Call it from a worker thread, or drive the SDK "
@@ -422,7 +435,8 @@ class AgentSdkProvider:
         if result is None:
             raise ProviderError(
                 f"the {self._model} session ended without a result message, so "
-                f"there is nothing to record"
+                f"there is nothing to record",
+                cause="transport",
             )
         self._refuse_a_failed_run(result)
         return result, manifest
@@ -438,19 +452,22 @@ class AgentSdkProvider:
             raise ProviderError(
                 f"{self._model} declined to answer. Nothing is recorded: a "
                 f"refusal is an outcome of the investigation, not a call to be "
-                f"retried on a different model"
+                f"retried on a different model",
+                cause="declined",
             )
         if result.stop_reason == "max_tokens":
             raise ProviderError(
                 f"{self._model} hit its output ceiling before finishing; "
                 f"thinking counts against the same allowance, so raise the "
-                f"ceiling rather than lowering effort"
+                f"ceiling rather than lowering effort",
+                cause="output_ceiling",
             )
         if result.is_error or result.subtype != "success":
             raise ProviderError(
                 f"the {self._model} session ended as {result.subtype!r} "
                 f"(terminal reason {result.terminal_reason!r}, api status "
-                f"{result.api_error_status!r}): {result.errors!r}"
+                f"{result.api_error_status!r}): {result.errors!r}",
+                cause="transport",
             )
 
     def _refuse_a_substitute_model(self, result: ResultMessage) -> None:
@@ -463,7 +480,7 @@ class AgentSdkProvider:
         """
         foreign = _foreign_providers(result)
         if foreign:
-            raise ProviderError(
+            raise SystemConfigurationError(
                 f"part of this turn was served by {foreign!r} rather than "
                 f"{FIRST_PARTY!r}. That is a different account and a different "
                 f"serving path from the subscription this backend records "
@@ -471,13 +488,13 @@ class AgentSdkProvider:
             )
         served = _served_models(result)
         if not served:
-            raise ProviderError(
+            raise SystemConfigurationError(
                 f"the session reported no per-model usage, so there is nothing "
                 f"to check {self._model!r} against. A transcript address names a "
                 f"model and this response cannot show which one produced it"
             )
         if self._model not in served:
-            raise ProviderError(
+            raise SystemConfigurationError(
                 f"the session was served by {served!r}, not by {self._model!r} "
                 f"which this provider is pinned to. Nothing is recorded: an "
                 f"address names a model, and a response another model produced "
@@ -533,11 +550,13 @@ def _payload_of(result: ResultMessage, model: str) -> Mapping[str, Any]:
     if payload is None:
         raise ProviderError(
             f"{model} returned no structured output to read a proposal from, "
-            f"though a JSON schema was set; the session said {result.result!r}"
+            f"though a JSON schema was set; the session said {result.result!r}",
+            cause="malformed_response",
         )
     if not isinstance(payload, dict):
         raise ProviderError(
             f"{model} returned a {type(payload).__name__} where the schema "
-            f"declares an object"
+            f"declares an object",
+            cause="malformed_response",
         )
     return payload

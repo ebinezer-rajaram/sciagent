@@ -972,7 +972,14 @@ class TestA44AFaultIsNotScoredAsARefusal:
         # Not named by the gate, and asserted anyway: A44 touches no estimator
         # and no dimension, so the term that *is* allowed to move for a scoring
         # change must not move for this one either.
-        assert DIMENSION_VERSION == "spec8/3"
+        #
+        # The literal moved to `spec8/4` at gate A31, which is the scoring change
+        # this assertion was written to allow for -- the payload gained the
+        # agency and mass fields SPEC 12 criteria 9 and 11 read. Updating it
+        # keeps the assertion's purpose rather than weakening it: what it pins is
+        # that *A44's* diff leaves the term alone, and a literal is what makes a
+        # later bump arrive here as a decision rather than as silence.
+        assert DIMENSION_VERSION == "spec8/4"
 
     def test_a44_an_allowance_above_two_is_refused(self) -> None:
         """The break asymmetry, settled in the same change as the entry requires.

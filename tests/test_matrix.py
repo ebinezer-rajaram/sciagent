@@ -45,6 +45,7 @@ from sciagent.core.types import (
     ScenarioId,
     Seed,
 )
+from sciagent.eval.agency import AgencyMetrics
 from sciagent.eval.campaign import ScenarioRun, run_scenario
 from sciagent.eval.matrix import (
     CampaignAddress,
@@ -146,6 +147,18 @@ def stub_reading(**overrides: float) -> CellReading:
         inadequate=False,
         probe_p_value=values["probe"],
         probe_inadequate=False,
+        agency=AgencyMetrics(
+            system="V1",
+            scenario=ScenarioId("S1"),
+            experiments=8,
+            entertained=4,
+            escalated=0,
+            proposals=None,
+            causes=None,
+        ),
+        null_mass=Probability(0.25),
+        abstain_mass=Probability(0.5),
+        max_defect_mass=0.4,
         experiments=8,
         structural_distance=1.0,
         # The battery this module addresses on, since `run_matrix` refuses a
@@ -398,10 +411,11 @@ class TestAnAddressCoversWhatDeterminesACell:
             "matrix": "spec9/1",
             # Literal rather than `DIMENSION_VERSION`, deliberately: this is
             # what makes a bump something a session has to notice and account
-            # for. `spec8/3` is A29 -- the payload gained `probe_p_value` and
-            # `probe_inadequate`, so a `spec8/2` row cannot answer a question
-            # about the Stage A probe.
-            "dimensions": "spec8/3",
+            # for. `spec8/4` is A31 -- the payload gained the autonomy fraction,
+            # F10's two tiers and criterion 9's three masses, so a `spec8/3` row
+            # cannot answer a question about agency or abstention. `spec8/3` was
+            # A29, which added `probe_p_value` and `probe_inadequate`.
+            "dimensions": "spec8/4",
             "battery": battery_key(BATTERY),
             "partition": "dev",
             "replicate": "07",

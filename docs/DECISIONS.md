@@ -8968,3 +8968,148 @@ discharged for this entry. The unreadable third clause is A31's business: until
 the ledger payload carries a proposal-outcome field, no gate after this one can
 pin anything against a recorded `yield_fraction` either, and A31 should be read
 as owing that.
+
+## 2026-08-22 — gate A31: the payload carries agency and the masses, and two debts handed to it are left open
+
+**Decision.** The entry's **Idea** and the gate line settled the field list, and
+`docs/BACKLOG.md` rank 7 is what implements it. What is recorded here is only
+what the diff does not say: one place the gate's own wording would not have
+discharged its entry's purpose, one test-first defect found before any
+implementation existed, two debts earlier gates assigned to this one and which
+this one does **not** pay, and a verification result I cannot fully account for.
+
+**The gate line names two masses and criterion 9 needs three, so a third was
+added rather than the gate satisfied.** The **Idea** asks for
+`null_mass`/`abstain_mass`; §12 criterion 9 is *"null and abstain mass exceeding
+**any single defect's** mass"*. The payload's existing `leading_mass` is not that
+third quantity — it is the maximum over *every* hypothesis, the null included —
+so wherever the null leads it is `null_mass` restated and says nothing about the
+largest defect. Measured on this gate's own fixture rather than argued: on S9 all
+three arms report `leading_mass = 1.0`, `null_mass = 1.0` and a largest defect of
+`0.0`. S9 and S10 are the two scenarios criterion 9 names, and they are precisely
+the ones where the null is *supposed* to lead — so the criterion would have stayed
+undecidable in the only case it exists for, and closing it later would have cost a
+second `DIMENSION_VERSION` bump. Taken at the user's direction, with the gap put
+in front of them before any edit. **The general shape is worth more than the
+instance: a gate line can be a faithful abbreviation of its entry and still be
+satisfiable without discharging it, and the entry's Rationale — here *"criterion 9
+is not decidable from the report"* — is what settles which.**
+
+**`/test-review` returned TOO WEAK on the render clause, and the finding is the
+one thing here nothing else would have caught.** The clause is *"render shows the
+autonomy fraction beside every dimension block"*. The draft scanned the whole
+rendered string for lines beginning `  autonomy` and asserted there were as many
+as there were cells — **cardinality, where the standard specifies location**. A
+`render` appending a trailing agency section after all six blocks emits exactly
+six such lines carrying exactly the right values, and satisfies none of "beside
+every dimension block". That is not an adversarial implementation, it is the
+*cheaper* one: a footer needs no `CellSummary` field, while an in-block line drags
+in the field enumeration in `tests/test_report.py`'s determinism digest. Closed by
+locating each block from its own `system / scenario` heading and asserting inside
+it, with a whole-report count kept beside that so location and cardinality are
+asserted together. **Reusable: a test that counts occurrences of a thing the
+standard *places* has tested the wrong property, and the two go green together.**
+
+**Two debts were handed to this gate by earlier entries. Neither is paid, and
+saying so is the point of recording it.**
+
+- **A44's, verbatim:** *"until the ledger payload carries a proposal-outcome
+  field, no gate after this one can pin anything against a recorded
+  `yield_fraction` either, and A31 should be read as owing that."* It is still
+  owed. `CellReading.agency` holds a `ProposalRecord` and a `ProposalCauses`,
+  so the data now reaches the cell — but `as_payload` emits neither, and no
+  recorded row carries an outcome count. What changed is only that the field is
+  one line from the ledger instead of dying in `runner.execute`. A31's own gate
+  line and **Idea** name agency, the two flags and the masses and no proposal
+  outcome, so adding one would have been a third widening in a change that had
+  already taken one.
+- **A29's:** `contrast()` still conditions on the `inadequate` payload key — the
+  whole-record check — and not on the probe flag, and that entry says the
+  argument for moving it *"belongs with A31"*. Not taken, for the reason A29
+  itself gives: what a **preregistered** contrast conditions on is its own
+  decision, and this entry's **Touches** names the payload rather than §9's
+  preregistration.
+
+**Verification, including the part I cannot account for.** Two runs on a
+byte-identical tree (`9cb1df84…`) came back **1581 passed, 7 skipped**, at
+169.64s and 148.66s under `uv run pytest -n 4 --dist loadfile`; `mypy` and `ruff`
+clean. Before those, two runs were lost. The first died during xdist worker
+bring-up with `OSError: [WinError 1450] Insufficient system resources exist to
+complete the requested service` on a numpy source file — *"no tests ran in
+13.41s"*. The second was killed by a session boundary at 72% having shown **two
+failures**, at the 49% and 54% progress marks, which I never identified: `-q`
+prints no name inline and the run ended before its summary. The attribution to
+machine resource pressure following the `WinError 1450` is **inference and not
+evidence**, and it is written down here rather than dropped because a determinism-
+pinned repository is the wrong place to let two unexplained reds disappear into a
+temp file. Anyone who sees a `WinError 1450` here should suspect the same cause
+and should not assume this entry cleared it.
+
+**Not recorded here and deliberately:** the `DIMENSION_VERSION` bump to
+`spec8/4`, which is visible in the diff and argued in the constant's own comment —
+the 2026-08-22 A29 entry declined to record its own bump on exactly that ground
+and the reasoning is unchanged. Likewise the truthiness-versus-`is not None`
+partition in `largest_defect_mass` and the `nan` crossing in `as_payload`: both
+would be findings worth keeping if they lived only here, and both are argued at
+length in the docstrings of the functions that depend on them.
+
+**Closes off.** Criterion 11 is met for any campaign recorded from here — the
+autonomy fraction is derived in `reading_of`, which gives
+`sciagent.eval.agency` its first caller outside a test. Criterion 9 is decidable
+from a rendered report for the first time. Criterion 4's two observables were
+already separable at A29 and are pinned again here. **`yield_fraction` remains
+unpinnable against any recorded row**, so A44's third clause stays substituted
+rather than satisfied, and the next gate to want it inherits A31's debt rather
+than A44's. `tests/acceptance/test_a44.py`'s `DIMENSION_VERSION` literal moved to
+`spec8/4` in this change: that assertion exists to pin that *A44's* diff leaves
+the term alone, so updating it for the scoring change it was written to allow for
+preserves its purpose — but it is an edit to a landed A-test, which is a shape
+invariant 6 asks to be suspicious of, and it is named here so it can be audited
+rather than found.
+
+## 2026-08-22 — gate A31, after review: three findings fixed and one threat-model change left standing
+
+**Decision.** `/preflight`'s six lenses ran against the A31 diff before it was
+committed. Four returned clean; `/code-review` returned three findings, all
+fixed; two lenses returned a suspicion each, and one of those is a real change
+to what the framework's audit covers, left unaddressed on purpose. This entry
+exists for that last item — the three fixes are in the diff and need no record.
+
+**Invariant 2's lens found the thing this change actually alters, and it is not
+in the diff.** `HypothesisNode.proposed_at` is compared by **neither**
+`_reconcile` nor `_audit` in `sciagent/eval/campaign.py` — the reconciliation
+checks recorded experiments, each hypothesis's `program_edit`, and the live set,
+and stops there. That was inert while nothing scored the field: before this gate
+`agency_metrics` had no production caller, so `proposed_at` reached only SPEC
+F9's confirmatory-claim rule in `verify/logical.py`. **A31 makes it decide
+`entertained`, `escalated` and `autonomy_fraction` in every recorded row.** A
+graph differing from the real one *only* in `proposed_at` passes every clause of
+both checks and moves the autonomy fraction toward 1.0.
+
+**Why it is left standing.** It needs private-attribute reach, and `_reconcile`'s
+own docstring already scopes that out in as many words — *"a caller able to reach
+the private engine to swap it could equally reach anything else. This function is
+a check with a scope, not a containment proof."* No shipped system does it: a
+sweep of `src/sciagent/systems/` and `src/environments/` for `investigation._`,
+`._graph`, `._proposed`, `._engine` and `._history` returns nothing outside
+`self._`. Widening `_reconcile` is a change to the reconciliation contract that
+every arm is scored under, which is not something to slip into the gate that
+first noticed it. **What is recorded here is the fact, not a plan: a field that
+was audit-exempt because nothing scored it is now scored, and that is a change in
+the framework's threat model rather than in its code.**
+
+**A second suspicion, deliberately not acted on and worth a sentence so it is not
+rediscovered as new.** `FrozenDict.__eq__` delegates to `dict.__eq__`, so two
+`LedgerEntry` values carrying an otherwise-identical `nan`-bearing reading
+compare unequal under the dataclass's generated `__eq__`. This is real and
+predates A31. It is unreached: the conflict-detection path in
+`CampaignLedger.append` compares `reading_digest` strings, never raw values, and
+`float('nan').hex()` is the stable ASCII `'nan'` for every NaN bit-pattern — which
+is what makes a `nan` payload deterministic under content addressing, and was
+checked rather than assumed. D2 and D3 have shipped `nan` on the same path since
+before this gate.
+
+**Closes off.** The autonomy fraction is only as trustworthy as `proposed_at`,
+and `proposed_at` is the one input to a recorded number that no reconciliation
+clause compares. Anything that later widens `_reconcile` should treat this as the
+reason. Nothing here changes what A31 landed.

@@ -90,6 +90,7 @@ from sciagent.core.types import (
     ScenarioId,
     Seed,
 )
+from sciagent.eval.agency import AgencyMetrics
 from sciagent.eval.campaign import ScenarioRun, run_scenario
 from sciagent.eval.matrix import (
     CampaignAddress,
@@ -240,6 +241,18 @@ def _stub_reading(task: CellTask) -> CellReading:
         inadequate=False,
         probe_p_value=0.03,
         probe_inadequate=False,
+        agency=AgencyMetrics(
+            system=task.cell.system,
+            scenario=task.cell.scenario,
+            experiments=8,
+            entertained=4,
+            escalated=0,
+            proposals=None,
+            causes=None,
+        ),
+        null_mass=Probability(0.25),
+        abstain_mass=Probability(0.5),
+        max_defect_mass=0.4,
         experiments=8,
         structural_distance=1.0,
         battery=battery_key(scenario(str(task.cell.scenario)).held_out),

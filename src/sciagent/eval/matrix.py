@@ -62,6 +62,7 @@ why it was built deliberately rather than improvised here. It is
 from __future__ import annotations
 
 import hashlib
+import math
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Final
@@ -76,9 +77,11 @@ from sciagent.core.types import (
     FrozenDict,
     HypothesisId,
     MetricVersion,
+    Probability,
     ScenarioId,
     Seed,
 )
+from sciagent.eval.agency import AgencyMetrics, agency_metrics
 from sciagent.eval.campaign import ScenarioRun
 from sciagent.eval.scoring import (
     DIMENSION_VERSION,
@@ -105,6 +108,7 @@ __all__ = [
     "battery_key",
     "cell_key",
     "held_out_battery",
+    "largest_defect_mass",
     "reading_of",
     "replicate_seeds",
     "run_matrix",
@@ -607,6 +611,51 @@ class CellReading:
     would discharge the letter of that and reinstate the defect.
     """
 
+    agency: AgencyMetrics
+    """SPEC F10's two tiers and the fraction §12 criterion 11 asks for.
+
+    The whole object rather than the one float, for the reason this class holds
+    a :class:`~sciagent.eval.scoring.DimensionVector` rather than six floats:
+    :func:`~sciagent.eval.agency.agency_metrics` is the only thing that builds
+    one, it reads the graph's ``proposed_at`` rather than any account a system
+    gives of itself, and a caller assembling a cell cannot supply a fraction
+    without the counts it is a fraction *of*.
+
+    Criterion 11 is *"autonomy fraction reported for every investigation"*, and
+    F10 puts it "alongside every performance figure". Before this field the
+    machinery was complete and had **no production caller at all** -- every call
+    in the repository was in ``tests/test_agency.py`` -- so the criterion was
+    unmet for the recorded campaign in the most literal way available: the number
+    was never computed outside a test.
+    """
+
+    null_mass: Probability
+    abstain_mass: Probability
+    """§12 criterion 9's first two quantities, from the run's own
+    :class:`~sciagent.core.types.Diagnosis`.
+
+    Carried because the criterion -- *"null and abstain mass exceeding any
+    single defect's mass"* -- is read off the report, and the ledger held
+    neither. The :class:`~sciagent.eval.campaign.ScenarioRun` that computes them
+    dies inside the environment's matrix runner, so a campaign that has finished
+    cannot be asked.
+    """
+
+    max_defect_mass: float
+    """The largest posterior mass on any single hypothesis holding an edit.
+
+    Criterion 9's third quantity, and **not** :attr:`ClosedWorldScore.leading_mass`
+    beside it. That one is the maximum over *every* hypothesis, the null
+    included, so wherever the null leads it is :attr:`null_mass` restated and
+    says nothing about the largest defect. Which is exactly S9 and S10 -- the two
+    scenarios criterion 9 names -- so a payload carrying only the leader leaves
+    the comparison undecidable in the one case it exists for. Measured on this
+    gate's own fixture: all three arms on S9 report ``leading_mass = 1.0`` and a
+    largest defect of ``0.0``.
+
+    :func:`largest_defect_mass` owns the derivation and the partition it uses.
+    """
+
     experiments: int
     structural_distance: float
     """Distance to the nearest structure entertained, from
@@ -638,7 +687,22 @@ class CellReading:
 
         Flat and named. Booleans reach the ledger as ``1.0``/``0.0``, which is
         lossless for a boolean and keeps one payload type rather than two.
+
+        **An absent autonomy fraction reaches it as ``nan``**, and that is the
+        one crossing here that could be got wrong quietly.
+        :attr:`~sciagent.eval.agency.AgencyMetrics.autonomy_fraction` is ``None``
+        for a run that took no decision, deliberately: *"reporting 1.0 there
+        would credit a system that did nothing with full autonomy, and would pool
+        into an aggregate as though it were evidence"*. A payload holds floats
+        and has no ``None``, so writing either ``0.0`` or ``1.0`` here would
+        spend that whole reasoning at the ledger boundary -- one reads as a
+        system that decided nothing unilaterally, the other as one that decided
+        everything, and the run decided nothing at all. ``nan`` is what
+        :func:`~sciagent.eval.report._summarise` already excludes from a mean and
+        counts separately, exactly as it does for a D2 on a scenario declaring no
+        battery, so the distinction survives into the rendered line.
         """
+        fraction = self.agency.autonomy_fraction
         return {
             "d1_structural_distance": self.dimensions.d1_structural_distance,
             "d2_held_out_predictive": self.dimensions.d2_held_out_predictive,
@@ -658,7 +722,59 @@ class CellReading:
             "probe_inadequate": float(self.probe_inadequate),
             "experiments": float(self.experiments),
             "structural_distance": self.structural_distance,
+            "autonomy_fraction": math.nan if fraction is None else fraction,
+            # F10's two tiers beside the fraction taken over them. Tier 1 is
+            # `experiments` above, so the denominator is recoverable from the
+            # payload alone and a reader need not take the fraction on trust.
+            "entertained": float(self.agency.entertained),
+            "escalated": float(self.agency.escalated),
+            "null_mass": float(self.null_mass),
+            "abstain_mass": float(self.abstain_mass),
+            "max_defect_mass": self.max_defect_mass,
         }
+
+
+def largest_defect_mass(run: ScenarioRun) -> float:
+    """Return the largest posterior mass on a single hypothesis holding an edit.
+
+    Guarantees the set of hypotheses maximised over is the exact complement of
+    the set :attr:`~sciagent.core.types.Diagnosis.null_mass` sums over, so §12
+    criterion 9's comparison is between quantities that mean what their names
+    say.
+
+    **The two sets partition the posterior; the two numbers do not add up to
+    it**, and the difference is worth stating because the first sentence invites
+    the second reading. This is a ``max`` and ``null_mass`` is a ``sum``: on a
+    posterior of ``{null: 0.2, hawkes: 0.4, seasonality: 0.4}`` they are ``0.2``
+    and ``0.4``, totalling ``0.6``. That is the correct answer to criterion 9 --
+    which asks about *any single* defect's mass and not about the defects
+    collectively -- and it is the wrong answer to "how is the mass split", which
+    nothing here claims to report.
+
+    **The partition is by truthiness of the program edit, not by ``is not
+    None``**, and the two are different sets here. The null carries an *empty*
+    edit rather than a missing one, so ``is not None`` -- which is how
+    :func:`reading_of` selects the edits it hands to
+    :func:`~sciagent.eval.scoring.dimension_vector`, correctly, for a different
+    question -- would count the null as a defect and make this the leader on
+    every abstention scenario. :func:`~sciagent.systems.base.diagnose` computes
+    ``null_mass`` as the mass where ``not engine.program_edit(h)``; this is that
+    predicate negated, and nothing else.
+
+    ``0.0`` where the run holds no defect-carrying hypothesis at all, which is
+    B1's case and is the honest reading rather than a placeholder: criterion 9
+    asks whether null and abstain mass exceed *any single defect's*, and over an
+    empty set that is vacuously true. ``0.0`` reproduces the verdict, and a
+    reader who needs to tell "no defect entertained" from "defects all at zero"
+    has ``entertained`` and ``escalated`` in the same payload, whose sum is zero
+    in exactly the first case.
+    """
+    masses = [
+        float(run.diagnosis.distribution[node_id])
+        for node_id in sorted(run.diagnosis.distribution)
+        if run.graph.node(node_id).program_edit
+    ]
+    return max(masses) if masses else 0.0
 
 
 def reading_of(
@@ -707,6 +823,20 @@ def reading_of(
     looks: D4 sums over recorded experiments, so an empty list yields a
     confident ``0.0`` rather than an error, and 1,120 cells of zero
     explanatory coverage is a plausible-looking result.
+
+    **Raises :class:`~sciagent.core.errors.InvestigationError` as well as
+    :class:`~sciagent.core.errors.MalformedDesignError`, and the second family
+    arrived with the agency fields rather than with this function.**
+    :func:`~sciagent.eval.agency.agency_metrics` refuses a run whose own
+    proposal record claims more admissions than the graph received late
+    structures -- two accounts of one run disagreeing -- and that check now runs
+    at scoring time because this function calls it. The condition is a graph
+    inconsistency and not a scoring fault, so it is deliberately *not* rewrapped
+    as a design error: a campaign should stop on it rather than record a cell
+    whose agency figures describe a run nobody can reconstruct. Worth naming
+    because the cost changed even though the check did not -- what used to
+    surface inside a system now aborts a matrix pass, with every cell completed
+    so far already in the ledger.
     """
     if run.probe is None:
         raise MalformedDesignError(
@@ -756,6 +886,14 @@ def reading_of(
             inadequate=run.ppc.inadequate,
             probe_p_value=run.probe.p_value,
             probe_inadequate=run.probe.inadequate,
+            # Criterion 11's observable, derived here for the same reason every
+            # other figure is: the run has been through `run_scenario`'s
+            # reconciliation, so its counts are the ones the graph's own state
+            # implies rather than a system's account of itself.
+            agency=agency_metrics(run),
+            null_mass=run.diagnosis.null_mass,
+            abstain_mass=run.diagnosis.abstain_mass,
+            max_defect_mass=largest_defect_mass(run),
             experiments=run.experiments,
             structural_distance=run.structural_distance,
             battery=battery_key(held_out_battery(run)),

@@ -95,7 +95,18 @@ __all__ = [
 #: among the changes that must not reach it. No recorded row is stranded by the
 #: bump: the 1,120 rows of the frozen campaign carry no ``dimensions`` key at
 #: all and :func:`~sciagent.eval.report._at_address` already excludes them.
-DIMENSION_VERSION: Final = "spec8/3"
+#:
+#: ``spec8/4`` is A31, and bumps for A29's reason rather than for a new one:
+#: :meth:`~sciagent.eval.matrix.CellReading.as_payload` gained
+#: ``autonomy_fraction``, ``entertained``, ``escalated``, ``null_mass``,
+#: ``abstain_mass`` and ``max_defect_mass``, so a ``spec8/3`` row cannot answer a
+#: question about §12 criterion 9 or 11 and a reader pooling the two generations
+#: would summarise agency over whichever rows happened to carry the key. D1-D6
+#: are again unchanged and no cached table moves. What the bump costs is
+#: precisely nothing in recompute: the fields are read off a
+#: :class:`~sciagent.eval.campaign.ScenarioRun` that already existed, and every
+#: estimator is untouched.
+DIMENSION_VERSION: Final = "spec8/4"
 
 
 @dataclass(frozen=True, slots=True)

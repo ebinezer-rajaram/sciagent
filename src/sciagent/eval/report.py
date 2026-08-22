@@ -290,6 +290,40 @@ class CellSummary:
     experiments: DimensionSummary
     """Experiments the system spent, averaged over replicates."""
 
+    autonomy_fraction: DimensionSummary
+    """§12 criterion 11's figure, pooled over this cell's replicates.
+
+    SPEC F10 asks for it *"alongside every performance figure"*, and this is
+    where the performance figures live -- hence a field on every cell rather
+    than a table of its own after them. Criterion 11 is *"reported for every
+    investigation"*, which is a claim about the report and not about any arm's
+    conduct, so unlike the rates beside it this one cannot be failed by a system.
+    It can only be absent, which is what it was.
+
+    A replicate that took no decision contributes ``nan`` and is therefore
+    excluded from the mean and counted in
+    :attr:`DimensionSummary.n_non_finite` -- see
+    :meth:`~sciagent.eval.matrix.CellReading.as_payload` for why it crosses the
+    ledger that way rather than as a number.
+    """
+
+    null_mass: DimensionSummary
+    abstain_mass: DimensionSummary
+    max_defect_mass: DimensionSummary
+    """§12 criterion 9's three quantities, pooled the same way.
+
+    All three, because the criterion compares the first two against the third
+    and the report carried none of them. :attr:`max_defect_mass` is not
+    ``leading_mass`` restated: that one is the maximum over every hypothesis
+    including the null, so on S9 and S10 -- the two scenarios criterion 9 names,
+    and the two where the null is *supposed* to lead -- it says nothing about the
+    largest defect. See :func:`~sciagent.eval.matrix.largest_defect_mass`.
+
+    Rendered rather than merely carried, for the reason the criterion exists:
+    *"not decidable from the report"* was the defect, and a field a reader has to
+    open the ledger to see has not fixed it.
+    """
+
 
 @dataclass(frozen=True, slots=True)
 class MatrixReport:
@@ -1084,6 +1118,10 @@ def _cell(
         inadequate_rate=_rate(rows, _INADEQUATE),
         probe_inadequate_rate=_rate(rows, _PROBE_INADEQUATE),
         experiments=_summarise(_values(rows, "experiments")),
+        autonomy_fraction=_summarise(_values(rows, "autonomy_fraction")),
+        null_mass=_summarise(_values(rows, "null_mass")),
+        abstain_mass=_summarise(_values(rows, "abstain_mass")),
+        max_defect_mass=_summarise(_values(rows, "max_defect_mass")),
     )
 
 
@@ -1328,6 +1366,21 @@ def _cell_block(cell: CellSummary, header: str) -> list[str]:
             # other byte `render` emits -- see `_CAVEAT`.
             f"  {'rate stage A probe fired':<{_LABEL_WIDTH}s}"
             f"{cell.probe_inadequate_rate:>10.3f}",
+            # Inside the cell block and not in a section after all of them, which
+            # is the whole of what SPEC 12 criterion 11 and F10 ask for: the
+            # fraction is reported *for every investigation*, alongside that
+            # investigation's figures, so a reader of one cell has it without
+            # cross-referencing a footer. Its interval carries the non-finite
+            # count, which is how a replicate that decided nothing shows as
+            # excluded rather than as a zero folded in.
+            f"  {'autonomy fraction':<{_LABEL_WIDTH}s}"
+            f"{_interval(cell.autonomy_fraction)}",
+            # Criterion 9's comparison, as three means on one line in the shape
+            # the rates line above already uses. The third is not the leader:
+            # see `CellSummary.max_defect_mass`.
+            f"  {'masses null/abstain/max defect':<{_LABEL_WIDTH}s}"
+            f"{cell.null_mass.point:>10.3f}  {cell.abstain_mass.point:>10.3f}  "
+            f"{cell.max_defect_mass.point:>10.3f}",
             "",
         ]
     )
@@ -1366,6 +1419,10 @@ def _level_of(report: MatrixReport) -> float:
                 cell.truth_mass,
                 cell.log_score,
                 cell.experiments,
+                cell.autonomy_fraction,
+                cell.null_mass,
+                cell.abstain_mass,
+                cell.max_defect_mass,
             )
         }
     )

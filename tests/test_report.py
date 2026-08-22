@@ -54,6 +54,7 @@ from sciagent.core.types import (
     ScenarioId,
     Seed,
 )
+from sciagent.eval.agency import AgencyMetrics
 from sciagent.eval.matrix import (
     CampaignAddress,
     Cell,
@@ -137,6 +138,19 @@ def reading(**overrides: float) -> CellReading:
         "correct": 1.0,
         "identified": 0.0,
         "experiments": 8.0,
+        # A31's four. `escalated` drives the autonomy fraction rather than the
+        # fraction being settable directly: the payload derives it from the two
+        # tiers, so a builder taking the quotient could construct a row the
+        # framework cannot produce. Zero here, so the default row reads 1.0 --
+        # `experiments / (experiments + escalated)`.
+        "escalated": 0.0,
+        "entertained": 4.0,
+        "null_mass": 0.25,
+        "abstain_mass": 0.5,
+        # Below `leading_mass` above, as it must be wherever the leader is a
+        # defect: a builder defaulting the two equal could not construct the
+        # abstention case, which is the one criterion 9 is read on.
+        "max_defect_mass": 0.4,
         **overrides,
     }
     return CellReading(
@@ -160,6 +174,18 @@ def reading(**overrides: float) -> CellReading:
         inadequate=bool(values["inadequate"]),
         probe_p_value=0.03,
         probe_inadequate=bool(values["probe_inadequate"]),
+        agency=AgencyMetrics(
+            system="V7",
+            scenario=ScenarioId("S11"),
+            experiments=int(values["experiments"]),
+            entertained=int(values["entertained"]),
+            escalated=int(values["escalated"]),
+            proposals=None,
+            causes=None,
+        ),
+        null_mass=Probability(values["null_mass"]),
+        abstain_mass=Probability(values["abstain_mass"]),
+        max_defect_mass=values["max_defect_mass"],
         experiments=int(values["experiments"]),
         structural_distance=1.0,
         # Not read here -- this module builds rows through `cell_key` directly
@@ -1264,6 +1290,13 @@ def _dimension_hexes(report: MatrixReport) -> tuple[tuple[str, ...], ...]:
             cell.identified_rate.hex(),
             cell.inadequate_rate.hex(),
             cell.probe_inadequate_rate.hex(),
+            # A31's four. Every fold this module renders belongs here or the
+            # order-independence claim is made about a subset of the report,
+            # which is the one shape a digest must not have.
+            cell.autonomy_fraction.point.hex(),
+            cell.null_mass.point.hex(),
+            cell.abstain_mass.point.hex(),
+            cell.max_defect_mass.point.hex(),
         )
         for cell in report.cells
     )

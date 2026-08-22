@@ -238,6 +238,8 @@ def _stub_reading(task: CellTask) -> CellReading:
         ),
         ppc_p_value=0.0,
         inadequate=False,
+        probe_p_value=0.03,
+        probe_inadequate=False,
         experiments=8,
         structural_distance=1.0,
         battery=battery_key(scenario(str(task.cell.scenario)).held_out),

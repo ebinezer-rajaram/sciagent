@@ -215,6 +215,8 @@ def _reading(d1: float = 1.0) -> CellReading:
         ),
         ppc_p_value=0.2,
         inadequate=False,
+        probe_p_value=0.03,
+        probe_inadequate=False,
         experiments=8,
         structural_distance=1.0,
         battery=battery_key(BATTERY),

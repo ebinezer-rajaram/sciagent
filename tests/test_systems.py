@@ -28,6 +28,7 @@ from sciagent.core.errors import (
     DuplicateExperimentError,
     EngineTamperError,
     InvestigationError,
+    MalformedDesignError,
 )
 from sciagent.core.types import (
     ComponentId,
@@ -527,6 +528,79 @@ class TestAProbeIsNotEvidence:
         experiment = ExperimentId("probe")
         harness.engine.record_probe(experiment, design.template(), result)
         return harness.engine, experiment
+
+    def test_a_reused_engine_cannot_supply_a_second_probe(self) -> None:
+        """The probe's arm-symmetry is the caller's to preserve, and is checked.
+
+        Gate A29 reads the Stage A probe before ``investigate`` so that its
+        verdict is the same whichever system ran. That holds because
+        ``run_scenario`` is handed a *fresh* engine, which nothing in its
+        signature requires. A caller reusing one engine across two scenarios
+        would compute the second probe over a posterior the first arm's run had
+        already moved, and the recorded value would become arm-dependent with
+        nothing complaining.
+
+        The duplicate-id guard in ``record_probe`` does not cover this: it fires
+        on reuse within one scenario, where ``stage_a/<id>`` collides, and these
+        are two scenarios with two ids. Raised as a suspicion by the invariant
+        auditor, which pointed out that the guarantee was stated in a docstring
+        and enforced nowhere.
+        """
+        first = _harness("S11")
+        run_scenario(
+            first.scenario,
+            PPCOnly(),
+            executor=first.executor,
+            engine=first.engine,
+            graph=first.graph,
+        )
+        second = _harness("S1")
+        with pytest.raises(MalformedDesignError, match="Stage A probe"):
+            run_scenario(
+                second.scenario,
+                PPCOnly(),
+                executor=second.executor,
+                engine=first.engine,
+                graph=first.graph,
+            )
+
+    def test_a_hypothesis_entertained_before_the_probe_is_refused(self) -> None:
+        """The other half of the guard, and the half `observations` cannot see.
+
+        ``expand`` records no observation, so a structure entertained before the
+        probe is read moves ``posterior()`` with ``engine.observations`` still
+        empty -- and V1, B4 and V7 all call ``entertain`` ahead of their first
+        experiment. The drift is small (measured 7.19e-10 on S11 for one added
+        structure, because the null's code length dominates an observation-free
+        posterior) but the bound is a fact about this grammar rather than an
+        asserted invariant, and gate A29's claim is that the verdict does not
+        depend on the arm at all.
+
+        Demonstrated by the invariant auditor against the first version of this
+        guard, which checked ``observations`` alone and let this through.
+        """
+        harness = _harness("S11")
+        entertain(
+            Investigation(
+                scenario_id=harness.scenario.id,
+                designs=harness.scenario.designs,
+                truth=harness.scenario.executed,
+                executor=harness.executor,
+                engine=harness.engine,
+                graph=harness.graph,
+                seed=harness.scenario.seed,
+            ),
+            closed_set(),
+        )
+        assert harness.engine.observations == ()
+        with pytest.raises(MalformedDesignError, match="Stage A probe"):
+            run_scenario(
+                harness.scenario,
+                PPCOnly(),
+                executor=harness.executor,
+                engine=harness.engine,
+                graph=harness.graph,
+            )
 
     def test_a_probe_moves_no_posterior_mass(self) -> None:
         """The one that matters. A reading about the space is not evidence in it.

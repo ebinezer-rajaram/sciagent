@@ -6,14 +6,32 @@ so on any scenario whose truth is outside the graph it has been given, its
 posterior stays where it started and its only informative output is the PPC
 verdict: *the hypotheses in play do not explain what was seen*.
 
-That verdict is the number SPEC §12's criterion 4 measures an LLM against --
-"detects inadequacy on S11 at a rate at least matching B1" -- which is why it is
-a floor and not a competitor. Beating B1 at detection is the minimum, not the
-result.
+That verdict *was* what SPEC §12's criterion 4 measured an LLM against, and is
+no longer. The criterion was re-specified on 2026-08-21 as C1 -- power against
+size on the named Stage A probe -- and gate A29 made the harness evaluate that
+probe for every arm alike, so what criterion 4 now reads is
+:attr:`~sciagent.eval.campaign.ScenarioRun.probe` and not this. B1's whole-record
+verdict remains :attr:`~sciagent.eval.campaign.ScenarioRun.ppc`, is still
+reported, and is still the Stage A floor in the sense that matters to SPEC §5 --
+what detection is worth without experiment design.
 
-The verdict is not carried on the :class:`~sciagent.core.types.Diagnosis`: SPEC
-§3.4 has no field for it, and inventing one would put a B1-shaped hole in a type
-every system shares. It is read off the run by
+**"Beating B1 at detection" is no longer a thing an arm can do *on the probe***,
+and that is a property of the re-specification rather than of B1: every arm now
+reads one instrument, so every arm's probe rate is identical. See `docs/SPEC.md`
+§12 criterion 4, which says so and records what would be needed to make it a bar
+again.
+
+The qualifier is load-bearing: the arms still differ on the *whole-record*
+check, and B1 is not the floor there either. On S11 at one seed B1's
+:attr:`~sciagent.eval.campaign.ScenarioRun.ppc` fires and V1's does not --
+because B1 holds only the null, which makes its space inadequate on eleven of
+twelve by construction rather than by detecting anything. That is the
+multiplicity artefact `docs/OPEN-DECISIONS.md` §1 named as the reason the
+original criterion 4 could not be read off this check.
+
+Neither verdict is carried on the :class:`~sciagent.core.types.Diagnosis`: SPEC
+§3.4 has no field for either, and inventing one would put a B1-shaped hole in a
+type every system shares. Both are read off the run by
 :class:`~sciagent.eval.campaign.ScenarioRun`.
 """
 

@@ -622,7 +622,14 @@ and would need the combination rule stated. Not a change to make on the way past
 some other work: the rule is the whole design, and choosing it by convenience
 while shipping something else is how the `1 + ln(n)` dilution got in.
 
-## SPEC §12 criterion 4 is incoherent, and fixing it needs a decision made cold
+## DONE (2026-08-22, gate A29) — SPEC §12 criterion 4 is incoherent, and fixing
+## it needs a decision made cold
+
+**Discharged.** The decision was written up as `docs/OPEN-DECISIONS.md` §1 and
+taken cold on 2026-08-21 as C1; gate A29 implemented it on 2026-08-22. What the
+implementation then found — that C1 makes the criterion unfailable, because both
+its clauses are comparisons and the probe is now arm-symmetric — is the entry at
+the end of this file, not this one. This entry asked for a decision and got one.
 
 **Idea.** Re-specify criterion 4 — currently *"Detects inadequacy on S11 at a
 rate at least matching B1"* — as a power-against-size comparison on a named
@@ -1309,7 +1316,23 @@ replicate index); two processes produce identical proposal sequences.
 **Cost.** S–M. Compute: corner form minutes; full-grid form bounded by the
 preregistered budget. API $0.
 
-## Criterion 4's observable, implemented arm-symmetrically once decided cold
+## DONE (2026-08-22, gate A29) — Criterion 4's observable, implemented
+## arm-symmetrically once decided cold
+
+**Done, and it delivers an instrument rather than the bar the Idea implied.**
+The probe is arm-symmetric, both flags are recorded and labelled, and the rate
+is reported per cell with the false-positive side readable across scenarios.
+What did *not* survive is criterion 4 as a pass/fail bar: C1 words both of its
+clauses as comparisons of V7 against B1, and once the two arms read one
+instrument on one seed sequence, both are equalities. See the entry below,
+which is the decision that would make it a bar again, and `docs/DECISIONS.md`
+(2026-08-22).
+
+**The Idea's "at the gate point" and the Gate's "identical whichever system
+ran" cannot both hold literally**, since the scoped check reads a posterior
+each arm moves. Resolved in favour of the Gate line, which is the contract; the
+probe is read before `investigate` is called. If this wording is ever revised
+it should say *before the run*.
 
 **Decided 2026-08-21 — C1**, as recommended, in `docs/DECISIONS.md`. The hold
 is off and this entry is now buildable as written.
@@ -1936,3 +1959,60 @@ declared battery reports unchanged.
 
 **Rank.** 5
 **Cost.** S.
+
+## Criterion 4 is now unfailable, and needs an absolute bar or none at all
+
+**Idea.** Replace §12 criterion 4's two V7-versus-B1 comparisons with an
+absolute statement about the Stage A probe — fires on S11, does not fire on
+S1–S7 or S9 — or strike the criterion and report the rates, which is C3 of
+`docs/OPEN-DECISIONS.md` §1 and is now the honest description of what the
+criterion does anyway.
+
+**Rationale.** A29 made the probe arm-symmetric, which is what its gate asked
+for and what removes the confound C1 diagnosed. It also removes the variance
+the criterion was reading. C1 words both clauses as comparisons — "at a rate at
+least matching B1's", "at a false-positive rate on S1–S7 and S9 no higher than
+B1's" — and `replicate_seeds` pairs every arm on one seed sequence, so V7's
+rate and B1's are bit-identical on every scenario and neither clause can fail.
+The gate's own tests demonstrate it on S1, one of the size scenarios.
+
+This is not an argument against A29. The instrument is right and the
+discrimination is real: the probe fires on S11 and stays quiet on the other
+eleven, measured 2026-08-16. What is missing is a *threshold*, and the reason
+there is not one is that C1 inherited the comparative form from the wording it
+replaced, where the comparison was the whole point.
+
+**What an absolute bar can and cannot buy, because the obvious expectation is
+wrong.** It restores falsifiability of the *instrument* — whether the probe and
+the scenario set discriminate S11 from S1–S7 and S9 at all, which a badly chosen
+probe would fail. It does **not** restore V7-versus-B1 grading, and no choice of
+threshold can: the probe is computed before `investigate` is called, so its value
+is identical for every arm by construction, and an absolute bar is therefore the
+same pass or fail for B1, V1 and V7 forever. A29 removed that comparison
+permanently, which is the point of it — the comparison was the confound. Anyone
+taking this decision should take it knowing that criterion 4 will grade the
+apparatus and not the agent under either option, and that if a *capability*
+criterion on S11 detection is wanted, it has to be built on something other than
+this probe. Raised by the invariant-6 lens on 2026-08-22, which noted neither
+this entry nor SPEC §12 said so.
+
+**Why this is not a `/decide` entry.** It changes what V7 is graded on, and V7
+has been measured. That is CLAUDE.md invariant 6's territory, and the
+repository has paid twice for taking such a decision in a session that had just
+watched V7 run. It should be written up in `docs/OPEN-DECISIONS.md` and taken
+cold, exactly as C1 was — the difference being that C1's write-up argued about
+*which check* and never asked what a comparison between identical readings
+could mean.
+
+**Touches.** §12 criterion 4 again, and nothing else: the instrument, the
+payload and the report layer all already carry what either wording would need.
+
+**Gate.** `test_a45_criterion_four_is_falsifiable` — there exists a probe rate
+vector over S1–S11 that the criterion rejects. A criterion no input can fail is
+what this entry exists to remove, so the gate is a demonstration that some
+input fails it.
+
+**Rank.** 21
+**Held.** a cold decision on whether criterion 4 becomes an absolute bar or is
+struck
+**Cost.** S for the wording and the check; the semantic decision is the user's.

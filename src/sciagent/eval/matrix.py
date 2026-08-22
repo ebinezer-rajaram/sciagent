@@ -577,6 +577,34 @@ class CellReading:
     detection*, so the conditioning variable has to survive in the ledger. A
     matrix that recorded only the outcome would leave the contrast unanswerable
     without re-running every cell.
+
+    **Arm-dependent, and not only in its p-value.** On S11 this fires for B1 and
+    stays quiet for V1 at the same seed, because B1 holds only the null and its
+    space is inadequate on eleven of twelve by construction. That is why it is
+    now recorded beside :attr:`probe_inadequate` rather than as the only
+    detection flag: a rate read off this alone compares two arms on an
+    instrument that moves with the arm.
+    """
+
+    probe_p_value: float
+    """The Stage A adequacy probe's p-value, from
+    :attr:`~sciagent.eval.campaign.ScenarioRun.probe`."""
+
+    probe_inadequate: bool
+    """Whether the harness-evaluated Stage A probe judged the space inadequate.
+
+    SPEC §12 criterion 4's observable under C1, and the same value for every arm
+    on a given (scenario, seed) -- see
+    :attr:`~sciagent.eval.campaign.ScenarioRun.probe`, which owns the guarantee
+    and the reason the evaluation point is where it is.
+
+    **Recorded under its own name, which is the point rather than a detail.**
+    ``inadequate`` already means the whole-record check in 1,120 recorded rows
+    and in :mod:`sciagent.eval.report`, which conditions its contrast on that
+    literal key; the entry this gate comes from asks for both flags *"clearly
+    labelled"* because the two were conflated under one name and a preregistered
+    contrast was left unanswerable by it. Writing the probe into ``inadequate``
+    would discharge the letter of that and reinstate the defect.
     """
 
     experiments: int
@@ -626,6 +654,8 @@ class CellReading:
             "identified": float(self.score.identified),
             "ppc_p_value": self.ppc_p_value,
             "inadequate": float(self.inadequate),
+            "probe_p_value": self.probe_p_value,
+            "probe_inadequate": float(self.probe_inadequate),
             "experiments": float(self.experiments),
             "structural_distance": self.structural_distance,
         }
@@ -678,6 +708,20 @@ def reading_of(
     confident ``0.0`` rather than an error, and 1,120 cells of zero
     explanatory coverage is a plausible-looking result.
     """
+    if run.probe is None:
+        raise MalformedDesignError(
+            f"scenario {run.scenario.id!r} declares no Stage A probe, so a cell "
+            f"reading for it cannot carry one. A ledger row holds floats, so "
+            f"there is no way to record 'never evaluated' in the payload: it "
+            f"would go in as 0.0 and summarise as a probe rate of 0.000, "
+            f"indistinguishable from a probe that was evaluated and never "
+            f"fired, and SPEC section 12 criterion 4 is read off exactly that "
+            f"number. This refuses rather than narrowing what the matrix can "
+            f"score by accident -- an environment that declares no Stage A "
+            f"design cannot use it, which is a real restriction and the "
+            f"deliberate one. Declare a Stage A design on the scenario, or "
+            f"score this run outside the matrix"
+        )
     if len(observations) != run.experiments:
         raise MalformedDesignError(
             f"run of {run.system!r} on {run.scenario.id!r} charged for "
@@ -710,6 +754,8 @@ def reading_of(
             score=run.score,
             ppc_p_value=run.ppc.p_value,
             inadequate=run.ppc.inadequate,
+            probe_p_value=run.probe.p_value,
+            probe_inadequate=run.probe.inadequate,
             experiments=run.experiments,
             structural_distance=run.structural_distance,
             battery=battery_key(held_out_battery(run)),

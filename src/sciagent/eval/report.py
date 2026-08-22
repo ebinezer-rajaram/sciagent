@@ -131,6 +131,12 @@ DIMENSIONS: Final[tuple[str, ...]] = (
 #: an unconditioned contrast reported as a conditioned one.
 _INADEQUATE: Final = "inadequate"
 
+#: Payload key holding the harness-evaluated Stage A probe, which SPEC §12
+#: criterion 4 is read off under C1. Named beside :data:`_INADEQUATE` and never
+#: confused with it: that one is the whole-record check, is arm-dependent even
+#: in its verdict, and is what :func:`contrast` conditions on.
+_PROBE_INADEQUATE: Final = "probe_inadequate"
+
 #: What :func:`render` says about every figure it prints. SPEC §9: slice results
 #: "are exploratory by construction ... they are not reportable as confirmatory
 #: findings". Unconditional, because the sentence is only useful where somebody
@@ -260,6 +266,25 @@ class CellSummary:
 
     SPEC §9's primary contrast is *conditional on inadequacy detection*, so this
     is the conditioning variable rather than one result among several.
+    """
+
+    probe_inadequate_rate: float
+    """Fraction of replicates whose Stage A probe fired: §12 criterion 4's rate.
+
+    Beside :attr:`inadequate_rate` rather than replacing it, because the two
+    answer different questions and the criterion names this one. Under C1 the
+    probe is evaluated by the harness for every arm, so on a given scenario this
+    figure is the same across arms by construction -- which is what makes
+    reading it *down* a scenario meaningful: the rate on S11 is the instrument's
+    power and the rate on S1-S7 and S9 is its size.
+
+    That reading is a **report**, and criterion 4 as C1 words it is not a bar it
+    could fail. Both of C1's clauses compare V7's rate against B1's, and this
+    figure is identical across arms by the paragraph above, so neither can fail.
+    Making it a bar again needs an absolute threshold, which is open in
+    ``docs/BACKLOG.md`` and is not this field's to decide. Reported per cell
+    regardless, because the discrimination is real even where the comparison is
+    empty.
     """
 
     experiments: DimensionSummary
@@ -1057,6 +1082,7 @@ def _cell(
         correct_rate=_rate(rows, "correct"),
         identified_rate=_rate(rows, "identified"),
         inadequate_rate=_rate(rows, _INADEQUATE),
+        probe_inadequate_rate=_rate(rows, _PROBE_INADEQUATE),
         experiments=_summarise(_values(rows, "experiments")),
     )
 
@@ -1296,6 +1322,12 @@ def _cell_block(cell: CellSummary, header: str) -> list[str]:
             f"  {'rates correct/ident/inadequate':<{_LABEL_WIDTH}s}"
             f"{cell.correct_rate:>10.3f}  {cell.identified_rate:>10.3f}  "
             f"{cell.inadequate_rate:>10.3f}",
+            # On its own line and labelled for the check it is, rather than as a
+            # fourth number under "inadequate": the two are different checks and
+            # this is the one SPEC 12 criterion 4 is read off. ASCII, as is every
+            # other byte `render` emits -- see `_CAVEAT`.
+            f"  {'rate stage A probe fired':<{_LABEL_WIDTH}s}"
+            f"{cell.probe_inadequate_rate:>10.3f}",
             "",
         ]
     )

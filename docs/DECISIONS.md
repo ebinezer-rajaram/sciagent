@@ -8761,3 +8761,113 @@ the A40 session's own report — **A35 blocks the re-derivation run**, which "is
 expected to crash at the first refusal-containing address", and A31/A30 must
 land before the run or the re-derived payload cannot answer §12 criteria 4, 9
 and 11. A40's *code* is finished and may land out of rank; its *run* waits.
+
+## 2026-08-22 — gate A29: the probe is read before the run, and criterion 4's power clause becomes an equality
+
+**Decision.** `ScenarioRun.probe` is computed in `run_scenario` **between
+`_run_stage_a` and `system.investigate`** — on the graph the harness hands every
+arm, with the Stage A reading recorded and nothing else. C1's *"the harness
+evaluates the probe for every arm regardless of whether the arm consults it"* is
+discharged by evaluating it **once, before any system code runs**, rather than
+once per arm afterwards.
+
+**Why. The entry's own two halves cannot both be met literally, and that is the
+ambiguity this settles.** The **Idea** says the probe is evaluated "uniformly at
+the gate point", which reads as SPEC F6's consultation point — mid-run, after an
+arm has entertained a library and spent half its budget, and therefore
+arm-specific. The **Gate** says the verdict is "identical whichever system ran",
+which requires a value no arm can move. The Gate is the contract, so it wins. If
+the backlog wording is ever revised it should say *before the run*.
+
+The rejected reading is not merely weaker; **it is already withdrawn**. Reading
+the probe per arm at the end of a run is the `ScenarioRun.adequacy` field written
+and removed on 2026-08-16, and `eval/campaign.py` has carried the reason ever
+since: the end-of-run posterior is the one the arm's *proposals* moved, so a
+system that successfully proposed a structure explaining the probe is recorded as
+having failed to detect. It also cannot satisfy the Gate arithmetically — the
+recorded end-of-run S11 probe is 0.0112 under V7 and 0.0294 under B1, and V7's
+own gate saw 0.0128.
+
+**The cost, stated because it is real and runs against the change — and it is
+larger than this entry first claimed.** Both arms now read one instrument, so
+C1's power clause — *"V7's probe fires at a rate at least matching B1's"* — is
+satisfied **by construction**, not by measurement.
+
+The first version of this paragraph then said the false-positive term "stays
+falsifiable", and **that is false**. C1 words *both* clauses as comparisons of V7
+against B1 — the second is "at a false-positive rate on S1–S7 and S9 **no higher
+than B1's**" — and `replicate_seeds` already pairs every arm on one seed
+sequence. Two arms reading one instrument at one seed agree exactly, so the size
+clause is an equality on S1–S7 and S9 exactly as the power clause is on S11.
+**SPEC §12 criterion 4 as re-specified cannot fail, under either clause.** Caught
+by `/preflight` — `/code-review` and the invariant-6 lens reached it
+independently — and the demonstration was sitting in the gate's own tests, which
+assert the arms' probe p-values identical *on S1*, one of the scenarios the size
+clause is read on.
+
+What this buys is therefore an **instrument**, not a bar: the probe is
+well-defined for every arm, discriminates S11 from the in-library scenarios, and
+is recorded and reported per cell. Restoring a bar needs an *absolute* threshold
+in place of the comparison. That is not taken here — it changes what V7 is graded
+on, which is invariant 6's territory and the user's call, and it belongs in
+`docs/BACKLOG.md` to be written up and taken cold as C1 was. Both the SPEC
+wording and `ScenarioRun.probe`'s docstring now say this outright rather than
+claiming a falsifiability the code does not deliver.
+
+**The reusable lesson is about the shape of the error, not the arithmetic.** C1's
+diagnosis was that criterion 4 compared two arms on two different checks. Giving
+both arms one check fixes the comparison by making it vacuous, and the write-up
+that recommended it did not notice because it was arguing about *which* check,
+not about what a comparison between identical readings could still mean. A
+re-specification that removes a confound by removing the variance removes the
+criterion with it.
+
+It is not degenerate for being symmetric. B1 holds only the null and proposes
+nothing, so its live set never changes and its posterior never moves: the
+pre-run value **is** B1's reading throughout its run, which is the 0.0294 that
+the 2026-08-16 table measured firing on S11 alone across the twelve.
+
+**Measured, and expensive to reproduce — the whole-record flag is arm-dependent
+in its *verdict*, not only its p-value.** On S11 at the scenario seed, the
+harness probe reads 0.029409 (fires) for every arm, while the whole-record check
+reads:
+
+| arm | whole-record p | fires |
+|---|---|---|
+| B1 | 0.045811 | **yes** |
+| V1 | 0.527271 | no |
+| rotating (library + rotation) | 0.223485 | no |
+
+B1 fires because it holds only the null, so its space is inadequate on eleven of
+twelve by construction — `docs/OPEN-DECISIONS.md`'s own table says so ("full-record
+ppc | B1 on 5 of 12 (S1, S5, S8, S10, S11)"). **This nearly shipped a gate that
+could not pass.** The first draft of `test_a29` asserted the two flags disagree
+for *every* arm on S11, which is true of V1 and V7 and false of B1, and the
+whole point of the scenario is that it is where §9's contrast is read. Found by
+`/test-review` before any implementation existed.
+
+**A transposition of the two boolean labels passed everything.** Swapping
+`inadequate` and `probe_inadequate` inside `reading_of` passed all four A29 tests
+and the full suite: the tests compared the two payload keys to each other and
+never to the attribute each is named for, and the one sibling that pins
+`reading_of` runs on S9, where both verdicts are `False` and a boolean swap is
+invisible. Closed by asserting each payload entry equals its source attribute.
+The reusable part is the shape: a test that pins *two* derived fields against
+each other pins neither to its origin, and picking the fixture scenario where
+they agree hides it.
+
+**Closes off.** Criterion 4 is answerable for the first time, which is one of the
+three the previous entry said must land before A40's re-derivation *runs*; A31
+(criteria 9 and 11) and A30 still bind, and A35 still blocks the run outright.
+
+**Left deliberately incomplete, so the silence is not read as an oversight.**
+`contrast()` still conditions on the `inadequate` payload key — the whole-record
+check — and not on the new probe flag. SPEC §9 says its primary contrast is
+"conditional on inadequacy detection", and under C1 the named detection check is
+now the probe, so there is a live argument that the conditioning should move. It
+was not taken here: the entry's **Touches** names §12 criterion 4, `eval/campaign.py`
+and the payload, and not §9's preregistration, and changing what a preregistered
+contrast conditions on is its own decision rather than a consequence of this one.
+It belongs with A31, which this entry's own **Touches** line says it couples to.
+Not recorded here and deliberately: the `DIMENSION_VERSION` bump to `spec8/3`,
+which is visible in the diff and argued in the constant's own comment.

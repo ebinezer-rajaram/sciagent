@@ -84,7 +84,18 @@ __all__ = [
 #: ``spec8/2`` is the A26 reading: D2 proper rather than modal, D4 excluding the
 #: candidate's own structure. ``spec8/1`` was never written down, and is what
 #: every row recorded before 2026-08-19 was scored under.
-DIMENSION_VERSION: Final = "spec8/2"
+#:
+#: ``spec8/3`` is A29: :meth:`~sciagent.eval.matrix.CellReading.as_payload`
+#: gained ``probe_p_value`` and ``probe_inadequate``, so a row recorded under
+#: ``spec8/2`` cannot answer a question about the Stage A probe and a reader
+#: folding the two generations together would summarise a detection rate over
+#: whichever rows happened to carry the key. D1-D6 are unchanged and no cached
+#: table moves, which is exactly why this is the term that bumps and
+#: ``METRIC_VERSION`` is not -- ``docs/DECISIONS.md`` (2026-08-19) names A29
+#: among the changes that must not reach it. No recorded row is stranded by the
+#: bump: the 1,120 rows of the frozen campaign carry no ``dimensions`` key at
+#: all and :func:`~sciagent.eval.report._at_address` already excludes them.
+DIMENSION_VERSION: Final = "spec8/3"
 
 
 @dataclass(frozen=True, slots=True)

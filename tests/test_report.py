@@ -128,6 +128,12 @@ def reading(**overrides: float) -> CellReading:
         "log_score": -1.0,
         "truth_mass": 0.5,
         "inadequate": 0.0,
+        # Overridable independently of ``inadequate``, and defaulted apart from
+        # it, because they are different checks: the Stage A probe is the same
+        # value for every arm on a scenario while the whole-record check is not.
+        # A builder tying the two together could not construct the case the
+        # matrix actually holds.
+        "probe_inadequate": 1.0,
         "correct": 1.0,
         "identified": 0.0,
         "experiments": 8.0,
@@ -152,6 +158,8 @@ def reading(**overrides: float) -> CellReading:
         ),
         ppc_p_value=0.2,
         inadequate=bool(values["inadequate"]),
+        probe_p_value=0.03,
+        probe_inadequate=bool(values["probe_inadequate"]),
         experiments=int(values["experiments"]),
         structural_distance=1.0,
         # Not read here -- this module builds rows through `cell_key` directly
@@ -575,6 +583,21 @@ class TestRatesAreReportedAsRates:
         readings = [reading(inadequate=1.0)] * 3 + [reading(inadequate=0.0)]
         report = report_of(rows("B1", "S11", readings))
         assert report.cells[0].inadequate_rate == 0.75
+
+    def test_the_probe_rate_is_separate_from_the_whole_record_rate(self) -> None:
+        # Two different checks, and SPEC section 12 criterion 4 is read off the
+        # probe. The rates are asserted to *differ* rather than merely to exist:
+        # the failure this catches is `probe_inadequate_rate` folded onto the
+        # `inadequate` key, which no other assertion here would notice because
+        # both are plausible fractions. The render line is checked too, since a
+        # figure nothing prints is a figure nobody reads.
+        readings = [reading(inadequate=1.0, probe_inadequate=0.0)] * 3 + [
+            reading(inadequate=0.0, probe_inadequate=1.0)
+        ]
+        report = report_of(rows("B1", "S11", readings))
+        assert report.cells[0].inadequate_rate == 0.75
+        assert report.cells[0].probe_inadequate_rate == 0.25
+        assert "stage A probe" in render(report)
 
     def test_correct_and_identified_are_separate_rates(self) -> None:
         readings = [reading(correct=1.0, identified=1.0)] * 2 + [
@@ -1240,6 +1263,7 @@ def _dimension_hexes(report: MatrixReport) -> tuple[tuple[str, ...], ...]:
             cell.correct_rate.hex(),
             cell.identified_rate.hex(),
             cell.inadequate_rate.hex(),
+            cell.probe_inadequate_rate.hex(),
         )
         for cell in report.cells
     )

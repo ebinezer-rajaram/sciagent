@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from dataclasses import replace
 
 import pytest
 from slice_tables import AGENT_GRAMMAR, GRAMMAR, METRICS, gate_table
@@ -113,7 +114,17 @@ def stub_reading(**overrides: float) -> CellReading:
     feature -- it is exactly the friction a caller hand-rolling a payload
     would have met.
     """
-    values = {"d1": 0.0, "d3": 0.0, "log_score": 0.0, "ppc": 0.0, **overrides}
+    # ``probe`` defaults apart from ``ppc`` so that a payload rendered from this
+    # builder distinguishes the two checks: equal defaults would let a
+    # transposition of the two keys go unnoticed everywhere this is used.
+    values = {
+        "d1": 0.0,
+        "d3": 0.0,
+        "log_score": 0.0,
+        "ppc": 0.0,
+        "probe": 0.03,
+        **overrides,
+    }
     return CellReading(
         dimensions=DimensionVector(
             d1_structural_distance=values["d1"],
@@ -133,6 +144,8 @@ def stub_reading(**overrides: float) -> CellReading:
         ),
         ppc_p_value=values["ppc"],
         inadequate=False,
+        probe_p_value=values["probe"],
+        probe_inadequate=False,
         experiments=8,
         structural_distance=1.0,
         # The battery this module addresses on, since `run_matrix` refuses a
@@ -383,7 +396,12 @@ class TestAnAddressCoversWhatDeterminesACell:
         assert key.digest == cell_key(task, ADDRESS, battery=BATTERY).digest
         assert dict(key.config) == {
             "matrix": "spec9/1",
-            "dimensions": "spec8/2",
+            # Literal rather than `DIMENSION_VERSION`, deliberately: this is
+            # what makes a bump something a session has to notice and account
+            # for. `spec8/3` is A29 -- the payload gained `probe_p_value` and
+            # `probe_inadequate`, so a `spec8/2` row cannot answer a question
+            # about the Stage A probe.
+            "dimensions": "spec8/3",
             "battery": battery_key(BATTERY),
             "partition": "dev",
             "replicate": "07",
@@ -499,6 +517,14 @@ class TestAReadingComesFromARealRun:
         assert reading.experiments == run.experiments
         assert reading.inadequate == run.ppc.inadequate
         assert reading.ppc_p_value == run.ppc.p_value
+        # `reading_of` assigns two checks to four fields, so the probe's half is
+        # pinned as well as the check's. Note what this scenario cannot show: S9
+        # has both verdicts False, so a transposition confined to the *booleans*
+        # is invisible here however many assertions are added. What catches it is
+        # `tests/acceptance/test_a29.py`, on S11, where the two disagree.
+        assert run.probe is not None, "S9 declares a Stage A design"
+        assert reading.probe_p_value == run.probe.p_value
+        assert reading.probe_inadequate == run.probe.inadequate
         assert reading.score == run.score
         assert reading.structural_distance == run.structural_distance
         assert reading.dimensions.n_held_out == len(held_out_battery(run))
@@ -517,6 +543,31 @@ class TestAReadingComesFromARealRun:
                 table=engine.table,
                 simulate=simulator(GRAMMAR),
                 observations=(),
+            )
+
+    def test_scoring_a_scenario_with_no_stage_a_probe_raises(self) -> None:
+        # Same failure shape as the observations check above, and found the same
+        # way: without a Stage A design, `ScenarioRun.probe` falls back to the
+        # check over an empty record -- a documented p_value of 1.0 and "not
+        # inadequate". Written to a ledger row that summarises as a probe rate
+        # of 0.000, which reads as "evaluated, never fired" rather than as "never
+        # evaluated", and SPEC section 12 criterion 4 is read off that number.
+        run, runner, engine = slice_run("S9", PPCOnly())
+        # Both fields, because that is the pair `run_scenario` actually
+        # produces: `_stage_a_probe` returns None precisely when the scenario
+        # declares no design. Replacing only the scenario would build a run no
+        # harness can emit, and `reading_of` reads the probe rather than the
+        # declaration -- so such a fixture would pass while testing nothing.
+        probeless = replace(
+            run, scenario=replace(run.scenario, stage_a=None), probe=None
+        )
+        with pytest.raises(MalformedDesignError, match="no Stage A probe"):
+            reading_of(
+                probeless,
+                grammar=runner.grammar,
+                table=engine.table,
+                simulate=simulator(GRAMMAR),
+                observations=engine.observations,
             )
 
     def test_an_address_derived_from_the_executor_matches_it(self) -> None:

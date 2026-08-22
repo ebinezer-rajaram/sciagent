@@ -37,7 +37,11 @@ from dataclasses import dataclass, replace
 from typing import Protocol, runtime_checkable
 
 from sciagent.core.edits import Defect
-from sciagent.core.errors import EngineTamperError, InvestigationError
+from sciagent.core.errors import (
+    EngineTamperError,
+    InvestigationError,
+    MalformedDesignError,
+)
 from sciagent.core.types import (
     CLAIM_MODALITIES,
     CLAIM_STRENGTHS,
@@ -102,17 +106,67 @@ class ScenarioRun:
     folding in a reading absent from that index would not be.
 
     **Not** the verdict a system acted on where a scenario declares a Stage A
-    probe, and deliberately no longer accompanied by one. A companion
-    ``adequacy`` field was written on 2026-08-16 and withdrawn the same day: the
-    only honest place to evaluate it is *after* ``investigate`` returns, which
-    reads the final posterior rather than the one the gate saw, so a system that
+    probe. That is :attr:`probe`, and the two are reported side by side rather
+    than reconciled: this one is arm-dependent even in its verdict -- on S11 it
+    fires for B1, whose space holds only the null, and stays quiet for V1 at the
+    same seed -- which is why a criterion read off it alone was comparing arms
+    on an instrument that moves with the arm.
+    """
+
+    probe: PPCResult | None
+    """The Stage A adequacy probe, evaluated by the harness for every arm.
+
+    SPEC §12 criterion 4's observable, under the C1 reading taken cold on
+    2026-08-21 (``docs/OPEN-DECISIONS.md`` §1, ``docs/DECISIONS.md``): power
+    against size on the named Stage A probe, with the harness evaluating that
+    probe for **every** arm regardless of whether the arm consults it. B1 and
+    the conventional baselines never call
+    :meth:`~sciagent.systems.base.Investigation.ppc`, and a criterion undefined
+    for the floor it names is not a criterion.
+
+    **Evaluated before ``investigate`` is called**, on the graph the harness
+    handed the system and the Stage A reading :func:`_run_stage_a` has just
+    taken. That is the whole of gate A29: the check reads the engine's live set
+    and its posterior, both of which a system moves, so a value taken at any
+    later point is a function of the arm. Taken here, no system code has run and
+    "identical whichever system ran" is structural rather than an agreement
+    between arms that happens to hold on one recorded matrix.
+
+    A companion ``adequacy`` field was written on 2026-08-16 and withdrawn the
+    same day for evaluating at the other end of the run, and that reasoning is
+    what fixes the point here rather than merely arguing for it: the end-of-run
+    posterior is the one the arm's *proposals* moved, so a system that
     successfully proposed a structure explaining the probe would be recorded as
-    having failed to detect. The field also conflated two different quantities --
-    whether the space is adequate, which is a property of the space and the
-    scenario, and whether a *system* detected that it was not, which B1 cannot
-    have an answer to because it never consults the check. Both are open in
-    ``docs/BACKLOG.md``. Until they are settled there is no consumer, and a field
-    whose correct semantics depend on an unmade decision is worse than none.
+    having failed to detect, inverting the criterion. The field also conflated
+    two quantities -- whether the space is adequate, which is a property of the
+    space and the scenario, and whether a *system* detected it, which B1 cannot
+    answer because it never looks. This field is the first of those, and says so
+    by being the same number for every arm.
+
+    Not degenerate as an *instrument*: B1 holds only the null and proposes
+    nothing, so its live set never changes and its posterior never moves, and
+    this *is* B1's probe reading throughout its run -- the check measured on
+    2026-08-16 to fire on S11 alone across the twelve slice scenarios. Read down
+    a column it discriminates, which is why it is worth recording.
+
+    **It does, however, cost both of C1's clauses, and the cost is larger than
+    the first draft of this docstring admitted.** C1 words criterion 4 as two
+    comparisons of V7 against B1 -- fires "at a rate at least matching B1's", at
+    a false-positive rate "no higher than B1's" -- and
+    :func:`~sciagent.eval.matrix.replicate_seeds` already pairs every arm on one
+    seed sequence. Two arms reading one instrument at one seed agree exactly, so
+    *neither* clause can fail, on S11 or on S1-S7 and S9. Criterion 4 is a
+    report rather than a bar until an **absolute** threshold replaces the
+    comparison, which is a fresh decision about what V7 is graded on and is open
+    in ``docs/BACKLOG.md`` rather than taken here. An earlier version of this
+    paragraph claimed the false-positive term stayed falsifiable; it does not,
+    and gate A29's own S1 assertions are what show it.
+
+    ``None`` where the scenario declares no Stage A design, rather than the
+    check over an empty record -- which would be a documented ``p_value = 1``
+    and "not inadequate", and would summarise as a probe rate of 0.000
+    indistinguishable from a probe evaluated and never fired. The distinction is
+    :attr:`attempts`'s, for the same reason.
     """
 
     experiments: int
@@ -237,6 +291,13 @@ def run_scenario(
         stage_a=stage_a_id(scenario) if scenario.stage_a is not None else None,
     )
     _run_stage_a(scenario, executor=executor, engine=engine)
+    # Read here and not after the run, which is gate A29 and not a preference
+    # about where a line sits. The scoped check reads the engine's live set and
+    # its posterior; `investigate` moves both. Taken on this side of the call
+    # the value is a function of the scenario, the seed and the graph the
+    # harness built -- so it is the same number for every arm by construction,
+    # and no system can move it. See `ScenarioRun.probe`.
+    probe = _stage_a_probe(scenario, engine, graph)
     reported = system.investigate(investigation)
     # Read before reconciling, not in the call below. ``Proposing.attempts`` and
     # ``ResearchSystem.name`` are both *properties*, so reading either runs
@@ -269,6 +330,7 @@ def run_scenario(
         diagnosis=reported,
         score=closed_world_score(reported, scenario.truth, edits),
         ppc=engine.ppc(),
+        probe=probe,
         experiments=len(investigation.history),
         proposed=investigation.proposed,
         attempts=attempts,
@@ -344,6 +406,91 @@ def _run_stage_a(
     seed = replicate_seed(scenario.seed, f"stage_a:{design.id}", 0)
     result = executor.measure(design, scenario.executed, seed)
     engine.record_probe(stage_a_id(scenario), design.template(), result)
+
+
+def _stage_a_probe(
+    scenario: Scenario,
+    engine: EmpiricalTableEngine,
+    graph: HypothesisGraph,
+) -> PPCResult | None:
+    """Return the adequacy probe as the harness evaluates it, for any arm.
+
+    Guarantees the answer is a function of the engine's state alone, so a caller
+    that invokes it before handing the engine to a system gets a value no system
+    can have influenced. That is the only guarantee here worth having, and it is
+    why this is called where it is rather than beside the other fields.
+
+    The same scoping :meth:`~sciagent.systems.base.Investigation.ppc` applies,
+    and it has to be the same: the criterion compares what one arm *acted on*
+    against what the others would have seen, so a harness computing a differently
+    scoped check would be reporting a rate for a check no system consults. The
+    scoping rule is stated once there and the fallback once here because the two
+    are called at different points in a run and only agree on an engine holding
+    the probe and nothing else.
+
+    Returns ``None`` where the scenario declares no Stage A design. **Not a
+    fallback to the check over the recorded record**, which at this point is
+    empty and would yield
+    :func:`~sciagent.inference.ppc.posterior_predictive_check`'s documented
+    ``p_value = 1`` and "not inadequate" -- a real-looking number for a
+    measurement never taken. ``None`` is the same distinction
+    :attr:`ScenarioRun.attempts` draws, and for the same reason: "no probe
+    declared" and "a probe that did not fire" are different facts about a run,
+    and one value cannot carry both.
+
+    Raises :class:`~sciagent.core.errors.MalformedDesignError` if the engine
+    holds an experiment, or a hypothesis the caller's graph does not.
+    **Both checks are the guarantee above, and without them the guarantee is a
+    sentence.** Arm-independence is a property of the *caller*: it holds because
+    ``run_scenario`` calls this on a fresh engine built from ``graph`` before any
+    system has run, and nothing in the signature says so.
+
+    The two conditions are not redundant, because the two degradations they
+    catch are different and neither check sees the other's:
+
+    - **An engine reused across scenarios** carries the previous run's
+      experiments. ``record_probe`` 's duplicate-id guard does not fire, since
+      the ids differ. Caught by ``observations`` -- and *not* by the hypothesis
+      check, because an arm like B1 proposes nothing and leaves the set alone.
+    - **A hypothesis entertained before the probe is read** moves ``posterior()``
+      with ``observations`` still empty: ``expand`` records nothing, and V1, B4
+      and V7 all call ``entertain`` ahead of their first experiment. Measured on
+      S11, one added structure moves the probe by 7.19e-10 -- small because the
+      null's code length dominates an observation-free posterior, which is a
+      fact about this grammar and not an asserted bound. Caught by comparing the
+      engine's hypotheses against the graph the caller passed, and *not* by
+      ``observations``, which is still empty.
+
+    An earlier version checked ``observations`` alone and said it was "exactly
+    the quantity that must be empty". It is *a* quantity that must be empty; the
+    entertained set is the other, and that half was left as a comment in a
+    docstring claiming otherwise. Found by the invariant auditor, which
+    demonstrated the drift rather than arguing it.
+
+    See :attr:`ScenarioRun.probe` for why that point is before ``investigate``.
+    """
+    if engine.observations:
+        raise MalformedDesignError(
+            f"the Stage A probe was asked for on an engine already holding "
+            f"{len(engine.observations)} experiment(s). It is read before a "
+            f"system runs so that its verdict is the same whichever system ran "
+            f"(gate A29); on a posterior some arm has already moved it is a "
+            f"different quantity wearing the same name, and nothing downstream "
+            f"could tell the two apart"
+        )
+    entertained = set(engine.hypotheses) - set(graph.nodes)
+    if entertained:
+        raise MalformedDesignError(
+            f"the Stage A probe was asked for on an engine holding "
+            f"{sorted(entertained)!r}, which the graph it was built from does "
+            f"not. The check weights its mixture by the posterior over the live "
+            f"set, so a structure entertained first moves it with no experiment "
+            f"recorded -- and gate A29 is that the verdict is the same whichever "
+            f"system ran"
+        )
+    if scenario.stage_a is None:
+        return None
+    return engine.ppc(experiments={stage_a_id(scenario)})
 
 
 def _attempts_of(system: ResearchSystem) -> tuple[ProposalAttempt, ...] | None:

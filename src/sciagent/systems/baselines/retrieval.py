@@ -17,8 +17,10 @@ Why that is not just a likelihood
 ---------------------------------
 
 Scoring candidates by ``p(observation | mechanism)`` would make B4 a posterior
-engine wearing a different hat, and the comparison against V1 would be about
-experiment selection alone. A signature distance is a genuinely different
+engine wearing a different hat, and there would be almost nothing left for the
+comparison against V1 to be about -- since A34 the two also select their
+post-proposal experiments through the same call. A signature distance is a
+genuinely different
 object: it compares *summary statistics in diagnostic space* and is blind to how
 peaked a mechanism's outcome distribution is. That is what retrieval means, and
 it is why B4 can be beaten by evidence a likelihood would have weighed.
@@ -35,7 +37,12 @@ from sciagent.core.types import Diagnosis, HypothesisId
 from sciagent.experiments.dsl import ExperimentDesign
 from sciagent.inference.binning import Discretisation
 from sciagent.inference.empirical import EmpiricalTable
-from sciagent.systems.base import NULL_DEFECT, Investigation, entertain
+from sciagent.systems.base import (
+    NULL_DEFECT,
+    Investigation,
+    entertain,
+    select_experiments,
+)
 
 __all__ = ["Retrieval", "residual_signature"]
 
@@ -154,13 +161,21 @@ class Retrieval:
         return "B4"
 
     def investigate(self, investigation: Investigation) -> Diagnosis:
-        """Observe, retrieve, propose the shortlist, then spend what is left.
+        """Observe, retrieve, propose the shortlist, then select what is left.
 
         Half the budget is spent before retrieving and half after. Retrieval
         needs observations to key on, and the experiments that follow are what
         separate a shortlist the posterior then has to weigh -- spending
         everything up front would leave the proposals unexamined, and spending
         nothing would leave the signature undefined.
+
+        The two halves are spent differently, and the asymmetry is the whole of
+        A34. The second goes through
+        :func:`~sciagent.systems.base.select_experiments`, which is the call V7
+        and V1 make, so the designated comparator no longer differs from the
+        treatment on selection policy in a contrast about proposal source. The
+        first stays a rotation because there is nothing to select between yet;
+        see :meth:`_rotate`.
         """
         total = int(investigation.budget.remaining)
         self._rotate(investigation, (total + 1) // 2)
@@ -169,7 +184,16 @@ class Retrieval:
         proposed = ranked[: self._shortlist]
         entertain(investigation, {name: self._library[name] for name in proposed})
 
-        self._rotate(investigation, int(investigation.budget.remaining))
+        remaining = int(investigation.budget.remaining)
+        if len(investigation.engine.live) > 1:
+            select_experiments(investigation, remaining)
+        else:
+            # Nothing was admitted, so the belief holds the null alone and every
+            # design's expected information gain is exactly zero -- selection
+            # would repeat one design for the whole half. The same degeneracy
+            # :meth:`_rotate` documents for the half *before* the proposal, which
+            # is reachable here too whenever the proposal step admits nothing.
+            self._rotate(investigation, remaining)
         return investigation.conclude(
             residual_candidates=tuple(
                 HypothesisId(name) for name in ranked[self._shortlist :]
@@ -180,7 +204,18 @@ class Retrieval:
 
     @staticmethod
     def _rotate(investigation: Investigation, count: int) -> None:
-        """Run ``count`` experiments in the scenario's design order, repeating."""
+        """Run ``count`` experiments in the scenario's design order, repeating.
+
+        The pre-proposal half only, and that is not an oversight left over from
+        A34. At this point the graph holds the null and nothing else, so every
+        design's expected information gain is exactly zero and
+        :func:`~sciagent.experiments.boed.rank` breaks the resulting all-way tie
+        by ascending template id -- selection would repeat one design for the
+        whole half. The rotation is what spreads the budget over the design space
+        instead, which is what the step after it needs. The residual asymmetry
+        against V7, which *has* entertained a library by the time it selects, is
+        declared on ``SPEC9_CONTRAST`` rather than left for a reader to find.
+        """
         designs = investigation.designs
         for step in range(max(0, count)):
             if not investigation.affords():

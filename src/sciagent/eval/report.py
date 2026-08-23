@@ -496,6 +496,25 @@ class Preregistration:
     dimension: str
     conditional_on_inadequacy: bool = True
 
+    residual_asymmetries: tuple[str, ...] = ()
+    """Protocol deltas between the two arms that this contrast does **not**
+    control for, stated in advance.
+
+    A contrast is only as clean as what the arms share, and the arms do not share
+    everything. Recording the remainder is what turns a confound into a stated
+    limitation: a reader can price a difference that is named, and cannot price
+    one that is not. ``docs/BACKLOG.md``'s A34 entry is where the requirement
+    comes from, and the instance that carries it is in
+    ``environments/pointproc/matrix.py`` -- the framework may not know which
+    systems a campaign compares.
+
+    Deliberately **not** part of :meth:`describes`. That compares the five fields
+    that say *which* contrast was declared, and a note about what the comparison
+    does not control for is not one of them. Folding it in would make every
+    contrast report ``preregistered=False`` the moment a residual was written
+    down, which is the opposite of what recording one is for.
+    """
+
     def describes(
         self,
         *,
@@ -564,6 +583,17 @@ class Contrast:
     overlaps: bool
     """Whether the two intervals intersect. ``False`` is what §12 criterion 5
     asks for; it is not by itself evidence of anything, at twenty seeds."""
+
+    residual_asymmetries: tuple[str, ...]
+    """The declaration's stated protocol deltas, carried onto the result.
+
+    Copied from the :class:`Preregistration` rather than re-derived, and empty
+    when none was given. It is here because a limitation nobody reads is not a
+    limitation stated: ``docs/BACKLOG.md``'s A34 entry asks for the bounding
+    comparison to be preregistered *in the contrast analysis*, and the analysis is
+    what a reader sees. ``scripts/report_matrix.py`` prints it under the contrast
+    block.
+    """
 
     preregistered: bool
     """Whether this contrast matches the :class:`Preregistration` it was given.
@@ -1368,6 +1398,9 @@ def contrast(
         treatment_seeds=_seeds_of(arms[treatment]),
         comparator_seeds=_seeds_of(arms[comparator]),
         overlaps=left.low <= right.high and right.low <= left.high,
+        residual_asymmetries=(
+            () if preregistration is None else preregistration.residual_asymmetries
+        ),
         preregistered=preregistration is not None
         and preregistration.describes(
             scenario=scenario,

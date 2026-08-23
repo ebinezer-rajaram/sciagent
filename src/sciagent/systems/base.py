@@ -19,7 +19,8 @@ runs designs *against* the truth without being able to read it.
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from typing import Protocol, runtime_checkable
 
 from sciagent.core.conditions import Between, Condition, Not
@@ -28,6 +29,7 @@ from sciagent.core.errors import InvestigationError, NoLiveHypothesisError
 from sciagent.core.types import (
     Diagnosis,
     ExperimentId,
+    ExperimentTemplateId,
     FrozenDict,
     HypothesisId,
     MetricRef,
@@ -37,6 +39,7 @@ from sciagent.core.types import (
     ScenarioId,
     Seed,
 )
+from sciagent.experiments import boed
 from sciagent.experiments.dsl import ExperimentDesign
 from sciagent.experiments.executor import ExecutionResult, Executor
 from sciagent.hypothesis.graph import HypothesisGraph
@@ -58,6 +61,7 @@ __all__ = [
     "diagnose",
     "entertain",
     "null_seeded_graph",
+    "select_experiments",
     "table_prediction",
     "table_predictions",
 ]
@@ -292,7 +296,11 @@ class Investigation:
         offers. A system therefore says only *which* structure it wants to
         entertain, and the thresholds that would refute it are the framework's.
         Supplying predictions explicitly is for a system that has a reason to
-        claim something narrower; they are validated by the graph either way.
+        claim something narrower; they are validated by the graph either way, and
+        the framework stamps :attr:`~sciagent.core.types.Prediction.authored` on
+        them so that what the system chose its own threshold for is recoverable
+        downstream. :func:`~sciagent.verify.statistical.check` is what acts on
+        that stamp.
 
         ``proposed_at`` is set to the most recent experiment, so SPEC F9's rule
         -- lateness costs nothing in likelihood but forfeits a confirmatory claim
@@ -312,6 +320,21 @@ class Investigation:
                     self._engine.table, node_id, program_edit, self._designs
                 )
             )
+        else:
+            # Stamped rather than read. A caller able to set this flag is able to
+            # clear it, so the framework overwrites it on everything it did not
+            # derive itself -- which is what makes this a seal and not a
+            # convention a system is trusted to keep.
+            #
+            # Unconditional, and deliberately not narrowed to conditions that
+            # *contradict* the structure's table row. Contradicting the modal
+            # cell makes a claim harder to confirm; the move that actually pays
+            # is widening the condition to cover most of the diagnostic's range,
+            # which strictly contains the row and contradicts nothing. A stamp
+            # that fired only on contradiction would miss it.
+            predictions = [
+                replace(prediction, authored=True) for prediction in predictions
+            ]
         proposed_at: ExperimentId | None = (
             self._history[-1].experiment if self._history else None
         )
@@ -484,6 +507,66 @@ def _cell_condition(design: ExperimentDesign, cell: int) -> tuple[MetricRef, Con
     return axis.metric, Between(
         low=low, high=high, low_closed=True, high_closed=index + 1 == axis.n_bins
     )
+
+
+def select_experiments(
+    investigation: Investigation,
+    steps: int,
+    *,
+    targets: Callable[[Investigation], Sequence[HypothesisId]] | None = None,
+) -> None:
+    """Spend ``steps`` experiments by expected information gain.
+
+    The single selection call site. Every arm that selects at all comes through
+    here, so *"the comparator chooses its evidence the way the treatment does"*
+    is a property of one function rather than a resemblance between four that a
+    later edit could quietly break in one of them.
+
+    It exists because that resemblance did not hold. V1 and V7 planned while B4
+    and B5 spent their budget on a fixed rotation through the design order, so
+    SPEC §9's contrast -- designated to test *proposal source* -- carried a
+    selection difference too, and "equal budget" held for the count and not for
+    the informativeness. See ``docs/BACKLOG.md``'s A34 entry.
+
+    Guarantees no number reaches the plan from the caller. The belief and the
+    predictive are both taken off the engine inside
+    :func:`~sciagent.experiments.boed.plan`; what a system supplies is which
+    designs exist and how many steps to spend, neither of which is a number about
+    the world.
+
+    ``steps`` below one spends nothing rather than raising. A caller handing over
+    "whatever is left" may legitimately have nothing left, and
+    :func:`~sciagent.experiments.boed.greedy` refuses a plan of zero steps --
+    which is right for a plan and wrong for a budget.
+
+    The plan is run as one trajectory rather than step by step so that the belief
+    BOED selects against is the belief it updates; see
+    :func:`~sciagent.experiments.boed.greedy` on why designs are chosen with
+    replacement.
+
+    ``targets`` names, per step, the hypotheses the chosen experiment is aimed at,
+    which is SPEC §7.1 clause 1's input. Optional, and its absence does not break
+    the parity above: nothing in :mod:`sciagent.experiments.boed` reads it, so an
+    arm that declares no target selects identically to an arm that does. What
+    differs is what the relevance check can later say about the claims each makes,
+    and that difference is declared in ``SPEC9_CONTRAST`` rather than hidden.
+    """
+    if steps < 1:
+        return
+    by_id: dict[ExperimentTemplateId, ExperimentDesign] = {
+        design.id: design for design in investigation.designs
+    }
+
+    def observe(_index: int, template: ExperimentTemplateId) -> int:
+        # The step index is BOED's; the seed comes from the investigation, which
+        # counts steps itself.
+        design = by_id[template]
+        result = investigation.run(
+            design, targets=() if targets is None else targets(investigation)
+        )
+        return design.template().outcome.cell_of(result.result)
+
+    boed.plan(investigation.engine, tuple(by_id), observe, steps=steps)
 
 
 def entertain(investigation: Investigation, library: Mapping[str, Defect]) -> None:

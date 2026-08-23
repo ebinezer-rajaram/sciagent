@@ -15,10 +15,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from sciagent.core.edits import Defect
-from sciagent.core.types import Diagnosis, ExperimentTemplateId
-from sciagent.experiments import boed
-from sciagent.experiments.dsl import ExperimentDesign
-from sciagent.systems.base import Investigation, entertain
+from sciagent.core.types import Diagnosis
+from sciagent.systems.base import Investigation, entertain, select_experiments
 
 __all__ = ["BOEDOnly"]
 
@@ -52,23 +50,5 @@ class BOEDOnly:
         replacement.
         """
         entertain(investigation, self._library)
-        by_id: dict[ExperimentTemplateId, ExperimentDesign] = {
-            design.id: design for design in investigation.designs
-        }
-
-        def observe(_index: int, template: ExperimentTemplateId) -> int:
-            # The step index is BOED's; the seed comes from the investigation,
-            # which counts steps itself.
-            design = by_id[template]
-            result = investigation.run(design)
-            return design.template().outcome.cell_of(result.result)
-
-        steps = int(investigation.budget.remaining)
-        if steps >= 1:
-            boed.plan(
-                investigation.engine,
-                tuple(by_id),
-                observe,
-                steps=steps,
-            )
+        select_experiments(investigation, int(investigation.budget.remaining))
         return investigation.conclude()

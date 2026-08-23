@@ -910,6 +910,40 @@ class TestThePreregisteredContrast:
         assert result.treatment_system == "V7"
         assert result.preregistered is False
 
+    def test_a_declared_residual_reaches_the_contrast(self) -> None:
+        """A limitation nobody reads is not a limitation stated.
+
+        ``contrast`` copies the declaration's protocol deltas onto the result so
+        that ``report_matrix.py`` can print them under the block they qualify.
+        Without this the deltas are visible only to whoever reads
+        ``environments/pointproc/matrix.py``, which is not the reader the
+        contrast is for.
+        """
+        result = contrast(
+            contrast_report([0.9] * 4, [0.1] * 4),
+            scenario=SPEC9_CONTRAST.scenario,
+            treatment=SPEC9_CONTRAST.treatment,
+            comparator=SPEC9_CONTRAST.comparator,
+            dimension=SPEC9_CONTRAST.dimension,
+            preregistration=SPEC9_CONTRAST,
+        )
+        assert result.residual_asymmetries == SPEC9_CONTRAST.residual_asymmetries
+        assert result.residual_asymmetries
+
+    def test_a_contrast_with_no_declaration_carries_no_residual(self) -> None:
+        """Empty, not inherited from somewhere. A contrast nobody declared has
+        nothing to say about what it fails to control for, and inventing a
+        residual for it would be as misleading as omitting a real one."""
+        result = contrast(
+            contrast_report([0.9] * 4, [0.1] * 4),
+            scenario=SPEC9_CONTRAST.scenario,
+            treatment=SPEC9_CONTRAST.treatment,
+            comparator=SPEC9_CONTRAST.comparator,
+            dimension=SPEC9_CONTRAST.dimension,
+        )
+        assert result.residual_asymmetries == ()
+        assert result.preregistered is False
+
     def test_the_spec_nine_contrast_is_marked_preregistered(self) -> None:
         result = contrast(
             contrast_report([0.9] * 4, [0.1] * 4),

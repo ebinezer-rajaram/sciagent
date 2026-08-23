@@ -10017,3 +10017,290 @@ test and the extension-case test were written with `Path` and `rglob`, whose
 behaviour *is* the defect on Windows and is correct on POSIX — so each passed
 locally while asserting nothing on CI. `PureWindowsPath` and `PurePosixPath`
 state the question in a way that means the same thing everywhere.
+
+## 2026-08-23 — A34: parity is partial by construction, so both branches of the OR were taken
+
+**Decision.** The post-proposal half of every arm's budget now goes through one
+`select_experiments` in `systems/base.py` — V1, V7, B4 and B5 all call it. The
+**pre-proposal** half of B4 and B5 stays a fixed rotation, and the residual is
+declared on `SPEC9_CONTRAST.residual_asymmetries` rather than left implicit. The
+A34 gate's first clause is an "either … or"; this satisfies both halves, because
+the parity half alone is not achievable and the declaration half alone leaves a
+confound in the primary contrast that could have been removed.
+
+**Why.** Full parity is blocked by something structural rather than by a policy
+choice. V7 calls `entertain` over its whole library *before* its first selection,
+so its first half plans against a belief with alternatives in it. B4 must observe
+before it can retrieve — its key is a residual signature over what was seen — and
+B5 before it can score predictive fit. At their first half the graph holds only
+the null.
+
+**Measured, in the course of writing the gate, and the number is the reason:**
+with a one-hypothesis belief every design's expected information gain is exactly
+zero, and `boed.rank` breaks the resulting all-way tie by ascending template id.
+A `boed.plan` over B4's first half on S1 returns `force×4` — one design, four
+times — against the rotation's `[d0, d1, d2, d3]`. That would collapse
+`_observed_signature`'s key from a vector over every design run to a single
+design's residual, and score B5's beam on one design. It would make the
+designated comparator *weaker*, which inverts the entry's own purpose ("A weak B4
+would answer that question by default, so this is built to be strong").
+
+The two escapes are worse and were rejected: entertaining the library up front
+turns B4 into V1, and handing `greedy` a system-constructed belief violates the
+second invariant by construction — `plan` exists precisely so the belief comes
+off the engine.
+
+**A spec ambiguity found, and resolved against the narrower text.** The BACKLOG
+**Gate.** sentence says a self-serving prediction "that contradicts the
+structure's table row" must be refused or stamped. Contradiction is the *weaker*
+attack: contradicting the modal cell makes a claim harder to confirm. The move
+that pays is a condition strictly *containing* the row — measured on `hawkes`
+under `query:count_autocorrelation_w2`, the honest row is `[0.42, 0.47)`, 2.5% of
+the declared `[-1.0, 1.0]` range, against a widened `[-1.0, 0.65)` at 82.5%. It
+contradicts nothing, passes `validate_prediction`, and is counted in full by
+`prediction_evidence`. So authorship is stamped on **every** explicitly supplied
+prediction. The same sentence drops the **Idea.**'s "three protocol deltas"; the
+gate asserts all three. The entry is marked with both narrowings.
+
+**Two smaller calls.** The discount is `REFER`, not `REJECT`, and sits *last* in
+`_from_predictions` — a claim its own cited experiments refuted is still rejected
+above it, and only a claim that would otherwise have been accepted is referred.
+Nothing about such a claim is false; what cannot be settled mechanically is
+whether the condition was drawn where the structure implies or where the claim
+needed it. And `targets` — V7 declares the live hypotheses each experiment aims
+at, B4/B5 declare none — was left a *declared* delta rather than fixed: it is
+SPEC §7.1's input and not a selection input, nothing in `boed` reads it, and
+making V1 declare targets to match would move V1's numbers for a reason A34 does
+not ask for.
+
+**A measurement that is expensive to reproduce, and a correction to one I made
+mid-session.** Suite timings on this tree: 612.61s on the first run after the
+change (cold — new rows written into the shared table cache), 272.73s on the
+second, 139.28s on the third and settled one, against the 151.30s figure
+CLAUDE.md documents. I read the 272.73s as a permanent tax the new gate had
+added and rewrote it to run each arm once instead of three times on that basis.
+**The reading was wrong**: the 272.73s run was contaminated by my own background
+polling loops and a partly-cold cache, and no A34 test appears in the settled
+run's slowest eight. The rewrite stands on being simpler and doing strictly less
+work; it did not buy two minutes, and anyone repeating this should not expect it
+to.
+
+**Closes off.** B4's and B5's recorded numbers move, D3 included. That was
+anticipated and is why the 2026-08-21 re-ranking put A34 at 11 and A40's
+re-derivation at 12; A40 must still run after this. V1 and V7 are behaviour-
+identical across the change — their `_select` bodies became delegations to the
+same call with the same arguments — so nothing here stales a V-arm number.
+B1 is untouched and stays a rotation: its own is documented as deliberate, since a
+selection policy would confound the floor it exists to establish.
+
+## 2026-08-23 — A34, addendum: what the review found, and the one thing left open
+
+**Decision.** Three of `/code-review`'s four findings are fixed in the same
+change. The fourth — **no term in the cell address moves when a system's
+protocol changes** — is left open and is the user's call, not mine.
+
+**The open one, stated so it is not lost.** `cell_key` folds in the matrix
+version, the dimension version, the battery key, the system name, the scenario,
+the replicate, the partition, the environment/data/metric versions and the seed.
+It covers, in its own docstring's words, "every coordinate that should determine
+the cell … and nothing that should not" — and *how a system spends its budget* is
+not among them. So `run_matrix`'s `skip_recorded=True` default will reuse
+rotation-era B4 and B5 rows beside new-code V7 rows and report them as one
+campaign. `MATRIX_VERSION` is still `"spec9/1"`. This is the same failure
+`DIMENSION_VERSION` (A26) and `battery_key` (A27) were each minted to close,
+arriving from a third direction.
+
+**Why it is not fixed here.** Bumping `MATRIX_VERSION` re-addresses all 1,120
+recorded rows, which is a campaign-wide act that A40 already owns — A40 bumps
+`METRIC_VERSION`, which is itself in the address, so after A40 no mixing is
+possible. A34 sits at rank 11 and A40 at rank 12 precisely because A34 stales
+what A40 re-derives. The exposure is therefore the window between the two, and it
+is only reachable by running `run_matrix` with `skip_recorded` on the existing
+ledger before A40 lands. **Anyone doing that between now and A40 gets a mixed
+matrix with nothing warning them.** Whether to spend the bump now or rely on the
+sequencing is a decision about the recorded campaign, and it is the user's.
+
+**The three that were fixed, because two were defects and not style.**
+
+1. **B5 could hit the degeneracy its own new docstring warns about.** If the
+   candidate loop admits nothing — every candidate a duplicate or unmeasurable,
+   or an empty beam — the graph holds only the null, and routing the second half
+   through `boed.plan` would repeat one design for all of it. B5 previously
+   rotated that half, so this was a regression the parity change introduced. Both
+   B4 and B5 now fall back to the rotation when `len(engine.live) <= 1`.
+   `test_a34_selection_on_a_null_only_belief_repeats_one_design` pins the
+   underlying fact rather than the branch, since it is the same fact the
+   pre-proposal rotation rests on.
+2. **The authored "discount" is all-or-nothing, and the docstring said
+   otherwise.** `propose` stamps a node's predictions in one call and nothing
+   adds more to a node afterwards, so `confirmed == authored_confirmed` reduces
+   today to `authored_confirmed > 0`: a hypothesis proposed with *any* explicit
+   prediction can never carry an adjudicated prediction-channel claim. The
+   behaviour is defensible — referral is gentler than the refusal A34 also
+   permits — but `Prediction.authored` claimed it "keeps the legitimate narrower
+   claim available", which is false. The prose now states the trade instead of
+   softening it. The condition is left as the equality, which is what is actually
+   meant and stays right if a node ever holds both kinds.
+3. **The declared residuals reached no reader.** `Contrast` carried only
+   `preregistered: bool`, so the protocol deltas were visible to whoever reads
+   `environments/pointproc/matrix.py` and to nobody reading the contrast they
+   qualify. The entry asks for the bounding comparison to be preregistered *in
+   the contrast analysis*; `Contrast` now carries them and
+   `scripts/report_matrix.py` prints them under the block.
+
+**Closes off.** The `MATRIX_VERSION` question is the only thing this gate leaves
+open, and it is now written down rather than resting on the ordering holding.
+
+## 2026-08-23 — A34, second addendum: the history lens found this was a twice-deferred item
+
+**Decision.** Nothing changed in the code as a result, but two things are now
+recorded that were not, and one sentence was added to `SPEC9_CONTRAST`.
+
+**This gate closes a defect the project had already caught and consciously left
+open — twice — and neither deferral was findable from the A34 entry.** The
+2026-08-16 entry ("the review caught an invariant 6 violation on the way out")
+records the selection asymmetry as a known defect rather than a design choice:
+*"the Stage A design is in `slice_designs()`, so B1, B4 and B5 rotate onto it and
+spend budget there while V1 and V7 select by information gain and can decline —
+left as it is, flagged, and it belongs with the criterion 4 question rather than
+being settled on the way past."* That is the opposite of B1's status, which
+`ppc_only.py` documents as deliberate. No equivalent sentence was ever written
+for B4 or B5, which is what made "is the rotation deliberate?" answerable at all.
+
+**The Stage A consequence was not in the declaration and now is.** Over the
+post-proposal half B4 and B5 can now decline the Stage A design exactly as V7
+can, so that half of the 2026-08-16 finding is closed. Over the pre-proposal half
+they still rotate onto it and still spend budget there. It is a facet of the
+first declared delta rather than a fourth one, and it is named inside it.
+
+**The predictions channel was recorded as unfixed twice, and the stated blocker
+turned out not to bind.** The 2026-08-16 invariant-2 entry left it because *"the
+fix changes `propose`'s signature… It needs a decision about the signature before
+it needs code"*, and A30 (`f7a33b0`, earlier today) repeated it as one of three
+findings recorded and not fixed, threat-model-only since no shipped system used
+the field. Stamping authorship needs **no signature change** — `propose` keeps
+`predictions: Sequence[Prediction] | None = None` and overwrites a field on what
+arrives — so the thing that blocked it for a week was not actually in the way.
+Worth knowing the next time a fix is deferred on a signature question.
+
+**Also checked, and clean.** V1's deleted inline `boed.plan` block and V7's
+deleted `_select` body each came from a single originating commit (`9331bd4` and
+`a380a21`) and were never revisited, so neither carried a guard added to fix a
+defect. The clause order in `_from_predictions` was written once in `91449a1` and
+never reordered by a fix, so appending to it disturbs nothing that was settled.
+
+**Closes off.** The criterion 4 question the 2026-08-16 entry parked this
+alongside is A29's, which has landed; the selection half of that finding is what
+A34 closes, and the Stage A budget consequence over the pre-proposal half is now
+declared rather than merely flagged.
+
+## 2026-08-23 — A34, third addendum: the invariant lens found a hole in my own reasoning
+
+**Decision.** Lens 2 of `invariant-auditor` found three things on the authorship
+seal. One was a defect in the change and is fixed; one is a design hole held shut
+by two absences and is recorded rather than fixed; one was hardening the house
+style asks for and is applied.
+
+**The defect: the discount did not cover `strength == "refutes"`, and the reason
+I gave for that was wrong.** `PredictionEvidence.authored_confirmed`'s first
+docstring said refutations need no equivalent split, because *"a system that
+authored a condition its own experiment then refuted has argued against itself,
+and there is nothing to discount"*. That is true of a claim **supporting** the
+hypothesis and false of a claim **refuting** it: there, clearing a self-authored
+refutation bar is the *favourable* outcome. A system can propose a rival or decoy
+structure with a wide authored refutation and have `"refutes"` accepted on a
+threshold it set — and `claims_from_run` emits a claim per hypothesis carrying
+mass, so the path is live on every scored cell the moment a system authors
+anything. `_from_predictions` returned inside the `refutes` branch *before*
+reaching the authored gate, so nothing caught it. Now tallied as
+`authored_refuted` and referred symmetrically, with
+`test_a34_an_agent_authored_refutation_cannot_carry_a_claim` covering the branch
+the gate's own `supports`-only test never reached.
+
+**The hole recorded rather than fixed: referral is not only a penalty.** `REFER`
+is not merely "not adjudicated" — it is also not `accepted`, and only accepted
+claims enter the population `contradiction.check` reads. So authoring predictions
+*lowers* the contradiction count SPEC §12 criterion 8 asks to be zero, by making
+the system's own earlier claims unadmittable. The lens demonstrated it by
+execution against this tree: identical claims but for the flag gave
+`adjudicated=2/2, contradictions=1` at `authored=False` and `adjudicated=0/2,
+contradictions=0` at `authored=True`. A cost on one criterion bought as a credit
+on another.
+
+It **cannot fire today**, and both reasons are absences rather than structure: no
+shipped system passes `predictions=`, and `HypothesisGraph.relate` has no caller
+in `src` at all, so no `CONTRADICTS` edge exists in any recorded campaign —
+checked directly, `grep -rn "\.relate(" src/` returns nothing. Not fixed here
+because the fix is a question about how §12's criteria rank against each other,
+§12 is frozen, and inventing an answer inside a gate about selection parity is
+the kind of thing invariant 6 exists to stop. `Prediction.authored` now states
+the direction rather than only the cost.
+
+**The hardening.** `PredictionEvidence` is a frozen dataclass of five bare ints
+whose subset relation (`authored_confirmed <= confirmed`) is what
+`_from_predictions`' equality test depends on; if it were ever violated the
+discount would disappear with nothing raising. It now has a `__post_init__`, the
+same discipline `AdjudicationCounts` applies one level up and for the reason that
+class already states: CLAUDE.md's second invariant asks for runtime assertions
+rather than comments.
+
+**Also raised and deliberately not acted on.** `select_experiments`' `targets` is
+a caller-supplied callable invoked inside the framework's own loop, so an
+arbitrary implementation could call `run` or `propose` re-entrantly and shift the
+history length every subsequent seed derives from. It cannot write a number — the
+view strips `record`, `expand` and `ensure_structure` — and the only implementation
+that exists is `Hybrid._live`, a pure staticmethod over `engine.live`. Guarding it
+would mean policing callables at a boundary nothing has ever crossed.
+
+**Closes off.** Together with the first addendum's `MATRIX_VERSION` question,
+these are the two things this gate leaves open, and both are now written down
+rather than resting on nobody exercising them.
+
+## 2026-08-24 — A34, fourth addendum: a shared-file race the gate made fire, and a false green I recorded
+
+**Decision.** `tests/acceptance/test_a34.py` no longer calls `save_gate_table`.
+The race it made fire is **pre-existing and still open**, and is written down
+here rather than fixed, because fixing it is a change to how six test modules
+share one file and does not belong inside a gate about comparator parity.
+
+**What happened.** The verification run came back `1 failed, 1645 passed`, on
+`tests/test_matrix_runner.py::TestTheTableIsThreadedAcrossReplicates::
+test_a_structure_simulated_once_is_not_simulated_again`, at
+`tests/test_matrix_runner.py:324`:
+
+```python
+assert set(gate_table().structures) == shared
+```
+
+That is not an assertion about the runner. It captures the shared on-disk table's
+structures at test start and asserts the **file did not grow while the test ran**
+— which any concurrent writer breaks. Under `-n 4 --dist loadfile` modules land
+on different workers, and `save_gate_table` is called by `baseline_runs.py`,
+`oracle_runs.py`, `test_ablation.py`, `test_agency.py`, `test_baselines_slice.py`
+— and, until this change, by the new A34 gate. The test passes in isolation, and
+passed three full runs before failing the fourth, which is the signature.
+
+**Why the gate's write was pure cost.** `baseline_runs.py` and
+`test_baselines_slice.py` each run B5 on *every* slice scenario including S1 and
+save, so every row the A34 gate would have persisted is already persisted by
+them. The gate's growth is a subset of theirs, it calls no `reading_of`, and it
+proposes nothing new — B5's search runs before the half this change touched, so
+the structures it proposes are unaltered. Removing the write loses no warmth and
+removes one racer.
+
+**The race is not closed.** Five modules still write that file while
+`test_matrix_runner` asserts it is still. Nothing here changes the odds for
+those; what changed is that A34 is no longer among them. Whoever fixes it
+properly has to decide whether the invariant belongs on the file (a private table
+per module, or a lock) or whether line 324's assertion should be scoped to the
+runner rather than to the shared file it happens to read.
+
+**A false green I recorded and then retracted.** `suite-freshness.sh record`
+promotes the pinned tree on the strength of being *invoked*; it does not read
+pytest's exit code, and I had piped pytest through `tail`, so the shell reported
+success. I ran `record` on a run with a failure in it and it wrote
+`3b5c1c62…` into `.cache/claude/last-green.txt`. Removed by hand the moment I
+read the tail properly. **The hook cannot catch this** — its own header says a
+false "fresh" is the failure mode it will not tolerate, and the gap is that
+`record` trusts the caller to have read the result. Read the tail before
+recording; a zero exit code from a pipeline is not a green suite.

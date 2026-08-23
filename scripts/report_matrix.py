@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import textwrap
 from pathlib import Path
 
 from environments.pointproc.matrix import SPEC9_CONTRAST
@@ -183,6 +184,7 @@ def _contrast_lines(result: Contrast) -> str:
             f"  {'treatment exceeds':<22s}{result.exceeds}",
             f"  {'same seeds (paired)':<22s}{result.paired}",
             "",
+            *_residual_lines(result),
             "  Exploratory. Overlap and direction are two readings, not one",
             "  verdict; SPEC sec. 12 criterion 5 asks for non-overlap and does",
             "  not make non-overlap sufficient.",
@@ -192,6 +194,25 @@ def _contrast_lines(result: Contrast) -> str:
             "  twenty seeds cannot separate out.",
         ]
     )
+
+
+def _residual_lines(result: Contrast) -> list[str]:
+    """Return the declared protocol deltas, wrapped, or nothing if none were.
+
+    Printed because a residual recorded only in the declaration is visible to
+    whoever reads ``environments/pointproc/matrix.py`` and to nobody reading the
+    contrast it qualifies. ``docs/BACKLOG.md``'s A34 entry asks for the bounding
+    comparison to be preregistered *in the contrast analysis*.
+    """
+    if not result.residual_asymmetries:
+        return []
+    lines = ["  Declared protocol deltas this contrast does NOT control for:"]
+    for stated in result.residual_asymmetries:
+        wrapped = textwrap.wrap(stated, width=68)
+        lines.append(f"    - {wrapped[0]}")
+        lines.extend(f"      {line}" for line in wrapped[1:])
+    lines.append("")
+    return lines
 
 
 if __name__ == "__main__":

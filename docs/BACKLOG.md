@@ -1483,7 +1483,8 @@ digest is refused under another; the rendered report names the numpy version.
 **Rank.** 10
 **Cost.** M.
 
-## Comparator parity: selection policy is confounded with proposal source
+## DONE (2026-08-23, gate A34) — Comparator parity: selection policy is
+## confounded with proposal source
 
 **Idea.** Give B4 and B5 the same BOED selection V7 uses (or, if rotation is
 kept deliberately, preregister that V1-vs-B4 bounds the selection effect in
@@ -1510,6 +1511,30 @@ selection through `boed.plan` identically to V7 on a constructed scenario, or
 the contrast declaration records the bounding comparison; and a self-serving
 explicit prediction that contradicts the structure's table row is refused or
 marked agent-authored.
+
+**Landed 2026-08-23, taking both branches of the first clause.** Full parity is
+unreachable and the obstruction is structural: V7 entertains its library before
+it selects, while B4 must observe before it can retrieve and B5 before it can
+score predictive fit, so at their pre-proposal half the belief holds only the
+null, every design's expected information gain is exactly zero, and `boed.rank`
+breaks the all-way tie by ascending template id. Routing that half through
+`boed.plan` would repeat one design for the whole of it, collapsing B4's
+retrieval key onto a single design's residual — gutting the comparator this
+project deliberately built strong. So the post-proposal half of all four arms now
+goes through one `select_experiments` in `systems/base.py`, the pre-proposal half
+stays a rotation with the reason written at `_rotate`, and the remainder is
+declared on `SPEC9_CONTRAST.residual_asymmetries` — three deltas, the Idea's
+count, though not all three are the ones it had in mind.
+
+**The Gate sentence is narrower than this entry's own Idea, and the
+implementation follows the Idea.** "Contradicts the structure's table row" names
+the weaker attack: contradicting the modal cell makes a claim *harder* to
+confirm, while a condition strictly containing it is confirmed by everything the
+honest one is and much else besides — measured at 82.5% of the diagnostic's
+declared range against the honest 2.5%. Authorship is therefore stamped on every
+explicitly supplied prediction, not only on contradicting ones. The Gate sentence
+also drops the Idea's "three protocol deltas"; the gate test asserts all three.
+Worth reconciling the two sentences if this entry is ever read as the contract.
 
 **Rank.** 11
 **Cost.** M.

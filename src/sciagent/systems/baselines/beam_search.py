@@ -37,7 +37,7 @@ from sciagent.experiments.dsl import defect_key
 from sciagent.hypothesis.validator import find_duplicate
 from sciagent.inference.empirical import EmpiricalTable
 from sciagent.inference.interface import Observation, Simulator
-from sciagent.systems.base import Investigation
+from sciagent.systems.base import Investigation, select_experiments
 
 __all__ = ["BeamSearch", "PredictiveFit", "table_fit"]
 
@@ -143,11 +143,15 @@ class BeamSearch:
         return "B5"
 
     def investigate(self, investigation: Investigation) -> Diagnosis:
-        """Observe, search, propose the best structure, then spend what is left.
+        """Observe, search, propose the best structure, then select what is left.
 
         Like B4, half the budget is spent before searching: predictive fit is
         defined against observations, so a search with none would rank candidates
-        by their priors alone.
+        by their priors alone. And like B4, the half that follows the proposal is
+        spent through :func:`~sciagent.systems.base.select_experiments` while the
+        half before it is a rotation -- see :meth:`_rotate` for why the two
+        cannot be the same call, and ``docs/BACKLOG.md``'s A34 entry for why they
+        are no longer the same call as each other.
         """
         total = int(investigation.budget.remaining)
         self._rotate(investigation, (total + 1) // 2)
@@ -181,7 +185,16 @@ class BeamSearch:
             proposed.append(node_id)
             break
 
-        self._rotate(investigation, int(investigation.budget.remaining))
+        remaining = int(investigation.budget.remaining)
+        if len(investigation.engine.live) > 1:
+            select_experiments(investigation, remaining)
+        else:
+            # Nothing was admitted, so the belief holds the null alone and every
+            # design's expected information gain is exactly zero -- selection
+            # would repeat one design for the whole half. The same degeneracy
+            # :meth:`_rotate` documents for the half *before* the proposal, which
+            # is reachable here too whenever the proposal step admits nothing.
+            self._rotate(investigation, remaining)
         # What was *not* admitted, rather than everything below rank 0. The two
         # agreed while only the leading candidate could be proposed; now that the
         # loop falls through an unmeasurable or duplicate leader, the admitted
@@ -202,7 +215,18 @@ class BeamSearch:
 
     @staticmethod
     def _rotate(investigation: Investigation, count: int) -> None:
-        """Run ``count`` experiments in the scenario's design order, repeating."""
+        """Run ``count`` experiments in the scenario's design order, repeating.
+
+        The pre-proposal half only, and that is not an oversight left over from
+        A34. At this point the graph holds the null and nothing else, so every
+        design's expected information gain is exactly zero and
+        :func:`~sciagent.experiments.boed.rank` breaks the resulting all-way tie
+        by ascending template id -- selection would repeat one design for the
+        whole half. The rotation is what spreads the budget over the design space
+        instead, which is what the step after it needs. The residual asymmetry
+        against V7, which *has* entertained a library by the time it selects, is
+        declared on ``SPEC9_CONTRAST`` rather than left for a reader to find.
+        """
         designs = investigation.designs
         for step in range(max(0, count)):
             if not investigation.affords():

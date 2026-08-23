@@ -319,6 +319,47 @@ class Prediction:
     under: ExperimentTemplateId
     refutation: Condition
 
+    authored: bool = False
+    """Whether the system supplied this condition rather than the framework.
+
+    ``False`` for everything :func:`~sciagent.systems.base.table_predictions`
+    derives, which is every prediction the conventional baselines make and every
+    prediction in the recorded campaign. ``True`` only where a system passed
+    ``predictions=`` to :meth:`~sciagent.systems.base.Investigation.propose`.
+
+    **Not a number, and not trusted from the caller.** The flag is a fact about
+    provenance, so the second invariant is untouched; and
+    :meth:`~sciagent.systems.base.Investigation.propose` stamps it on every
+    explicitly supplied prediction rather than reading what arrived, since a
+    system able to set it would otherwise simply clear it.
+
+    It exists so that a threshold a system chose for itself is *referred* rather
+    than accepted: :func:`~sciagent.verify.statistical.check` hands such a claim
+    to a human instead of grading it, which is strictly gentler than the refusal
+    the A34 criterion also permits.
+
+    **Be precise about what that costs, because the obvious gentler reading is
+    false.** :meth:`~sciagent.systems.base.Investigation.propose` stamps a node's
+    predictions in one call and nothing adds more to a node afterwards, so every
+    prediction of a node carries the same flag. A hypothesis proposed with any
+    explicit prediction therefore cannot carry an *adjudicated* prediction-channel
+    claim at all -- not a narrower one, not any.
+
+    **And the trade is not only a cost, which is the part a first reading of this
+    missed.** ``REFER`` is not merely "not adjudicated": it is also not
+    :attr:`~sciagent.verify.verdict.Verdict.accepted`, so the claim never enters
+    the accepted population :func:`sciagent.verify.contradiction.check` reads.
+    Authoring predictions therefore *lowers* the contradiction count SPEC §12
+    criterion 8 asks to be zero, by making the system's own earlier claims
+    unadmittable — a criterion paid on a different criterion's account. It cannot
+    fire today: no shipped system supplies predictions, and
+    :meth:`~sciagent.hypothesis.graph.HypothesisGraph.relate` has no caller in
+    ``src`` at all, so no ``CONTRADICTS`` edge exists in any recorded campaign.
+    Both surfaces are agent-facing, so this is a design hole held shut by two
+    absences rather than by anything structural; ``docs/DECISIONS.md``
+    (2026-08-23) records it.
+    """
+
 
 # --------------------------------------------------------------------------
 # Diagnosis

@@ -169,4 +169,31 @@ SPEC9_CONTRAST: Final = Preregistration(
     comparator="B4",
     dimension="d3_intervention_similarity",
     conditional_on_inadequacy=True,
+    residual_asymmetries=(
+        "Pre-proposal selection. V7 entertains its library before it selects, so "
+        "the first half of its budget is chosen by expected information gain. B4 "
+        "must observe before it can retrieve, so at its own first half the belief "
+        "holds only the null, every design's gain is exactly zero, and the budget "
+        "is spent on a rotation through the design space instead. The two arms "
+        "select identically over the half that follows and not over the half "
+        "before it. One consequence is worth naming on its own: the Stage A "
+        "design is in the scenario's design set, so a rotating arm spends budget "
+        "on it while a selecting arm can decline it -- over the pre-proposal "
+        "half B4 and B5 still do, and V7 still need not. V1-vs-B4 bounds what "
+        "remains: V1 selects that half by information gain over the same library "
+        "B4 retrieves from, so the V1-B4 gap contains the pre-proposal selection "
+        "effect the V7-B4 gap also carries.",
+        "Relevance declarations. V7 names the live hypotheses each experiment is "
+        "aimed at; B4 and B5 name none. SPEC §7.1 clause 1 reads those targets, "
+        "so the arms' claims are not equally gradeable on relevance. It is not a "
+        "selection input -- nothing in the BOED plan reads it -- so it does not "
+        "reach D3 through the experiments chosen, only through what the verifier "
+        "can say about the claims that follow.",
+        "Library coverage. B4's fixed mechanism library excludes S11's truth by "
+        "construction, S11 being the out-of-library scenario. The comparator "
+        "therefore cannot retrieve the answer on the one scenario its designation "
+        "exists for, and its D3 is bounded above by the best its library can do. "
+        "This is a property of the comparison §9 asks for rather than a defect: "
+        "R1 is whether generation beats retrieval where retrieval cannot reach.",
+    ),
 )

@@ -97,11 +97,9 @@ from sciagent.core.errors import (
     StructureNotMeasurableError,
     SystemConfigurationError,
 )
-from sciagent.core.types import Diagnosis, ExperimentTemplateId, HypothesisId
-from sciagent.experiments import boed
-from sciagent.experiments.dsl import ExperimentDesign
+from sciagent.core.types import Diagnosis, HypothesisId
 from sciagent.hypothesis.validator import find_duplicate
-from sciagent.systems.base import Investigation, entertain
+from sciagent.systems.base import Investigation, entertain, select_experiments
 from sciagent.systems.llm.provider import Proposal, slug_hypothesis_name
 
 __all__ = ["MAX_PROPOSALS", "Hybrid", "ProposalAttempt", "ProposalSource"]
@@ -350,23 +348,16 @@ class Hybrid:
     def _select(self, investigation: Investigation, steps: int) -> None:
         """Spend ``steps`` experiments by expected information gain.
 
-        The plan runs as one trajectory rather than step by step so that the
-        belief BOED selects against is the belief it updates -- see
-        :func:`sciagent.experiments.boed.greedy` on why designs are chosen with
-        replacement.
+        Delegated to :func:`~sciagent.systems.base.select_experiments`, which is
+        where the body used to live inline. The move is the point rather than a
+        tidy-up: B4 and B5 now call the same function, so V7's selection policy
+        and its comparators' are one implementation and cannot drift apart.
+
+        ``targets`` is passed as the callable rather than a computed tuple
+        because the live set moves as the plan proposes, and a set computed once
+        before the trajectory would describe the first step for all of them.
         """
-        if steps < 1:
-            return
-        by_id: dict[ExperimentTemplateId, ExperimentDesign] = {
-            design.id: design for design in investigation.designs
-        }
-
-        def observe(_index: int, template: ExperimentTemplateId) -> int:
-            design = by_id[template]
-            result = investigation.run(design, targets=self._live(investigation))
-            return design.template().outcome.cell_of(result.result)
-
-        boed.plan(investigation.engine, tuple(by_id), observe, steps=steps)
+        select_experiments(investigation, steps, targets=self._live)
 
     @staticmethod
     def _live(investigation: Investigation) -> tuple[HypothesisId, ...]:

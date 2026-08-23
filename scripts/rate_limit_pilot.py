@@ -224,11 +224,20 @@ STOPPED_OUTCOMES: Final = ("ProviderError", "ProviderUnavailableError")
 def _stored_address(store: TranscriptStore, before: set[str]) -> str:
     """Return the address this call added to ``store``, or ``""`` if none.
 
-    A ``ProviderError`` is raised before anything is stored, so an empty string
-    is the honest answer there and means "no transcript to inspect". A decode
-    failure is the case this exists for: the payload was resolved and stored
-    before ``_build`` rejected it, so there *is* a transcript, and the report's
-    "inspect these" listing is worth nothing without its address.
+    A decode failure is the case this exists for: the payload was resolved and
+    stored before ``_build`` rejected it, so there *is* a transcript, and the
+    report's "inspect these" listing is worth nothing without its address.
+
+    Since gate A35 a ``ProviderError`` also leaves one. It used to be raised
+    before anything was stored, and this docstring said so; ``resolve`` now
+    records the refusal as a transcript in its own right and re-raises, so the
+    refusal has an address and the listing can point at it. Nothing here needed
+    changing for that -- the set difference was always the question -- but the
+    sentence claiming otherwise did.
+
+    An empty string still means "no transcript to inspect", and it is still the
+    honest answer for a machine fault: ``ProviderUnavailableError`` and
+    ``SystemConfigurationError`` are not converted and store nothing.
     """
     added = set(store.addresses()) - before
     return added.pop() if len(added) == 1 else ""

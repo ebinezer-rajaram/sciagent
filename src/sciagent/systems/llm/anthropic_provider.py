@@ -25,12 +25,20 @@ rather than a cache of one. See
 :mod:`sciagent.systems.llm.transcripts`.
 
 **No refusal fallback.** A model refusal raises
-:class:`~sciagent.core.errors.ProviderError` and nothing is recorded. Falling
-back to another model would be the ordinary advice and is wrong here: a
-transcript's address covers the model id, so a response served by a substitute
-would be stored under an address naming a model that did not produce it. A
-provenance chain that quietly lies about which model answered is worse for this
-framework than a run that stops.
+:class:`~sciagent.core.errors.ProviderError`. Falling back to another model would
+be the ordinary advice and is wrong here: a transcript's address covers the model
+id, so a response served by a substitute would be stored under an address naming
+a model that did not produce it. A provenance chain that quietly lies about which
+model answered is worse for this framework than a run that stops.
+
+The refusal *is* recorded, but not here.
+:meth:`~sciagent.systems.llm.transcripts.TranscriptStore.resolve` catches the
+exception this module raises, stores it as a refusal transcript and raises it
+onward, so a replicate the ledger scored as refused replays (gate A35). Until
+then a refusal stored nothing and that replicate was unreplayable. Nothing in
+this module changed for it, which is the point: what a refusal *is* -- an event
+of the investigation rather than a call to retry -- is decided here, and where it
+is written down is decided one layer out.
 """
 
 from __future__ import annotations
@@ -182,9 +190,10 @@ class AnthropicProvider:
             details = getattr(response, "stop_details", None)
             raise ProviderError(
                 f"{self._model} declined to answer "
-                f"(category {getattr(details, 'category', None)!r}). Nothing is "
-                f"recorded: a refusal is an outcome of the investigation, not a "
-                f"call to be retried on a different model",
+                f"(category {getattr(details, 'category', None)!r}). This is "
+                f"recorded as a refusal and replays as one: a refusal is an "
+                f"outcome of the investigation, not a call to be retried on a "
+                f"different model",
                 cause="declined",
             )
         if response.stop_reason == "max_tokens":

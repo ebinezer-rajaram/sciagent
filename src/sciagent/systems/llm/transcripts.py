@@ -59,20 +59,44 @@ address, because a tool that auto-updates would otherwise invalidate an entire
 corpus on somebody else's release schedule.
 
 One consequence worth stating plainly: :meth:`TranscriptStore.put` compares
-**payloads**, not provenance. Two recordings of one address that agree on the
+the **answer**, not provenance. Two recordings of one address that agree on the
 answer agree, whichever binary produced them, and the first one's provenance is
 kept.
+
+A refusal is an answer
+----------------------
+
+A model that declines, or hits an output ceiling, is not a call that failed to
+happen: it is an event of the investigation, which ``Hybrid`` records as a
+proposal outcome and the ledger scores. So it is recorded here too, as a
+:class:`Transcript` whose :attr:`~Transcript.outcome` is ``"refused"``, and
+:meth:`TranscriptStore.resolve` rebuilds the original exception from it on
+replay. Before that (gate A35) a refusal stored nothing, so the *reading* counted
+it while the *address* was absent from the corpus, and replaying that replicate
+raised :class:`~sciagent.core.errors.TranscriptMissError` rather than reproducing
+the refusal.
+
+The record kind is new; the **addressing scheme is not**, and
+:data:`ADDRESS_VERSION` deliberately did not move for it. Nothing that is hashed
+changed, and a bump would have refused every corpus recorded before the change --
+including the 112-call section 9 corpus the campaign's LLM numbers rest on.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
-from sciagent.core.errors import ProposalError, TranscriptMissError
+from sciagent.core.errors import (
+    ProposalError,
+    ProviderError,
+    TranscriptMissError,
+    TranscriptSchemeError,
+)
 from sciagent.core.program import stable_key
 
 __all__ = [
@@ -81,11 +105,30 @@ __all__ = [
     "Completion",
     "Transcript",
     "TranscriptMode",
+    "TranscriptOutcome",
     "TranscriptStore",
     "call_address",
+    "corpus_digest",
 ]
 
 type TranscriptMode = Literal["replay", "record"]
+
+#: What kind of record a transcript is.
+#:
+#: ``"answered"`` is a tool payload the model returned. ``"refused"`` is the
+#: model declining, or hitting an output ceiling, or returning a body that is not
+#: the object the schema demands -- every condition
+#: :class:`~sciagent.core.errors.ProviderError` is raised for. Both are *events
+#: of the investigation* and both are recorded, which is what lets a replicate
+#: the ledger scored as refused replay.
+#:
+#: Deliberately narrow. A machine fault -- an unreachable backend, a replay that
+#: reached a provider -- is not on this list and is not recordable: those raise
+#: :class:`~sciagent.core.errors.ProviderUnavailableError` and
+#: :class:`~sciagent.core.errors.SystemConfigurationError`, neither of which
+#: :meth:`TranscriptStore.resolve` converts. Widening this type is how a harness
+#: fault becomes a scored datum.
+type TranscriptOutcome = Literal["answered", "refused"]
 
 #: Refuse to call out; a missing address is an error. What evaluation runs under.
 REPLAY: TranscriptMode = "replay"
@@ -138,6 +181,52 @@ def call_address(
     return f"call/{stable_key(payload) % (1 << 64):016x}"
 
 
+def _outcome_of(raw: object, path: Path) -> TranscriptOutcome:
+    """Return ``raw`` as a record kind, refusing anything else.
+
+    Guarantees a corpus cannot introduce a kind this process does not implement.
+    An unknown value is not defaulted to ``"answered"``: that would read a record
+    somebody wrote to mean something as though it were a model's answer, and hand
+    an empty payload to the decoder. It raises, on the same reasoning
+    :meth:`TranscriptStore.load` refuses a file addressed under another scheme.
+    """
+    if raw not in ("answered", "refused"):
+        raise ProposalError(
+            f"{path} holds a call whose record kind is {raw!r}, which this "
+            f"process does not implement; a corpus recorded under a wider "
+            f"vocabulary cannot be read by a narrower one"
+        )
+    # `raw` is narrowed by the membership test above, which mypy cannot see
+    # through on an `object`, so the kind is rebuilt from the literal.
+    return "refused" if raw == "refused" else "answered"
+
+
+def corpus_digest(path: Path) -> str:
+    """Return the SHA-256 of the corpus at ``path``, as lowercase hex.
+
+    Guarantees the digest is a pure function of the file's bytes, so a third
+    party can check it with ``sha256sum`` and no part of this framework. That is
+    the point of the choice: the replay claim is the reproducibility story for
+    every LLM number in the campaign, and a claim checkable only by the code it
+    vouches for is not checkable.
+
+    Bytes rather than a re-canonicalisation of the parsed content, because
+    :meth:`TranscriptStore.save` already writes canonically -- sorted keys,
+    ``indent=2``, and ``newline="\\n"`` regardless of platform -- so the file *is*
+    the canonical form and hashing it twice would only add a way for the two to
+    disagree.
+
+    Read in binary and in chunks: a recorded corpus is hundreds of kilobytes
+    today and grows with every campaign, and a digest is not a reason to hold one
+    in memory.
+    """
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1 << 16):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 @dataclass(frozen=True, slots=True)
 class Completion:
     """What a provider returns: the answer, and what produced it.
@@ -187,13 +276,99 @@ class Transcript:
     Stored for the same reason ``provider`` and ``model`` are: without it two
     entries recorded at different reasoning efforts differ in address and are
     otherwise indistinguishable in the file, which is precisely the question a
-    reader opens a transcript to answer. Last in the field order and defaulted,
-    so the five-argument constructions that predate it still read the same.
+    reader opens a transcript to answer. Defaulted, so the five-argument
+    constructions that predate it still read the same -- it was last in the field
+    order until the refusal fields arrived after it, on the same reasoning.
     """
 
+    outcome: TranscriptOutcome = "answered"
+    """Whether this record holds an answer or a refusal. Part of the answer.
+
+    Defaulted to ``"answered"`` for the reason ``settings`` is defaulted, and for
+    one more: a corpus recorded before refusals were recordable carries no such
+    key, and every record in it *is* an answer. The default is what lets the
+    112-call section 9 corpus load unchanged under :data:`ADDRESS_VERSION`
+    ``"transcript/2"``, which is the decision this field was added under -- a
+    refusal is a new record **kind**, nothing that is hashed changed, and bumping
+    the scheme would orphan that corpus for no gain.
+    """
+
+    cause: str = ""
+    """For a refusal, :class:`~sciagent.core.errors.ProviderError`'s tag.
+
+    Empty for an answer. Recorded rather than re-derived because
+    ``Hybrid._propose_once`` reads the tag off the exception and
+    :func:`~sciagent.eval.agency.proposal_causes` bins by it, so a replay that
+    reconstructed a *generic* refusal would reproduce the ``refused`` count while
+    moving the cause histogram -- reproducing the ledger row and not the reading.
+    """
+
+    detail: str = ""
+    """For a refusal, the message the provider raised with. Empty otherwise.
+
+    Stored for the reason the request fields are stored: it is what makes the
+    record reviewable. It is also what ``Hybrid`` carries in
+    :attr:`~sciagent.systems.hybrid.ProposalAttempt.detail`, so a replay that
+    dropped it would answer "why did this refuse" with silence, in precisely the
+    corpus somebody opened to find out.
+    """
+
+    @property
+    def answer(self) -> tuple[str, str, Mapping[str, Any]]:
+        """Return what this address identifies: the answer, and nothing else.
+
+        Guarantees provenance is excluded. Two recordings of one address that
+        agree on *this* agree, whichever binary produced them -- the rule
+        :meth:`TranscriptStore.put` enforces, expressed here rather than restated
+        at each place that compares.
+
+        The payload alone was a complete description of an answer while every
+        record was one. A refusal carries an empty payload, so a comparison
+        reading payloads alone finds two refusals naming *different causes*
+        identical, and an append-only store would keep whichever arrived first
+        while the corpus reported the other's condition.
+
+        ``detail`` is **not** in here, and the reason is the same one that keeps
+        provenance out: it is recorded for audit, not for identity. It is still
+        *stored*, because a replay that could not reproduce the message would not
+        be the byte-identical replay gate A35 asks for -- but two recordings of
+        one address that agree on the outcome, the cause and the payload agree,
+        and the first one's wording is the one kept.
+
+        A first version did include it, on the argument that every raise site
+        varies its message only with what happened. A review falsified that, and
+        the counterexample is not incidental. ``AnthropicProvider`` excludes
+        ``max_tokens`` from the address deliberately -- its own docstring argues
+        that a ceiling "either yields that answer or **raises**, so it can never
+        produce a different recorded payload" -- and A35 turned that raise into a
+        record whose message interpolates the ceiling. Two runs differing only in
+        a value the addressing scheme is designed to ignore then collided, and
+        the second ``save`` refused. Including ``detail`` would have made this
+        module quietly break a neighbouring module's stated invariant.
+        """
+        return (self.outcome, self.cause, self.payload)
+
     def as_json(self) -> dict[str, Any]:
-        """Return the JSON form written to disk."""
-        return {
+        """Return the JSON form written to disk.
+
+        Guarantees a record that carries no refusal writes no refusal keys, so a
+        corpus recorded before A35 round-trips through :meth:`TranscriptStore.load`
+        and :meth:`~TranscriptStore.save` **byte-identically**.
+
+        That is not tidiness, and a review caught it by reproducing the
+        alternative. Emitting the three keys unconditionally rewrote every
+        pre-A35 corpus on the first save that touched it -- ``spec9.json`` grew
+        659,740 bytes to 667,356 and its digest moved -- which invalidates the
+        hash ``docs/CORPUS.md`` publishes for it. ``run_matrix``'s ``checkpoint``
+        calls ``save`` after *every replicate*, so a single resumed recording
+        pass would have done it, silently, to the artefact the campaign's LLM
+        numbers rest on.
+
+        Still a pure function of the record, so determinism holds: an answer
+        always writes the same keys and a refusal always writes its own. What is
+        conditional is the record's kind, not anything about when it was written.
+        """
+        form: dict[str, Any] = {
             "address": self.address,
             "provider": self.provider,
             "model": self.model,
@@ -202,6 +377,13 @@ class Transcript:
             "payload": dict(self.payload),
             "provenance": dict(self.provenance),
         }
+        if self.outcome != "answered":
+            form["outcome"] = self.outcome
+        if self.cause:
+            form["cause"] = self.cause
+        if self.detail:
+            form["detail"] = self.detail
+        return form
 
 
 class TranscriptStore:
@@ -210,7 +392,10 @@ class TranscriptStore:
     Append-only for the reason the registry is (SPEC §6.3 A12): a transcript
     that could be overwritten is a record of what the model says *now*, and the
     whole point is a record of what it said when the result was measured. Storing
-    a different payload at an existing address raises rather than replacing.
+    a different :attr:`Transcript.answer` at an existing address raises rather
+    than replacing -- the answer rather than the payload, because a refusal
+    carries an empty payload and two refusals naming different causes would
+    otherwise compare equal.
 
     Not a frozen value type, unlike most of this framework. A store accumulates
     during a recording run, exactly as
@@ -275,16 +460,23 @@ class TranscriptStore:
     def put(self, transcript: Transcript) -> None:
         """Store a call. Raises if the address already holds a different answer.
 
-        **Payloads decide; provenance does not.** Two recordings of one address
-        that agree on the answer agree, whichever binary or SDK version produced
-        them, and the first one's provenance is the one kept. Comparing
-        provenance too would make an append-only store reject a re-recording
-        that reproduced the answer exactly, which is the opposite of what the
-        guarantee is for.
+        **The answer decides; provenance does not.** Two recordings of one
+        address that agree on :attr:`Transcript.answer` agree, whichever binary
+        or SDK version produced them, and the first one's provenance is the one
+        kept. Comparing provenance too would make an append-only store reject a
+        re-recording that reproduced the answer exactly, which is the opposite of
+        what the guarantee is for.
+
+        The comparison reads :attr:`Transcript.answer` rather than the payload
+        alone, and the difference is only visible once refusals are recordable: a
+        refusal carries an *empty* payload, so two refusals naming different
+        causes -- a model declining, and an output ceiling -- compared equal, and
+        the store kept whichever arrived first while reporting the other's
+        condition. See that property for the full argument.
         """
         existing = self._entries.get(transcript.address)
         if existing is not None:
-            if existing.payload != transcript.payload:
+            if existing.answer != transcript.answer:
                 raise ProposalError(
                     f"address {transcript.address} already holds a different "
                     f"response; a transcript store is append-only, so a model "
@@ -304,22 +496,74 @@ class TranscriptStore:
         brief: str,
         settings: str = "",
     ) -> Transcript:
-        """Return the response at ``address``, calling out only if permitted.
+        """Return the answer at ``address``, or re-raise the refusal recorded there.
 
         ``call`` is invoked exactly once, and only on a miss in :data:`RECORD`
         mode. In :data:`REPLAY` a miss raises, which is the whole guarantee: an
         evaluation run cannot quietly become a live one because someone had
         credentials in their environment.
+
+        **A refusal is recorded and then re-raised, on both legs.** In
+        :data:`RECORD` a :class:`~sciagent.core.errors.ProviderError` from
+        ``call`` is stored as a refusal record and raised onward; in
+        :data:`REPLAY` that record is a *hit*, and this method rebuilds the same
+        exception from it. The two legs therefore leave the caller in states that
+        differ in nothing it can observe -- which is what makes a replicate the
+        ledger scored as refused replay at all, and it is the whole of gate A35.
+
+        Raising here rather than returning the record for a caller to interpret
+        is deliberate. It is the only arrangement in which the reconstruction
+        cannot be *forgotten*: a caller handed a refusal record would otherwise
+        pass its empty payload to the decoder and get
+        :class:`~sciagent.core.errors.MalformedProposalError`, which
+        ``Hybrid._extend`` continues past where a refusal breaks -- so the replay
+        would make a call the recording never made, at an address the corpus
+        cannot hold, and miss. A review of A35's test found exactly that
+        implementation passing every other assertion.
+
+        **Only ``ProviderError`` is converted, and the two exclusions are the
+        point.** :class:`~sciagent.core.errors.ProviderUnavailableError` is a
+        *sibling*, not a subclass, so a 429 propagates and records nothing: a
+        transport failure says nothing about the model's ability to propose, and
+        recording one would write a refusal nobody made into an append-only
+        corpus. :class:`~sciagent.core.errors.SystemConfigurationError` sits
+        outside :class:`~sciagent.core.errors.ProposalError` entirely, so a
+        replay that reached a provider stays the configuration fault it is.
+        Widening this clause by one class -- to ``ProposalError``, which
+        :class:`~sciagent.core.errors.TranscriptMissError` also sits under --
+        would make a replay against an incomplete corpus report a full matrix
+        scored on refusals the harness invented, and contradicts gate A40.
         """
-        if address in self._entries:
-            return self._entries[address]
+        recorded = self._entries.get(address)
+        if recorded is not None:
+            self._raise_for_refusal(recorded)
+            return recorded
         if self._mode != RECORD:
             raise TranscriptMissError(
                 f"no recorded response at {address} and the store is in "
                 f"{self._mode!r} mode, so it will not call out. Record the "
                 f"transcript deliberately, or run against a store that holds it"
             )
-        completion = call()
+        try:
+            completion = call()
+        except ProviderError as error:
+            refusal = Transcript(
+                address=address,
+                provider=provider,
+                model=model,
+                brief=brief,
+                payload={},
+                settings=settings,
+                outcome="refused",
+                cause=error.cause,
+                detail=str(error),
+            )
+            self.put(refusal)
+            # Counted, because `misses` says how many addresses were filled by a
+            # live call and this one was. A recording run that refused did reach
+            # the network; a replay of it will not.
+            self._misses += 1
+            raise
         if not isinstance(completion, Completion):
             raise ProposalError(
                 f"a provider must return a Completion, got {type(completion).__name__}"
@@ -341,6 +585,29 @@ class TranscriptStore:
         self.put(transcript)
         self._misses += 1
         return transcript
+
+    @staticmethod
+    def _raise_for_refusal(transcript: Transcript) -> None:
+        """Re-raise the refusal ``transcript`` records; return if it holds an answer.
+
+        Named for the raise rather than the return, on ``raise_for_status``'s
+        precedent. A helper that re-raises is the wrong place for a name a reader
+        can mistake for a predicate, and this one stands at the seam deciding
+        whether a harness fault becomes a scored datum.
+
+        Guarantees the exception a replay raises is the one that was recorded,
+        tag and message alike, and not a fresh refusal wearing the same outcome.
+        ``Hybrid._propose_once`` reads
+        :attr:`~sciagent.core.errors.ProviderError.cause` off the exception and
+        :func:`~sciagent.eval.agency.proposal_causes` bins by it, so a generic
+        reconstruction would reproduce the ledger row -- which carries no
+        proposal tier and no cause histogram -- while silently moving the agency
+        reading beside it. That is not a hypothetical: it is the wrong
+        implementation A35's test review named first.
+        """
+        if transcript.outcome != "refused":
+            return
+        raise ProviderError(transcript.detail, cause=transcript.cause)
 
     # -- persistence -------------------------------------------------------
 
@@ -402,7 +669,7 @@ class TranscriptStore:
         whose stored provenance is empty, takes this store's value, so a corpus
         recorded before provenance existed gains it on the next save rather than
         being pinned to nothing. ``_refuse_to_drop`` has already established that
-        the payloads agree, so this cannot pair one run's provenance with
+        the answers agree, so this cannot pair one run's provenance with
         another's answer.
         """
         entries = dict(self._entries)
@@ -410,7 +677,7 @@ class TranscriptStore:
             return entries
         try:
             on_disk = self.load(path, mode=self._mode)
-        except ProposalError:
+        except TranscriptSchemeError:
             return entries
         for address, stored in on_disk._entries.items():
             current = entries.get(address)
@@ -423,25 +690,34 @@ class TranscriptStore:
 
         Two ways a write loses a recorded call, and both are refused: an address
         on disk that this store does not hold at all, and one it holds under a
-        *different payload*. Checking only the address set would have left the
+        *different answer*. Checking only the address set would have left the
         second open, which is the same hole one level in -- :meth:`put` raises on
-        a changed payload in process, so a file boundary that did not would make
+        a changed answer in process, so a file boundary that did not would make
         the guarantee depend on whether the two answers happened to arrive in one
         session.
 
         A file that does not exist drops nothing. A file recorded under an older
         address scheme is the one readable-failure that may be replaced: every
-        call in it would miss anyway, which is what :meth:`load` raises about,
-        and refusing here as well would strand the corpus forever. **Every other
-        failure to read propagates**, deliberately -- a corpus that is present
-        but malformed may still hold recoverable calls, and quietly treating it
-        as "drops nothing" would truncate exactly the file nobody can reconstruct.
+        call in it would miss anyway, which is what
+        :class:`~sciagent.core.errors.TranscriptSchemeError` says, and refusing
+        here as well would strand the corpus forever. **Every other failure to
+        read propagates**, deliberately -- a corpus that is present but malformed
+        may still hold recoverable calls, and quietly treating it as "drops
+        nothing" would truncate exactly the file nobody can reconstruct.
+
+        The clause is written at that narrow class and **not** at
+        :class:`~sciagent.core.errors.ProposalError`, which is what it caught
+        while a scheme mismatch was the only thing :meth:`load` raised. Gate A35
+        added a second failure -- a record kind this process does not implement
+        -- and under the broad clause a corpus holding one lost *every* call in
+        the file, well-formed ones included. That was reproduced rather than
+        reasoned about, and it is the whole reason the narrow class exists.
         """
         if not path.exists():
             return
         try:
             on_disk = self.load(path, mode=self._mode)
-        except ProposalError:
+        except TranscriptSchemeError:
             return
         dropped = sorted(set(on_disk._entries) - set(self._entries))
         if dropped:
@@ -454,7 +730,7 @@ class TranscriptStore:
         changed = sorted(
             address
             for address, transcript in on_disk._entries.items()
-            if self._entries[address].payload != transcript.payload
+            if self._entries[address].answer != transcript.answer
         )
         if changed:
             raise ProposalError(
@@ -469,8 +745,12 @@ class TranscriptStore:
     def load(cls, path: Path, *, mode: TranscriptMode = REPLAY) -> TranscriptStore:
         """Return the store recorded at ``path``.
 
-        Raises :class:`~sciagent.core.errors.ProposalError` if the file was
-        written under a different address scheme, on the same reasoning as
+        Raises :class:`~sciagent.core.errors.TranscriptSchemeError` if the file
+        was written under a different address scheme, and the broader
+        :class:`~sciagent.core.errors.ProposalError` for anything else it cannot
+        read -- a record kind this process does not implement. The split is the
+        safety property: ``save``'s guards may overwrite a corpus for the first
+        reason and must refuse for the second. Same reasoning as
         :meth:`~sciagent.inference.empirical.EmpiricalTable.load` refusing a
         table whose content address disagrees: a file that cannot be addressed
         the way this process addresses things is not this store, and reading it
@@ -479,7 +759,7 @@ class TranscriptStore:
         raw = json.loads(path.read_text(encoding="utf-8"))
         version = raw.get("version")
         if version != ADDRESS_VERSION:
-            raise ProposalError(
+            raise TranscriptSchemeError(
                 f"{path} was recorded under address scheme {version!r}, but this "
                 f"process addresses calls as {ADDRESS_VERSION!r}; every stored "
                 f"call would miss"
@@ -491,6 +771,13 @@ class TranscriptStore:
                 model=str(call["model"]),
                 brief=str(call["brief"]),
                 settings=str(call.get("settings", "")),
+                # Defaulted reads, not required keys. A file recorded before
+                # refusals were recordable carries none of the three and every
+                # record in it is an answer, which is exactly what these
+                # defaults say. See :attr:`Transcript.outcome`.
+                outcome=_outcome_of(call.get("outcome", "answered"), path),
+                cause=str(call.get("cause", "")),
+                detail=str(call.get("detail", "")),
                 payload=dict(call["payload"]),
                 provenance={
                     str(key): str(value)

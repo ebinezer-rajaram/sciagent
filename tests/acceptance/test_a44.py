@@ -718,8 +718,11 @@ class TestA44AFaultIsNotScoredAsARefusal:
         # The hierarchy the boundary rests on, pinned from the other end. Both
         # of these are ``ProposalError`` subclasses that must not be caught, so
         # the family cannot be the catch set and reparenting either of them out
-        # of it is not an available fix -- ``sciagent.systems.llm.transcripts``
-        # guards on ``except ProposalError`` and would silently change meaning.
+        # of it is not an available fix -- ``scripts/run_matrix.py`` and
+        # ``scripts/rate_limit_pilot.py`` both handle the family and would
+        # silently change meaning. (Gate A35 narrowed ``transcripts.py``'s own
+        # two ``save`` guards to ``TranscriptSchemeError``; this comment named
+        # those, and no longer does.)
         assert issubclass(TranscriptMissError, ProposalError)
         assert issubclass(ProviderUnavailableError, ProposalError)
         assert not issubclass(TranscriptMissError, tuple(CAUGHT_BY_HYBRID))
@@ -790,9 +793,9 @@ class TestA44AFaultIsNotScoredAsARefusal:
         Getting this wrong is worse than leaving it out: a red saying "raises a
         ProposalError" invites the implementer to reparent
         ``ProviderUnavailableError`` off the family, which would silently change
-        the ``except ProposalError`` guards in
-        :mod:`sciagent.systems.llm.transcripts` and break the A35/A40 boundary
-        this gate is meant to hold.
+        every handler that treats ``ProposalError`` as the boundary -- both
+        campaign scripts do -- and break the A35/A40 boundary this gate is meant
+        to hold.
         """
         with pytest.raises(expected) as raised:
             self._raise(label, monkeypatch)

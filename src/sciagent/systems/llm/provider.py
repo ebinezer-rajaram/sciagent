@@ -282,10 +282,15 @@ class ProposalLayer:
         """Return one proposal for the state ``investigation`` is in.
 
         Raises :class:`~sciagent.core.errors.TranscriptMissError` when replaying
-        a call that was never recorded, and
+        a call that was never recorded,
+        :class:`~sciagent.core.errors.ProviderError` when the recorded call is a
+        *refusal* -- rebuilt by
+        :meth:`~sciagent.systems.llm.transcripts.TranscriptStore.resolve` with the
+        cause it was recorded under, so a replayed refusal is indistinguishable
+        from the live one (gate A35) -- and
         :class:`~sciagent.core.errors.MalformedProposalError` when the payload
-        does not denote a structure the grammar licenses. Neither is caught here:
-        a system that wants to carry on without a proposal should decide that
+        does not denote a structure the grammar licenses. None is caught here: a
+        system that wants to carry on without a proposal should decide that
         itself rather than have the layer decide it silently.
         """
         brief = render_brief(investigation, self._menu, memory=self._memory)

@@ -54,6 +54,14 @@ A :class:`~sciagent.core.errors.TranscriptMissError` is
 recorded, which is a configuration fault rather than a scientific event, and
 swallowing it would turn a broken replay into a quietly worse result.
 
+Gate A35 narrowed what a miss can mean without touching this clause. A refusal is
+now recorded as a transcript in its own right and re-raised from
+:meth:`~sciagent.systems.llm.transcripts.TranscriptStore.resolve` on replay, so a
+replicate scored as refused replays and reaches the same ``except`` below with
+the same :attr:`~sciagent.core.errors.ProviderError.cause`. A miss therefore no
+longer has a legitimate reading at all -- it was one before, since a refused
+address was absent from the corpus by construction.
+
 Neither is a fault of the *machine*. Gate A44 moved five conditions out of the
 recorded tier for the same reason -- a contaminated environment, a call from
 inside a running event loop, a turn served by another provider or another model,

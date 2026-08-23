@@ -434,8 +434,8 @@ class AgentSdkProvider:
             ) from error
         if result is None:
             raise ProviderError(
-                f"the {self._model} session ended without a result message, so "
-                f"there is nothing to record",
+                f"the {self._model} session ended without a result message; "
+                f"this is recorded as a transport refusal and replays as one",
                 cause="transport",
             )
         self._refuse_a_failed_run(result)
@@ -450,9 +450,9 @@ class AgentSdkProvider:
         """
         if result.stop_reason == "refusal":
             raise ProviderError(
-                f"{self._model} declined to answer. Nothing is recorded: a "
-                f"refusal is an outcome of the investigation, not a call to be "
-                f"retried on a different model",
+                f"{self._model} declined to answer. This is recorded as a "
+                f"refusal and replays as one: a refusal is an outcome of the "
+                f"investigation, not a call to be retried on a different model",
                 cause="declined",
             )
         if result.stop_reason == "max_tokens":

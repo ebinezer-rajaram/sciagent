@@ -434,6 +434,27 @@ class TranscriptMissError(ProposalError):
     """
 
 
+class TranscriptSchemeError(ProposalError):
+    """A transcript corpus was recorded under a different address scheme.
+
+    Narrower than :class:`ProposalError` on purpose, and the narrowness is what
+    it is *for*. ``TranscriptStore._refuse_to_drop`` treats exactly one
+    read failure as safe to overwrite -- a corpus addressed under an older
+    scheme, every call in which would miss anyway, so refusing there would
+    strand it forever. **Every other failure to read must propagate**, because a
+    corpus that is present but malformed may still hold recoverable calls and
+    quietly treating it as "drops nothing" truncates the one file nobody can
+    reconstruct.
+
+    That distinction was expressed as ``except ProposalError`` while this class
+    was the only thing ``load`` raised. Gate A35 added a second: a record kind
+    the reading process does not implement. Under the broad clause a corpus
+    holding one silently lost **every** call in the file, including well-formed
+    ones -- reproduced before this class existed. A subclass rather than a
+    sibling, so callers asserting the documented ``ProposalError`` are unchanged.
+    """
+
+
 class ProviderUnavailableError(ProposalError):
     """A model backend could not be reached, or the session died under it.
 

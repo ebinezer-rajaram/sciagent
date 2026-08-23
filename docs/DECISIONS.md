@@ -9311,3 +9311,352 @@ own outcome, which is a different attack from authoring a number and is not
 closed by anything here. Whether item 12 refers a malformed claim rather than
 raising is a choice about what a campaign does with a bad agent, and it should be
 taken deliberately rather than inherited from this gate's default.
+
+## 2026-08-23 — A35: the address scheme is not versioned for a new record kind
+
+**Decision.** `ADDRESS_VERSION` stays `"transcript/2"`. A refusal is a new record
+**kind**, not a new addressing scheme, and `Transcript` gains three defaulted
+fields — `outcome`, `cause`, `detail` — exactly as `settings` was added.
+
+**Why.** The A35 backlog entry's **Touches.** says "the address scheme (a refusal
+transcript is a new record kind — version the scheme)", and taken literally that
+is self-defeating. `ADDRESS_VERSION` doubles as the corpus file's format version
+and `TranscriptStore.load` *refuses* a file whose version disagrees, so a bump
+orphans the 112-call `spec9.json` outright — making A40's re-derivation, which
+A35 exists to unblock, permanently unreachable. Nothing that is *hashed* changes:
+a refusal record alters what a call's answer looks like, not what determines its
+address. The entry's parenthetical reads as "the record gains a kind", not
+"invalidate the corpus", and the two readings differ by the whole of the
+campaign's LLM evidence.
+
+**The pin took two attempts, and the first was worthless.**
+`test_a35_a_corpus_recorded_before_refusals_still_loads` originally built its
+"legacy" fixture with `save()` and read it back with `load()`. That round trip is
+version-*agnostic* — `save` stamps whatever the constant says and `load` compares
+against the same constant — so the test passed under `"transcript/3"` and under
+`"banana/99"`, while its docstring claimed a bump "fails here". A test review
+measured that, and it was the only thing in the repository purporting to hold
+this decision. The fixture is now hand-written JSON carrying a literal
+`"version": "transcript/2"`, and the constant is asserted directly.
+
+**Closes off.** A36 still bumps the scheme deliberately, and still belongs after
+A40 for exactly the reason this entry declines to bump now. Anything else that
+reaches for `ADDRESS_VERSION` should first ask whether what it changes is
+*hashed*; if not, a defaulted field is the instrument.
+
+## 2026-08-23 — A35: a refusal is re-raised from `resolve`, on both legs
+
+**Decision.** `TranscriptStore.resolve` re-raises the refusal rather than
+returning the record for a caller to interpret. On RECORD it catches
+`ProviderError` from the `call()` thunk, stores a refusal transcript and raises
+onward; on REPLAY that record is a *hit*, and it rebuilds the same exception with
+the recorded cause and message. Only `ProviderError` is converted.
+
+**Why.** It is the only arrangement in which the reconstruction cannot be
+*forgotten*. The alternative — return the record, branch in `provider.py` —
+admits a wrong implementation that passes every assertion anyone thought to
+write: hand the empty payload to the decoder, get `MalformedProposalError`, which
+`Hybrid._extend` **continues** past where a refusal **breaks**. The replay then
+makes a call the recording never made, at an address the corpus cannot hold, and
+misses — the gate's own headline failing on exactly the replicates it exists to
+unblock. A test review found it, and found that A35's own fixture was blind to it
+because `SHORT_SCRIPT` put the refusal on the *last* of two calls, the one
+position where break and continue cost the same.
+
+The two exclusions are the boundary the 2026-08-21 entry pinned.
+`ProviderUnavailableError` is a *sibling*, so a 429 propagates and records
+nothing; `SystemConfigurationError` sits outside `ProposalError` entirely.
+Widening this clause to `ProposalError` — which `TranscriptMissError` also sits
+under — contradicts A40 and lands a harness fault in the ledger as a scored
+datum.
+
+**A consequence worth stating, because it is the opposite of what was planned.**
+`provider.py` needed no code change at all, only a docstring: the branch it was
+going to carry does not exist anywhere. What did change is the append-only
+comparison. `put` and `_refuse_to_drop` now compare a new `Transcript.answer`
+property — `(outcome, cause, detail, payload)` — rather than the payload alone,
+because two refusals carry *equal empty payloads* and would otherwise silently
+agree while naming different causes, keeping whichever arrived first while the
+corpus reported the other's condition.
+
+**Closes off.** `Hybrid._propose_once`'s catch is untouched and stays narrow.
+Any later change to `resolve`'s `except` clause now has A35 and A40 reading it
+from opposite sides.
+
+## 2026-08-23 — A35: the recorded campaign holds no refusals, measured
+
+**Decision.** None — this is a measurement, and it corrects two claims recorded
+as unrecoverable. Run on Windows, this session:
+
+```
+uv run python scripts/run_matrix.py <scratch>.db --systems V3,V4,V7 \
+    --replay .cache/transcripts/spec9.json
+ran 360, skipped 0, simulated 100 row(s)
+replay: 360 replicate(s) executed against a corpus of 112 recorded call(s), misses 0
+```
+
+All 18 LLM cells, 360 replicates, **zero misses**. The recorded campaign
+therefore contains **no refusals at all**.
+
+**Why it matters.** The 2026-08-21 entry states that "a refusal in the recorded
+campaign stored nothing anywhere, so the number of them is unrecoverable from the
+tree", and the A35 backlog entry asserts that "replay of the recorded campaign
+would crash at the first refusal-containing address". The count *was* recoverable
+— by replaying rather than by reading, which is the one route neither entry
+considered — and it is zero. The crash A35 was ranked six places ahead of A40 to
+prevent is **vacuous on this corpus**, and A40's re-derivation is unblocked.
+
+Stated plainly because it cuts against the ranking this session inherited: A35's
+fix is still correct and still necessary for any *future* campaign containing a
+refusal, but the specific blocking claim that justified ordering it ahead of A40
+did not hold, and establishing that needed nothing from A35.
+
+**Verified non-vacuous two ways**, since `misses == 0` asserts nothing on its own
+and a replay that resolved no calls would report it:
+
+1. A control replay against the same corpus truncated to one call stops with
+   `TranscriptMissError` at a real address (`call/2853dc9bf45dd42d`). Calls are
+   genuinely resolved.
+2. The replayed readings reproduce the recorded campaign **exactly**, on all 360
+   cells, for `correct`, `identified`, `truth_mass`, `log_score`, `leading_mass`,
+   `d1_structural_distance`, `structural_distance`, `d6_complexity`,
+   `experiments`, `inadequate` and `ppc_p_value` — every field that depends on
+   what the model proposed.
+
+They differ on `d2`, `d3`, `d4`, `d5` and `n_held_out`, and the two ledgers share
+no content address at all. Both are what A40's own decision predicts:
+`DIMENSION_VERSION` re-scored the dimensions after the campaign, and every
+recorded row carries `battery = None` and `dimensions = None`.
+
+**Closes off.** A40's re-derivation may now be run. Anything that reasons from
+"the recorded campaign's refusal count is unknown" should stop; it is zero, and
+`docs/CORPUS.md` records the digest of the corpus that establishes it.
+
+## 2026-08-23 — A35: the corpus is registered by hash, not committed
+
+**Decision.** `docs/CORPUS.md` carries the corpora's SHA-256 digests in literal
+`sha256sum` format — `e2361f03…` for `spec9.json` (112 calls, 659,740 bytes) and
+`a9053d1a…` for `llm_smoke.json` (2 calls). `.gitignore` is untouched and the
+660KB corpus stays out of git.
+
+**Why.** The gate asks that "the corpus hash is resolvable from the repository",
+and a digest is enough for the claim being made: a third party handed a corpus
+can establish it is *the* one these numbers came from, and a disagreement is
+visible rather than silent. The format is literal `sha256sum` output so that
+check needs nothing from this framework — which is the point, since a
+reproducibility claim checkable only by the code it vouches for is not checkable.
+Hashing the file's bytes is safe because `save` already writes canonically
+(sorted keys, `indent=2`, LF on every platform).
+
+**What the test can and cannot do, stated rather than hidden.** A fresh checkout
+has no corpus, so the digest comparison cannot run in CI. Two things run
+everywhere instead: `corpus_digest` is checked against `hashlib.sha256` over a
+corpus the test builds, and every path the manifest names is checked
+*structurally*. That second one exists because a conditional that skips absent
+paths passes forever on a manifest naming a path that never resolves — a typo is
+otherwise indistinguishable from an unfetched corpus. A review also found the
+first version resolving paths against the *worktree* root, where `.cache/` does
+not exist, so the comparison was dead in every editing session as well as on CI;
+it now goes through `git rev-parse --git-common-dir`, the door CLAUDE.md names
+for reading a cached artefact.
+
+**Closes off.** Both corpora hold only `answered` records — checked, not assumed
+— so the manifest is a record of the pre-A35 generation. A campaign recorded
+after this gate will hold refusal records, and **any** recording pass that adds
+a call means updating the digest here in the same change — a resumed pass, not
+only a fresh re-recording. `run_matrix`'s `checkpoint` saves after every
+replicate. (A plain *replay* does not: it opens the corpus in REPLAY mode and
+writes nothing to it, which is why the digests above still verify after this
+session's 360-replicate replay.)
+
+## 2026-08-23 — A35 review: a broad `except` turned a new record kind into silent data loss
+
+**Decision.** `TranscriptStore.load`'s scheme mismatch now raises
+`TranscriptSchemeError`, a narrow subclass of `ProposalError`, and the two
+clauses in `save`'s path that treat a read failure as replaceable
+(`_refuse_to_drop`, `_keep_earlier_provenance`) catch **that** rather than
+`ProposalError`.
+
+**Why.** `_refuse_to_drop`'s docstring already said the rule: a corpus addressed
+under an older scheme may be replaced, because every call in it would miss
+anyway, and "**every other failure to read propagates**, deliberately — a corpus
+that is present but malformed may still hold recoverable calls, and quietly
+treating it as 'drops nothing' would truncate exactly the file nobody can
+reconstruct". The *code* said `except ProposalError`, which was the same thing
+only while a scheme mismatch was the only error `load` raised. A35's
+`_outcome_of` added a second, and the clause silently widened to cover it.
+
+Reproduced before it was fixed, not reasoned about. A corpus holding one record
+of an unimplemented kind plus one well-formed call, saved over by a fresh RECORD
+store holding one call:
+
+```
+on disk before: ['call/a', 'call/b']
+save() SUCCEEDED
+on disk after : ['call/z']
+LOST: ['call/a', 'call/b']
+```
+
+The well-formed neighbour is the part that matters. This is the exact failure
+`_refuse_to_drop` exists to prevent, arriving through the door that method's own
+docstring names, and it was introduced by the change that added the second
+failure mode. Found by `/code-review` at `/preflight`; nothing else caught it,
+including four invariant lenses and a suite of 1,604 tests.
+
+`test_a35_an_unreadable_record_kind_does_not_let_save_truncate` holds it, and
+asserts the *surviving neighbour* rather than only that `save` raises — an
+implementation that raised and truncated anyway would pass the weaker form.
+Verified by reverting the fix and watching the test go red.
+
+**Closes off.** Any future `raise` inside `load` must now choose deliberately
+between the two classes, and the narrow one means "this file is addressed for a
+different process". A38's CI gate does not reach this: no corpus exists on a
+fresh checkout.
+
+## 2026-08-23 — A35: three review findings deferred, with what each waits on
+
+**Decision.** Three findings from the A35 review are recorded rather than fixed.
+None is a defect in what this gate changed; each is a consequence worth having
+written down before somebody meets it.
+
+**1. A refusal is recorded before the substitute-model check runs, and that is
+not this gate's to move.** `AgentSdkProvider._call` calls
+`_refuse_a_failed_run` at `agent_sdk_provider.py:441`, and
+`_refuse_a_substitute_model` runs later, at `:248`. So a refusal short-circuits
+the check that a response came from the pinned model. Before A35 this cost
+nothing — a refusal recorded nothing, so there was no attribution to be wrong.
+Now the refusal is written into the corpus under the model that was *asked*, with
+empty provenance, and nothing in the file can ever contradict it. If a substitute
+model refused, the corpus says the pinned one declined, and `cause="declined"` is
+the one bin gate A44 calls unambiguously a fact about a model.
+
+Not fixed here, for three reasons, and the ordering of them matters. Reordering
+the guards changes which *exception class* a failed live session raises —
+`SystemConfigurationError` instead of `ProviderError` — which changes whether it
+is scored at all. That is the T1a/T2 boundary A44 settled, and moving it belongs
+in its own decision rather than inside a gate about replay. Second, it is on the
+live-network path, which cannot be exercised without an API call, so any claim to
+have verified a change there would be unearned. Third, the record is not
+*false* as written: `provider` and `model` say what was asked, which is what the
+address hashes; `provenance` says what served it, and is honestly empty.
+
+**Waits on:** a decision about whether the substitute-model check should precede
+the failure check on the recording path.
+
+**2. A refusal is now sticky at its address in RECORD mode, and the four earlier
+entries argue only the replay leg.** An address covers the brief, not the
+scenario or the seed, so replicates presenting an identical brief share one —
+which is why 112 calls serve 360 replicates. Recording a refusal therefore makes
+every later replicate at that address replay the refusal rather than asking
+again.
+
+This is intended, and the alternative is worse. Answers already behave exactly
+this way; not recording refusals would make a refusal the one outcome that got
+retried, which biases a campaign *against* observing refusals — the opposite of
+what A35 is for. It is recorded because it changes what a future recording
+campaign measures, and the four entries above all argue the replay leg, where it
+does not arise.
+
+**3. A corpus-supplied `cause` is validated at scoring time, not at load.**
+`_outcome_of` validates `outcome` at the read boundary; `cause` is taken as a
+plain string. The check exists, at `agency.py`'s `proposal_causes`, which raises
+`InvestigationError` on a tag outside `PROPOSAL_CAUSES` rather than binning or
+dropping it — so a bad tag cannot reach a reading. Two reviewers found this
+independently and both concluded it should stay: `eval/agency.py` imports
+`ProposalAttempt` from `systems/hybrid.py`, so a vocabulary check inside
+`transcripts.py` would need `systems` → `eval` and close an import cycle. It is
+the same constraint `errors.py` records for why `ProviderError.cause` is a plain
+`str`.
+
+The cost, named so the deferral is a decision rather than an omission: a corpus
+with one bad tag aborts a matrix pass at scoring, with every cell completed so
+far already in the append-only ledger.
+
+**Closes off.** Finding 1 is the only one carrying an open question. Findings 2
+and 3 are settled; re-raising either should start from the reasoning here.
+
+## 2026-08-23 — A35, second review: the record kind was rewriting the corpus it vouches for
+
+**Decision.** :meth:`Transcript.as_json` omits ``outcome``, ``cause`` and
+``detail`` when they hold their defaults, and ``detail`` is **out** of
+``Transcript.answer`` — the tuple that decides append-only equality. Both
+reverse choices made hours earlier in the same gate.
+
+**Why the first.** Emitting the three keys unconditionally rewrote every corpus
+recorded before A35 on the first ``save`` that touched it. Reproduced:
+``spec9.json`` went 659,740 → 667,356 bytes and its digest ``e2361f03…`` →
+``5256b99c…``. ``scripts/run_matrix.py``'s ``checkpoint`` calls ``save`` after
+*every replicate*, so one resumed recording pass would have done it — silently,
+to the artefact every LLM number in the campaign rests on, and to the exact hash
+``docs/CORPUS.md`` had just been written to publish. The manifest and the record
+kind were on a collision course inside one gate.
+
+Omitting defaults is not tidiness: it is what makes a corpus of answers
+round-trip byte-identically, which is the property the published digest needs and
+which nothing else was providing.
+``test_a35_a_pre_a35_corpus_round_trips_byte_identically`` asserts the **bytes**,
+not the parsed content, because the hash is over bytes.
+
+**Why the second, and this one is a correction of reasoning rather than of an
+oversight.** ``detail`` was included in the equality tuple with a stated
+justification: that every raise site varies its message only with *what
+happened*, checked rather than assumed. That claim was false, and the
+counterexample matters more than the error. ``AnthropicProvider`` excludes
+``max_tokens`` from the address **deliberately**, and its docstring gives the
+argument — a ceiling "either yields that answer or **raises**, so it can never
+produce a different recorded payload". A35 turned that raise into a record whose
+message interpolates the ceiling. Two runs differing only in a value the
+addressing scheme is designed to ignore then collided at one address and the
+second ``save`` refused. Reproduced at ``call/3717b983a55e0f49``.
+
+So including ``detail`` made this module quietly break a neighbouring module's
+stated invariant. It is now treated exactly as provenance is: recorded for audit,
+never for identity, first recording wins. It is still *stored* — a replay that
+could not reproduce the message would not be the byte-identical replay the gate
+asks for — and ``(outcome, cause, payload)`` is what decides.
+
+**Closes off.** Two refusals at one address that agree on cause and disagree on
+wording now agree. If a future raise site makes the *cause* config-dependent the
+way the ceiling made the message, that is an addressing question and belongs in
+``settings``, not in the comparison.
+
+## 2026-08-23 — A35: two hazards in the corpus writer, found by review and left
+
+**Decision.** Neither is fixed here. Both are pre-existing, both are outside what
+this gate changed, and both are recorded so the next person meets them written
+down rather than by reproducing them.
+
+**1. ``TranscriptStore.save`` is not atomic, and the project's own idiom two
+modules away is.** ``path.write_text`` truncates before it writes, so an
+interrupted save leaves a truncated corpus — against a ``save`` docstring that
+says "Guarantees the file never loses a call". ``run_matrix``'s ``checkpoint``
+calls it after every replicate, and its ``KeyboardInterrupt`` handler reasons
+that "each interesting path checkpoints for itself", so a Ctrl-C landing inside
+the write is reachable on the ordinary recording path.
+:class:`~sciagent.inference.empirical.EmpiricalTable` already writes a per-pid
+temp file and retries ``os.replace``, and its docstring says in terms that "a
+plain ``write_text`` truncates first". ``docs/DECISIONS.md`` records that
+hardening for the table and records nothing for the transcript store — so this is
+not a decision already taken and cleared; the store simply never got the same
+treatment.
+
+**Waits on:** nothing but a decision to do it. It is a small change and it
+belongs in its own commit, not inside a gate about replay.
+
+**2. A corpus holding two entries at one address silently keeps one.**
+``load`` builds its entries as a dict comprehension keyed on the address, so a
+duplicate is collapsed with nothing raised, and ``_refuse_to_drop`` cannot see it
+because it compares the already-collapsed key set. It is the same *shape* as the
+truncation defect fixed earlier today — a read outcome the guard treats as
+"drops nothing" — and weaker only in that ``save`` can never produce such a file
+itself. It needs an externally-produced corpus, which ``docs/CORPUS.md`` now
+explicitly invites: a naive merge of two ``calls`` arrays produces exactly this.
+
+**Waits on:** whether ``load`` should refuse a duplicate address outright. It
+should, but that is a change to what a corpus *is*, and it is the third such
+change proposed inside one gate.
+
+**Closes off.** Both were found by ``/preflight``'s review on the re-run, after
+the first pass had already been acted on — which is the argument for re-running
+the review when the fixes touch the reviewed path, rather than only re-running
+the suite.

@@ -25,10 +25,10 @@ a refinement, it is a disagreement, and the record should not carry both silentl
 from __future__ import annotations
 
 from sciagent.core.types import Claim, Direction, HypothesisId
-from sciagent.hypothesis.graph import Relation
+from sciagent.hypothesis.graph import HypothesisGraph, Relation
 from sciagent.verify.verdict import CheckClass, ClaimContext, Finding, Outcome
 
-__all__ = ["SUPPORTING_STRENGTHS", "check"]
+__all__ = ["SUPPORTING_STRENGTHS", "check", "zombie"]
 
 #: The strengths that assert *for* a subject. ``refutes`` asserts against it, and
 #: every rule here is about asserting for something already settled otherwise.
@@ -45,6 +45,34 @@ def _reject(claim: Claim, why: str) -> Finding:
     )
 
 
+def zombie(claim: Claim, graph: HypothesisGraph) -> bool:
+    """Return whether ``claim`` supports a hypothesis ``graph`` has rejected.
+
+    Guarantees the answer is the exact condition :func:`check` refuses a claim
+    on, so a caller counting zombies and a caller reading findings cannot come
+    to different totals.
+
+    Exported for that reason and no other. SPEC §12 criterion 8 asks for two
+    quantities -- *"zero graph contradictions and zero zombie hypotheses"* --
+    and a count of :data:`~sciagent.verify.verdict.CheckClass.CONTRADICTION`
+    findings pools them, so a nonzero figure could be a reversal and the second
+    half of the criterion stays underivable. The alternative was for the caller
+    to recognise a zombie by its :attr:`~sciagent.verify.verdict.Finding.message`,
+    which :mod:`sciagent.verify.verdict` says is for a human reading the record
+    and that nothing branches on, or to restate the rule in a second place --
+    where it would drift from this one silently.
+
+    Refuting a rejected hypothesis is not a zombie and neither is any claim
+    about a *suspended* one; see this module's docstring for both.
+    """
+    if claim.subject_kind != "hypothesis":
+        return False
+    if claim.strength not in SUPPORTING_STRENGTHS:
+        return False
+    subject = HypothesisId(str(claim.subject))
+    return subject in graph.nodes and graph.node(subject).status == "rejected"
+
+
 def check(claim: Claim, context: ClaimContext) -> tuple[Finding, ...]:
     """Return every contradiction between this claim, the graph and the record."""
     findings: list[Finding] = []
@@ -54,7 +82,7 @@ def check(claim: Claim, context: ClaimContext) -> tuple[Finding, ...]:
         subject = HypothesisId(str(claim.subject))
         if subject in context.graph.nodes:
             node = context.graph.node(subject)
-            if supporting and node.status == "rejected":
+            if zombie(claim, context.graph):
                 findings.append(
                     _reject(
                         claim,

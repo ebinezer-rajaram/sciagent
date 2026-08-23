@@ -69,8 +69,9 @@ from typing import Final
 
 from sciagent.core.edits import Defect, EditGrammar
 from sciagent.core.errors import MalformedDesignError
-from sciagent.core.program import stable_key
+from sciagent.core.program import GenerativeProgram, stable_key
 from sciagent.core.types import (
+    Claim,
     DataVersion,
     Digest,
     EnvVersion,
@@ -82,7 +83,7 @@ from sciagent.core.types import (
     Seed,
 )
 from sciagent.eval.agency import AgencyMetrics, agency_metrics
-from sciagent.eval.campaign import ScenarioRun
+from sciagent.eval.campaign import Adjudication, ScenarioRun, adjudicate
 from sciagent.eval.scoring import (
     DIMENSION_VERSION,
     ClosedWorldScore,
@@ -641,6 +642,22 @@ class CellReading:
     cannot be asked.
     """
 
+    adjudication: Adjudication
+    """What the verifier made of this run's claims (§12 criteria 8 and 10).
+
+    The whole object rather than the rate alone, for the reason this class holds
+    an :class:`~sciagent.eval.agency.AgencyMetrics` rather than one float:
+    :func:`~sciagent.eval.campaign.adjudicate` is the only thing that builds
+    one, it reads the graph and the evidence the run ended with rather than any
+    account a system gives of itself, and a caller assembling a cell cannot
+    supply a rate without the counts it is a rate *of*.
+
+    Before this field :func:`sciagent.verify.verify` had **no caller in**
+    ``src`` at all -- seven check modules reachable only from
+    ``tests/baseline_runs.py`` -- so criterion 10's figure described a synthetic
+    claim population and criterion 8 counted objects no recorded run created.
+    """
+
     max_defect_mass: float
     """The largest posterior mass on any single hypothesis holding an edit.
 
@@ -701,8 +718,16 @@ class CellReading:
         :func:`~sciagent.eval.report._summarise` already excludes from a mean and
         counts separately, exactly as it does for a D2 on a scenario declaring no
         battery, so the distinction survives into the rendered line.
+
+        **An absent adjudication rate crosses the same way and for the same
+        reason.** :attr:`~sciagent.eval.campaign.Adjudication.rate` is ``None``
+        for a run that afforded no claim, and both numbers a reader might expect
+        there are false: ``0.0`` reads as a verifier that decided none of them
+        and ``1.0`` as one that decided all, while it decided nothing because
+        there was nothing to decide.
         """
         fraction = self.agency.autonomy_fraction
+        rate = self.adjudication.rate
         return {
             "d1_structural_distance": self.dimensions.d1_structural_distance,
             "d2_held_out_predictive": self.dimensions.d2_held_out_predictive,
@@ -731,6 +756,19 @@ class CellReading:
             "null_mass": float(self.null_mass),
             "abstain_mass": float(self.abstain_mass),
             "max_defect_mass": self.max_defect_mass,
+            # §12 criterion 10, with both counts it is a ratio of beside it so a
+            # reader need not take the division on trust -- the same reasoning
+            # that puts `entertained` and `escalated` beside the autonomy
+            # fraction above.
+            "claims": float(self.adjudication.claims),
+            "adjudicated": float(self.adjudication.adjudicated),
+            "adjudication_rate": math.nan if rate is None else rate,
+            # §12 criterion 8's two quantities, separately. The criterion asks
+            # for zero graph contradictions *and* zero zombie hypotheses, and a
+            # single pooled count leaves the second underivable: a nonzero
+            # figure could be a reversal, which is neither.
+            "contradictions": float(self.adjudication.contradictions),
+            "zombie_claims": float(self.adjudication.zombies),
         }
 
 
@@ -784,6 +822,8 @@ def reading_of(
     table: EmpiricalTable,
     simulate: Simulator,
     observations: Sequence[Observation],
+    program: GenerativeProgram,
+    claims: Sequence[Claim] | None = None,
 ) -> tuple[CellReading, EmpiricalTable]:
     """Return SPEC §8's dimensions and §9's conditioning for one run.
 
@@ -814,6 +854,22 @@ def reading_of(
     still cannot get it wrong by supplying the wrong list, because a caller still
     does not supply one; what changed is which right answer it gets.
 
+    ``program`` is the **reference** programme the run's executor was built on,
+    and is what SPEC §7.2's causal licence is read against. Required rather than
+    defaulted, for the reason :func:`cell_key`'s ``battery`` is: there is no
+    domain-independent programme to fall back to, and a wrong one does not raise
+    -- it silently mis-licenses every causal claim in the population and the
+    adjudication figures come out plausible. It carries no scenario's ground
+    truth; see :attr:`~sciagent.experiments.executor.Executor.reference`.
+
+    ``claims`` defaults to
+    :func:`~sciagent.eval.campaign.claims_from_run` and exists because an agent
+    will author them at item 12, and because a criterion counted over a
+    population that cannot contain the thing counted is not a measurement -- see
+    :func:`~sciagent.eval.campaign.adjudicate`, which owns that reasoning. It
+    admits **structure** only: which claims are adjudicated, never how any of
+    them is decided.
+
     ``observations`` cannot be derived the same way -- an
     :class:`~sciagent.inference.interface.Observation` carries the engine's
     template rather than the evidence index's -- so it is checked instead.
@@ -824,9 +880,18 @@ def reading_of(
     confident ``0.0`` rather than an error, and 1,120 cells of zero
     explanatory coverage is a plausible-looking result.
 
-    **Raises :class:`~sciagent.core.errors.InvestigationError` as well as
-    :class:`~sciagent.core.errors.MalformedDesignError`, and the second family
-    arrived with the agency fields rather than with this function.**
+    **Raises :class:`~sciagent.core.errors.InvestigationError` and
+    :class:`~sciagent.core.errors.MalformedClaimError` as well as
+    :class:`~sciagent.core.errors.MalformedDesignError`, and none of the three
+    arrived with this function.** The claim family is gate A30's:
+    :func:`~sciagent.eval.campaign.adjudicate` refuses a population holding a
+    claim about a hypothesis the run never entertained, and
+    :class:`~sciagent.eval.campaign.Adjudication` refuses a tally that cannot
+    describe one population. Neither is reachable from the default population --
+    both bound the ``claims`` seam -- but a caller deciding what to catch around
+    a matrix pass needs the family named rather than discovered.
+    :class:`~sciagent.core.errors.MalformedClaimError` is a
+    ``VerificationError`` and is in neither of the other two families.
     :func:`~sciagent.eval.agency.agency_metrics` refuses a run whose own
     proposal record claims more admissions than the graph received late
     structures -- two accounts of one run disagreeing -- and that check now runs
@@ -891,6 +956,13 @@ def reading_of(
             # reconciliation, so its counts are the ones the graph's own state
             # implies rather than a system's account of itself.
             agency=agency_metrics(run),
+            # Criteria 8 and 10's observables, and the first call to
+            # `sciagent.verify.verify` from anywhere in `src`. Derived here for
+            # the same reason every other figure is: the run has been through
+            # `run_scenario`'s reconciliation, so the graph, the evidence and
+            # the posterior the claims are judged against are the ones the
+            # engine's own state implies.
+            adjudication=adjudicate(run, program=program, claims=claims),
             null_mass=run.diagnosis.null_mass,
             abstain_mass=run.diagnosis.abstain_mass,
             max_defect_mass=largest_defect_mass(run),

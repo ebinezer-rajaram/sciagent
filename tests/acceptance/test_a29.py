@@ -221,14 +221,15 @@ def _runs() -> dict[tuple[str, str], Recorded]:
             system = _system(arm)
             graph = null_seeded_graph(AGENT_GRAMMAR, METRICS, table, slice_designs())
             engine = EmpiricalTableEngine(graph, table, simulate=simulate)
+            runner = executor(
+                GRAMMAR,
+                store=ExperimentStore.in_memory(),
+                budget=target.budget,
+            )
             run = run_scenario(
                 target,
                 system,
-                executor=executor(
-                    GRAMMAR,
-                    store=ExperimentStore.in_memory(),
-                    budget=target.budget,
-                ),
+                executor=runner,
                 engine=engine,
                 graph=graph,
             )
@@ -238,6 +239,7 @@ def _runs() -> dict[tuple[str, str], Recorded]:
                 table=engine.table,
                 simulate=simulate,
                 observations=engine.observations,
+                program=runner.reference,
             )
             built[(name, arm)] = Recorded(
                 run=run,

@@ -106,7 +106,19 @@ __all__ = [
 #: precisely nothing in recompute: the fields are read off a
 #: :class:`~sciagent.eval.campaign.ScenarioRun` that already existed, and every
 #: estimator is untouched.
-DIMENSION_VERSION: Final = "spec8/4"
+#:
+#: ``spec8/5`` is A30, and bumps for the same reason a third time:
+#: :meth:`~sciagent.eval.matrix.CellReading.as_payload` gained ``claims``,
+#: ``adjudicated``, ``adjudication_rate``, ``contradictions`` and
+#: ``zombie_claims``, so a ``spec8/4`` row cannot answer a question about §12
+#: criterion 8 or 10 and a reader pooling the two generations would summarise an
+#: adjudication rate over whichever rows happened to carry the key. D1-D6 are
+#: again unchanged, no cached table moves, and no estimator is touched -- the
+#: fields are read off a
+#: :class:`~sciagent.eval.campaign.ScenarioRun` by
+#: :func:`~sciagent.eval.campaign.adjudicate`, which recomputes nothing the run
+#: did not already hold.
+DIMENSION_VERSION: Final = "spec8/5"
 
 
 @dataclass(frozen=True, slots=True)

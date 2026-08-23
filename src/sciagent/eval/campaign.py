@@ -32,7 +32,7 @@ citation; the one number in a claim, its effect, comes off
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Protocol, runtime_checkable
 
@@ -40,8 +40,10 @@ from sciagent.core.edits import Defect
 from sciagent.core.errors import (
     EngineTamperError,
     InvestigationError,
+    MalformedClaimError,
     MalformedDesignError,
 )
+from sciagent.core.program import GenerativeProgram
 from sciagent.core.types import (
     CLAIM_MODALITIES,
     CLAIM_STRENGTHS,
@@ -51,8 +53,10 @@ from sciagent.core.types import (
     Diagnosis,
     Direction,
     ExperimentId,
+    FrozenDict,
     HypothesisId,
     Intervention,
+    Probability,
     TotalEffect,
 )
 from sciagent.eval.scenarios import Scenario
@@ -63,10 +67,20 @@ from sciagent.inference.empirical import EmpiricalTableEngine, replicate_seed
 from sciagent.inference.interface import PPCResult
 from sciagent.systems.base import Investigation, ResearchSystem, diagnose
 from sciagent.systems.hybrid import ProposalAttempt
+from sciagent.verify import ClaimContext, Verdict, verify
+from sciagent.verify.contradiction import zombie
 from sciagent.verify.numerical import recompute
 from sciagent.verify.relevance import EvidenceIndex
+from sciagent.verify.verdict import CheckClass
 
-__all__ = ["Proposing", "ScenarioRun", "claims_from_run", "run_scenario"]
+__all__ = [
+    "Adjudication",
+    "Proposing",
+    "ScenarioRun",
+    "adjudicate",
+    "claims_from_run",
+    "run_scenario",
+]
 
 
 @runtime_checkable
@@ -621,6 +635,280 @@ def claims_from_run(run: ScenarioRun) -> tuple[Claim, ...]:
                     else draft
                 )
     return tuple(built)
+
+
+@dataclass(frozen=True, slots=True)
+class Adjudication:
+    """What the verifier made of one run's claims.
+
+    Four counts and no verdict of its own. SPEC §12 reads two criteria off
+    these, and both are bars a campaign may fail, so nothing here decides
+    whether a run passed anything -- that is a comparison a reader makes against
+    the criterion, from figures the report carries.
+    """
+
+    claims: int
+    """How many claims the run afforded, and the denominator of :attr:`rate`."""
+
+    adjudicated: int
+    """How many the verifier decided without human input (§12 criterion 10).
+
+    :attr:`~sciagent.verify.Verdict.adjudicated` is *"not referred"* rather than
+    *"accepted"*: a claim refused on a mechanical ground has been decided, and
+    the criterion is about how much of a population the verifier can settle, not
+    about how much of it survives.
+    """
+
+    contradictions: int
+    """Contradiction findings across every verdict (§12 criterion 8, first half).
+
+    Findings and not claims: one claim can be incoherent with the record on more
+    than one ground, and a criterion asking for *zero* contradictions is not
+    served by collapsing three into one.
+    """
+
+    zombies: int
+    """Supporting claims about a rejected hypothesis (criterion 8, second half).
+
+    Beside :attr:`contradictions` because the criterion names two quantities --
+    *"zero graph contradictions and zero zombie hypotheses"* -- and one pooled
+    count leaves the second underivable: a nonzero figure could be a reversal.
+
+    A subset of :attr:`contradictions` by construction, since every zombie claim
+    draws a contradiction finding and this is
+    :func:`sciagent.verify.contradiction.zombie`, the very predicate that check
+    refuses on.
+    """
+
+    def __post_init__(self) -> None:
+        """Raise unless the four counts can describe one population.
+
+        :class:`~sciagent.verify.Verdict` asserts its own consistency in the
+        same call path -- it refuses to report an outcome gentler than its
+        findings imply -- and this is the same discipline one level up. Three
+        relations the docstrings above state as facts, made false-able:
+        every count is non-negative, no more claims were decided than were
+        offered, and every zombie drew a contradiction finding.
+
+        The third is the one worth asserting rather than trusting. ``zombies``
+        and ``contradictions`` are counted from **different places** -- the
+        first from :func:`sciagent.verify.contradiction.zombie` over the
+        population, the second from the findings
+        :func:`~sciagent.verify.verify` returned -- and the only thing making
+        them agree is that ``check`` refuses on that same predicate. If that
+        ever stops being true, the two SPEC §12 criterion 8 figures disagree
+        about one run and the report averages both.
+
+        CLAUDE.md's second invariant asks for runtime assertions rather than
+        comments, and a frozen dataclass of four bare ints is exactly where a
+        comment would otherwise have been the whole of it.
+        """
+        if min(self.claims, self.adjudicated, self.contradictions, self.zombies) < 0:
+            raise MalformedClaimError(
+                f"adjudication reports a negative count "
+                f"(claims={self.claims}, adjudicated={self.adjudicated}, "
+                f"contradictions={self.contradictions}, zombies={self.zombies}); "
+                f"every field here is a tally over a claim population"
+            )
+        if self.adjudicated > self.claims:
+            raise MalformedClaimError(
+                f"adjudication decided {self.adjudicated} of {self.claims} "
+                f"claim(s), which is more than it was offered; `rate` would "
+                f"report above 1.0 and pool into a campaign aggregate as though "
+                f"SPEC section 12 criterion 10 had been exceeded"
+            )
+        if self.zombies > self.contradictions:
+            raise MalformedClaimError(
+                f"adjudication counted {self.zombies} zombie(s) against "
+                f"{self.contradictions} contradiction finding(s). Every zombie "
+                f"claim is refused *by* the contradiction check, so the first is "
+                f"a subset of the second; the two are counted from different "
+                f"places and this is where they are made to agree"
+            )
+
+    @property
+    def rate(self) -> float | None:
+        """Return the share of claims adjudicated, or ``None`` for an empty run.
+
+        ``None`` when the run afforded no claim at all, and for
+        :attr:`~sciagent.eval.agency.AgencyMetrics.autonomy_fraction`'s reason:
+        a rate over an empty population is not 1.0. Reporting it as 1.0 would
+        credit a verifier that decided nothing with having decided everything,
+        and would pool into a campaign aggregate as though it were evidence that
+        criterion 10 was met.
+        """
+        if self.claims == 0:
+            return None
+        return self.adjudicated / self.claims
+
+
+def _about_this_run(
+    run: ScenarioRun, population: Sequence[Claim], program: GenerativeProgram
+) -> None:
+    """Raise unless every claim in ``population`` is a claim about ``run``.
+
+    Guarantees each claim's subject is one this run could be about -- a
+    hypothesis it entertained, or a component the reference programme holds --
+    and each cited experiment one it registered, so the counts
+    :func:`adjudicate` returns are a tally over *this* run rather than over a
+    population that happens to have been handed to it.
+
+    **Both halves of** :data:`~sciagent.core.types.SubjectKind`, and the second
+    is not decoration. An earlier version checked only ``"hypothesis"`` and its
+    guarantee was therefore false of exactly the claims
+    ``test_a30_the_rate_falls_when_a_claim_cannot_be_decided`` injects: a
+    component-subject claim is the one demonstrated lever on criterion 10 in
+    this repository, so the branch the check skipped was the branch that
+    mattered.
+
+    The check the ``claims`` seam needs, and the reason it is an assertion
+    rather than the sentence in :func:`adjudicate`'s docstring saying claims are
+    structure. Item 12 will feed that parameter from an agent, and a claim about
+    a hypothesis this run never held is not a claim this run can be graded on --
+    counting it moves SPEC §12 criterion 10's denominator with something the
+    investigation never entertained. CLAUDE.md's second invariant asks for the
+    boundary to be enforced rather than described.
+
+    **It bounds well-formedness, not merit, and the difference is the honest
+    limit of what any check here can do.** A claim can pass this and still be
+    worthless: the verifier refuses it, a refusal *is* adjudicated (a claim
+    decided on a mechanical ground has been decided, which is what criterion 10
+    measures), and so a population padded with junk raises the rate toward 1.0.
+    That is a property of the criterion rather than of this function -- the same
+    one :func:`claims_from_run` names when it says a generator emitting only
+    what the verifier accepts would turn A23 into a measurement of itself -- and
+    it is recorded in ``docs/DECISIONS.md`` (2026-08-23, A30 after review)
+    rather than papered over here. Changing what criterion 10 measures is a SPEC
+    §12 question and is nobody's to take inside a gate.
+
+    Raising rather than referring, and deliberately. The verifier's posture is
+    that an undecidable claim is *referred* rather than guessed at, but a claim
+    citing evidence that does not exist is malformed rather than undecidable:
+    :meth:`~sciagent.verify.relevance.EvidenceIndex.record` already raises
+    :class:`~sciagent.core.errors.MalformedClaimError` for it, several frames
+    deeper and without naming which claim. This is that failure moved to the
+    boundary where it can say.
+    """
+    for claim in population:
+        if claim.subject_kind == "hypothesis":
+            subject = HypothesisId(str(claim.subject))
+            if subject not in run.graph.nodes:
+                raise MalformedClaimError(
+                    f"claim {claim.id!r} is about hypothesis {subject!r}, which "
+                    f"{run.system!r}'s run on {run.scenario.id!r} never "
+                    f"entertained; the graph holds "
+                    f"{sorted(run.graph.nodes)!r}. Adjudicating it would count a "
+                    f"claim about another investigation toward this one's"
+                )
+        else:
+            component = ComponentId(str(claim.subject))
+            if component not in program.components:
+                raise MalformedClaimError(
+                    f"claim {claim.id!r} is about component {component!r}, which "
+                    f"the reference programme does not hold; it names "
+                    f"{sorted(program.components)!r}. A claim about a component "
+                    f"no programme has is not a claim about this run"
+                )
+        for experiment in claim.evidence:
+            if experiment not in run.evidence.records:
+                raise MalformedClaimError(
+                    f"claim {claim.id!r} cites experiment {experiment!r}, which "
+                    f"{run.system!r}'s run on {run.scenario.id!r} never "
+                    f"registered. A claim resting on evidence the run does not "
+                    f"hold cannot be adjudicated against it"
+                )
+
+
+def adjudicate(
+    run: ScenarioRun,
+    *,
+    program: GenerativeProgram,
+    claims: Sequence[Claim] | None = None,
+) -> Adjudication:
+    """Adjudicate one run's claims and return what the verifier found.
+
+    Guarantees every claim is put through :func:`sciagent.verify.verify` in the
+    order given, that the counts returned are of what that function decided, and
+    that nothing here reads a number a system reported: the context is built
+    from the graph the run ended with, the evidence it registered and the
+    posterior the engine's own state implies.
+
+    This is :func:`~sciagent.verify.verify`'s **production caller**. Before it,
+    every call in the repository was in a test, so §12 criterion 10's figure
+    described a synthetic population rather than a campaign, and criterion 8
+    counted objects no recorded run ever created.
+
+    ``claims`` defaults to :func:`claims_from_run`. It is a parameter because
+    the claims will come from an agent once one exists, and because a count no
+    input can move is not a measurement -- a rejected hypothesis is given
+    exactly zero mass and ``claims_from_run`` filters to mass above zero, so the
+    generated population *cannot* contain a zombie and criterion 8's zero is
+    unfalsifiable without a way in.
+
+    **A caller says which claims are adjudicated and cannot say how any one of
+    them is decided** -- every outcome comes from :func:`~sciagent.verify.verify`
+    and every count from this function. An earlier version of this paragraph put
+    that as *"claims are structure"*, which is **false** and was corrected after
+    review rather than quietly softened.
+    :attr:`~sciagent.core.types.Claim.effect` is a number, and it selects which
+    grading path runs: :mod:`sciagent.verify.statistical` takes
+    ``_from_effect`` when a claim carries one and ``_from_predictions`` when it
+    does not, and only the second can return ``REFER``. So attaching a
+    *fabricated* effect to an otherwise-referrable claim converts it to a
+    refusal -- and a refusal **is** adjudicated, which is criterion 10's own
+    definition of decided. Fabricating a number therefore raises the rate.
+
+    That is not closed here, and cannot be. Refusing a fabricated effect at this
+    boundary would take the work away from :mod:`sciagent.verify.numerical`,
+    whose whole purpose -- gate A19 -- is to catch exactly that; the verifier is
+    *supposed* to receive fabricated effects and refuse them. What the mechanism
+    actually shows is a property of criterion 10, recorded in
+    ``docs/DECISIONS.md`` (2026-08-23, A30 after review) alongside the volume
+    case: a bar counting refusals as decisions rewards a caller for supplying
+    more claims, whatever they say. Changing that is SPEC §12 and frozen.
+
+    **Accumulating, and within this run only.** A claim the verifier accepts
+    enters :attr:`~sciagent.verify.ClaimContext.accepted` for the claims after
+    it, which is what
+    :mod:`sciagent.verify.contradiction`'s cross-contradiction and reversal
+    rules read; against the empty tuple every earlier caller passed, two of that
+    module's three rules are unreachable code. Only claims the verdict
+    *accepts* are carried -- ``accepted`` is documented as the claims already
+    **admitted**, and putting refused ones there would let the record contradict
+    itself with claims the verifier threw out.
+
+    Accumulating across a *campaign* would be a bug rather than a stronger
+    version of this: a cell's reading would become a function of which cells ran
+    before it, so a resumed pass would score differently at the same content
+    address. That is the third invariant, and it is why the accumulator is a
+    local here rather than anything the caller holds.
+    """
+    population = tuple(claims_from_run(run) if claims is None else claims)
+    _about_this_run(run, population, program)
+    context = ClaimContext(
+        graph=run.graph,
+        evidence=run.evidence,
+        program=program,
+        posterior=FrozenDict[HypothesisId, Probability](run.diagnosis.distribution),
+    )
+    admitted: list[Claim] = []
+    verdicts: list[Verdict] = []
+    for claim in population:
+        verdict = verify(claim, replace(context, accepted=tuple(admitted)))
+        verdicts.append(verdict)
+        if verdict.accepted:
+            admitted.append(claim)
+    return Adjudication(
+        claims=len(population),
+        adjudicated=sum(1 for verdict in verdicts if verdict.adjudicated),
+        contradictions=sum(
+            1
+            for verdict in verdicts
+            for finding in verdict.findings
+            if finding.check is CheckClass.CONTRADICTION
+        ),
+        zombies=sum(1 for claim in population if zombie(claim, run.graph)),
+    )
 
 
 def _reconcile(

@@ -307,6 +307,98 @@ class CellSummary:
     ledger that way rather than as a number.
     """
 
+    claims: DimensionSummary
+    adjudicated: DimensionSummary
+    """The two counts :attr:`adjudicated_share` is a ratio of, pooled per cell.
+
+    Carried because criterion 10 is a share of **claims** and this class pools
+    per **replicate**, and the two are not the same number wherever a cell's
+    replicates afford different-sized claim populations. Without them the
+    criterion's own statistic is unrecoverable from the report -- exactly the
+    gap :attr:`max_defect_mass` exists to close for criterion 9.
+    """
+
+    adjudication_rate: DimensionSummary
+    """§12 criterion 10's figure, pooled over this cell's replicates.
+
+    *"At least 90% of claims adjudicated by the verifier without human input"*
+    is read off a report, and until gate A30 the report carried nothing to read
+    it from: :func:`sciagent.verify.verify` had no caller in ``src`` at all, so
+    the only measurement of it anywhere was over a claim population a test built.
+
+    A replicate that afforded no claim contributes ``nan`` and is excluded from
+    the mean and counted in :attr:`DimensionSummary.n_non_finite`, exactly as an
+    absent autonomy fraction is -- see
+    :meth:`~sciagent.eval.matrix.CellReading.as_payload`.
+
+    **This is the mean of per-replicate rates, and criterion 10 is not that
+    number.** *"At least 90% of claims adjudicated"* is a share of claims, so
+    replicates weight by how many claims each afforded; this weights them
+    equally. Two replicates at 80/100 and 4/4 average to 0.9000 and clear the
+    bar, while the share they actually represent is 84/104 = 0.8077 and does
+    not. :attr:`adjudicated_share` is the criterion's statistic; this one is
+    kept beside it because it is the only figure here carrying an interval and
+    a non-finite count, which is what shows a replicate that afforded nothing.
+    """
+
+    @property
+    def adjudicated_share(self) -> float:
+        """Return §12 criterion 10's statistic: adjudicated claims over claims.
+
+        Guarantees the figure is weighted by claim count rather than by
+        replicate, so a cell whose replicates afford unequal populations is
+        reported on the quantity the criterion names.
+
+        :attr:`claims` and :attr:`adjudicated` are means over the *same*
+        replicate set and both are always finite -- they come off non-negative
+        integer counts -- so the replicate count cancels and this is the
+        claim-weighted share rather than the replicate-weighted one. That is the
+        whole distinction the field exists for.
+
+        **It is not exact, and an earlier version of this paragraph said it
+        was.** Two separately-rounded means divided are not
+        ``sum(adjudicated) / sum(claims)`` in IEEE-754: on claims ``[33, 33,
+        34]`` against adjudicated ``[26, 27, 27]`` this returns
+        ``0.7999999999999999`` where the true share is ``0.8``. The error is at
+        the last unit in the last place and cannot move the statistic's meaning;
+        it can in principle decide a comparison against criterion 10's ``0.90``
+        that was already on a knife edge, which is a case where the bar is not
+        answering anything either way. Carrying the raw sums instead would need
+        :func:`_summarise` to report one, and a report layer plumbing sums to
+        chase an ulp is a worse trade than saying so here.
+
+        ``nan`` where the cell afforded no claim at all, for the reason
+        :attr:`~sciagent.eval.campaign.Adjudication.rate` is ``None`` there.
+
+        **Currently equal to** :attr:`adjudication_rate`'s point on every
+        conventional arm, and that is a fact about the arms rather than about
+        the two statistics: measured over six replicates of B1 and V1 on S9 and
+        S11, every replicate afforded exactly 16 and 80 claims respectively, so
+        the weights are uniform and the two agree. An arm holding a proposal
+        layer entertains a different number of structures per replicate, so they
+        part company on V7, V3 and V4 -- which is to say on every arm the
+        recorded campaign exists to compare.
+        """
+        if not math.isfinite(self.claims.point) or self.claims.point <= 0.0:
+            return math.nan
+        return self.adjudicated.point / self.claims.point
+
+    contradictions: DimensionSummary
+    zombie_claims: DimensionSummary
+    """§12 criterion 8's two quantities, pooled the same way.
+
+    Both, because the criterion is *"zero graph contradictions **and** zero
+    zombie hypotheses"* and one count cannot answer it: a nonzero pooled figure
+    could be a reversal, which is neither of the two things named. See
+    :func:`sciagent.verify.contradiction.zombie`, which owns the second
+    predicate and is what the payload counts.
+
+    Means rather than totals, like everything else on this class. A campaign
+    meeting the criterion reports 0.000 in both columns, and the mean is what
+    makes a single offending replicate visible as a small nonzero rather than
+    hidden by however many quiet ones surround it.
+    """
+
     null_mass: DimensionSummary
     abstain_mass: DimensionSummary
     max_defect_mass: DimensionSummary
@@ -1119,6 +1211,11 @@ def _cell(
         probe_inadequate_rate=_rate(rows, _PROBE_INADEQUATE),
         experiments=_summarise(_values(rows, "experiments")),
         autonomy_fraction=_summarise(_values(rows, "autonomy_fraction")),
+        claims=_summarise(_values(rows, "claims")),
+        adjudicated=_summarise(_values(rows, "adjudicated")),
+        adjudication_rate=_summarise(_values(rows, "adjudication_rate")),
+        contradictions=_summarise(_values(rows, "contradictions")),
+        zombie_claims=_summarise(_values(rows, "zombie_claims")),
         null_mass=_summarise(_values(rows, "null_mass")),
         abstain_mass=_summarise(_values(rows, "abstain_mass")),
         max_defect_mass=_summarise(_values(rows, "max_defect_mass")),
@@ -1381,6 +1478,27 @@ def _cell_block(cell: CellSummary, header: str) -> list[str]:
             f"  {'masses null/abstain/max defect':<{_LABEL_WIDTH}s}"
             f"{cell.null_mass.point:>10.3f}  {cell.abstain_mass.point:>10.3f}  "
             f"{cell.max_defect_mass.point:>10.3f}",
+            # Criterion 10, inside the cell block for the reason the autonomy
+            # fraction is: a criterion read off the report is not answerable
+            # from a field a reader has to open the ledger to find. Its interval
+            # carries the non-finite count, so a replicate that afforded no
+            # claim shows as excluded rather than as a zero folded in.
+            f"  {'adjudicated fraction':<{_LABEL_WIDTH}s}"
+            f"{_interval(cell.adjudication_rate)}",
+            # Criterion 10's own statistic, which the line above is not: that
+            # one weights replicates equally and the criterion weights claims.
+            # Printed with both counts in the clear so a reader can check the
+            # quotient rather than take it, the way criterion 9's three masses
+            # are printed rather than their verdict.
+            f"  {'claims afforded/adjudicated/share':<{_LABEL_WIDTH}s}"
+            f"{cell.claims.point:>10.3f}  {cell.adjudicated.point:>10.3f}  "
+            f"{cell.adjudicated_share:>10.4f}",
+            # Criterion 8's two quantities, on one line and labelled apart. A
+            # campaign meeting the criterion prints 0.000 twice; a pooled single
+            # figure could not say which of the two a nonzero was.
+            f"  {'per run contradictions/zombies':<{_LABEL_WIDTH}s}"
+            f"{cell.contradictions.point:>10.3f}  "
+            f"{cell.zombie_claims.point:>10.3f}",
             "",
         ]
     )
@@ -1420,6 +1538,11 @@ def _level_of(report: MatrixReport) -> float:
                 cell.log_score,
                 cell.experiments,
                 cell.autonomy_fraction,
+                cell.claims,
+                cell.adjudicated,
+                cell.adjudication_rate,
+                cell.contradictions,
+                cell.zombie_claims,
                 cell.null_mass,
                 cell.abstain_mass,
                 cell.max_defect_mass,

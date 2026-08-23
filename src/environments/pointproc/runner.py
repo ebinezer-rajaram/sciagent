@@ -337,12 +337,18 @@ class MatrixRunner:
         )
         graph = null_seeded_graph(AGENT_GRAMMAR, METRICS, self._table, slice_designs())
         engine = EmpiricalTableEngine(graph, self._table, simulate=self._simulate)
+        # Hoisted into a local rather than built inside the `run_scenario` call,
+        # because `reading_of` now needs the same executor's *reference*
+        # programme: SPEC §7.2's causal licence is read against it, and a
+        # second executor built here would be a second reference the run was
+        # never scored under.
+        runner = executor(
+            GRAMMAR, store=ExperimentStore.in_memory(), budget=target.budget
+        )
         run = run_scenario(
             target,
             system,
-            executor=executor(
-                GRAMMAR, store=ExperimentStore.in_memory(), budget=target.budget
-            ),
+            executor=runner,
             engine=engine,
             graph=graph,
         )
@@ -352,6 +358,7 @@ class MatrixRunner:
             table=engine.table,
             simulate=self._simulate,
             observations=engine.observations,
+            program=runner.reference,
         )
         self._table = grown
         return reading

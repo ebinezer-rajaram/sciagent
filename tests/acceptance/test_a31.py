@@ -131,6 +131,7 @@ from environments.pointproc.outcomes import (
 )
 from environments.pointproc.scenarios import scenario
 from sciagent.core.errors import MalformedDesignError
+from sciagent.core.program import GenerativeProgram
 from sciagent.core.types import (
     DataVersion,
     Diagnosis,
@@ -245,10 +246,17 @@ class Escalating:
 
 @dataclass(frozen=True, slots=True)
 class Recorded:
-    """One arm's run on one scenario, and the reading it was scored to."""
+    """One arm's run on one scenario, and the reading it was scored to.
+
+    ``program`` is the executor's reference programme, held because gate A30
+    made it an argument of :func:`~sciagent.eval.matrix.reading_of`: the
+    adjudication pass reads SPEC §7.2's causal licence against it, and a
+    ``ScenarioRun`` does not carry one.
+    """
 
     run: ScenarioRun
     reading: CellReading
+    program: GenerativeProgram
 
 
 @lru_cache(maxsize=1)
@@ -268,14 +276,15 @@ def _runs() -> dict[tuple[str, str], Recorded]:
         for arm in ARMS:
             graph = null_seeded_graph(AGENT_GRAMMAR, METRICS, table, slice_designs())
             engine = EmpiricalTableEngine(graph, table, simulate=simulate)
+            runner = executor(
+                GRAMMAR,
+                store=ExperimentStore.in_memory(),
+                budget=target.budget,
+            )
             run = run_scenario(
                 target,
                 _system(arm),
-                executor=executor(
-                    GRAMMAR,
-                    store=ExperimentStore.in_memory(),
-                    budget=target.budget,
-                ),
+                executor=runner,
                 engine=engine,
                 graph=graph,
             )
@@ -285,8 +294,11 @@ def _runs() -> dict[tuple[str, str], Recorded]:
                 table=engine.table,
                 simulate=simulate,
                 observations=engine.observations,
+                program=runner.reference,
             )
-            built[(name, arm)] = Recorded(run=run, reading=reading)
+            built[(name, arm)] = Recorded(
+                run=run, reading=reading, program=runner.reference
+            )
     save_gate_table(table)
     return built
 
@@ -556,6 +568,7 @@ class TestA31ThePayloadCarriesAgencyAndMasses:
             table=gate_table(),
             simulate=simulator(GRAMMAR),
             observations=(),
+            program=_runs()[("S9", "B1")].program,
         )
         payload = dict(reading.as_payload())
         assert math.isnan(payload["autonomy_fraction"])
@@ -588,7 +601,14 @@ class TestA31ThePayloadCarriesAgencyAndMasses:
         is not: the metric version addresses every cached empirical table, and
         this change touches no estimator.
         """
-        assert DIMENSION_VERSION == "spec8/4"
+        # The literal moved to `spec8/5` at gate A30, which is the next scoring
+        # change of exactly the kind this assertion was written to notice -- the
+        # payload gained the adjudication and contradiction fields SPEC 12
+        # criteria 8 and 10 read. Updating it keeps the assertion's purpose:
+        # what it pins is that the term moves when a reading changes and only
+        # then, and a literal is what makes each bump arrive here as a decision
+        # rather than as silence.
+        assert DIMENSION_VERSION == "spec8/5"
 
         current = _row("S9", "B1")
         stale = dataclasses.replace(

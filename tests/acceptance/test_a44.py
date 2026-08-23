@@ -979,7 +979,10 @@ class TestA44AFaultIsNotScoredAsARefusal:
         # keeps the assertion's purpose rather than weakening it: what it pins is
         # that *A44's* diff leaves the term alone, and a literal is what makes a
         # later bump arrive here as a decision rather than as silence.
-        assert DIMENSION_VERSION == "spec8/4"
+        # Moved again at gate A30, for the same kind of scoring change: the
+        # payload gained the adjudication and contradiction counts. A44 still
+        # touches no estimator and no dimension, which is what this pins.
+        assert DIMENSION_VERSION == "spec8/5"
 
     def test_a44_an_allowance_above_two_is_refused(self) -> None:
         """The break asymmetry, settled in the same change as the entry requires.

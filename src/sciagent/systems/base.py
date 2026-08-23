@@ -272,8 +272,19 @@ class Investigation:
 
         The one thing a system authors. Structure is what agents write; the
         prior over it is derived from the grammar's code length and the
-        likelihood from the table, so introducing a hypothesis cannot move a
-        number in the proposer's favour.
+        likelihood from the table, so introducing a hypothesis cannot move the
+        **posterior** in the proposer's favour.
+
+        That used to read *"cannot move a number"*, without qualification, and
+        gate A30 made the unqualified form false. ``predictions`` below is now
+        read by :func:`sciagent.verify.statistical.prediction_evidence`, which
+        :func:`~sciagent.eval.campaign.adjudicate` reaches on every scored cell,
+        so a system supplying its own predictions moves SPEC §12 criterion 10's
+        adjudication rate. Before A30 the field reached no reported figure,
+        because :func:`sciagent.verify.verify` had no caller in ``src`` at all.
+        The claim about the prior and the likelihood is unchanged and still
+        holds; what changed is that it is no longer the whole story, and
+        ``docs/DECISIONS.md`` (2026-08-23) carries the rest.
 
         With ``predictions`` left at ``None`` -- which is what every baseline
         does -- the structure's table row is filled and

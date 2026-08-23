@@ -120,6 +120,7 @@ from sciagent.core.types import (
     Seed,
 )
 from sciagent.eval.agency import AgencyMetrics
+from sciagent.eval.campaign import Adjudication
 from sciagent.eval.matrix import (
     CampaignAddress,
     Cell,
@@ -226,6 +227,14 @@ def _reading(d1: float = 1.0) -> CellReading:
             escalated=0,
             proposals=None,
             causes=None,
+        ),
+        # A30's counts. A fully adjudicated run with a clean record, which is
+        # what every real one on the slice is: `verify` never refers a claim in
+        # the recorded population, and no run rejects a hypothesis, so nothing
+        # here can be a zombie. Fixed rather than derived because this builder
+        # constructs a reading rather than scoring a run.
+        adjudication=Adjudication(
+            claims=80, adjudicated=80, contradictions=0, zombies=0
         ),
         null_mass=Probability(0.25),
         abstain_mass=Probability(0.5),

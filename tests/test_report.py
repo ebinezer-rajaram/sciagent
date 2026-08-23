@@ -55,6 +55,7 @@ from sciagent.core.types import (
     Seed,
 )
 from sciagent.eval.agency import AgencyMetrics
+from sciagent.eval.campaign import Adjudication
 from sciagent.eval.matrix import (
     CampaignAddress,
     Cell,
@@ -151,6 +152,19 @@ def reading(**overrides: float) -> CellReading:
         # defect: a builder defaulting the two equal could not construct the
         # abstention case, which is the one criterion 9 is read on.
         "max_defect_mass": 0.4,
+        # A30's four. `adjudicated` drives the rate rather than the rate being
+        # settable, for `escalated`'s reason above: the payload derives it as
+        # `adjudicated / claims`, so a builder taking the quotient could
+        # construct a row the framework cannot produce. Defaulted to a fully
+        # adjudicated run with a clean record, which is what every real one is.
+        "claims": 80.0,
+        "adjudicated": 80.0,
+        "contradictions": 0.0,
+        # Separately settable from `contradictions`, and defaulted apart from
+        # nothing -- both are zero on every real run. They are different
+        # quantities: a zombie is one kind of contradiction and a reversal is
+        # another, and SPEC 12 criterion 8 names both halves.
+        "zombie_claims": 0.0,
         **overrides,
     }
     return CellReading(
@@ -182,6 +196,12 @@ def reading(**overrides: float) -> CellReading:
             escalated=int(values["escalated"]),
             proposals=None,
             causes=None,
+        ),
+        adjudication=Adjudication(
+            claims=int(values["claims"]),
+            adjudicated=int(values["adjudicated"]),
+            contradictions=int(values["contradictions"]),
+            zombies=int(values["zombie_claims"]),
         ),
         null_mass=Probability(values["null_mass"]),
         abstain_mass=Probability(values["abstain_mass"]),

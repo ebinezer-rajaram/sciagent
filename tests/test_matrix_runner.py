@@ -119,12 +119,11 @@ def direct_payload(scenario_id: str, system: str, seed: Seed) -> dict[str, float
     target = replace(scenario(scenario_id), seed=seed)
     graph = null_seeded_graph(AGENT_GRAMMAR, METRICS, table, slice_designs())
     engine = EmpiricalTableEngine(graph, table, simulate=simulator(GRAMMAR))
+    runner = executor(GRAMMAR, store=ExperimentStore.in_memory(), budget=target.budget)
     run = run_scenario(
         target,
         system_for(system),
-        executor=executor(
-            GRAMMAR, store=ExperimentStore.in_memory(), budget=target.budget
-        ),
+        executor=runner,
         engine=engine,
         graph=graph,
     )
@@ -134,6 +133,7 @@ def direct_payload(scenario_id: str, system: str, seed: Seed) -> dict[str, float
         table=engine.table,
         simulate=simulator(GRAMMAR),
         observations=engine.observations,
+        program=runner.reference,
     )
     return dict(reading.as_payload())
 

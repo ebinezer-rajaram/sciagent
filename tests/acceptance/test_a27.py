@@ -91,7 +91,7 @@ from sciagent.core.types import (
     Seed,
 )
 from sciagent.eval.agency import AgencyMetrics
-from sciagent.eval.campaign import ScenarioRun, run_scenario
+from sciagent.eval.campaign import Adjudication, ScenarioRun, run_scenario
 from sciagent.eval.matrix import (
     CampaignAddress,
     Cell,
@@ -250,6 +250,14 @@ def _stub_reading(task: CellTask) -> CellReading:
             proposals=None,
             causes=None,
         ),
+        # A30's counts. A fully adjudicated run with a clean record, which is
+        # what every real one on the slice is: `verify` never refers a claim in
+        # the recorded population, and no run rejects a hypothesis, so nothing
+        # here can be a zombie. Fixed rather than derived because this builder
+        # constructs a reading rather than scoring a run.
+        adjudication=Adjudication(
+            claims=80, adjudicated=80, contradictions=0, zombies=0
+        ),
         null_mass=Probability(0.25),
         abstain_mass=Probability(0.5),
         max_defect_mass=0.4,
@@ -372,6 +380,7 @@ class TestA27PreregisteredBattery:
             table=engine.table,
             simulate=simulator(GRAMMAR),
             observations=engine.observations,
+            program=runner.reference,
         )
         assert reading.dimensions.n_held_out == len(scenario("S9").held_out)
 
@@ -400,6 +409,7 @@ class TestA27PreregisteredBattery:
             table=engine.table,
             simulate=simulator(GRAMMAR),
             observations=engine.observations,
+            program=runner.reference,
         )
         as_swapped, _ = reading_of(
             replace(run, scenario=replace(run.scenario, held_out=swapped)),
@@ -407,6 +417,7 @@ class TestA27PreregisteredBattery:
             table=grown,
             simulate=simulator(GRAMMAR),
             observations=engine.observations,
+            program=runner.reference,
         )
         assert as_declared.dimensions.n_held_out == as_swapped.dimensions.n_held_out
         assert (

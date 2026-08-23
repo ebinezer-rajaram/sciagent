@@ -9113,3 +9113,201 @@ before this gate.
 and `proposed_at` is the one input to a recorded number that no reconciliation
 clause compares. Anything that later widens `_reconcile` should treat this as the
 reason. Nothing here changes what A31 landed.
+
+## 2026-08-23 — gate A30: the verifier gains a production caller, and the test written for it pointed at the wrong implementation
+
+**Decision.** `verify()` is called from `src` for the first time, by
+`adjudicate()` in `eval/campaign.py`, reached from `reading_of`. Four things
+about it are not recoverable from the diff.
+
+**1. The claims parameter exists because criterion 8's zero was unfalsifiable,
+not merely unmeasured.** `claims_from_run` filters to `mass > 0.0` and
+`diagnose` gives a rejected hypothesis *exactly* zero, so the generated
+population **structurally cannot contain a zombie**. No amount of running the
+campaign would have moved the count. That is why the gate line asks for an
+*injected* claim and why the injection had to reach the recorded payload rather
+than a helper. Claims are structure, so the seam does not touch invariant 2: a
+caller says which claims are adjudicated and nothing about how any is decided.
+
+**2. Accumulation is within a run and never across a campaign.** A claim the
+verifier *accepts* enters `ClaimContext.accepted` for the claims after it —
+accepted only, because that field is documented as the claims already
+*admitted*. Without it, `contradiction.py`'s cross-contradiction and reversal
+rules are unreachable code: measured over the fixture, no real graph holds a
+`CONTRADICTS` edge and every caller passed `accepted` empty, so two of that
+module's three rules had never once been evaluated against anything. Doing it
+across cells instead would make a cell's reading a function of which cells ran
+first, so a resumed campaign would score differently at the same content
+address — invariant 3. The accumulator is therefore a local inside `adjudicate`
+rather than anything a caller holds.
+
+**3. `zombie_claims` is beyond the gate line on A31's `max_defect_mass`
+precedent.** Criterion 8 names *two* quantities and one pooled count leaves the
+second underivable — a nonzero figure could be a reversal, which is neither.
+Counting it meant exporting `contradiction.zombie(claim, graph)` rather than
+recognising a zombie by its `Finding.message`, which `verify/verdict.py` says is
+for a human and that nothing branches on. Both this and the accumulation choice
+were put to the user as two-option questions and taken as recommended.
+
+**An approach tried and abandoned, found by `/test-review` before any
+implementation existed.** The accumulation test first hand-authored two
+`supports` claims citing the run's whole evidence and asserted one contradiction
+finding. Measured: **both are refused by the `statistical` check** — 7 of the 8
+bearing experiments refuted the subject, and an experiment that refuted a
+hypothesis is not evidence supporting it — so they never reach the contradiction
+rules, `accepted` stays empty, and the correct answer is **zero**. The only
+implementation that could satisfy that assertion was one carrying *refused*
+claims forward as admitted, which would let the record contradict itself with
+claims the verifier threw out. **The test was pointing implementation at a bug.**
+Replaced by drawing the pair from the run's own accepted claims — `null` and
+`poisson_mixture` on S9/V1, both `correlational`/`suggests`.
+
+The reusable shape is worth more than the fix: a fixture built from
+plausible-*looking* objects is not built from *admissible* ones, and a test whose
+only satisfying implementation is wrong still fails closed — it does not pass
+silently, it misdirects. The gate that catches it is running the checks over the
+fixture before asserting on them, which is now `_accepted_supporting`.
+
+**Measured, and expensive to reproduce.** Adjudication costs **0.009–0.019s per
+run over 80 claims**, against a 0.05–0.17s run — roughly 20s across 1,120 cells,
+which is why there is no opt-in switch. `REFER` occurs **zero times** over this
+fixture and **zero times over `tests/baseline_runs.py`'s 2,288 claims**, so every
+recordable row's true adjudication rate is 1.0 and `1.0 if claims else nan`
+reproduces the entire payload. Criterion 10 would have been *measured but not
+falsifiable* — the same vacuity the entry complains about for criterion 8, one
+criterion over. `test_a30_the_rate_falls_when_a_claim_cannot_be_decided` closes
+it by injecting a component-subject `exclusive` claim, which `logical` and
+`statistical` both refer and nothing refuses. That test is not in the entry's
+gate line and was not in the approved plan; it exists because the review
+measured the gap.
+
+**A blind spot in the literal-pin convention.** Three tests pin
+`DIMENSION_VERSION`'s literal so a bump has to be noticed. `mypy` flagged two of
+them, because they compare against the constant and narrow to a `Literal`; it
+could not flag `tests/test_matrix.py`'s, which is a **dict value** in an expected
+config and has no such narrowing. Only the suite caught it. A convention that
+exists to make a bump loud is a third silent to the type checker.
+
+**Closes off.** Criterion 10 is answerable from a recorded row for the first
+time, and criterion 8's two halves are separately answerable. Neither is *met*
+by this: both are bars a campaign may fail, and nothing here asserts an outcome.
+
+**Left undone on purpose.** The recorded campaign is **not** re-derived — A35
+blocks the replay outright and A40 is rank 12. This lands the machinery so the
+re-derivation has it; it does not spend it. And `contrast()` still conditions on
+the whole-record check rather than the probe: A29 left that to A31, A31
+deliberately did not take it, and it is not in this entry's **Touches** either.
+It is now owed by whichever gate does move §9's preregistration.
+
+## 2026-08-23 — gate A30, after review: three findings fixed, three recorded and left standing
+
+**Decision.** `/preflight` ran `/code-review` plus five lenses against the A30
+diff before it was committed. Four lenses returned clean. Three findings were
+fixed; three more are real, are **not** fixed, and are recorded here because
+each is a change to something wider than this gate.
+
+**Fixed — the report pooled the wrong statistic.** `adjudication_rate` was
+summarised as an unweighted mean of per-replicate rates, and SPEC §12 criterion
+10 (*"at least 90% of **claims** adjudicated"*) is a share of claims. Two
+replicates at 80/100 and 4/4 average to 0.9000 and clear the bar; the 84/104
+they actually represent is 0.8077 and does not. `claims` and `adjudicated`
+reached the ledger but nothing summarised them, so the criterion's own statistic
+was unrecoverable from the report — the identical gap `max_defect_mass` exists
+to close for criterion 9. `CellSummary.adjudicated_share` is now that statistic
+and both counts are printed beside it.
+
+**Measured, because the finding's stated premise turned out not to hold on the
+arms that exist.** The review argued claim counts "genuinely vary within a cell".
+Over six replicates each of B1 and V1 on S9 and S11 they do not: every replicate
+affords exactly 16 and 80 claims respectively, so the weights are uniform and the
+two statistics agree to the last digit. The hazard is **latent on conventional
+arms and live on the LLM arms** — V7, V3 and V4 hold a proposal layer, so how
+many structures carry mass varies by replicate, and those are precisely the arms
+A40's re-derivation exists to compare. Fixed on that basis rather than on the
+premise as given.
+
+**Fixed — two places where a docstring was doing an assertion's work**, which is
+CLAUDE.md's second invariant verbatim. `Adjudication` was four bare `int`s whose
+stated relations (`zombies ⊆ contradictions`, `adjudicated ≤ claims`) nothing
+enforced, while `Verdict.__post_init__` does exactly this one level down in the
+same call path; it now refuses an inconsistent tally. And `adjudicate` took the
+`claims` sequence verbatim — `_about_this_run` now refuses a claim whose subject
+the run never entertained or whose citation it never registered.
+
+**Recorded and not fixed: criterion 10 rewards supplying more claims, by three
+distinct routes.** A refusal *is* adjudicated — deliberately, since a claim
+decided on a mechanical ground has been decided — and everything follows from
+that.
+
+1. **Volume.** A population padded with junk drives the rate toward 1.0 with no
+   science done. And `adjudicate` does not deduplicate: `claims` is
+   `len(population)`, so the padding need not even be distinct — *the same claim
+   the run itself affords, repeated N times, passes every check N times.*
+2. **A fabricated number, which is the one that is not merely "volume".**
+   `Claim.effect` is an `EffectEstimate`, and `statistical.check` branches on it:
+   `_from_effect` when a claim carries one, `_from_predictions` otherwise — and
+   only the second returns `REFER`. So attaching a *fabricated* effect to an
+   otherwise-referrable claim converts it to a refusal and **raises** the rate.
+   `numerical.check` does refuse the fabrication, which is gate A19 working
+   exactly as designed; the refusal is still adjudicated. This is an
+   agent-authored **number** selecting which check grades the claim, and an
+   earlier draft of this entry did not have it — `adjudicate`'s docstring said
+   *"claims are structure"*, which is false and is now corrected in place.
+3. **Predictions**, below.
+
+None of the three is closable at this boundary. Refusing fabricated effects here
+would take A19's work away from `verify/numerical.py`, whose purpose is to catch
+them — the verifier is *supposed* to receive fabricated effects and refuse them.
+`_about_this_run` bounds well-formedness and cannot bound merit; no assertion
+can. It is a question about what criterion 10 measures, which is SPEC §12 and
+frozen, so it belongs in `docs/BACKLOG.md` rather than in a gate.
+
+**Recorded and not fixed: the `claims` seam sits outside `cell_key`'s content
+address.** Two `reading_of` calls at one address can produce different payloads.
+Unreachable today — `MatrixRunner.execute` never passes `claims` — and closing it
+properly means an address *term*, which `cell_key` cannot carry: it computes the
+address **before** the cell runs, so it cannot see a population that does not
+exist yet. That is structurally the `battery` problem, whose remedy was a change
+to the content-addressing contract every recorded row depends on. Not something
+to slip into the gate that first noticed it, which is how A31's `proposed_at`
+finding was handled a day earlier and for the same reason.
+
+**Recorded and not fixed: a pre-existing agent-writable surface became
+load-bearing.** `Investigation.propose(..., predictions=...)` lets a system
+supply its own predictions, and `validate_prediction` does **not** constrain
+`prediction.under` to a template the scenario offers. Before this gate that
+reached no reported number, because `verify()` had no caller in `src`.
+`statistical.prediction_evidence` now reads those predictions, and `evaluated ==
+0` yields REFER — the one outcome that is not adjudicated. So a system supplying
+a valid, falsifiable prediction under a template it never runs moves
+`adjudication_rate`.
+
+**Downward only is an observation about today's arms, not a property of the
+code**, and an earlier draft of this entry stated it as the latter. The branch is
+symmetric: a prediction aimed at a template the system *does* run makes
+`evaluated > 0`, and `_from_predictions` then returns `()` or a REJECT, both
+adjudicated. Only downward movement is *observable* right now because the
+measured rate is already pinned at its 1.0 ceiling. On any future arm whose
+default predictions produce referrals, better-aimed supplied predictions raise
+its own figure. No shipped system uses the field (`predictions=` appears twice in
+`src/sciagent/systems/`, both the framework's own pass-through), so this stays a
+threat-model note — exactly the shape of A31's `proposed_at` entry: a field that
+was audit-exempt because nothing scored it is now scored.
+`systems/base.py`'s own docstring claimed *"introducing a hypothesis cannot move
+a number in the proposer's favour"*; that is now qualified to the posterior,
+which is the part still true.
+
+**Closes off.** Every `verify()`-reachable input a system can author is now
+either audited or written down here, and the list took three passes to close
+rather than one: `claim.effect` was missed by the first draft of this entry and
+found by re-auditing the fix. Anything that later widens `_reconcile` should
+treat `prediction.under` as the next item, after `proposed_at`.
+
+**One decision is owed before item 12 wires the seam, and is cheap now and
+expensive later.** `_about_this_run` *raises*, and `run_matrix` has no `except` —
+so once an agent supplies claims, one malformed claim aborts the whole campaign
+pass. A system that would score badly and instead aborts is a system moving its
+own outcome, which is a different attack from authoring a number and is not
+closed by anything here. Whether item 12 refers a malformed claim rather than
+raising is a choice about what a campaign does with a bad agent, and it should be
+taken deliberately rather than inherited from this gate's default.

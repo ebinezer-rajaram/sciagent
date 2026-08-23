@@ -46,7 +46,7 @@ from sciagent.core.types import (
     Seed,
 )
 from sciagent.eval.agency import AgencyMetrics
-from sciagent.eval.campaign import ScenarioRun, run_scenario
+from sciagent.eval.campaign import Adjudication, ScenarioRun, run_scenario
 from sciagent.eval.matrix import (
     CampaignAddress,
     Cell,
@@ -155,6 +155,14 @@ def stub_reading(**overrides: float) -> CellReading:
             escalated=0,
             proposals=None,
             causes=None,
+        ),
+        # A30's counts. A fully adjudicated run with a clean record, which is
+        # what every real one on the slice is: `verify` never refers a claim in
+        # the recorded population, and no run rejects a hypothesis, so nothing
+        # here can be a zombie. Fixed rather than derived because this builder
+        # constructs a reading rather than scoring a run.
+        adjudication=Adjudication(
+            claims=80, adjudicated=80, contradictions=0, zombies=0
         ),
         null_mass=Probability(0.25),
         abstain_mass=Probability(0.5),
@@ -411,11 +419,20 @@ class TestAnAddressCoversWhatDeterminesACell:
             "matrix": "spec9/1",
             # Literal rather than `DIMENSION_VERSION`, deliberately: this is
             # what makes a bump something a session has to notice and account
-            # for. `spec8/4` is A31 -- the payload gained the autonomy fraction,
-            # F10's two tiers and criterion 9's three masses, so a `spec8/3` row
-            # cannot answer a question about agency or abstention. `spec8/3` was
-            # A29, which added `probe_p_value` and `probe_inadequate`.
-            "dimensions": "spec8/4",
+            # for. `spec8/5` is A30 -- the payload gained `claims`,
+            # `adjudicated`, `adjudication_rate`, `contradictions` and
+            # `zombie_claims`, so a `spec8/4` row cannot answer a question about
+            # SPEC 12 criterion 8 or 10. `spec8/4` was A31, which added the
+            # autonomy fraction, F10's two tiers and criterion 9's three masses;
+            # `spec8/3` was A29, which added `probe_p_value` and
+            # `probe_inadequate`.
+            #
+            # This is the assertion the mechanism above is *for*, and A30 is
+            # where it earned its keep: mypy caught the two sibling pins because
+            # they compare against `DIMENSION_VERSION` and narrow to a
+            # `Literal`, and could not catch this one because it is a dict
+            # value. The suite did.
+            "dimensions": "spec8/5",
             "battery": battery_key(BATTERY),
             "partition": "dev",
             "replicate": "07",
@@ -503,6 +520,7 @@ class TestAReadingComesFromARealRun:
             table=engine.table,
             simulate=simulator(GRAMMAR),
             observations=engine.observations,
+            program=runner.reference,
         )
         payload = reading.as_payload()
         with CampaignLedger.in_memory() as ledger:
@@ -527,6 +545,7 @@ class TestAReadingComesFromARealRun:
             table=engine.table,
             simulate=simulator(GRAMMAR),
             observations=engine.observations,
+            program=runner.reference,
         )
         assert reading.experiments == run.experiments
         assert reading.inadequate == run.ppc.inadequate
@@ -557,6 +576,7 @@ class TestAReadingComesFromARealRun:
                 table=engine.table,
                 simulate=simulator(GRAMMAR),
                 observations=(),
+                program=runner.reference,
             )
 
     def test_scoring_a_scenario_with_no_stage_a_probe_raises(self) -> None:
@@ -582,6 +602,7 @@ class TestAReadingComesFromARealRun:
                 table=engine.table,
                 simulate=simulator(GRAMMAR),
                 observations=engine.observations,
+                program=runner.reference,
             )
 
     def test_an_address_derived_from_the_executor_matches_it(self) -> None:

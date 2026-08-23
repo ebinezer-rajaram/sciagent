@@ -163,6 +163,7 @@ REDERIVED = CampaignAddress(
 
 BATTERY = held_out_designs()
 PLATFORM = "Windows-11-x86_64"
+NUMPY = "2.5.1"
 GRAMMAR = GrammarVersion("pointproc-edits/1.0.0")
 
 #: The cheapest cell that actually calls a provider. V3 is one of the two
@@ -285,6 +286,7 @@ def _summarise(
         scenario_class=lambda _target: fallback,
         battery=lambda _target: BATTERY,
         platform=PLATFORM,
+        numpy_version=NUMPY,
         grammar=GRAMMAR,
     )
 

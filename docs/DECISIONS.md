@@ -9660,3 +9660,360 @@ change proposed inside one gate.
 the first pass had already been acted on — which is the argument for re-running
 the review when the fixes touch the reviewed path, rather than only re-running
 the suite.
+
+## 2026-08-23 — A33: the entry asked for a pairing Hypothesis refuses
+
+**Decision.** A33's Idea wanted "fixed `derandomize` for gates ... **and** a
+committed example database". Those are mutually exclusive. Hypothesis 6.164
+raises at profile construction:
+
+    InvalidArgument: derandomize=True implies database=None, so passing
+    database=DirectoryBasedExampleDatabase(...) too is invalid.
+
+Hypothesis's own `ci` profile pairs `derandomize=True` with `database=None` for
+the same reason. The user took the entry's own parenthetical — "or a recorded
+seed printed on failure" — so the profile samples randomly, sets
+`print_blob=True`, and roots its database at a tracked `tests/regressions/`.
+
+**Why.** Derandomising buys cross-machine agreement by freezing the sample:
+every machine would try the identical examples forever, so six property gates
+would certify one *fixed* sample rather than one random one, and repeated runs
+would never widen coverage. A tracked corpus keeps the widening and still
+carries a counterexample between machines, which is what the entry wanted
+derandomising for in the first place. `print_blob` supplies the other half it
+named: a failure carries `@reproduce_failure('6.164.0', b'AEQ7msoA')` in its
+`__notes__`, which pytest prints.
+
+Tracking the corpus is safe, and that was measured rather than assumed: a
+**passing** run writes **zero** files into the database. Only a failure writes.
+Had it written on green, every suite run would have moved a tracked path between
+`suite-freshness.sh begin` and `record`, and `record` would refuse after exactly
+the runs whose result is least in doubt.
+
+**Closes off.** Do not "fix" the profile back into the invalid pairing — the
+argument for the branch not taken is real, and it is the freezing, not an
+oversight. What stays open is that a counterexample is machine-local until
+somebody commits it; nothing forces that commit.
+
+## 2026-08-23 — A33: the first version of the test passed the wrong implementation
+
+**Decision.** The A33 test's clause-1 probe was rewritten from a `@given`
+decorated *inside a test body* to one decorated at *module scope*
+(`_decorated_at_import`). The Hypothesis profile must therefore be registered in
+`tests/conftest.py`'s **module body** and not from a fixture — a correctness
+constraint, not a placement preference.
+
+**Why.** `/test-review`'s lens named a wrong implementation the standard rejects
+and the first test accepted: register the profile correctly, but call
+`load_profile` from an autouse *session fixture*. Every reading of `settings()`
+then comes back correct, because `settings()` is evaluated at call time — while
+the six real `@given` sites, decorated during collection, keep Hypothesis's
+defaults and go on writing counterexamples into `.hypothesis/`, which is
+self-ignoring. Zero of six governed, with nothing red. The mechanism is that
+`settings.__init__` resolves from `settings.default` at construction
+(`_settings.py:694`) and `@given` snapshots the same way (`core.py:2406-2407`),
+so only a probe decorated at the same instant as the real sites can tell the two
+implementations apart. Confirmed by construction that the corrected test rejects
+the late-load version.
+
+The same review found that `_StorageDirectoryDatabase` is a **subclass** of
+`DirectoryBasedExampleDatabase`, so an `isinstance` check on the database is
+satisfied by Hypothesis's own default under `.hypothesis/`. Only comparing the
+path discriminates. Both assertions are kept; only one of them decides anything.
+
+**Closes off.** This is the case for `/test-review` existing, recorded because
+the failure is invisible afterwards: the weak test and the sound one both go
+green once the right implementation lands, and `/preflight`'s review sees the
+test only in that final form. The general shape — *a probe that observes state
+later than the thing it is making a claim about* — is worth suspecting wherever
+a test asserts that configuration is "in force".
+
+## 2026-08-23 — A33: one clause declined as subsumed, and numpy left unpinned
+
+**Decision.** Two parts of A33's Idea were deliberately not built.
+
+**1. `suite-freshness.sh` does not account for `.cache/tables` content.** The
+Idea asked for it; the Gate line does not. Once `cache_key` is derived from the
+environment's source (`SIMULATOR_DIGEST`), a stale table cannot be *read* at
+all, so the clause is subsumed rather than skipped. Hashing it would also be
+actively wrong: `.cache/tables` is a derived directory that changes *during* a
+run, so `record` would refuse routinely. The hook did gain
+`git ls-files -s tests/regressions` — **index state only, never content** —
+because A33 asserts the corpus is tracked while Hypothesis writes into it on
+failure.
+
+**2. numpy is recorded, not pinned.** `pyproject` still declares `numpy>=2.1`
+and a `uv lock --upgrade` still moves the resolved version. What changed is that
+the move stops being *silent*: two reports built under different resolutions no
+longer render identically, because `summarise` requires `numpy_version` and
+`render` prints it. The registry's content address still carries no dependency
+term, so two campaigns under different numpy versions remain indistinguishable
+*by address*.
+
+**Why.** `numpy_version` is caller-supplied rather than read from
+`numpy.__version__` at summarise time because the function may run on a machine
+other than the one that filled the ledger — `scripts/report_matrix.py` opens a
+ledger *file*. Reading the local interpreter would print a confident fact about
+the wrong process, which is worse than refusing.
+
+**Closes off.** **Waits on:** a dependency-policy decision on whether to pin
+numpy outright, and separately on whether the registry's address should grow a
+dependency term — which cannot be done without retiring every stored row, so it
+is not a small change. Neither is this gate's to take. Anyone reading the Idea
+later should find both here rather than concluding they were forgotten.
+
+## 2026-08-23 — A33: what the cache-key change cost, once
+
+**Decision.** Folding `SIMULATOR_DIGEST` into `cache_key` invalidated every
+cached table — all seven files, ~580KB, including the grown 45KB gate table that
+`tests/slice_tables.py` calls "the single most expensive thing in the suite".
+
+**Why.** Recorded so nobody re-measures it, and so the next long run after a
+change to `src/environments/pointproc/` is recognised rather than diagnosed.
+`uv run pytest -n 4 --dist loadfile` took **577.90s (9m37s)**, 1621 passed and 7
+skipped, against the **~151s** baseline. The difference is entirely the one-time
+rebuild.
+
+The existing cached files were deliberately **not** renamed into the new scheme.
+Renaming would have laundered tables whose provenance is exactly what was in
+doubt — they were built under whatever source stood at the time, and whether
+that source matches today's is the question the digest exists to answer. Paying
+the rebuild once is the only honest answer.
+
+**Closes off.** Subsequent runs return to baseline. Any edit to a `.py` under
+`src/environments/pointproc/` — a docstring included, since the digest covers
+every module in the package by design — costs this again. That is the intended
+trade: a false miss costs a rebuild, a false hit costs the guarantee.
+
+## 2026-08-23 — A33 review: the committed corpus would have been silently corrupted
+
+**Decision.** `.gitattributes` gains `tests/regressions/** -text`, and gate A33
+asserts the exemption through `git check-attr` rather than by reading the file.
+Three further defects found by the same review pass were fixed; one was
+identified as pre-existing and fixed anyway; one was left.
+
+**Why.** `/preflight`'s `/code-review` found that the corpus the gate exists to
+carry between machines could not survive being committed. The repository-wide
+rule is `* text=auto eol=lf`, and `text=auto` makes git *guess*: a Hypothesis
+corpus entry is opaque binary from `choices_to_bytes`, so one that happens to
+hold no NUL byte is judged text and has its `
+` rewritten on the way into the
+object store. Measured on this tree — `A
+BC
+DE` hashes to `d1ae50da` raw
+and `175dd737` through the filter, and comes back as `A
+BC
+DE`.
+
+The consequence is worse than a corrupt file because nothing reports it:
+`choices_from_bytes` rejects the mangled entry and Hypothesis then **deletes** it
+from the database. The counterexample would vanish on the machine that pulled
+it, silently — the precise failure a committed corpus exists to prevent, so the
+feature would have been decorative. A sample of six real corpus entries happened
+to contain no CRLF at all, which is why this was never going to surface by
+trying it; only the filter test settles it.
+
+`-text` and not `text eol=lf`, inverting the reasoning the same file gives for
+`*.json`: a recorded transcript is sorted and indented so that it reviews as a
+diff, and marking it binary would cost that. A corpus entry was never
+reviewable, so there is nothing to lose.
+
+**The other findings.** (1) `simulator_digest` had no empty-set guard: a missing
+or wrongly-rooted directory returned `e3b0c44298fc`, the sha256 of nothing —
+a valid-looking constant that silently reverts `cache_key` to `ENV_VERSION`-only
+and makes every stale table readable again. It now raises. This is the identical
+false green `suite-freshness.sh` guards with `MIN_FILES`, whose comment the
+function's own docstring already cited. (2) The digest used `glob`, not `rglob`,
+so a future subpackage would have escaped it entirely — contradicting the
+"every module, not a curated subset" guarantee, with A33's own breadth test
+blind to it for the same reason. Now recursive and keyed on the path relative to
+the root. (3) `tests/acceptance/test_a33.py` was untracked while
+`tests/regressions/README.md` was staged, so `git commit -a` would have landed
+the substrate without its gate and `scripts/status.py` would have reported A33
+uncovered.
+
+**A change beyond what the gate asked for, recorded as such.**
+`_refuse_non_ascii` now also refuses non-printing characters. `"
+"` is ASCII
+and `strip` does not remove it from a string's interior, so
+`--numpy "2.5.1
+  platform  Linux"` passed validation and `render` emitted a
+fabricated header line indistinguishable from framework output. The gap was
+**pre-existing** for `platform` and `grammar` and is not A33's to fix; it was
+fixed because two independent reviews raised it, because this diff took the
+count of caller-supplied strings interpolated into that header from two to
+three, and because provenance a caller can forge is worse than provenance a
+caller merely has to supply. Closing it hardens `platform`, `grammar`, `system`
+and `scenario` at the same time.
+
+**Left, deliberately.** `scripts/report_matrix.py` does not guard `summarise`,
+so a `MalformedDesignError` reaches the operator as a traceback rather than a
+message. `--numpy` inherits that. It is recorded already at gate A43's commit
+`596cb96` as pre-existing for the two sibling refusals, and it is a change to
+the script's error handling rather than to this gate.
+
+**Closes off.** **Waits on:** nothing, for the corpus — but note that the
+exemption is now load-bearing and invisible. Deleting one line from
+`.gitattributes` leaves every byte of every other tracked file untouched, so it
+moves no content hash; `.gitattributes` was therefore added to
+`suite-freshness.sh`'s `tree_hash` in the same change, which is what stops that
+deletion reading as FRESH.
+
+## 2026-08-23 — A33 review: a fix for one review finding introduced an invariant-3 defect
+
+**Decision.** `simulator_digest` sorts by `path.relative_to(root).as_posix()` — a
+string — and never by the `Path` object. A gate test with a deliberately
+mixed-case fixture pins it.
+
+**Why.** `/preflight`'s ordering lens caught this in code written earlier in the
+same session, as the fix for a *different* review finding. Making the digest
+recursive (`rglob`) to close a curated-subset gap, the sort key became
+`key=lambda path: path.relative_to(root)` — the `Path`, not its string.
+`PurePath.__lt__` compares through `os.path.normcase`, which lower-cases on
+Windows and is a no-op on POSIX. Measured on this tree:
+
+    sorted by Path object : ['abstract.py', 'apple.py', 'Helper.py', 'Zebra.py']
+    sorted by as_posix()  : ['Helper.py', 'Zebra.py', 'abstract.py', 'apple.py']
+    digest under each     : 0fb3af2369c2  vs  709fa437b010
+
+Same files, same bytes, different content address, decided by which platform ran
+the sort. That is an iteration-order dependence reaching a content address,
+which the third invariant forbids in as many words — and the function's own
+docstring claimed the opposite: *"``as_posix`` keeps the separator out of the
+digest, so a Windows tree and a Linux one agree"*. True of the bytes hashed;
+false of the order they were hashed in.
+
+**Why nothing would have caught it.** It is dormant: every module under
+`src/environments/pointproc/` is lowercase, so case folding is a no-op and the
+two orderings coincide today. A test built on a *copy of the real package* —
+which is how every other digest test in A33 is built, deliberately, so the
+comparison is against real source bytes — inherits that property and cannot
+expose it. The fixture therefore has to be synthetic and mixed-case, which is
+the one shape the rest of the clause has a good reason not to use. It reopens
+with the first capital letter in a module name, which is precisely what `rglob`
+was added to anticipate.
+
+**Closes off.** Two general points, both cheap to forget. `Path` comparison is
+not ordinal on Windows, so any sort feeding a hash, a digest or an address must
+sort strings. And a fix written to close a review finding is ordinary new code:
+it had not been reviewed, and it was the only part of this change that
+introduced a defect. The lens that caught it was reading the diff concurrently
+and saw the file change underneath it, which it reported — that is the mechanism
+working, not a flaw in it.
+
+## 2026-08-23 — A33: a second review round, and what re-reviewing the fixes caught
+
+**Decision.** `/ship` §0 sent `/preflight` back because six files had changed
+after its first review reported. That second pass found eight further defects,
+one of which would have reddened CI. Recorded because the *pattern* is the
+finding, not any single item: across two rounds, the fixes for review findings
+were the only part of this change that introduced defects.
+
+**Why.** The first pass reviewed the gate; the fixes it prompted were new,
+unreviewed code, and `suite-freshness.sh` cannot see that — it hashes `.py`,
+`pyproject.toml` and `uv.lock`, so a tree it calls FRESH may carry edits no
+review looked at. `.gitattributes`, which did not exist when the first review
+ran, was one of them.
+
+**The CI-breaking one.** `test_a33_the_digest_does_not_depend_on_case_folded_
+ordering` guarded its own fixture with
+`assert sorted(contents, key=Path) != sorted(contents)`. `Path.__lt__` compares
+through `os.path.normcase`, which is the *identity* on POSIX — so on Linux both
+sorts are equal, the guard is `False`, and the test errors before reaching what
+it tests. `.github/workflows/check.yml` runs `ubuntu-24.04`. The test written to
+pin a Windows-only defect was itself Windows-only. Fixed by keying the guard on
+`PureWindowsPath`, whose semantics are fixed on every platform.
+
+**Two more platform divergences in the same function.** `rglob("*.py")` matches
+case-*insensitively* on Windows and case-sensitively on POSIX (verified: it
+matched `Model.PY` here), so an uppercase extension would be inside the digest
+on one platform and outside on the other — the same divergence as the sort key,
+moved from ordering to membership. Selection is now by `path.suffix`, an exact
+comparison. And the `name + NUL + source + NUL` framing was not injective: a
+filename cannot hold a NUL but the file set is chosen by *suffix* rather than by
+parsability, so one `.py` file of arbitrary bytes can reproduce the framing of
+two. Demonstrated — `a.py` holding `b"x=1 y.py z=2
+"` collided with the
+pair `a.py`/`y.py` at `b1ced9190eb2`; each field is now length-prefixed and they
+separate to `1bc2048bf2a0` and `683357cd1187`. CPython refuses to compile source
+containing a NUL, so no importable module reaches it, but the docstring's
+guarantee was unconditional and the framing now matches it.
+
+**The `.gitattributes` fix was itself half-wrong.** `tests/regressions/** -text`
+also matched `tests/regressions/README.md` — hand-written prose, the one file in
+that directory a person edits, and the one that wants normalisation. An explicit
+`tests/regressions/README.md text eol=lf` follows it.
+
+**And the hardening had a false-refusal bug.** `_refuse_non_ascii` was checking
+the *unstripped* argument while `summarise` stores `platform` and
+`numpy_version` stripped, so `platform="Windows-11
+"` began raising where the
+stored value would have rendered cleanly. It now checks what is stored.
+`grammar` is stored unstripped and is correctly checked as given. This also
+corrected a gate test: a *trailing* U+00A0 is whitespace to `str.strip` and can
+never reach the output, so refusing it was the wrong assertion — both non-ASCII
+cases now place the character in the interior.
+
+**Scope, on the user's decision.** The guard was extended to the three
+`CampaignAddress` version fields, which `render` interpolates into the same
+header and which were reaching it unchecked. That left the guarantee holding for
+three of six rendered strings and not the other three, which reads as a decision
+rather than an oversight. This is the third expansion beyond the approved plan
+and was taken to the user rather than assumed.
+
+**Left.** `simulator_digest` calls `read_bytes()` at import with no guard, so an
+unreadable module raises a raw `PermissionError` rather than a `TableError`. Not
+wrapped: a permission failure on the package's own source is a genuine
+environment fault and the traceback names the file, whereas a `TableError` would
+dress it as a domain error.
+
+**Closes off.** `Path` comparison is not ordinal on Windows and `rglob`'s
+matching is not case-exact there; anything feeding a hash or an address must
+sort and select on strings. More generally: **a fix written in response to a
+review has not been reviewed**, and re-running only the suite over it checks the
+half that was never in doubt.
+
+## 2026-08-23 — A33: three review rounds, and where they converged
+
+**Decision.** Three `/code-review` passes were run over this gate, the second and
+third because `/ship` §0 requires re-review when files change after a review
+reports — which they had, both times, because the fixes *were* the change. The
+third pass is where it converged, and that is the fact worth keeping.
+
+**Why.** The severity profile across the rounds is the signal, not the counts:
+
+- **Round 1 — five findings, production defects.** The committed corpus would
+  have been CRLF-mangled and silently deleted; the digest returned the sha256 of
+  nothing for a wrong root; a subpackage would have escaped it.
+- **Round 2 — eight findings, still production defects plus a red CI.** Two more
+  platform divergences in the digest (`rglob` case-insensitivity on Windows, a
+  non-injective NUL framing), a false-refusal bug in the hardening, and a test
+  written to pin a Windows-only defect that was itself Windows-only and would
+  have errored on `ubuntu-24.04`.
+- **Round 3 — four findings, none in production code.** Two dormant test-side
+  issues (a test enumerating with the very `rglob("*.py")` the implementation had
+  just stopped using; an extension-case test vacuous on POSIX) and two
+  inaccurate sentences.
+
+So the stopping rule was not "the review came back clean" — it never did — but
+that the *class* of finding fell to test-side dormancy and prose. A fourth round
+would have been reviewing documentation.
+
+**What the rounds actually cost, and what they bought.** Four full suite runs at
+9–15 minutes each, most of them cold because every digest change invalidates
+every cached table. Against that: a red CI, a silently corrupted corpus, and two
+content addresses that differed by platform, none of which the suite could see.
+Every one of them was caught by review and none by a test that existed.
+
+**Closes off.** The recursion `/ship` §0 implies is real and does not terminate
+on its own, because every round's fixes are unreviewed code. What terminates it
+is a judgement about severity, and the honest way to make that judgement is to
+watch whether findings are still reaching production code. Two rounds is not a
+ceiling and one is demonstrably not enough here.
+
+A concrete corollary, twice over in this gate: **a test that pins a
+platform-specific defect must name the platform explicitly.** Both the sort-order
+test and the extension-case test were written with `Path` and `rglob`, whose
+behaviour *is* the defect on Windows and is correct on POSIX — so each passed
+locally while asserting nothing on CI. `PureWindowsPath` and `PurePosixPath`
+state the question in a way that means the same thing everywhere.

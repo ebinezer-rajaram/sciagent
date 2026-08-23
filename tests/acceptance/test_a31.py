@@ -184,6 +184,7 @@ ADDRESS = CampaignAddress(
 )
 
 PLATFORM = "Windows-11-x86_64"
+NUMPY = "2.5.1"
 REPORT_GRAMMAR = GrammarVersion("pointproc-edits/1.0.0")
 
 
@@ -375,6 +376,7 @@ def _report_of(rows: tuple[LedgerEntry, ...]) -> str:
             scenario_class=_scenario_class,
             battery=lambda target: scenario(str(target)).held_out,
             platform=PLATFORM,
+            numpy_version=NUMPY,
             grammar=REPORT_GRAMMAR,
         )
     )

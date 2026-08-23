@@ -28,6 +28,7 @@ and nothing in ``src/`` reads it.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import subprocess
 import sys
@@ -65,6 +66,7 @@ __all__ = [
     "REPLICATES",
     "SEARCH_REPLICATES",
     "SEARCH_SEED",
+    "SIMULATOR_DIGEST",
     "STRUCTURE_NAMES",
     "TABLE_SEED",
     "TEMPLATES",
@@ -75,6 +77,7 @@ __all__ = [
     "publish",
     "save_matrix_table",
     "search_table",
+    "simulator_digest",
     "slice_table",
     "table_probe",
 ]
@@ -138,14 +141,19 @@ def cache_root() -> Path:
     behaviour and what a source archive without ``.git`` gets.
 
     Sharing is safe because a cached file is content-addressed over the table's
-    own address and ``ENV_VERSION`` (see :func:`cache_key`), so a tree can only
-    read a file that agrees with what it would have built; and because
-    :meth:`EmpiricalTable.save` replaces atomically, so a concurrent reader
-    cannot observe a half-written one. The residual exposure is that
-    ``ENV_VERSION`` is composed of hand-maintained version literals rather than a
-    hash of the environment's source, so two worktrees on different commits rely
-    on those having been bumped -- a pre-existing limitation the environment
-    protocol is meant to close, widened rather than created by sharing.
+    own address, ``ENV_VERSION`` and :data:`SIMULATOR_DIGEST` (see
+    :func:`cache_key`), so a tree can only read a file that agrees with what it
+    would have built; and because :meth:`EmpiricalTable.save` replaces
+    atomically, so a concurrent reader cannot observe a half-written one.
+
+    The residual exposure used to be that ``ENV_VERSION`` is composed of
+    hand-maintained version literals rather than a hash of the environment's
+    source, so two worktrees on different commits relied on those having been
+    bumped. Gate A33 closed it: :data:`SIMULATOR_DIGEST` is that hash, and it
+    enters the same key. What remains outside the digest is the *framework* --
+    a change to :meth:`EmpiricalTable.build` or to seed derivation moves a row
+    without moving the key. That is narrower than what it replaces and is not
+    the environment protocol's job.
 
     **The anchor is load-bearing and is asserted by a test.** This logic used to
     live in ``tests/slice_tables.py``, where ``parents[1]`` was the repository
@@ -214,6 +222,114 @@ def publish(table: EmpiricalTable, path: Path) -> None:
         )
 
 
+def simulator_digest(root: Path) -> str:
+    """Return a digest of the environment's source, for the table cache's key.
+
+    Guarantees the same value for two checkouts holding the same source, and a
+    different value for any change to any module in ``root`` -- including a
+    rename, since the name is hashed beside the bytes.
+
+    **Every module, not a curated subset.** A hand-kept list of "the modules that
+    decide a simulated row" rots in exactly the way :data:`ENV_VERSION`'s version
+    literals already do, which is the defect this closes rather than one to
+    reproduce one layer down. So editing a docstring in a module that could not
+    possibly move a number is a cache miss, and that is the intended trade: a
+    false miss costs a rebuild, a false *hit* costs the guarantee, and the two
+    are not comparable. ``.claude/hooks/suite-freshness.sh`` reasons the same way
+    about the same asymmetry.
+
+    **Line endings are normalised first, and that is load-bearing.** Worktrees
+    share one cache directory (see :func:`cache_root`), and ``docs/DECISIONS.md``
+    records a measured CRLF/LF divergence between the main tree and fresh
+    checkouts at the same commit -- ``git status`` clean throughout, because git
+    normalises CRLF away on read. Hashing raw bytes would give those trees
+    different digests and permanently cold caches, reintroducing the 181x cold
+    penalty the sharing exists to remove.
+
+    Takes ``root`` as an argument rather than reading the package directly so the
+    property is testable against a copy: a constant would key the cache perfectly
+    well and close nothing, and only a digest computed over source somewhere else
+    can catch that.
+
+    **Recursive, and keyed on the path relative to** ``root``. A subpackage added
+    later would otherwise fall outside the digest silently, which is the same
+    curated-subset failure one directory down; and hashing the bare filename
+    would make two modules of the same name in different directories
+    interchangeable.
+
+    **The sort key is that relative path as a string, and it must not be the**
+    ``Path``. ``as_posix`` keeps the separator out of the digest, so a Windows
+    tree and a Linux one agree on the bytes -- but ``PurePath.__lt__`` compares
+    through ``os.path.normcase``, which lower-cases on Windows and is a no-op on
+    POSIX. Sorting the ``Path`` objects therefore orders ``Helper.py`` against
+    ``abstract.py`` differently on the two platforms and feeds the same file set
+    to sha256 in a different order:
+
+        by Path object : ['abstract.py', 'apple.py', 'Helper.py', 'Zebra.py']
+        by as_posix()  : ['Helper.py', 'Zebra.py', 'abstract.py', 'apple.py']
+
+    That is an iteration-order dependence reaching a content address, which the
+    third invariant forbids. It is dormant while every module here is lowercase
+    and would reopen with the first capital letter -- exactly what ``rglob``
+    exists to anticipate. Found by ``/preflight``'s ordering lens, in a fix
+    written earlier in the same session.
+
+    **The file set is chosen by suffix, not by the glob pattern**, for the same
+    reason one layer out: ``rglob("*.py")`` matches case-insensitively on Windows
+    and case-sensitively on POSIX, so a module named ``Model.PY`` would be inside
+    the digest on one platform and outside it on the other. Comparing
+    ``path.suffix`` is exact on both.
+
+    **Each field is length-prefixed.** ``name + NUL + source + NUL`` is not
+    injective: a filename cannot contain a NUL, but ``rglob`` selects by suffix
+    rather than by parsability, so a ``.py`` file holding arbitrary bytes can
+    reproduce the framing of two files in one. Demonstrated -- ``a.py`` holding
+    ``b"x=1\\x00y.py\\x00z=2\\n"`` collided with the pair ``a.py``/``y.py``
+    holding ``b"x=1"`` and ``b"z=2\\n"``. CPython refuses to compile source with
+    a NUL in it, so no importable module can reach the case, but the guarantee
+    stated above should not depend on that and the framing now matches it.
+
+    That guarantee has exactly one stated exception, and it is the line-ending
+    normalisation above: a change that rewrites a module's line endings and
+    nothing else does *not* move the digest, deliberately, because two checkouts
+    of one commit may differ in precisely that way. "Any change to any module"
+    means any change to its normalised bytes.
+
+    Raises :class:`~sciagent.core.errors.TableError` if ``root`` holds no module
+    at all. Without that, a missing or wrongly-rooted directory hashes *nothing*
+    and returns ``e3b0c44298fc`` -- a perfectly valid-looking digest that is the
+    same on every such call, so ``cache_key`` silently reverts to being
+    ``ENV_VERSION``-only and every stale table becomes readable again. It is the
+    identical false green ``.claude/hooks/suite-freshness.sh`` guards with its
+    ``MIN_FILES`` check, for the identical reason: the sha256 of an empty input
+    is still 64 characters.
+    """
+    modules = sorted(
+        (path for path in root.rglob("*") if path.is_file() and path.suffix == ".py"),
+        key=lambda path: path.relative_to(root).as_posix(),
+    )
+    if not modules:
+        raise TableError(
+            f"no module found under {root}, so a simulator digest over it would "
+            "be the digest of nothing -- which is a valid-looking constant that "
+            "would silently make every cached table readable again. Refusing "
+            "rather than returning it"
+        )
+    digest = hashlib.sha256()
+    for module in modules:
+        name = module.relative_to(root).as_posix().encode("utf-8")
+        source = module.read_bytes().replace(b"\r\n", b"\n")
+        for field in (name, source):
+            digest.update(len(field).to_bytes(8, "big"))
+            digest.update(field)
+    return digest.hexdigest()[:12]
+
+
+#: The environment's source as it stands, folded into every cached table's
+#: address by :func:`cache_key`.
+SIMULATOR_DIGEST: Final = simulator_digest(Path(__file__).resolve().parent)
+
+
 def cache_key(probe: EmpiricalTable, *parts: str) -> str:
     """Return the file stem a cached table is stored under.
 
@@ -223,8 +339,18 @@ def cache_key(probe: EmpiricalTable, *parts: str) -> str:
     a forced arrival's window is not a row under another. ``ENV_VERSION`` is
     therefore mixed in here, where the environment is in scope, so a change to
     the environment's semantics is a cache miss and never a stale read.
+
+    ``ENV_VERSION`` alone was not enough, and :func:`cache_root` said so: it is
+    three hand-maintained version literals, so a mechanism bugfix landed without
+    someone remembering to bump one left every 2000-replicate table on disk
+    readable -- across every worktree, since they share this cache by design.
+    :data:`SIMULATOR_DIGEST` closes that by deriving the same question from the
+    source itself. It is mixed in *here* rather than at any caller because this
+    is the single door every cached table is addressed through, and the three
+    callers -- :func:`cached_table`, :func:`search_table` and the matrix table --
+    would otherwise have to remember it separately.
     """
-    payload = "/".join((probe.version, str(ENV_VERSION), *parts))
+    payload = "/".join((probe.version, str(ENV_VERSION), SIMULATOR_DIGEST, *parts))
     return f"{stable_key(payload) % (1 << 48):012x}"
 
 

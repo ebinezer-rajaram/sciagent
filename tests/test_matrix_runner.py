@@ -362,6 +362,7 @@ class TestTheRunnerDrivesTheRealMatrix:
             scenario_class=scenario_class_of,
             battery=scenario_battery,
             platform="Windows",
+            numpy_version="2.5.1",
             grammar=GrammarVersion(str(AGENT_GRAMMAR.version)),
         )
         assert {(row.system, str(row.scenario)) for row in report.cells} == {

@@ -93,6 +93,7 @@ ADDRESS = CampaignAddress(
 BATTERY = held_out_designs()
 
 PLATFORM = "Windows-11-x86_64"
+NUMPY = "2.5.1"
 GRAMMAR = GrammarVersion("pointproc-edits/1.0.0")
 
 #: The CLI in front of the report layer. Run as a child process; see
@@ -263,6 +264,7 @@ def report_of(
         scenario_class=scenario_class,
         battery=lambda _s: BATTERY,
         platform=PLATFORM,
+        numpy_version=NUMPY,
         grammar=GRAMMAR,
     )
 
@@ -673,6 +675,7 @@ class TestProvenanceIsRefusedRatherThanDefaulted:
                 scenario_class=lambda _s: "out_of_library",
                 battery=lambda _s: BATTERY,
                 platform="   ",
+                numpy_version=NUMPY,
                 grammar=GRAMMAR,
             )
 
@@ -687,6 +690,7 @@ class TestProvenanceIsRefusedRatherThanDefaulted:
                 scenario_class=lambda _s: "out_of_library",
                 battery=lambda _s: BATTERY,
                 platform=PLATFORM,
+                numpy_version=NUMPY,
                 grammar=GrammarVersion(""),
             )
 
@@ -745,6 +749,7 @@ class TestProvenanceIsRefusedRatherThanDefaulted:
                 scenario_class=lambda _s: "out_of_library",
                 battery=lambda _s: BATTERY,
                 platform=bad,
+                numpy_version=NUMPY,
                 grammar=GRAMMAR,
             )
 
@@ -756,6 +761,7 @@ class TestProvenanceIsRefusedRatherThanDefaulted:
                 scenario_class=lambda _s: "out_of_library",
                 battery=lambda _s: BATTERY,
                 platform=PLATFORM,
+                numpy_version=NUMPY,
                 grammar=GrammarVersion(f"pointproc{chr(0x2013)}edits/1.0.0"),
             )
 
@@ -1108,6 +1114,8 @@ class TestTheScriptPrintsWhatTheLedgerHolds:
             str(path),
             "--platform",
             PLATFORM,
+            "--numpy",
+            NUMPY,
             "--grammar",
             str(GRAMMAR),
             "--env-version",
@@ -1223,6 +1231,7 @@ class TestGuardsAgainstAHandBuiltReport:
             cells=(),
             rows=(),
             platform=PLATFORM,
+            numpy_version=NUMPY,
             grammar=GRAMMAR,
             address=ADDRESS,
             matrix_version="spec9/1",
@@ -1250,6 +1259,7 @@ class TestGuardsAgainstAHandBuiltReport:
             cells=(other, good),
             rows=(),
             platform=PLATFORM,
+            numpy_version=NUMPY,
             grammar=GRAMMAR,
             address=ADDRESS,
             matrix_version="spec9/1",
@@ -1270,6 +1280,7 @@ class TestGuardsAgainstAHandBuiltReport:
                 scenario_class=lambda _s: cast("ScenarioClass", "invented"),
                 battery=lambda _s: BATTERY,
                 platform=PLATFORM,
+                numpy_version=NUMPY,
                 grammar=GRAMMAR,
             )
 

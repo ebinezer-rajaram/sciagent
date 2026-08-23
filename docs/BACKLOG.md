@@ -1453,7 +1453,7 @@ the A14 analyser finds a planted module-level violation; no module under
 **Rank.** 13
 **Cost.** M.
 
-## The verification substrate has unversioned randomness, caches and dependencies
+## DONE (2026-08-23, gate A33) — The verification substrate has unversioned randomness, caches and dependencies
 
 **Idea.** (1) Register a Hypothesis profile: fixed `derandomize` for gates
 (or a recorded seed printed on failure) and a committed example database, so

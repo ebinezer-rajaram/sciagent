@@ -1,21 +1,30 @@
 """Print a campaign ledger as SPEC §8's D1-D6 vector table.
 
     uv run python scripts/report_matrix.py .cache/campaign/spec9.sqlite \\
-        --platform "$(uname -sm)" --grammar pointproc-edits/1.0.0
+        --platform "$(uname -sm)" --grammar pointproc-edits/1.0.0 \\
+        --numpy "$(uv run python -c 'import numpy; print(numpy.__version__)')"
 
 Thin by intent. Everything that decides a number lives in
 :mod:`sciagent.eval.report`, which is tested; this resolves an address, opens a
 ledger read-only and prints. A script is not where a reporting rule should live,
 because a script is the one part of this nobody runs under pytest.
 
-``--platform`` and ``--grammar`` have **no defaults**, and that is the point. The
-registry content-addresses with no platform term, so the ledger cannot say which
-machine filled it and a default here would invent an answer.
+``--platform``, ``--numpy`` and ``--grammar`` have **no defaults**, and that is
+the point. The registry content-addresses with no platform term and no dependency
+term, so the ledger cannot say which machine filled it or which numpy it
+resolved, and a default here would invent an answer.
 :func:`~sciagent.eval.report.summarise` refuses an unlabelled report; this just
 declines to paper over that with a plausible guess. The project is pinned to
-Windows, so in practice the value is always the same one -- which is the reason to
-type it rather than to assume it, since a constant is what stops being written
-down.
+Windows, so in practice the platform is always the same one -- which is the
+reason to type it rather than to assume it, since a constant is what stops being
+written down.
+
+``--numpy`` is where the plausible guess is most tempting and most wrong. This
+script opens a ledger *file*, which may have been filled on another machine or
+before a lockfile upgrade, so defaulting it to the running interpreter's
+``numpy.__version__`` would print a confident fact about the wrong process. The
+command in the synopsis above is right only when the report is taken on the
+machine that filled the ledger, under the same lock.
 
 Nothing here has run against a real campaign, because no cell of the matrix has
 been run -- that waits on the unmeasured subscription rate limits. What this is
@@ -61,6 +70,14 @@ def _parser() -> argparse.ArgumentParser:
         "--platform",
         required=True,
         help="the machine every cell ran on; no default, see the module docstring",
+    )
+    parser.add_argument(
+        "--numpy",
+        required=True,
+        help=(
+            "the numpy version every cell was computed under; no default, see "
+            "the module docstring"
+        ),
     )
     parser.add_argument(
         "--grammar",
@@ -117,6 +134,7 @@ def main(argv: list[str] | None = None) -> int:
         scenario_class=scenario_class,
         battery=battery,
         platform=args.platform,
+        numpy_version=args.numpy,
         grammar=GrammarVersion(args.grammar),
     )
     print(render(report), end="")

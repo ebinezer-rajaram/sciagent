@@ -50,9 +50,17 @@
 # reintroduced through a door it was not watching.
 #
 # So the rule is not "code only", it is *every input an acceptance gate reads*.
-# The three named below are that set today. Anything that adds a gate over a
+# The five named below are that set today. Anything that adds a gate over a
 # non-.py file belongs here in the same commit as the gate; the general docs/
 # exclusion survives because nothing asserts over the rest of it.
+#
+# tests/regressions/ is the fourth, added with gate A33, and it is in by INDEX
+# STATE ONLY -- `git ls-files`, not `sha256sum`. That asymmetry is deliberate.
+# A33 asserts the Hypothesis corpus directory is *tracked*, not what it holds,
+# and Hypothesis writes into it whenever a property test fails. Hashing the
+# content would therefore make `record` refuse after exactly the runs whose
+# result is least in doubt. A passing run writes nothing there, which is what
+# makes the index-only reading sufficient rather than merely convenient.
 #
 # CONCURRENT EDITS -- why `record` alone was not enough
 #
@@ -146,7 +154,13 @@ tree_hash() {
         sha256sum pyproject.toml uv.lock 2>/dev/null
         # The non-.py files an acceptance gate reads. See NON-PYTHON INPUTS above.
         find .github/workflows -type f 2>/dev/null -exec sha256sum {} + | sort
-        sha256sum LICENSE docs/SCALE-UP.md 2>/dev/null
+        # `.gitattributes` joined this set with gate A33, which asserts through
+        # `git check-attr` that tests/regressions/ is exempt from the repo-wide
+        # `text=auto eol=lf`. Deleting that one line leaves every byte of every
+        # other tracked file untouched, so nothing else here moves -- and the
+        # committed Hypothesis corpus silently starts being CRLF-mangled on its
+        # way into the object store.
+        sha256sum LICENSE docs/SCALE-UP.md .gitattributes 2>/dev/null
         # And the git *index* for those same paths, because two of the gates
         # assert tracked-ness rather than content: `test_a38_every_named_path_is_
         # tracked` and `test_a39_the_document_is_tracked` shell out to
@@ -154,7 +168,7 @@ tree_hash() {
         # byte on disk, so the content hashes above do not move and `check`
         # reported FRESH while A38 was red -- the same false green the section
         # above closed, one door further along. Found by review, not by the hook.
-        git ls-files -s LICENSE docs/SCALE-UP.md .github/workflows 2>/dev/null
+        git ls-files -s LICENSE docs/SCALE-UP.md .github/workflows tests/regressions 2>/dev/null
     } | sha256sum | cut -d' ' -f1
 }
 

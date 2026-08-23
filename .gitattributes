@@ -21,3 +21,28 @@
 # Frozen. Reformatting it is what `extend-exclude = ["docs"]` stops ruff doing;
 # this stops git doing the same thing by a different route.
 docs/SPEC.md text eol=lf
+
+# The Hypothesis corpus (gate A33). `-text`, and here the reasoning inverts the
+# one given for `*.json` above.
+#
+# These are opaque binary written by `choices_to_bytes`, not an artefact anybody
+# reads. Under the repo-wide `text=auto` git *guesses*: an entry that happens to
+# contain no NUL byte is judged text, and `\r\n` inside it is rewritten to `\n`
+# on the way into the object store. Demonstrated on this tree --
+# `A\r\nBC\r\nDE` hashes to d1ae50da raw and 175dd737 through the filter, and
+# comes back out as `A\nBC\nDE`.
+#
+# The consequence is worse than a corrupt file, because nothing reports it:
+# `choices_from_bytes` rejects the mangled entry and Hypothesis then **deletes**
+# it from the database. The counterexample would vanish silently on the machine
+# that pulled it, which is the exact failure the committed corpus exists to
+# prevent. Losing the diff is no loss here -- unlike a recorded transcript,
+# these were never reviewable.
+tests/regressions/** -text
+
+# ...except the directory's own README, which is hand-written prose and wants
+# the repository-wide rule like any other document. The pattern above is a
+# recursive wildcard and does not distinguish them, so the exception has to be
+# spelled out and has to come after it. Without this line the one file in there
+# that a person actually edits is the one file exempt from normalisation.
+tests/regressions/README.md text eol=lf

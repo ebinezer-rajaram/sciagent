@@ -105,6 +105,7 @@ ADDRESS = CampaignAddress(
 )
 
 PLATFORM = "Windows-11-x86_64"
+NUMPY = "2.5.1"
 GRAMMAR = GrammarVersion("pointproc-edits/1.0.0")
 
 
@@ -228,6 +229,7 @@ class TestA43SupersededBattery:
                 scenario_class=_scenario_class,
                 battery=lambda _target: declared,
                 platform=PLATFORM,
+                numpy_version=NUMPY,
                 grammar=GRAMMAR,
             )
         # Both terms, so the reader can tell which generation they are holding.
@@ -245,6 +247,7 @@ class TestA43SupersededBattery:
             scenario_class=_scenario_class,
             battery=lambda _target: declared,
             platform=PLATFORM,
+            numpy_version=NUMPY,
             grammar=GRAMMAR,
         )
         assert len(report.cells) == 1
@@ -277,6 +280,7 @@ class TestA43SupersededBattery:
                 scenario_class=_scenario_class,
                 battery=lambda _target: declared,
                 platform=PLATFORM,
+                numpy_version=NUMPY,
                 grammar=GRAMMAR,
             )
 
@@ -301,6 +305,7 @@ class TestA43SupersededBattery:
                 scenario_class=_scenario_class,
                 battery=lambda _target: declared,
                 platform=PLATFORM,
+                numpy_version=NUMPY,
                 grammar=GRAMMAR,
             )
         assert "two rows at this address" not in str(raised.value)
@@ -351,6 +356,7 @@ class TestA43SupersededBattery:
                     scenario_class=_scenario_class,
                     battery=declaration,
                     platform=PLATFORM,
+                    numpy_version=NUMPY,
                     grammar=GRAMMAR,
                 )
             message = str(raised.value)
@@ -390,6 +396,7 @@ class TestA43SupersededBattery:
                     scenario_class=_scenario_class,
                     battery=lambda target: scenario(str(target)).held_out,
                     platform=PLATFORM,
+                    numpy_version=NUMPY,
                     grammar=GRAMMAR,
                 )
             return str(raised.value)

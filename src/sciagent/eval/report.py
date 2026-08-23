@@ -29,7 +29,7 @@ substitute for them.
 What a report must say, and therefore cannot default
 ----------------------------------------------------
 
-Two things have to appear wherever these numbers appear, and neither can be
+Three things have to appear wherever these numbers appear, and none can be
 recovered from the ledger:
 
 **Which platform every cell ran on.** The project is pinned to one platform --
@@ -45,6 +45,20 @@ caption remembering. The pin is a present choice, recorded in
 ``docs/DECISIONS.md`` alongside the measured Windows/Ubuntu divergence that
 motivated it; a report that states its platform stays readable if that choice is
 ever revisited, and one that assumed it does not.
+
+**Which numpy every cell was computed under.** SPEC's third invariant is
+bit-exact determinism, and that guarantee rides numpy's generator bit-stream
+stability: the same seed reaches the same draws only for as long as numpy's
+streams do not move. ``pyproject`` declares ``numpy>=2.1``, a lower bound, so a
+``uv lock --upgrade`` resolves a different one without any file the registry
+addresses over changing. The address is (env version, config, data version,
+metric version, seed) and has no dependency term -- so two campaigns run under
+different numpy versions are indistinguishable by their addresses, and the
+report is the only place the difference can surface. Gate A33 is why it is here.
+
+This does not *pin* numpy, and the difference is worth being clear about: the
+lockfile can still move. What changes is that the move stops being silent, since
+two reports built under different resolutions no longer render identically.
 
 **Which grammar produced D1 and D6.** Both are grammar-relative --
 :attr:`~sciagent.eval.scoring.DimensionVector.d6_complexity` says so in as many
@@ -436,6 +450,14 @@ class MatrixReport:
     """Every ledger row at this address, in the order given."""
 
     platform: str
+
+    numpy_version: str
+    """The numpy the cells were computed under. Beside :attr:`platform` and for
+    the same reason: bit-exact determinism rides numpy's generator bit-stream
+    stability, ``pyproject`` declares a lower bound only, and the registry
+    content-addresses with no dependency term -- so a ``uv lock --upgrade`` could
+    move every figure below while every content address stayed fixed."""
+
     grammar: GrammarVersion
     address: CampaignAddress
     matrix_version: str
@@ -753,6 +775,18 @@ def _refuse_non_ascii(what: str, value: str) -> None:
     ``test_the_rendering_is_ascii`` -- which passes an ASCII platform -- went on
     passing. Checking the inputs is what makes the guarantee hold, since the
     numbers and the fixed template were never the risk.
+
+    **ASCII is not sufficient on its own, and a control character is the case it
+    misses.** ``"\\n"`` is ASCII, ``strip`` does not remove it from the interior
+    of a string, and ``render`` interpolates these values into a header of
+    aligned ``label  value`` lines -- so a value carrying a newline adds lines to
+    that header which a reader cannot distinguish from ones the framework
+    computed. Provenance a caller can forge is worse than provenance a caller
+    merely has to supply, and every checked field is caller- or ledger-supplied.
+    Found by two independent reviews of gate A33, which added one more such
+    field; the gap was pre-existing for ``platform`` and ``grammar``, so closing
+    it here hardens those, the three address versions, and the per-cell
+    ``system`` and ``scenario`` at the same time.
     """
     if not value.isascii():
         offending = sorted(
@@ -762,6 +796,13 @@ def _refuse_non_ascii(what: str, value: str) -> None:
             f"{what} {value!r} is not ASCII ({offending!r}); a report is read on a "
             f"cp1252 console, where these either become replacement characters or "
             f"raise on the way out of print, so a report cannot carry them"
+        )
+    control = sorted({character for character in value if not character.isprintable()})
+    if control:
+        raise MalformedDesignError(
+            f"{what} {value!r} carries a non-printing character ({control!r}); "
+            f"render interpolates it into the report, so a value holding a "
+            f"newline or a tab forges lines that read as framework output"
         )
 
 
@@ -980,6 +1021,7 @@ def summarise(
     scenario_class: Callable[[ScenarioId], ScenarioClass],
     battery: Callable[[ScenarioId], Sequence[ExperimentDesign]],
     platform: str,
+    numpy_version: str,
     grammar: GrammarVersion,
 ) -> MatrixReport:
     """Summarise every row of a campaign at one address.
@@ -1015,10 +1057,17 @@ def summarise(
     :func:`_refuse_superseded_battery` for why that asymmetry with ``dimensions``
     is the right way round.
 
-    ``platform`` and ``grammar`` are **required and validated**, not defaulted.
-    Neither is recoverable from the ledger and both must appear wherever these
-    numbers are reported; refusing an unlabelled report is how that holds without
-    depending on anybody remembering.
+    ``platform``, ``numpy_version`` and ``grammar`` are **required and
+    validated**, not defaulted. None is recoverable from the ledger and all three
+    must appear wherever these numbers are reported; refusing an unlabelled
+    report is how that holds without depending on anybody remembering.
+
+    ``numpy_version`` is **caller-supplied rather than read from**
+    ``numpy.__version__`` **here**, which is the one thing about it worth
+    stating. It describes the process that filled the ledger, and this function
+    may well be running on another machine -- ``scripts/report_matrix.py`` opens
+    a ledger file, not a campaign. Reading the local interpreter would print a
+    confident fact about the wrong process, which is worse than refusing.
 
     Raises :class:`~sciagent.core.errors.MalformedDesignError` if no row matches
     the address. An empty report is indistinguishable from a matrix that ran and
@@ -1032,14 +1081,37 @@ def summarise(
             "ledger cannot supply this and an unlabelled report cannot be "
             "compared with any other"
         )
+    if not numpy_version.strip():
+        raise MalformedDesignError(
+            "a report needs the numpy version its cells were computed under. "
+            "Bit-exact determinism rides numpy's generator bit-stream stability, "
+            "pyproject declares a lower bound only, and the registry "
+            "content-addresses with no dependency term -- so a lockfile upgrade "
+            "moves the numbers while every address stays fixed, and only the "
+            "report can say which resolution produced these"
+        )
     if not str(grammar).strip():
         raise MalformedDesignError(
             "a report needs the grammar version its cells were scored under. D1 "
             "is grammar.distance and D6 is grammar.code_length, so both are "
             "grammar-relative and neither can be interpreted unnamed"
         )
-    _refuse_non_ascii("platform", platform)
+    # Checked on the *stored* value, because that is what `render` interpolates:
+    # `platform` and `numpy_version` are stripped on their way into the report, so
+    # guarding the raw argument refuses a trailing newline that would never have
+    # reached the output. `grammar` is stored unstripped and is checked as given.
+    _refuse_non_ascii("platform", platform.strip())
+    _refuse_non_ascii("numpy", numpy_version.strip())
     _refuse_non_ascii("grammar", str(grammar))
+    # The address renders into the same header and was reaching it unchecked, so
+    # the guarantee held for three of the six strings `render` interpolates and
+    # not the other three -- which reads as a decision rather than an oversight.
+    # `CampaignAddress` carries bare `NewType` strings with no validation of
+    # their own, and `scripts/report_matrix.py` takes all three from the command
+    # line beside `--platform`.
+    _refuse_non_ascii("env version", str(address.env_version))
+    _refuse_non_ascii("data version", str(address.data_version))
+    _refuse_non_ascii("metric version", str(address.metric_version))
 
     # Materialised, because the diagnostic below reads them a second time and
     # ``entries`` is an Iterable: a generator caller would have found it empty
@@ -1153,6 +1225,7 @@ def summarise(
         cells=cells,
         rows=rows,
         platform=platform.strip(),
+        numpy_version=numpy_version.strip(),
         grammar=grammar,
         address=address,
         matrix_version=MATRIX_VERSION,
@@ -1382,6 +1455,7 @@ def render(report: MatrixReport) -> str:
         f"SPEC sec. 9 experiment matrix -- {report.matrix_version}",
         "",
         f"  {'platform':<16s}{report.platform}",
+        f"  {'numpy':<16s}{report.numpy_version}",
         f"  {'grammar':<16s}{report.grammar}",
         f"  {'env / data':<16s}"
         f"{report.address.env_version} / {report.address.data_version}",

@@ -10426,3 +10426,132 @@ the two NUL bytes to make the problem go away: the entry holding them records a
 real hash collision, and editing an existing entry is forbidden by this file's
 own rule. Check `git diff --cached --stat` before committing it; the line count
 is the only tell, since the working tree looks correct in an editor either way.
+
+## 2026-08-24 — A37: "refuses the paired reading" resolved, and refused wider than asked
+
+**Decision.** `Contrast.paired_difference` is `DimensionSummary | None`, and
+`None` is a refusal that leaves the rest of the contrast intact — not an
+exception. The gate's phrase, *"refuses the paired reading when the seed sets
+differ"*, does not say which, and the two readings are far apart: raising would
+report **nothing** where two independent intervals are reported today.
+
+Two things settled it, neither of them taste. The entry's own Idea asks for the
+paired difference *"alongside (not instead of)"* those intervals. And
+`tests/test_report.py`'s
+`test_a_contrast_reports_whether_conditioning_kept_the_seeds_paired` already
+calls `contrast()` on deliberately crossed seed sets and reads `paired` off the
+**returned object** — so the raising reading was ruled out by a test that
+predates the gate, not by a preference formed while implementing it.
+
+**The refusal is also wider than the gate's letter, deliberately.** It fires when
+the seed sets differ, and *also* when the sets agree while one arm carries two
+rows for one seed. The second is not implied by the first: `_seeds_of`
+deduplicates, so equal seed *sets* do not establish one reading per seed. Taking
+either row would be this module deciding by fiat precisely what
+`_refuse_reseeded` declines to decide one address earlier. The gate as written
+would not have caught it, since the sets are equal in that case.
+
+**Closes off.** A caller cannot tell "not paired" from "paired but ambiguous"
+from the `None` alone; `paired` together with `treatment_seeds` /
+`comparator_seeds` is what separates them, and `scripts/report_matrix.py` prints
+both. If that distinction ever has to be actionable rather than merely
+diagnosable, it wants a typed reason — not a second boolean.
+
+## 2026-08-24 — A37: an assertion that could not fail, and the two mutants beside it
+
+**Decision.** The first draft of `tests/acceptance/test_a37.py` was rewritten
+after `/test-review` returned TOO WEAK. It was right, and it established the
+finding by building and *running* three wrong implementations the draft accepted
+rather than by arguing from the source. This is the second instance of the
+pattern the 2026-08-23 entry *"A33: the first version of the test passed the
+wrong implementation"* records; what is new is the shape of the hole.
+
+**The assertion that could not fail.** The draft's "alongside (not instead of)"
+guard asserted `math.isfinite` on the two arms' four interval bounds. That is not
+a property the code can lose: `contrast()` raises on a non-finite bound *before*
+it can return one, so the assertion was re-testing the function's own
+precondition. An implementation that re-intervalled both arms at the **paired**
+half-width — "instead of" in its purest form — passed the entire file. It is also
+the biased direction: measured, it takes the treatment arm from
+`[0.524453, 0.735547]` to `[0.581991, 0.678009]`, a **54.5%** narrowing, and §12
+criterion 5 is read off arm non-overlap. `report.py` already refuses to clip
+intervals for that exact reason. The fix is to assert the bounds **by value**.
+
+**Why pairing by row position needs a test of its own.** `zip(treatment_rows,
+comparator_rows)` is the obvious code, and it is wrong. The mean cannot detect
+it: positionally-paired differences average to `mean(T) - mean(C)` under *every*
+permutation, so the point estimate is order-invariant whatever the pairing. Only
+the interval discriminates — and only on rows that did not arrive seed-ascending,
+which is how every row arrives through the canonical pipeline, so the natural
+fixture cannot see it either. Measured on one permutation of the comparator arm's
+five rows, the positional mutant runs to `[-0.053359, 0.233359]` and stops
+excluding zero: a flipped verdict from a re-ordered tuple.
+
+**Third, and smaller.** A `len(treatment) != len(comparator)` guard satisfies a
+per-seed uniqueness test whenever the duplicate happens to leave the arms unequal
+in length, which the draft's fixture did. Two arms both at seeds `(0,1,2,2)`
+separate the two checks.
+
+**Closes off.** All three are killed by execution now, one test each, re-run
+against the mutants *after* the fix rather than assumed. The general shape worth
+suspecting anywhere: **an assertion whose predicate the function under test
+already guarantees by raising** costs nothing, fails never, and reads as
+coverage.
+
+## 2026-08-24 — A37: the `### As proposed` convention was dropped six entries ago
+
+**Measured.** `/preflight`'s history lens reported that A37's DONE entry breaks a
+`docs/BACKLOG.md` convention — "8 of 8 comparable prior entries" put a
+`### As proposed` sub-heading between the closing commentary and the retained
+`**Idea.**` block, and A33/A34 are "the exception". Checked rather than taken,
+and it is inverted. The census, over every `## DONE ... gate A` section (splitting
+on `## ` lines that are *not* continuations of a wrapped heading, which is what
+makes a naive split miscount this file):
+
+    HAS:   A26 A27 A28 A38 A39 (all 2026-08-19), A40 (08-21)   — 6
+    LACKS: A43 (08-20), A29, A29, A44 (08-22), A33, A34 (08-23) — 6
+
+So it is 6 and 6, not 8 and 2, and the split is chronological: the sub-heading was
+used through 2026-08-21 and appears in **no** gated closure since. The six most
+recent are consecutive omissions. A37 follows current practice; the finding was
+declined on that evidence rather than actioned.
+
+**Why it is worth a note.** The convention is still visibly present in half the
+file, so a reader — or the next history lens — will keep rediscovering it as a
+rule this entry broke. It is not a rule any more. If it should be revived, that is
+a call to make once for the file rather than one entry at a time.
+
+**Closes off.** Nothing depends on this. Recorded only so the same finding does
+not get re-litigated from the same half-evidence next time.
+
+## 2026-08-24 — A37: the fixes for a review's findings are themselves unreviewed code
+
+**Measured.** `/ship` §0 says to re-run `/preflight` if *any* file changed after it
+reported, and warns that FRESH is weaker than "nothing changed" — the suite and
+the review go stale on different inputs, and only the suite has a hook watching
+it. On this gate that rule paid immediately. `/preflight`'s review found three
+defects; fixing them added about a hundred lines, including a rewritten
+three-branch renderer and two new tests. Re-running the review over just that
+delta found **two more real defects**, in the fixes:
+
+- The new `no interval -- N of M pairs are finite` row was only ever exercised at
+  `n_finite == 0` — the single value where `n_finite + n_non_finite` and
+  `n_non_finite` alone print the same string. Confirmed by mutation: substituting
+  `n_non_finite` left all ten tests green. A case with one finite pair separates
+  them (`1 of 4` against `1 of 3`) and now exists.
+- Two docstrings claimed the `same seeds (paired)` row sits "two lines above" the
+  paired row. It is directly above, with nothing between.
+
+**The pattern, which is the reason this is worth an entry.** Three times in one
+gate a fixture sat at exactly the value where two candidate implementations
+coincide: arms of unequal length hid a `len()` guard standing in for per-seed
+uniqueness; a single arm's `-inf` made the paired count equal that arm's count;
+and zero finite pairs made a sum equal one of its terms. None of the three is a
+weak assertion — each is a *correct* assertion evaluated at a degenerate point.
+The check that finds them is not "is this asserted?" but "would this assertion
+still hold if the quantity were computed the other plausible way?"
+
+**Closes off.** A review's findings do not close when the fix is written; the fix
+is new code and has been reviewed by nobody. Re-running the review on the delta
+costs one pass and is not optional — see also the 2026-08-24 entry *"an assertion
+that could not fail"*, which is the same lesson one round earlier.

@@ -580,6 +580,49 @@ class Contrast:
     it by fiat in the report layer. :attr:`paired` makes the answer visible in any
     given case, which is what a reader needs to interpret the contrast.
     """
+    paired_difference: DimensionSummary | None
+    """The mean within-seed difference, ``treatment - comparator``, or ``None``.
+
+    Reported **alongside** the two independent intervals above and never instead
+    of them. :mod:`sciagent.eval.matrix` pairs seeds across arms by construction
+    -- a seed is a function of the scenario and the replicate index alone -- and
+    until this existed that pairing was established at real cost and then thrown
+    away here, where two independent normal intervals were compared. This is an
+    additional *reading* of the same ledger rows: it records nothing, runs no
+    cell, and collapses no dimension, since §8's prohibition is on combining the
+    six and a paired difference on one dimension is still one dimension.
+
+    Computed by the same :func:`_summarise` the two arms go through, so the
+    estimator, the confidence level and the exactly-summed folding are not merely
+    equivalent to theirs but literally the same code. A pair whose either half is
+    non-finite yields a non-finite difference, which that function already
+    excludes and counts in :attr:`DimensionSummary.n_non_finite` -- so
+    ``n_finite`` here is the number of *seeds* that contributed, and is not
+    generally either arm's count.
+
+    **It can be zero while both arms are usable, and this does not raise.** The
+    two arm summaries are guaranteed finite, because :func:`contrast` refuses to
+    return an unusable interval; that guarantee does **not** extend here. Each
+    arm needs two finite readings, while a *pair* needs one seed finite in both,
+    and on D2 -- ``-inf`` whenever a candidate ruled out something that happens
+    -- the two can come apart entirely. Reported as ``point=nan`` with
+    ``n_finite=0`` rather than refused, because the arms did pair: the reading
+    is empty, which is a different fact from the arms not pairing, and
+    collapsing the two into ``None`` would lose it. ``scripts/report_matrix.py``
+    renders it as its own line rather than as a ``nan`` in the shape of a
+    figure.
+
+    ``None`` is a **refusal**, not an absence of interest, and it does not stop
+    the contrast: an unpaired matrix still gets everything above. Two cases reach
+    it. The seed sets differ, which is :attr:`paired` being ``False`` -- ordinary,
+    since conditioning filters each arm by its own flag. Or the sets agree while
+    one arm carries two rows for a seed: :func:`_seeds_of` deduplicates, so equal
+    sets do not imply one reading per seed, and there is then no fact of the
+    matter about which row that seed contributes. Picking one would be this module
+    deciding by fiat what :func:`_refuse_reseeded` refuses to decide one address
+    over.
+    """
+
     overlaps: bool
     """Whether the two intervals intersect. ``False`` is what §12 criterion 5
     asks for; it is not by itself evidence of anything, at twenty seeds."""
@@ -1397,6 +1440,9 @@ def contrast(
         conditioned_on_inadequacy=conditional_on_inadequacy,
         treatment_seeds=_seeds_of(arms[treatment]),
         comparator_seeds=_seeds_of(arms[comparator]),
+        paired_difference=_paired_difference(
+            arms[treatment], arms[comparator], dimension
+        ),
         overlaps=left.low <= right.high and right.low <= left.high,
         residual_asymmetries=(
             () if preregistration is None else preregistration.residual_asymmetries
@@ -1419,6 +1465,52 @@ def _seeds_of(rows: Sequence[LedgerEntry]) -> tuple[int, ...]:
     happened to arrive, which is what :attr:`Contrast.paired` needs.
     """
     return tuple(sorted({int(row.key.seed) for row in rows}))
+
+
+def _readings_by_seed(
+    rows: Sequence[LedgerEntry], dimension: str
+) -> dict[int, float] | None:
+    """Return one arm's readings keyed by seed, or ``None`` if a seed repeats.
+
+    Guarantees the mapping is a *bijection* on seeds when it returns one, which is
+    what makes a within-seed difference well defined. A repeat is not resolved by
+    taking either row: :func:`_refuse_reseeded` records why one address cannot
+    choose between two rows of the same cell, and the same reasoning holds a
+    dimension later.
+    """
+    values = _values(rows, dimension)
+    readings: dict[int, float] = {}
+    for row, value in zip(rows, values, strict=True):
+        seed = int(row.key.seed)
+        if seed in readings:
+            return None
+        readings[seed] = value
+    return readings
+
+
+def _paired_difference(
+    treatment: Sequence[LedgerEntry],
+    comparator: Sequence[LedgerEntry],
+    dimension: str,
+) -> DimensionSummary | None:
+    """Return the mean within-seed difference, or ``None`` if the arms do not pair.
+
+    Guarantees the result does not depend on the order rows arrived in.
+    :attr:`MatrixReport.rows` retains the order it was given, so the pairing is by
+    **seed** and never by position -- the two coincide on rows that happen to
+    arrive seed-ascending, and the mean coincides under any permutation, so only
+    the interval would show the difference. See :attr:`Contrast.paired_difference`
+    for what ``None`` means and why it is not an exception.
+    """
+    left = _readings_by_seed(treatment, dimension)
+    right = _readings_by_seed(comparator, dimension)
+    if left is None or right is None or left.keys() != right.keys():
+        return None
+    # `sorted`, not the dicts' insertion order, which is the order the rows
+    # arrived in. `_summarise` folds through `core.reductions` and is
+    # order-independent anyway, so this is belt and braces -- and invariant 3
+    # forbids the dependence rather than the dependence that happens to matter.
+    return _summarise([left[seed] - right[seed] for seed in sorted(left)])
 
 
 def _arm(

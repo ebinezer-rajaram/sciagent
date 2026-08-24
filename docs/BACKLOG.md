@@ -1610,7 +1610,29 @@ indexed calls and admits deterministically.
 **Cost.** M. Live cost of k-sampling: (k−1) × $0.098 per firing at current
 rates.
 
-## The paired-seed design deserves a paired analysis
+## DONE (2026-08-24, gate A37) — The paired-seed design deserves a paired analysis
+
+**Done as specified.** `Contrast.paired_difference` is a `DimensionSummary |
+None`, computed through the same `_summarise` the two arms go through, so the
+estimator, the confidence level and the exactly-summed folding are the same code
+rather than an equivalent of it. Nothing existing moved: the diff is 107
+insertions and no deletions, and the two independent intervals report exactly
+what they reported before.
+
+**`None` is the refusal, and it is not an exception.** The Idea says "alongside
+(not instead of)", and `tests/test_report.py`'s
+`test_a_contrast_reports_whether_conditioning_kept_the_seeds_paired` already
+calls `contrast()` on deliberately crossed seed sets and reads `paired` off the
+returned object — so raising would report *nothing* where two intervals are
+reported today. Two cases reach it: the seed sets differ, or they agree while one
+arm carries two rows for a seed. The second is not implied by the first —
+`_seeds_of` deduplicates, so equal sets do not establish one reading per seed.
+
+**Pairing is by seed, never by position**, and the mean cannot tell the two
+apart: positionally-paired differences average to `mean(T) - mean(C)` under every
+permutation, so only the interval discriminates. `/test-review` caught that the
+first draft of the test could not, along with two other wrong implementations it
+accepted; all three are now killed by execution, one test each.
 
 **Idea.** When `Contrast.paired` is true, report the mean within-seed
 difference with its interval alongside (not instead of) the two independent

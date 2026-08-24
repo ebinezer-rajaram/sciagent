@@ -42,6 +42,7 @@ view of it.
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 import textwrap
 from pathlib import Path
@@ -183,6 +184,7 @@ def _contrast_lines(result: Contrast) -> str:
             f"  {'intervals overlap':<22s}{result.overlaps}",
             f"  {'treatment exceeds':<22s}{result.exceeds}",
             f"  {'same seeds (paired)':<22s}{result.paired}",
+            _paired_line(result),
             "",
             *_residual_lines(result),
             "  Exploratory. Overlap and direction are two readings, not one",
@@ -192,7 +194,57 @@ def _contrast_lines(result: Contrast) -> str:
             "  If 'same seeds' is False, conditioning left the arms on different",
             "  worlds and part of the difference between them is that, which",
             "  twenty seeds cannot separate out.",
+            "",
+            "  'paired difference' is the mean of the per-seed differences, and",
+            "  reads the same rows a second way rather than replacing the two",
+            "  intervals above. It is the reading the paired design was for, and",
+            "  the two can disagree: arm intervals that overlap are compatible",
+            "  with a within-seed difference that excludes zero.",
         ]
+    )
+
+
+def _paired_line(result: Contrast) -> str:
+    """Return the within-seed difference row, or what stands in for it.
+
+    Printed in the same ``point [low, high] n=`` shape as the two arms above, so
+    the three figures a reader weighs against each other read the same way. A
+    refusal is printed rather than the row being dropped: a block silently
+    missing it would look exactly like one that never carried it.
+
+    **Three renderings, not two, and the third is the one worth stating.** The
+    two arm rows above are guaranteed finite -- :func:`~sciagent.eval.report.contrast`
+    raises rather than return an unusable interval -- so a reader learns to read
+    that column as always-numbers. This row has no such guarantee: the arms can
+    pair while no *seed* carries a finite reading in both, which is ordinary on
+    D2, where ``-inf`` is what a candidate that ruled out something that happens
+    scores. Formatted into the same shape that would print ``nan [nan, nan]``,
+    with only ``n=0`` to say otherwise.
+
+    The refusal wording branches on :attr:`~sciagent.eval.report.Contrast.paired`
+    rather than asserting one cause. A refusal also fires when the seeds *do*
+    match and one arm carries two rows for one of them, and blaming differing
+    seeds there prints a claim the ``same seeds (paired)`` row directly above
+    directly contradicts.
+    """
+    label = "paired difference"
+    paired = result.paired_difference
+    if paired is None:
+        cause = (
+            "the arms ran on different seeds"
+            if not result.paired
+            else "one seed has two readings"
+        )
+        return f"  {label:<22s}refused -- {cause}"
+    if not math.isfinite(paired.low):
+        pairs = paired.n_finite + paired.n_non_finite
+        return (
+            f"  {label:<22s}no interval -- {paired.n_finite} of {pairs} "
+            f"pairs are finite"
+        )
+    return (
+        f"  {label:<22s}{paired.point:>10.4f}  "
+        f"[{paired.low:>10.4f}, {paired.high:>10.4f}]  n={paired.n_finite}"
     )
 
 

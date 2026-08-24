@@ -10555,3 +10555,98 @@ still hold if the quantity were computed the other plausible way?"
 is new code and has been reviewed by nobody. Re-running the review on the delta
 costs one pass and is not optional — see also the 2026-08-24 entry *"an assertion
 that could not fail"*, which is the same lesson one round earlier.
+
+## 2026-08-24 — A36: the address scheme moves, and the corpora are orphaned on purpose
+
+**Decision.** `ADDRESS_VERSION` is `"transcript/3"`. This **supersedes the
+2026-08-23 entry** *"A35: the address scheme is not versioned for a new record
+kind"*, on the condition that entry itself named: it declined the bump because
+`TranscriptStore.load` refuses a file whose version disagrees, so a bump orphaned
+the 112-call `spec9.json` that A40's re-derivation had not yet consumed, and it
+closed with "A36 still bumps the scheme deliberately, and still belongs after
+A40". A40 landed at `docs/BACKLOG.md` rank 12. The reason expired; the bump was
+taken.
+
+**Why.** Three A36 changes each alter what is hashed — the tool schema's `name`
+field, the structural menu moving from the brief into the system block, and a
+`sample` component in the address — so a scheme that did not move would leave
+recorded calls resolving against text no process still produces. Put to the user
+before any code was written, against the alternative of landing the two
+non-hashing changes and holding the bump for a session with a recording campaign
+queued; the bump was chosen.
+
+**Closes off — and this is the part no diff carries.** `.cache/transcripts/spec9.json`
+and `llm_smoke.json` are `transcript/2` files. **The 18 LLM cells of the recorded
+1,120-row matrix are unreplayable**, and no code change reaches them:
+`scripts/run_matrix.py --replay` over either now fails to start on
+`TranscriptSchemeError`. The bump itself deletes and rewrites nothing, and the
+digests in `docs/CORPUS.md` stay correct — they still say what those numbers came
+from. Restoring replay means **recording again**, at live cost, and nothing
+schedules that. Any future work that assumes it can replay the §9 corpus is
+assuming something that stopped being true here.
+
+**One consequence was missed when this entry was first written, and `/preflight`'s
+review caught it before the change landed.** `TranscriptStore.save`'s append-only
+guard works by reading the file it is about to replace, so it cannot guard a file
+under a superseded scheme; `_refuse_to_drop` treats `TranscriptSchemeError` as
+"replaceable", deliberately and with its reasoning recorded, because every call
+in such a file would miss anyway and refusing would strand it forever. Orphaning
+the corpora therefore moves both onto that branch: **a `save()` to either path
+now silently overwrites it**, and the guard that would ordinarily refuse is the
+one that cannot run. Reproduced, not reasoned about. Of the two `save()` callers
+only `run_matrix.py` is safe, and only incidentally, by loading before it writes;
+`rate_limit_pilot.py` never loads, so it replaces a superseded pilot corpus
+silently -- and its *"kept its existing calls"* report, which exists to say a
+write was refused, can no longer fire for such a file. `docs/CORPUS.md` carries the
+operational warning; nothing in the code enforces it, and that is the honest
+state rather than a gap to be papered over — restoring the guard would mean
+refusing to ever write to a path holding an unreadable corpus, which is the
+strand-forever behaviour that clause exists to avoid.
+
+**Two passes of review were needed, and the second caught a fix that was itself
+wrong.** The first pass found the stale "listed in the brief" sentences, left by
+the menu's move; the fix replaced them with "listed *above*", which is inverted --
+the system block is composed instruction-then-menu, so the menu sits ~900
+characters *below* the sentence claiming it is above. A second review pass over
+the fixes measured it (char 179 against char 1087) and it now reads "below",
+pinned by a test rather than by care. This is the 2026-08-24 A37 lesson recurring
+in the same shape, and worth one more line because of *which* shape: the fix
+reintroduced the very class of defect the finding was about -- model-facing text
+that is confidently false.
+
+`tests/acceptance/test_a35.py`'s constant assertion moved with it, from
+`"transcript/2"` to `"transcript/3"`. Both halves the 2026-08-23 entry argued for
+survive: the constant is asserted directly, and the fixture is hand-written with
+a literal, so an *unplanned* bump is still a red. What that test no longer holds
+is "the campaign's corpus loads" — `tests/acceptance/test_a36.py` now asserts the
+opposite, deliberately.
+
+## 2026-08-24 — A36: "a mechanism-neutral example" is not decidable, so there is no example
+
+**Spec ambiguity, resolved against the standard's letter.** The backlog entry's
+**Gate.** says *no menu mechanism name appears anywhere in the schema or its
+examples*; its **Idea.** says to replace `'self_excitation'` *with a
+mechanism-neutral example*. Read together they ask for a check that no finite
+blacklist can perform, and the gap is not academic: the test review measured that
+`'excitation'` and `'self-exciting'` both clear a blacklist derived from the menu
+constructs **and** `closed_set()`'s keys, while preserving the identical nudge
+toward S1's Hawkes truth. `'clustered_arrivals'` is caught only by accident, via
+the unrelated token `arrival`.
+
+**Decision.** The `name` field describes a *format* and carries **no instance at
+all** — no quoted literal, no `e.g.`. That is stronger than the **Idea.** asks,
+knowingly.
+
+**Why.** The **Rationale.** objects to *"an uncontrolled nudge ... effect size
+unmeasured"*, and every instance is one; neutrality of a *particular* example is
+not a property anything in this repository can establish, whereas absence is
+checkable in one line. The error directions are not symmetric: an over-strong
+rule can refuse a harmless example, and a blacklist can admit a priming one. The
+first failure is visible to whoever tries to add the example; the second is
+invisible and lands in every call of every scenario.
+
+**Closes off.** A future session that wants to reinstate an example is not
+blocked by a rule nobody wrote down — it is this decision, and the thing to
+supply with it is a measurement of the nudge, which is what was missing in the
+first place. It also rules out the cheaper reading of the gate, under which
+swapping the underscore for a hyphen would have discharged it.

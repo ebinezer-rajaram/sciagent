@@ -80,6 +80,24 @@ The record kind is new; the **addressing scheme is not**, and
 :data:`ADDRESS_VERSION` deliberately did not move for it. Nothing that is hashed
 changed, and a bump would have refused every corpus recorded before the change --
 including the 112-call section 9 corpus the campaign's LLM numbers rest on.
+
+The scheme moved at A36, and the corpora are orphaned on purpose
+----------------------------------------------------------------
+
+That corpus was load-bearing because A40's re-derivation had not run yet. It has
+(``docs/BACKLOG.md`` rank 12), so the reason expired, and gate A36 moved
+:data:`ADDRESS_VERSION` to ``transcript/3`` for three changes that each alter
+what is hashed: the tool schema's ``name`` field no longer names a mechanism, the
+structural menu moved from the brief into the system block, and an address now
+carries a **sample** index so a k-sample request can record every draw.
+
+The consequence is stated rather than discovered. ``.cache/transcripts/spec9.json``
+and ``llm_smoke.json`` are ``transcript/2`` files; :meth:`TranscriptStore.load`
+refuses them, and ``scripts/run_matrix.py --replay`` over them raises rather than
+missing. Nothing deletes or rewrites them and the digests ``docs/CORPUS.md``
+publishes stay correct -- what changed is that this process no longer addresses
+calls the way they were addressed. Replaying those numbers again means recording
+again, which is a deliberate act and not a side effect of reading this module.
 """
 
 from __future__ import annotations
@@ -140,7 +158,7 @@ RECORD: TranscriptMode = "record"
 #: change to *what* is hashed invalidates stored transcripts rather than silently
 #: matching them against a differently-computed key -- the same promise
 #: ``OPERATIONS_VERSION`` makes for the empirical table's cache.
-ADDRESS_VERSION = "transcript/2"
+ADDRESS_VERSION = "transcript/3"
 
 
 def call_address(
@@ -152,6 +170,7 @@ def call_address(
     brief: str,
     schema: Mapping[str, Any],
     index: int,
+    sample: int = 0,
 ) -> str:
     """Return the content address of one model call.
 
@@ -165,6 +184,17 @@ def call_address(
     ``settings`` is required rather than defaulted deliberately. A default would
     let a new backend forget to declare what it varies and get a plausible
     address anyway, which is the failure this argument exists to prevent.
+
+    ``index`` and ``sample`` are different questions and both are hashed.
+    ``index`` is *which request* -- a system that asks twice within one
+    investigation is asking two questions, and one answer serving both would make
+    the second depend on the first. ``sample`` is *which draw of one request*: a
+    k-sample elicitation makes k calls with an identical brief on purpose, and
+    without this they would collide at one address, where
+    :meth:`TranscriptStore.put` would refuse the second as a conflicting
+    recording. It is the one part defaulted rather than required, because a
+    single-sample request has exactly one honest value for it and every caller
+    that predates k-sampling means that one.
     """
     payload = "\x00".join(
         (
@@ -176,6 +206,7 @@ def call_address(
             brief,
             json.dumps(schema, sort_keys=True, separators=(",", ":")),
             str(index),
+            str(sample),
         )
     )
     return f"call/{stable_key(payload) % (1 << 64):016x}"

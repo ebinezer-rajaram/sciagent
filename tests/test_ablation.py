@@ -268,29 +268,37 @@ class TestTheDefaultPathIsUntouched:
     def test_the_default_is_both_memories(self) -> None:
         """A caller who passes nothing gets the same arm as one who asks for it."""
         investigation = _investigation()
-        assert render_brief(investigation, MENU) == render_brief(
-            investigation, MENU, memory=Memory.BOTH
+        assert render_brief(investigation) == render_brief(
+            investigation, memory=Memory.BOTH
         )
 
-    def test_it_carries_exactly_the_six_sections_it_always_had(self) -> None:
+    def test_it_carries_exactly_the_five_sections_it_carries(self) -> None:
         """No section added, none dropped, none reordered.
 
         The raw arm's ``Structures already entertained`` is the live hazard: it
         is new, and a refactor that let it reach the default would move every V7
         address at once.
+
+        **Five since gate A36, and six before it.** The structural menu is no
+        longer a section of the brief: it moved into the system block, where a
+        cache breakpoint can hold it, and the addresses moved with it under a
+        bumped ``ADDRESS_VERSION``. It is still shown to every arm --
+        ``tests/acceptance/test_a36.py`` asserts that it is in the system block
+        and *not* in the brief, so the two halves of the move are pinned from
+        both directions and a partial one cannot pass.
         """
-        assert list(_sections(render_brief(_investigation(), MENU))) == [
-            MENU_HEAD,
+        assert list(_sections(render_brief(_investigation()))) == [
             DESIGNS_HEAD,
             OBSERVED_HEAD,
             GRAPH_HEAD,
             CHECK_HEAD,
             BUDGET_HEAD,
         ]
+        assert MENU_HEAD not in _sections(render_brief(_investigation()))
 
     def test_the_raw_arms_section_is_unreachable_from_the_default(self) -> None:
         assert STRUCTURES_HEAD not in _sections(
-            render_brief(_investigation(), MENU, memory=Memory.BOTH)
+            render_brief(_investigation(), memory=Memory.BOTH)
         )
 
 
@@ -298,7 +306,7 @@ class TestTheArmsSwapRepresentations:
     """Neither arm's brief is a superset of the other's."""
 
     def test_raw_carries_the_readings(self) -> None:
-        sections = _sections(render_brief(_investigation(), MENU, memory=Memory.RAW))
+        sections = _sections(render_brief(_investigation(), memory=Memory.RAW))
         assert OBSERVED_HEAD in sections
         assert "step 0:" in sections[OBSERVED_HEAD]
 
@@ -312,12 +320,12 @@ class TestTheArmsSwapRepresentations:
         word search would pass for the wrong reason and would start failing the
         day someone lower-cased the heading.
         """
-        brief = render_brief(_investigation(), MENU, memory=Memory.RAW)
+        brief = render_brief(_investigation(), memory=Memory.RAW)
         assert GRAPH_HEAD not in _sections(brief)
         assert POSTERIOR_MARK not in brief
 
     def test_graph_carries_the_posterior(self) -> None:
-        sections = _sections(render_brief(_investigation(), MENU, memory=Memory.GRAPH))
+        sections = _sections(render_brief(_investigation(), memory=Memory.GRAPH))
         assert GRAPH_HEAD in sections
         assert POSTERIOR_MARK in sections[GRAPH_HEAD]
 
@@ -325,26 +333,35 @@ class TestTheArmsSwapRepresentations:
         """Guards the reading above: "no posterior" never meant "no check"."""
         for memory in Memory:
             assert CHECK_HEAD in _sections(
-                render_brief(_investigation(), MENU, memory=memory)
+                render_brief(_investigation(), memory=memory)
             )
 
     def test_graph_carries_no_readings(self) -> None:
         """V4's memory is the belief, not the record it was derived from."""
         assert OBSERVED_HEAD not in _sections(
-            render_brief(_investigation(), MENU, memory=Memory.GRAPH)
+            render_brief(_investigation(), memory=Memory.GRAPH)
         )
 
     def test_the_shared_sections_are_byte_identical(self) -> None:
         """Everything that is not memory is the same text in both arms.
 
-        The menu and the designs are the action space, and the check is SPEC F5's
+        The designs are the action space, and the check is SPEC F5's
         conventional Stage A verdict, which both arms are entitled to. If any of
         them differed, a measured delta could be about that instead.
+
+        The **menu** used to be checked here too and is not, because since gate
+        A36 it is not a section of the brief. It is shared by a stronger route
+        now -- one system block per layer, built from the grammar and nothing
+        about the run -- so the arms cannot differ in it by construction rather
+        than by both branches happening to render it.
+        ``tests/acceptance/test_a36.py`` asserts that directly on
+        ``ProposalLayer.system``, which is the object that would actually carry
+        a divergence.
         """
         investigation = _investigation()
-        raw = _sections(render_brief(investigation, MENU, memory=Memory.RAW))
-        graph = _sections(render_brief(investigation, MENU, memory=Memory.GRAPH))
-        for heading in (MENU_HEAD, DESIGNS_HEAD, CHECK_HEAD, BUDGET_HEAD):
+        raw = _sections(render_brief(investigation, memory=Memory.RAW))
+        graph = _sections(render_brief(investigation, memory=Memory.GRAPH))
+        for heading in (DESIGNS_HEAD, CHECK_HEAD, BUDGET_HEAD):
             assert raw[heading] == graph[heading], heading
 
     def test_both_arms_see_the_same_hypotheses_in_the_same_order(self) -> None:
@@ -355,8 +372,8 @@ class TestTheArmsSwapRepresentations:
         is needed because the two sections are rendered by different code.
         """
         investigation = _investigation()
-        raw = _sections(render_brief(investigation, MENU, memory=Memory.RAW))
-        graph = _sections(render_brief(investigation, MENU, memory=Memory.GRAPH))
+        raw = _sections(render_brief(investigation, memory=Memory.RAW))
+        graph = _sections(render_brief(investigation, memory=Memory.GRAPH))
         named = [
             line.split(":", 1)[0].removeprefix("- ")
             for line in raw[STRUCTURES_HEAD].splitlines()
@@ -371,8 +388,8 @@ class TestTheArmsSwapRepresentations:
     def test_the_arms_render_the_same_structures(self) -> None:
         """Same structure text under each name, so only the annotation differs."""
         investigation = _investigation()
-        raw = _sections(render_brief(investigation, MENU, memory=Memory.RAW))
-        graph = _sections(render_brief(investigation, MENU, memory=Memory.GRAPH))
+        raw = _sections(render_brief(investigation, memory=Memory.RAW))
+        graph = _sections(render_brief(investigation, memory=Memory.GRAPH))
         for named, annotated in zip(
             raw[STRUCTURES_HEAD].splitlines(),
             graph[GRAPH_HEAD].splitlines(),
@@ -389,7 +406,7 @@ class TestTheArmsSwapRepresentations:
                 provider="p",
                 model="m",
                 system="s",
-                brief=render_brief(investigation, MENU, memory=memory),
+                brief=render_brief(investigation, memory=memory),
                 schema=SCHEMA,
                 index=0,
             )
@@ -478,8 +495,8 @@ class TestDeterminism:
     @pytest.mark.parametrize("memory", list(Memory))
     def test_a_brief_renders_identically_on_repeat(self, memory: Memory) -> None:
         investigation = _investigation()
-        assert render_brief(investigation, MENU, memory=memory) == render_brief(
-            investigation, MENU, memory=memory
+        assert render_brief(investigation, memory=memory) == render_brief(
+            investigation, memory=memory
         )
 
     def test_both_arms_agree_across_two_runs(self) -> None:

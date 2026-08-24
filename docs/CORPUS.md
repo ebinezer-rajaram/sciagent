@@ -37,6 +37,53 @@ on Windows and on Linux is byte-identical.
 | `.cache/transcripts/spec9.json` | 112 | 659,740 | `transcript/2` | `claude-agent-sdk` / `claude-opus-5` / `effort=high` |
 | `.cache/transcripts/llm_smoke.json` | 2 | 12,130 | `transcript/2` | `claude-agent-sdk` / `claude-opus-5` / `effort=high` |
 
+**Both are `transcript/2`, and this process addresses calls as `transcript/3`.
+Neither replays.** Gate A36 moved the scheme deliberately: the tool schema's
+`name` field no longer names a mechanism, the structural menu moved from the
+brief into the system block so a cache can hold it, and an address now carries a
+sample index. All three change what is hashed, so the addresses in these files
+name requests nothing still produces. `TranscriptStore.load` *refuses* them by
+version — it does not load them and then miss every address, which would look
+like a model that had changed its mind about everything at once — and
+`scripts/run_matrix.py --replay` over either raises `TranscriptSchemeError`.
+
+The bump itself touches nothing on disk, and the digests below stay correct: they
+are the record of what these numbers came from, and that claim is unaffected by
+this process no longer being able to address them. Replaying the §9 LLM cells
+again means **recording again**, which is a deliberate act with a live cost and
+is not something a code change can restore. `docs/DECISIONS.md` (2026-08-23) is
+the decision that declined this bump while A40's re-derivation still needed the
+corpus, and records that A36 would take it once A40 landed; A40 landed at
+`docs/BACKLOG.md` rank 12.
+
+> **Back these two files up before any recording pass, and do not point
+> `--transcripts` at either path.** `TranscriptStore.save`'s append-only guard —
+> `_refuse_to_drop` — protects a corpus by *reading* it first, and it cannot read
+> one under a superseded scheme. It therefore treats `TranscriptSchemeError` as
+> "this file may be replaced", by design and with its reasoning written down:
+> every call in it would miss anyway, and refusing as well would strand the file
+> forever. The consequence of the bump is that both corpora are now on that
+> branch, so a `save()` to either path **silently overwrites it** — the guard
+> that would normally refuse is exactly the one that cannot run. Verified rather
+> than reasoned about: saving a one-call store over a `transcript/2` fixture
+> leaves the fixture's call gone and raises nothing.
+>
+> Of the repository's two `save()` callers, only one is safe, and it is safe
+> only incidentally: `scripts/run_matrix.py` loads the path before writing it, so
+> a superseded scheme raises there and it exits. `scripts/rate_limit_pilot.py`
+> does **not** — it builds a fresh `RECORD` store, never loads, and writes to
+> `<out>.transcripts.json`, so post-bump it replaces a `transcript/2` pilot
+> corpus without a word. Its `_save_transcripts` reports *"kept its existing
+> calls"* when `save()` refuses; that refusal can no longer fire for such a file,
+> so the silence there now means the opposite of what it used to.
+> (`scripts/stage_a_seed_sweep.py` records but never saves.)
+>
+> Nothing in the code enforces this warning. It is a property of the orphaning,
+> not a bug in the guard — restoring the guard would mean refusing to ever write
+> to a path holding an unreadable corpus, which is the strand-forever behaviour
+> that clause exists to avoid. It is written here because these files cannot be
+> regenerated without paying for them again.
+
 `spec9.json` is the SPEC §9 campaign corpus: the calls behind the 18 LLM cells
 (V3, V4 and V7) of the 1,120-row recorded matrix. One backend identity, which is
 what `scripts/run_matrix.py --replay` requires — a transcript address hashes the

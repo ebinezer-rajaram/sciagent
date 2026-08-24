@@ -82,6 +82,7 @@ __all__ = [
     "ProposalDraft",
     "decode",
     "render_brief",
+    "render_menu_prefix",
     "structural_menu",
     "tool_schema",
 ]
@@ -301,6 +302,18 @@ def tool_schema(menu: Sequence[MenuEntry]) -> dict[str, Any]:
     could reach the framework, so "agents do not write numbers" is a property of
     the wire format rather than of the prompt.
 
+    Guarantees also that it **names no mechanism, and illustrates nothing** --
+    gate A36. Until then the ``name`` field read *"a short slug naming the
+    mechanism, e.g. 'self_excitation'"*, and self-excitation is menu entry 0 as
+    well as S1's ground truth, so every call on every scenario carried a nudge
+    toward one answer and the nudge's effect size was never measured. The field
+    now describes a *format* and offers no instance of it. That is stronger than
+    swapping in a harmless example, and deliberately: an example cannot be shown
+    to prime nothing, whereas an absent one is checkable, and a blacklist of
+    mechanism words is not a definition of neutrality --
+    ``tests/acceptance/test_a36.py`` measured that ``'excitation'`` clears such a
+    list while preserving the identical nudge.
+
     What the schema does *not* bound is a parameter index from above. ``structure``
     carries a ``maximum``, because one menu length covers every entry; a parameter
     index cannot, because its bound is the grid's size and that varies by
@@ -320,7 +333,8 @@ def tool_schema(menu: Sequence[MenuEntry]) -> dict[str, Any]:
             "name": {
                 "type": "string",
                 "description": (
-                    "A short slug naming the mechanism, e.g. 'self_excitation'."
+                    "A short slug naming this proposal. It becomes part of the "
+                    "hypothesis id; lower case, digits and underscores."
                 ),
             },
             "rationale": {
@@ -344,7 +358,7 @@ def tool_schema(menu: Sequence[MenuEntry]) -> dict[str, Any]:
                             "minimum": 0,
                             "maximum": max(0, len(menu) - 1),
                             "description": (
-                                "Index into the structural menu in the brief."
+                                "Index into the structural menu listed above the brief."
                             ),
                         },
                         "parameters": {
@@ -354,7 +368,7 @@ def tool_schema(menu: Sequence[MenuEntry]) -> dict[str, Any]:
                             "items": {"type": "integer", "minimum": 0},
                             "description": (
                                 "One grid index per parameter of the chosen "
-                                "structure, in the order the brief lists them. "
+                                "structure, in the order the menu lists them. "
                                 "An index, never a value."
                             ),
                         },
@@ -389,11 +403,16 @@ class Memory(Enum):
     other, which is what makes a measured delta attributable to representation
     rather than to content.
 
-    The sections that are not memory -- the structural menu, the designs, SPEC
-    F5's conventional Stage A verdict and the budget -- are in every arm. They
-    are the action space and the framework's own report, not a record of what
-    happened, and withholding either would ablate something R2 is not asking
-    about.
+    What is not memory -- the structural menu, the designs, SPEC F5's
+    conventional Stage A verdict and the budget -- is in every arm. Those are the
+    action space and the framework's own report, not a record of what happened,
+    and withholding either would ablate something R2 is not asking about.
+
+    The menu is in every arm by a different route since gate A36: it is not a
+    section of the brief at all any more but part of the system block
+    (:func:`render_menu_prefix`). That keeps it identical across the arms by
+    construction rather than by both branches happening to include it, which is
+    the stronger arrangement for exactly the reason this class exists.
     """
 
     RAW = "raw"
@@ -409,13 +428,42 @@ class Memory(Enum):
     recorded its transcript corpus against -- see :func:`render_brief`."""
 
 
-def render_brief(
-    investigation: Investigation,
-    menu: Sequence[MenuEntry],
-    *,
-    max_grid_values: int = 8,
-    memory: Memory = Memory.BOTH,
-) -> str:
+def render_menu_prefix(menu: Sequence[MenuEntry], *, max_grid_values: int = 8) -> str:
+    """Return the structural menu as a block, for the *system* half of a request.
+
+    Guarantees the result is a pure function of the menu: it is a rendering of
+    the grammar's action space and reads nothing about the run. That is what
+    makes it the **stable prefix** -- identical across every call of a scenario,
+    across both memory arms, and across every step of an investigation.
+
+    It lives here rather than in :func:`render_brief` for a reason that is about
+    money rather than tidiness (gate A36). A cache breakpoint buys nothing below
+    512 tokens, and the standing instruction alone is ~273; the menu is ~626, so
+    the two together clear the floor and the instruction on its own never
+    could. The menu used to ride the *user* message, where the Agent SDK backend
+    -- which is what the recorded campaign used -- cannot place a breakpoint at
+    all: it passes ``system_prompt`` and ``prompt`` as bare strings. So the only
+    route to caching the one part of a request that never varies is to put it in
+    the block that is cached wholesale.
+
+    :meth:`~sciagent.systems.llm.provider.ProposalLayer.__init__` is what joins
+    it to the instruction, and does so for *every* prompt including a
+    caller-supplied one. A version that composed it only onto the default would
+    leave :func:`~sciagent.systems.ablation.memory_ablation`'s two arms with the
+    menu in no block at all, indexing into something they were never shown.
+
+    ``max_grid_values`` abbreviates a long grid to its first few points, its last
+    point and its size. The slice's grids have 64 points, and listing all of them
+    for every cell would crowd out the observations without telling a model
+    anything it needs: what it must know is the range, the direction and how many
+    indices there are.
+    """
+    section = _menu_section(menu, max_grid_values)
+    body = "\n".join(section.lines) if section.lines else "(none)"
+    return f"## {section.title}\n{body}"
+
+
+def render_brief(investigation: Investigation, *, memory: Memory = Memory.BOTH) -> str:
     """Return the brief a model is shown for this investigation.
 
     Assembled from what an ``Investigation`` exposes and nothing else, which is
@@ -428,23 +476,22 @@ def render_brief(
     looks, because the brief is hashed into a transcript's content address, so an
     unstable rendering would be an unreproducible run.
 
-    Guarantees also that ``Memory.BOTH`` -- the default -- renders exactly the
-    six sections it rendered at item 12, in that order. Every recorded transcript
-    is addressed by a hash over this string, so a default that gained a section
-    would not fail loudly; it would stop resolving the corpus and silently
-    re-derive against different text. ``Memory.RAW``'s extra section is
-    unreachable from ``BOTH`` for that reason.
+    Guarantees also that ``Memory.BOTH`` -- the default -- renders exactly five
+    sections, in the order below, and that ``Memory.RAW``'s extra section is
+    unreachable from it. Every recorded transcript is addressed by a hash over
+    this string, so a default that gained a section would not fail loudly; it
+    would stop resolving the corpus and silently re-derive against different
+    text.
 
-    ``max_grid_values`` abbreviates a long grid to its first few points, its last
-    point and its size. The slice's grids have 64 points, and listing all of them
-    for every cell would crowd out the observations without telling a model
-    anything it needs: what it must know is the range, the direction and how many
-    indices there are.
+    **Five and not the six of item 12**: gate A36 moved the structural menu out
+    of the brief and into the system block, where a cache can hold it -- see
+    :func:`render_menu_prefix`. That is a change to what is hashed, so it landed
+    with a bump to
+    :data:`~sciagent.systems.llm.transcripts.ADDRESS_VERSION` rather than
+    quietly. The menu is still shown to every arm; it is shown in the other half
+    of the request, which is also where ``max_grid_values`` went with it.
     """
-    sections: list[_Section] = [
-        _menu_section(menu, max_grid_values),
-        _designs_section(investigation),
-    ]
+    sections: list[_Section] = [_designs_section(investigation)]
     if memory in (Memory.RAW, Memory.BOTH):
         sections.append(_observations_section(investigation))
     if memory is Memory.RAW:

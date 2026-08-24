@@ -402,7 +402,7 @@ class TestTheBriefTellsTheTruthWithoutTellingTheAnswer:
         only path to it is ``Scenario.truth`` and an ``Investigation`` has none.
         """
         investigation = _investigation("S1", entertained=())
-        brief = render_brief(investigation, MENU)
+        brief = render_brief(investigation)
         truth = scenario("S1").truth
         for edit in canonical(truth):
             for key in sorted(edit.parameters):
@@ -413,21 +413,21 @@ class TestTheBriefTellsTheTruthWithoutTellingTheAnswer:
     def test_the_brief_reports_the_check_verdict(self) -> None:
         """Stage A is conventional (SPEC F5/F6), so the model is told the answer."""
         investigation = _investigation("S1", steps=4)
-        brief = render_brief(investigation, MENU)
+        brief = render_brief(investigation)
         assert "Posterior predictive check" in brief
         expected = "do NOT explain" if investigation.ppc().inadequate else "adequately"
         assert expected in brief
 
     def test_the_brief_reports_every_experiment_run(self) -> None:
         investigation = _investigation("S1", steps=3)
-        brief = render_brief(investigation, MENU)
+        brief = render_brief(investigation)
         for step in range(3):
             assert f"step {step}:" in brief
 
     def test_the_brief_is_stable_across_repeated_rendering(self) -> None:
         investigation = _investigation("S1", entertained=("hawkes", "seasonality"))
-        first = render_brief(investigation, MENU)
-        assert all(render_brief(investigation, MENU) == first for _ in range(5))
+        first = render_brief(investigation)
+        assert all(render_brief(investigation) == first for _ in range(5))
 
 
 class TestTheTranscriptStore:

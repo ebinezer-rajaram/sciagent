@@ -80,7 +80,7 @@ ABLATION_SYSTEM_PROMPT = """\
 You are proposing structure for a scientific investigation.
 
 An executable programme generates the data. Something has been changed in it,
-and the change is one of the structures listed in the brief. Conventional
+and the change is one of the structures listed below. Conventional
 methods have already done the parts that are theirs: they maintain the belief
 over the hypotheses entertained so far, and they run the check that says whether
 those hypotheses explain the data.

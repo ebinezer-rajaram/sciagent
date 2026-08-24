@@ -1577,7 +1577,8 @@ resolvable from the repository.
 **Rank.** 9
 **Cost.** S–M.
 
-## Elicitation hygiene: a priming example, a cold cache, one sample
+## DONE (2026-08-24, gate A36) — Elicitation hygiene: a priming example, a cold
+## cache, one sample
 
 **Idea.** Three changes at the elicitation surface, landed together at a
 recording-campaign boundary since the schema is hashed into every address:

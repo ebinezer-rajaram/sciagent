@@ -29,14 +29,15 @@ claim it is and not a wider one.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from sciagent.core.edits import Defect, EditGrammar
 from sciagent.core.errors import (
     GrammarError,
     MalformedProposalError,
+    ProviderError,
     SystemConfigurationError,
 )
 from sciagent.systems.base import Investigation
@@ -47,6 +48,7 @@ from sciagent.systems.llm.encoding import (
     decode,
     draft_from_payload,
     render_brief,
+    render_menu_prefix,
     structural_menu,
     tool_schema,
 )
@@ -57,10 +59,12 @@ from sciagent.systems.llm.transcripts import (
 )
 
 __all__ = [
+    "DrawOutcome",
     "Proposal",
     "ProposalLayer",
     "Provider",
     "RefusingProvider",
+    "SampleRecord",
     "slug_hypothesis_name",
 ]
 
@@ -210,6 +214,84 @@ class Proposal:
     address: str
 
 
+#: What became of one draw of a k-sample request.
+#:
+#: ``"admitted"`` is the draft that became the proposal -- exactly one per
+#: successful :meth:`ProposalLayer.propose`. ``"valid"`` is a draft the grammar
+#: licenses that a lower-numbered sample beat to it; it is *not* a failure, and
+#: counting it as one would understate how often the model answers usably.
+#: ``"malformed"`` is a payload that did not denote a licensed structure, and
+#: ``"refused"`` is the backend declining or hitting its ceiling.
+#:
+#: The four are what make proposal diversity measurable, which is the whole point
+#: of taking more than one draw.
+type DrawOutcome = Literal["admitted", "valid", "malformed", "refused"]
+
+#: What one draw can fail with and still be *one spent draw* rather than the end
+#: of the run. Deliberately these two and no wider: their siblings under
+#: :class:`~sciagent.core.errors.ProposalError` -- a replay miss, a scheme
+#: mismatch, an unreachable backend -- are conditions about the machine or the
+#: corpus rather than about this draw, and must stop the run. Both members carry
+#: a ``cause`` tag, which is what lets a draw bin like a proposal attempt.
+type _DrawFailure = ProviderError | MalformedProposalError
+
+#: One draw, as the sampling loop hands it to the admission pass: the sample
+#: index, the address it was recorded at, and exactly one of a parsed draft or
+#: the failure that replaced it.
+#:
+#: The sample index is **carried rather than re-derived from position**. The two
+#: agree today -- the loop appends exactly one entry per sample, in order -- and
+#: that is precisely the coincidence a review flagged: a `SampleRecord.sample`
+#: taken from `enumerate` would be a different quantity that happens to match,
+#: and it names the value hashed into `.address`, so the day the two diverge the
+#: record would point at a call it did not describe.
+type _Draw = tuple[int, str, ProposalDraft | None, _DrawFailure | None]
+
+
+@dataclass(frozen=True, slots=True)
+class SampleRecord:
+    """One draw of one proposal request, and what the framework made of it.
+
+    Carries no number a model wrote. ``structure`` is the tuple of *menu
+    indices* a draft named -- a choice of cell, not a magnitude -- and is
+    present whenever the payload parsed, including when the structure it named
+    turned out not to exist. That last case is deliberate: a draft indexing off
+    the end of the menu is the most informative thing a coverage measurement can
+    see, and dropping it would report perfect coverage of a menu the model
+    cannot address.
+    """
+
+    proposal: int
+    """Which request. :attr:`ProposalLayer.proposals` counts these."""
+
+    sample: int
+    """Which draw of that request, ``0`` to ``k-1``. Hashed into the address."""
+
+    address: str
+    outcome: DrawOutcome
+    structure: tuple[int, ...] | None
+
+    cause: str = ""
+    """Why, for a draw that produced nothing -- a **tag**, never prose.
+
+    The vocabulary is :attr:`~sciagent.core.errors.ProviderError.cause`'s, plus
+    :attr:`~sciagent.core.errors.MalformedProposalError.cause`'s fixed
+    ``"undecodable"``, so a draw bins exactly as a proposal attempt does.
+
+    Split from :attr:`detail` for the reason
+    :class:`~sciagent.systems.hybrid.ProposalAttempt` splits the same pair, and
+    that reason is SPEC's second invariant: an error message from the decoder
+    interpolates the model's own un-slugged ``name`` field, so putting it here
+    would make a field documented as a bin key hold provider-authored text. A
+    consumer that then binned by it would get a histogram whose *partition* the
+    model chose -- one bin per proposal name. An audit found this class holding
+    ``str(error)`` here and flagged it before any consumer existed to be misled
+    by it."""
+
+    detail: str = ""
+    """The failure's message, for a human reading the log. Never a bin key."""
+
+
 class ProposalLayer:
     """Turns an investigation into a proposal, reproducibly.
 
@@ -227,10 +309,13 @@ class ProposalLayer:
 
     __slots__ = (
         "_calls",
+        "_draws",
         "_grammar",
         "_memory",
         "_menu",
+        "_proposals",
         "_provider",
+        "_samples",
         "_store",
         "_system",
     )
@@ -243,14 +328,31 @@ class ProposalLayer:
         *,
         system_prompt: str = "",
         memory: Memory = Memory.BOTH,
+        samples: int = 1,
     ) -> None:
+        if samples < 1:
+            raise SystemConfigurationError(
+                f"a proposal layer was built to take {samples} sample(s) per "
+                f"request, which is a layer that cannot propose at all. A "
+                f"single-sample layer is 1, and k-sample elicitation is k > 1"
+            )
         self._provider = provider
         self._grammar = grammar
         self._menu = structural_menu(grammar)
         self._store = store
-        self._system = system_prompt or DEFAULT_SYSTEM_PROMPT
+        # The prefix joins **whatever** instruction this layer was given, not
+        # only the default one. `memory_ablation` supplies its own prompt to both
+        # arms, so composing onto the default alone would leave V3 and V4
+        # indexing into a menu that is in neither the system block nor -- since
+        # gate A36 -- the brief. A test review found that exact parenthesisation
+        # before it was written; see `tests/acceptance/test_a36.py`.
+        instruction = system_prompt or DEFAULT_SYSTEM_PROMPT
+        self._system = f"{instruction}\n\n{render_menu_prefix(self._menu)}"
         self._memory = memory
+        self._samples = samples
         self._calls = 0
+        self._proposals = 0
+        self._draws: tuple[SampleRecord, ...] = ()
 
     @property
     def menu(self) -> tuple[MenuEntry, ...]:
@@ -274,9 +376,69 @@ class ProposalLayer:
         return self._store
 
     @property
+    def system(self) -> str:
+        """Return the system block: this layer's instruction and the menu.
+
+        Public because it is half of what determines an address, and a caller
+        that can see only the brief can neither reproduce an address nor measure
+        what the request costs. ``scripts/rate_limit_pilot.py`` needs the second.
+        """
+        return self._system
+
+    @property
+    def samples(self) -> int:
+        """Return how many draws each :meth:`propose` takes. ``1`` unless asked.
+
+        The default is one because k multiplies the live cost of a recording
+        campaign, and a default above it would spend that without anyone
+        choosing to.
+        """
+        return self._samples
+
+    @property
     def calls(self) -> int:
-        """Return how many proposals have been requested."""
+        """Return how many model calls have been made -- ``samples`` per request.
+
+        This is the count of *addresses consumed*, which is what it always was:
+        at the single-sample default it is still one per :meth:`propose`. Use
+        :attr:`proposals` for the number of times the layer was asked.
+        """
         return self._calls
+
+    @property
+    def proposals(self) -> int:
+        """Return how many times :meth:`propose` has been called."""
+        return self._proposals
+
+    @property
+    def draws(self) -> tuple[SampleRecord, ...]:
+        """Return every draw taken, in the order taken.
+
+        The evidence behind :meth:`structure_counts`, kept so a caller can ask a
+        question this class did not anticipate. Written by the framework from
+        what the drafts named.
+        """
+        return self._draws
+
+    def structure_counts(self) -> tuple[tuple[tuple[int, ...], int], ...]:
+        """Return how often each structure was drawn, in sorted key order.
+
+        Guarantees the ordering is by structure and not by insertion, so the
+        result is comparable across runs and cannot make output depend on dict
+        iteration order (SPEC's third invariant).
+
+        Counting, not scoring. A structure index names a cell of the grammar's
+        menu, so this is the framework tallying which cells a model reached for
+        -- the proposal diversity and menu coverage that taking k draws exists to
+        make measurable. Draws that produced no draft at all are not counted,
+        because there is nothing to attribute them to; :attr:`draws` still holds
+        them.
+        """
+        counts: dict[tuple[int, ...], int] = {}
+        for draw in self._draws:
+            if draw.structure is not None:
+                counts[draw.structure] = counts.get(draw.structure, 0) + 1
+        return tuple((key, counts[key]) for key in sorted(counts))
 
     def propose(self, investigation: Investigation) -> Proposal:
         """Return one proposal for the state ``investigation`` is in.
@@ -289,31 +451,163 @@ class ProposalLayer:
         cause it was recorded under, so a replayed refusal is indistinguishable
         from the live one (gate A35) -- and
         :class:`~sciagent.core.errors.MalformedProposalError` when the payload
-        does not denote a structure the grammar licenses. None is caught here: a
-        system that wants to carry on without a proposal should decide that
-        itself rather than have the layer decide it silently.
+        does not denote a structure the grammar licenses. **None of the three is
+        swallowed**: a system that wants to carry on without a proposal should
+        decide that itself rather than have the layer decide it silently.
+
+        Since k-sampling, two of them *are* caught per draw and re-raised from
+        the request — a refusal and an undecodable payload are each one spent
+        draw of k, and the failure that propagates when no draw is admissible is
+        sample 0's, unchanged and unwrapped. The externally visible behaviour is
+        the same as before at the single-sample default; the sentence above is
+        about the caller's contract, and this paragraph is about the mechanism,
+        because a reader who assumed "caught nowhere" would misread the loop.
+        A :class:`~sciagent.core.errors.TranscriptMissError` really is caught
+        nowhere, and must not be: it says the corpus has no record of this draw.
+
+        **Every one of :attr:`samples` draws is taken, whatever the first one
+        says.** Stopping at the first usable draft would make the number of
+        addresses a request consumes depend on the answers it got, so replaying
+        the run would require reproducing the answers in order to know where to
+        look for them. It also truncates exactly the distribution the mode
+        exists to report. At the default of one this is a distinction without a
+        difference; above it, it is the whole design.
+
+        Admission is the **first draft, in sample order, that the grammar
+        licenses** -- not the first answer, which may be malformed, and not the
+        best of them, which would need a judgement this layer has no standing to
+        make. If no draw is admissible, sample 0's exception propagates, so a
+        single-sample layer behaves exactly as it did before k-sampling existed
+        rather than approximately so.
         """
-        brief = render_brief(investigation, self._menu, memory=self._memory)
+        brief = render_brief(investigation, memory=self._memory)
         schema = tool_schema(self._menu)
-        address = call_address(
-            provider=self._provider.id,
-            model=self._provider.model,
-            settings=self._provider.settings,
-            system=self._system,
-            brief=brief,
-            schema=schema,
-            index=self._calls,
-        )
-        self._calls += 1
-        transcript = self._store.resolve(
-            address,
-            lambda: self._provider.complete(self._system, brief, schema),
-            provider=self._provider.id,
-            model=self._provider.model,
-            brief=brief,
-            settings=self._provider.settings,
-        )
-        draft = draft_from_payload(transcript.payload)
+        index = self._proposals
+        self._proposals += 1
+
+        drawn: list[_Draw] = []
+        for sample in range(self._samples):
+            address = call_address(
+                provider=self._provider.id,
+                model=self._provider.model,
+                settings=self._provider.settings,
+                system=self._system,
+                brief=brief,
+                schema=schema,
+                index=index,
+                sample=sample,
+            )
+            self._calls += 1
+            try:
+                transcript = self._store.resolve(
+                    address,
+                    lambda: self._provider.complete(self._system, brief, schema),
+                    provider=self._provider.id,
+                    model=self._provider.model,
+                    brief=brief,
+                    settings=self._provider.settings,
+                )
+            except ProviderError as error:
+                # Only a refusal. A `TranscriptMissError` is a replay that has no
+                # record of this draw, and a `ProviderUnavailableError` is a
+                # machine fault -- both are siblings rather than subclasses
+                # precisely so that catching one here does not swallow them, and
+                # both must stop the run rather than become one unusable draw
+                # among k.
+                drawn.append((sample, address, None, error))
+                continue
+            try:
+                # **Outside the clause above, and this is not a tidiness move.**
+                # `draft_from_payload` raises `MalformedProposalError`, which is a
+                # *sibling* of `ProviderError` -- so while this call sat inside
+                # that `try`, a payload that did not conform to the schema
+                # escaped `propose` outright: the remaining draws were never
+                # taken, an already-admissible draft from a lower sample was
+                # discarded, and not one `SampleRecord` was written. A review
+                # reproduced it at `samples=3` with a valid sample 0 and a
+                # `plausibility`-carrying sample 1 -- three calls' worth of
+                # intent, zero draws recorded. A non-conforming payload is one
+                # unusable draw, exactly as an undecodable one is.
+                drawn.append(
+                    (sample, address, draft_from_payload(transcript.payload), None)
+                )
+            except MalformedProposalError as error:
+                drawn.append((sample, address, None, error))
+        return self._admit_first_valid(drawn, index)
+
+    def _admit_first_valid(
+        self,
+        drawn: Sequence[_Draw],
+        index: int,
+    ) -> Proposal:
+        """Return the first licensed draft, recording what every draw became.
+
+        Two passes over the draws rather than one, and the split is the point:
+        the calls are all made before any of them is judged, so what the
+        framework decides can never change what the framework asked.
+        """
+        records: list[SampleRecord] = []
+        admitted: Proposal | None = None
+        for sample, address, draft, failure in drawn:
+            if draft is None:
+                assert failure is not None, "a draw with no draft carries its failure"
+                records.append(
+                    SampleRecord(
+                        proposal=index,
+                        sample=sample,
+                        address=address,
+                        # A refusal is the backend declining; a non-conforming
+                        # payload is the model answering unusably. Both are one
+                        # spent draw, and they bin differently because the first
+                        # is a fact about the backend and the second is not.
+                        outcome=(
+                            "refused"
+                            if isinstance(failure, ProviderError)
+                            else "malformed"
+                        ),
+                        structure=None,
+                        cause=failure.cause,
+                        detail=str(failure),
+                    )
+                )
+                continue
+            structure = tuple(edit.structure for edit in draft.edits)
+            try:
+                proposal = self._build(draft, address)
+            except MalformedProposalError as error:
+                records.append(
+                    SampleRecord(
+                        proposal=index,
+                        sample=sample,
+                        address=address,
+                        outcome="malformed",
+                        structure=structure,
+                        cause=error.cause,
+                        detail=str(error),
+                    )
+                )
+                continue
+            if admitted is None:
+                admitted = proposal
+            records.append(
+                SampleRecord(
+                    proposal=index,
+                    sample=sample,
+                    address=address,
+                    outcome="admitted" if proposal is admitted else "valid",
+                    structure=structure,
+                )
+            )
+        self._draws += tuple(records)
+        if admitted is not None:
+            return admitted
+        # Nothing was admissible, so the request failed. Sample 0's failure is
+        # what propagates: it is the one a single-sample layer would have raised,
+        # which is what makes k=1 the old behaviour exactly.
+        _sample, address, draft, failure = drawn[0]
+        if failure is not None:
+            raise failure
+        assert draft is not None, "a draw with no failure carries its draft"
         return self._build(draft, address)
 
     def _build(self, draft: ProposalDraft, address: str) -> Proposal:
@@ -398,7 +692,7 @@ DEFAULT_SYSTEM_PROMPT = """\
 You are proposing structure for a scientific investigation.
 
 An executable programme generates the data. Something has been changed in it,
-and the change is one of the structures listed in the brief. Conventional
+and the change is one of the structures listed below. Conventional
 methods have already done the parts that are theirs: the posterior over the
 hypotheses entertained so far, and the posterior predictive check that says
 whether those hypotheses explain what was observed.

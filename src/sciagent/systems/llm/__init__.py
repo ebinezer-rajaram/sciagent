@@ -42,6 +42,7 @@ from sciagent.systems.llm.encoding import (
     decode,
     draft_from_payload,
     render_brief,
+    render_menu_prefix,
     structural_menu,
     tool_schema,
 )
@@ -50,6 +51,7 @@ from sciagent.systems.llm.provider import (
     ProposalLayer,
     Provider,
     RefusingProvider,
+    SampleRecord,
 )
 from sciagent.systems.llm.scripted import ScriptedProvider, fixed_payload
 from sciagent.systems.llm.transcripts import (
@@ -73,6 +75,7 @@ __all__ = [
     "ProposalLayer",
     "Provider",
     "RefusingProvider",
+    "SampleRecord",
     "ScriptedProvider",
     "Transcript",
     "TranscriptStore",
@@ -81,6 +84,7 @@ __all__ = [
     "draft_from_payload",
     "fixed_payload",
     "render_brief",
+    "render_menu_prefix",
     "structural_menu",
     "tool_schema",
 ]

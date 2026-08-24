@@ -92,7 +92,7 @@ def addresses() -> dict[str, str]:
                 model="child/1",
                 settings="",
                 system="system",
-                brief=render_brief(investigation, menu, memory=memory),
+                brief=render_brief(investigation, memory=memory),
                 schema=schema,
                 index=0,
             )

@@ -50,20 +50,31 @@ miss, a transport failure and a misconfigured replay must each keep propagating
 once refusals are recordable. A change that recorded any of them would satisfy
 the gate's headline and destroy what the gate is for.
 
-Why the address scheme is deliberately **not** versioned
---------------------------------------------------------
+Why the address scheme was deliberately **not** versioned here
+--------------------------------------------------------------
 
 The entry's **Touches.** suggests versioning the scheme, and the decision taken
-with this gate (2026-08-23) is not to.
+with this gate (2026-08-23) was not to.
 :data:`~sciagent.systems.llm.transcripts.ADDRESS_VERSION` doubles as the corpus
 file's format version, and :meth:`TranscriptStore.load` *refuses* a file whose
-version disagrees -- so a bump orphans the recorded 112-call corpus outright and
-makes A40's re-derivation unreachable, which is the opposite of what this entry
-exists to achieve. Nothing that is *hashed* changes: a refusal is a new record
-**kind**, not a new addressing scheme. The new fields are defaulted, exactly as
-``settings`` was, and
-``test_a35_a_corpus_recorded_before_refusals_still_loads`` is what holds that
-decision in place.
+version disagrees -- so a bump orphaned the recorded 112-call corpus outright and
+made A40's re-derivation unreachable, which is the opposite of what this entry
+exists to achieve. Nothing that A35 changes is *hashed*: a refusal is a new
+record **kind**, not a new addressing scheme, and the new fields are defaulted
+exactly as ``settings`` was.
+
+**That reason has since expired, and the scheme has moved.** A40 landed
+(``docs/BACKLOG.md`` rank 12), and gate A36 then bumped to ``transcript/3`` for
+three changes that *are* hashed -- a schema that no longer names a mechanism, a
+menu that moved from the brief into the system block, and an address that
+carries a sample index. The corpora are orphaned as a consequence, deliberately
+and with the cost written down.
+
+What survives here is the half of the decision that was never about A40: the
+scheme is not moved by a passing edit, and a record written before refusals were
+recordable still loads through *defaulted* reads rather than required keys.
+``test_a35_a_corpus_recorded_before_refusals_still_loads`` holds both, and its
+docstring carries the history.
 
 Cost
 ----
@@ -710,37 +721,60 @@ class TestA35RefusalsReplay:
     def test_a35_a_corpus_recorded_before_refusals_still_loads(
         self, tmp_path: Path
     ) -> None:
-        """The decision not to bump the address scheme, pinned.
+        """A record carrying no ``outcome`` key reads as the answer it is.
 
-        A ``transcript/2`` file written before refusals were recordable carries
-        no ``outcome`` key. It must load, and every address in it must resolve as
-        the answer it is -- because the recorded 112-call corpus is exactly such
-        a file, and a change that orphaned it would block the A40 re-derivation
-        this entry exists to unblock.
+        The three refusal fields are *defaulted reads*, not required ones, and
+        that is the whole of what this exercises -- against a file written by
+        hand rather than by :meth:`TranscriptStore.save`, so the defaults are
+        exercised rather than the writer's own output.
 
-        **The literal is asserted, and the fixture is written by hand.** A review
-        found that an earlier version built its "legacy" file with
-        :meth:`TranscriptStore.save`, which stamps whatever
+        **The subject is the defaults, not the era.** A review of A36 pointed out
+        that this docstring used to say "a corpus recorded before refusals were
+        recordable", which after the scheme bump names a file this reader now
+        refuses outright — an unrepresentable subject. The finding was right
+        about the framing and the framing is fixed; it does not make the test
+        vacuous, because :meth:`Transcript.as_json` writes the three keys **only
+        for a refusal**, so a present-day corpus of answers omits them exactly as
+        a pre-A35 one did. The defaults are load-bearing for every corpus, not
+        for a historical one.
+
+        **The scheme literal is asserted, and it has moved since A35 wrote this.**
+        A review found that an earlier version built its "legacy" file with
+        ``save`` and read it back with ``load``. That round trip is
+        version-*agnostic* -- ``save`` stamps whatever
         :data:`~sciagent.systems.llm.transcripts.ADDRESS_VERSION` currently says
-        and is then read back by a ``load`` comparing against the same constant.
-        That round trip is version-*agnostic*: it passed under
-        ``"transcript/3"`` and under ``"banana/99"``, so the docstring's claim
-        that a bump "fails here" was false and decision 1 was pinned by nothing
-        in the repository. Both halves are needed -- the constant, so a bump is a
-        red; and a file written as a pre-A35 session wrote it, so the defaulted
-        reads are exercised rather than the writer's own output.
+        and ``load`` compares against the same constant -- so it passed under
+        ``"banana/99"`` while claiming a bump would fail here. The constant is
+        therefore asserted directly, and the fixture carries a literal.
+
+        **What A35 decided, and why the literal below is no longer
+        ``transcript/2``.** ``docs/DECISIONS.md`` (2026-08-23) declined to bump
+        the scheme for A35, because the constant doubles as the corpus file's
+        format version and a bump orphans the recorded 112-call corpus that
+        A40's re-derivation needed -- the very thing A35 existed to unblock. A40
+        landed (``docs/BACKLOG.md`` rank 12), so that reason expired, and gate
+        A36 bumped to ``transcript/3`` on purpose: the tool schema, the brief and
+        the address's shape all changed. That entry's closing line said A36
+        "still bumps the scheme deliberately, and still belongs after A40", which
+        is what happened. This assertion keeps doing its job either way -- an
+        *unplanned* bump is still a red here, and the value it names is the
+        decision of record.
         """
-        assert ADDRESS_VERSION == "transcript/2", (
-            "the address scheme moved. The recorded 112-call corpus is a "
-            "'transcript/2' file and load() refuses any other, so this bump "
-            "orphans it and blocks the A40 re-derivation A35 exists to unblock"
+        assert ADDRESS_VERSION == "transcript/3", (
+            "the address scheme moved without a decision naming it. A bump "
+            "orphans every recorded corpus, so it belongs to a gate that says "
+            "so -- A36 was the last one -- and not to a passing edit"
         )
 
         corpus = tmp_path / "legacy.json"
         corpus.write_text(
             json.dumps(
                 {
-                    "version": "transcript/2",
+                    # A literal, not the constant. The review that produced this
+                    # test measured that reading the constant back makes the
+                    # fixture version-agnostic, so a bump would move both halves
+                    # at once and neither would notice.
+                    "version": "transcript/3",
                     "calls": [
                         {
                             "address": "call/0",

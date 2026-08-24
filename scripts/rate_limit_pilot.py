@@ -104,6 +104,7 @@ from sciagent.systems.llm import (
     fixed_payload,
     render_brief,
     structural_menu,
+    tool_schema,
 )
 from sciagent.systems.llm.agent_sdk_provider import AgentSdkProvider
 
@@ -160,7 +161,17 @@ class CallRecord:
     outcome: str
     """``"ok"``, or the name of the exception that ended the run."""
 
-    brief_chars: int
+    request_chars: int
+    """Everything the call carries: the system block, the brief and the schema.
+
+    **Renamed from ``brief_chars``, and the rename is the point.** Gate A36 moved
+    the structural menu into the system block, and the tool schema was never
+    counted at all, so the old field measured about 3,400 characters less than
+    the request it was reporting. Keeping the name would have left two
+    incompatible quantities under one key, with old and new pilot JSONs silently
+    comparable; a `KeyError` on an old file is the better failure.
+    """
+
     address: str
     wall_s: float
     """Measured around :meth:`ProposalLayer.propose`, so it includes process
@@ -436,7 +447,18 @@ def run_pilot(
         # Rendered a second time purely to size it. `propose` renders its own and
         # does not hand it back, and a brief is a pure function of the state, so
         # this is the same string the call carried.
-        brief_chars = len(render_brief(investigation, layer.menu, memory=memory))
+        #
+        # **The system block is counted too, and leaving it out was a live
+        # under-measurement.** Gate A36 moved the structural menu -- ~2,500
+        # characters of it -- out of the brief and into the system block, so a
+        # figure taken from `render_brief` alone stopped describing the request
+        # while still being reported as its size. This is a rate-limit pilot;
+        # the one number it exists to get right is how large a call is.
+        request_chars = (
+            len(layer.system)
+            + len(render_brief(investigation, memory=memory))
+            + len(json.dumps(tool_schema(layer.menu), sort_keys=True))
+        )
 
         tap.last = None
         # The store is shared across layers and `propose` does not hand its
@@ -468,7 +490,7 @@ def run_pilot(
                     scenario=name,
                     memory=memory,
                     outcome=type(error).__name__,
-                    brief_chars=brief_chars,
+                    request_chars=request_chars,
                     address=_stored_address(store, before),
                     wall_s=time.perf_counter() - started,
                     result=tap.last,
@@ -514,7 +536,7 @@ def run_pilot(
                     scenario=name,
                     memory=memory,
                     outcome=type(error).__name__,
-                    brief_chars=brief_chars,
+                    request_chars=request_chars,
                     address=_stored_address(store, before),
                     wall_s=time.perf_counter() - started,
                     result=tap.last,
@@ -530,7 +552,7 @@ def run_pilot(
                 scenario=name,
                 memory=memory,
                 outcome="ok",
-                brief_chars=brief_chars,
+                request_chars=request_chars,
                 address=proposal.address,
                 wall_s=wall,
                 result=tap.last,
@@ -599,7 +621,7 @@ def _record(
     scenario: str,
     memory: Memory,
     outcome: str,
-    brief_chars: int,
+    request_chars: int,
     address: str,
     wall_s: float,
     result: ResultMessage | None,
@@ -612,7 +634,7 @@ def _record(
         scenario=scenario,
         memory=memory.value,
         outcome=outcome,
-        brief_chars=brief_chars,
+        request_chars=request_chars,
         address=address,
         wall_s=round(wall_s, 3),
         duration_ms=_int(result.duration_ms if result is not None else 0),
@@ -717,7 +739,7 @@ def report(records: Sequence[CallRecord], *, dry_run: bool) -> None:
 
     print()
     print("per proposal            median      mean       min       max")
-    _row("brief (chars)", [float(record.brief_chars) for record in ok])
+    _row("request (chars)", [float(record.request_chars) for record in ok])
     _row("wall-clock (s)", walls)
     _row("cost (USD)", costs, places=4)
     _row("input tokens", inputs)

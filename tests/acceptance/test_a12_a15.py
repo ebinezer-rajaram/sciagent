@@ -27,7 +27,7 @@ from itertools import product
 from pathlib import Path
 
 import pytest
-from callgraph import analyse
+from callgraph import MODULE_SCOPE, analyse
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
@@ -451,7 +451,14 @@ class TestA14PartitionIsolation:
             FIXTURES, surface=("clean_tool",), sealed_symbols=SEALED_SYMBOLS
         )
         assert analysis.clean, "\n".join(str(path) for path in analysis.paths)
-        assert analysis.entry_points, "the positive control matched no entry point"
+        functions = [
+            entry for entry in analysis.entry_points if not entry.endswith(MODULE_SCOPE)
+        ]
+        assert functions, (
+            "the positive control matched no function. Since A32 every module "
+            "contributes a <module> pseudo-function, so a bare entry_points "
+            "check here can no longer fail."
+        )
 
     @pytest.mark.parametrize(
         "partition", [member for member in DataPartition if member in SEALED]

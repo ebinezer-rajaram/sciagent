@@ -86,6 +86,19 @@ AGENT_TOOL_SURFACE: tuple[str, ...] = (
 
 #: Names whose appearance constitutes sealed-partition access. Read by A14's
 #: analyser, so this tuple and the code are one declaration rather than two.
+#:
+#: The lowercase entries are the values the sealed partitions carry, and they
+#: are as load-bearing as the enum members above them. :class:`DataPartition`
+#: stores lowercase strings precisely so the database is readable without the
+#: enum, which means a comparison against ``"holdout"`` reaches a sealed row
+#: without ever naming ``HOLDOUT``. Declaring only the member names left that
+#: route undeclared (A32).
+#:
+#: They are spelled out rather than derived from :data:`SEALED`, because this
+#: tuple is a *declaration* that the analyser reads: a comprehension over the
+#: enum would make the sealed surface depend on import order and would hide the
+#: one entry -- ``"test"`` -- worth seeing before adding a parameter by that
+#: name to an agent-reachable module. A14 asserts the two agree.
 SEALED_SYMBOLS: tuple[str, ...] = (
     "HOLDOUT",
     "TEST",
@@ -93,6 +106,8 @@ SEALED_SYMBOLS: tuple[str, ...] = (
     "SealedAccess",
     "sealed_records",
     "require_sealed",
+    "holdout",
+    "test",
 )
 
 

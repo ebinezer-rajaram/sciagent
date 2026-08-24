@@ -37,6 +37,7 @@ separately below.
 
 from __future__ import annotations
 
+import ast
 import math
 from dataclasses import replace
 from inspect import signature
@@ -44,7 +45,7 @@ from itertools import islice
 from pathlib import Path
 
 import pytest
-from callgraph import analyse
+from callgraph import MODULE_SCOPE, analyse
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -104,10 +105,53 @@ from sciagent.registry.partitions import AGENT_TOOL_SURFACE
 FIXTURES = Path(__file__).parent / "fixtures"
 SOURCE = Path(__file__).resolve().parents[2] / "src"
 
+GRAPH = SOURCE / "sciagent" / "hypothesis" / "graph.py"
+
 TEMPLATE = ExperimentTemplateId("observe_baseline")
 
 METRICS: MetricRegistry = metric_registry()
 GRAMMAR = edit_grammar()
+
+
+def plausibility_definition_lines() -> frozenset[int]:
+    """Return the lines of ``graph.py`` that *define* a plausibility symbol.
+
+    A module names what it defines, so the module declaring both
+    ``PLAUSIBILITY_SYMBOLS`` and the ``plausibility`` field necessarily
+    references them at module scope. Neither is a write, and neither can appear
+    in ``PLAUSIBILITY_DERIVATION``, which is a list of *functions*.
+
+    Read from ``graph.py``'s own AST rather than written down as line numbers, so
+    the carve-out moves when the declaration does and cannot quietly come to
+    cover a third site.
+
+    Exactly two shapes qualify, and the narrowness is the point. A bare
+    annotation with no value (``plausibility: Probability``) *cannot* be a write:
+    it binds nothing. The ``PLAUSIBILITY_SYMBOLS`` assignment is named
+    explicitly, by that name, at module level. Matching "any assignment binding
+    ``plausibility``" instead -- the first version of this -- would have exempted
+    a module-scope ``plausibility = ...``, which is a write, so the carve-out
+    would have whitelisted the one construct it exists to catch.
+    """
+    tree = ast.parse(GRAPH.read_text(encoding="utf-8"), filename=str(GRAPH))
+    lines: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.AnnAssign | ast.Assign):
+            continue
+        targets: list[ast.expr] = (
+            [node.target] if isinstance(node, ast.AnnAssign) else list(node.targets)
+        )
+        bound = {target.id for target in targets if isinstance(target, ast.Name)}
+        declares_field = (
+            isinstance(node, ast.AnnAssign)
+            and node.value is None
+            and "plausibility" in bound
+        )
+        if declares_field or "PLAUSIBILITY_SYMBOLS" in bound:
+            end = node.end_lineno if node.end_lineno is not None else node.lineno
+            lines.update(range(node.lineno, end + 1))
+    assert lines, f"{GRAPH.name} declares neither PLAUSIBILITY_SYMBOLS nor the field"
+    return frozenset(lines)
 
 
 def prediction(
@@ -488,7 +532,14 @@ class TestA17PlausibilityImmutability:
             f"no module matches the agent tool surface {AGENT_TOOL_SURFACE!r}, so "
             f"the criterion below examines nothing"
         )
-        assert analysis.entry_points, "the surface matched modules but no functions"
+        functions = [
+            entry for entry in analysis.entry_points if not entry.endswith(MODULE_SCOPE)
+        ]
+        assert functions, (
+            "the surface matched modules but no functions. Compared against real "
+            "definitions rather than against entry_points, which since A32 is "
+            "non-empty for any matched module and could not fail."
+        )
 
     def test_a17_no_agent_path_writes_plausibility(self) -> None:
         """The criterion itself, over the shipped source tree.
@@ -513,6 +564,15 @@ class TestA17PlausibilityImmutability:
         symbol. An entry that no longer does is dead, and dead entries are how a
         narrow exemption turns into a wide one without anybody deciding to widen
         it.
+
+        Module scope is compared separately, not exempted. Since A32 the analyser
+        reads import-time code, and ``graph.py`` is where both
+        ``PLAUSIBILITY_SYMBOLS`` and the ``plausibility`` field are *defined* --
+        a module names what it defines. Those references are held to a stricter
+        rule than the functions are: they must fall on the definition lines
+        themselves. A module-level statement in ``graph.py`` that touched
+        plausibility anywhere else still fails this test, which a blanket
+        exclusion of ``<module>`` would not have caught.
         """
         flagged = analyse(
             SOURCE,
@@ -522,11 +582,48 @@ class TestA17PlausibilityImmutability:
         touching = {
             f"{path.reference.module}.{path.reference.function}"
             for path in flagged.paths
+            if path.reference.function != MODULE_SCOPE
         }
         assert set(PLAUSIBILITY_DERIVATION) == touching, (
             f"declared boundary {sorted(PLAUSIBILITY_DERIVATION)!r} does not match "
             f"the functions that actually touch a plausibility symbol "
             f"{sorted(touching)!r}"
+        )
+
+        defining = [
+            path.reference
+            for path in flagged.paths
+            if path.reference.function == MODULE_SCOPE
+        ]
+        assert defining, (
+            "no module-scope reference was found, so the rule below is dead and "
+            "the analyser has stopped reading import-time code"
+        )
+        # The line numbers below come from graph.py, so only graph.py's own
+        # references may be judged against them. Today the surface above is that
+        # one module and <module> is never a callee, so nothing else can appear
+        # here -- but that is a coupling between two lines rather than a stated
+        # rule, and widening the surface tuple would silently exempt a sibling
+        # module's module-scope write whenever its line number collided.
+        foreign = sorted(
+            f"{reference.module}.{MODULE_SCOPE} line {reference.lineno}"
+            for reference in defining
+            if reference.module != "sciagent.hypothesis.graph"
+        )
+        assert not foreign, (
+            f"a module other than {GRAPH.name} reached module scope here; its "
+            f"references are being judged against {GRAPH.name}'s line numbers, "
+            f"which means nothing: {foreign}"
+        )
+        definitions = plausibility_definition_lines()
+        stray = sorted(
+            f"line {reference.lineno} references {reference.symbol}"
+            for reference in defining
+            if reference.lineno not in definitions
+        )
+        assert not stray, (
+            f"{GRAPH.name} touches a plausibility symbol at module scope outside "
+            f"its own definitions: {stray}"
         )
 
     def test_a17_the_licence_does_not_extend_one_hop_further(self) -> None:
@@ -567,7 +664,10 @@ class TestA17PlausibilityImmutability:
             FIXTURES, surface=("clean_tool",), sealed_symbols=PLAUSIBILITY_SYMBOLS
         )
         assert analysis.clean, "\n".join(str(path) for path in analysis.paths)
-        assert analysis.entry_points, "the positive control matched no entry point"
+        functions = [
+            entry for entry in analysis.entry_points if not entry.endswith(MODULE_SCOPE)
+        ]
+        assert functions, "the positive control matched no function"
 
     def test_a17_propose_accepts_no_plausibility_argument(self) -> None:
         """There is no write path because there is no parameter to write through."""

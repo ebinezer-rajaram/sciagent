@@ -23,12 +23,20 @@ and acceptance test A12 checks all three:
    schema itself. ``INSERT`` is admitted only for the duration of
    :meth:`ExperimentStore.append`, since an authorizer is per connection and a
    blanket grant would make ``query`` a write path.
-3. **Schema.** Every table carries aborting ``BEFORE UPDATE`` and ``BEFORE
-   DELETE`` triggers, so a connection opened by any other tool is still refused.
+3. **Schema.** Every table carries aborting ``BEFORE UPDATE``, ``BEFORE DELETE``
+   and ``BEFORE INSERT`` triggers, so a connection opened by any other tool is
+   still refused.
 
-``PRAGMA recursive_triggers`` is on. Without it SQLite's ``REPLACE`` conflict
-resolution deletes the conflicting row *without* firing delete triggers, which
-would leave a supported SQL statement able to overwrite a registered result.
+``PRAGMA recursive_triggers`` is on, because without it SQLite's ``REPLACE``
+conflict resolution deletes the conflicting row *without* firing delete
+triggers. That is necessary and it is **not sufficient**, and the difference
+mattered: the pragma is per *connection*, so setting it here says nothing about
+the writer layer 3 exists for. Measured -- a foreign connection at sqlite's
+defaults, where ``recursive_triggers`` is off, took a registered result from
+``[1.0]`` to ``[999.0]`` against a table carrying both of the other triggers.
+What actually closes it is the third trigger, guarded on the digest already
+being present, which fires before conflict resolution is consulted at all. See
+:func:`~sciagent.registry.backing.append_only_triggers`.
 
 Layers 2 and 3 live in :mod:`sciagent.registry.backing`, which
 :class:`~sciagent.registry.ledger.CampaignLedger` shares, so both stores are

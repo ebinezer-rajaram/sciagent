@@ -14,9 +14,10 @@ it at three independent levels. Two of the three are here:
 
 - **Connection.** :func:`authorizer` is an allowlist over sqlite actions, default
   deny, with ``INSERT`` granted only for the duration of one append.
-- **Schema.** :func:`append_only_triggers` returns the aborting ``BEFORE UPDATE``
-  and ``BEFORE DELETE`` triggers, so a connection opened by any other tool is
-  still refused.
+- **Schema.** :func:`append_only_triggers` returns the aborting ``BEFORE UPDATE``,
+  ``BEFORE DELETE`` and ``BEFORE INSERT`` triggers, so a connection opened by any
+  other tool is still refused. The third of those is what closes ``INSERT OR
+  REPLACE``, which reaches neither of the first two; see that function.
 
 The third -- that no update or delete method exists on the API -- cannot be
 factored out, because it is a property of each store's own surface. Each store
@@ -77,16 +78,53 @@ PERMITTED_ACTIONS: Final[frozenset[int]] = frozenset(
 
 
 def append_only_triggers(table: str) -> tuple[str, ...]:
-    """Return the aborting update and delete triggers for one table.
+    """Return the aborting triggers that make one table append-only.
 
-    Guarantees the pair is refused at the schema level, so a connection this
-    package never opened -- the sqlite CLI, another process -- is refused too.
+    Guarantees that update, delete and overwrite are all refused at the schema
+    level, so a connection this package never opened -- the sqlite CLI, another
+    process -- is refused too. ``table`` must carry a ``digest`` column and a
+    ``sequence`` rowid, which every store here has.
+
+    The third trigger is the one that is not obvious. ``INSERT OR REPLACE``
+    satisfies a uniqueness constraint by *deleting* the conflicting row, and
+    those deletes fire delete triggers **only when ``PRAGMA recursive_triggers``
+    is on**. That pragma is per connection, so a store setting it protects
+    nothing against the writer this layer exists for: sqlite's default is off,
+    and a foreign connection was measured taking a registered result from
+    ``[1.0]`` to ``[999.0]`` against a table carrying both of the other two
+    triggers. A ``BEFORE INSERT`` fires before conflict resolution is consulted
+    at all, so it holds whatever the writer's pragmas say.
+
+    **Both** unique constraints have to be named in the ``WHEN`` clause, and
+    guarding the digest alone was measured insufficient. A row can be evicted by
+    conflicting on the ``sequence`` rowid instead, under a decoy digest the
+    digest clause does not match; that frees the content address, and a second,
+    ordinary insert then puts a forged result at it. Measured end to end against
+    a table carrying the digest-only form: ``(1.0,)`` to ``(999.0,)`` at an
+    unchanged content address, through ``ExperimentStore.get``.
+
+    The clause stays a ban on *overwriting* rather than on appending because
+    both halves test for an existing row. ``NEW.sequence`` is NULL in a
+    ``BEFORE INSERT`` trigger when the insert omits the rowid -- which every
+    store's own ``append`` does -- so the second half is false on the write path
+    this package takes, and an insert at an unoccupied rowid still succeeds
+    because it evicts nothing. A store's ``append`` also returns the existing
+    record before reaching an insert, so its documented idempotence never
+    presents a duplicate digest here either.
     """
-    return tuple(
+    aborting = (
         f"CREATE TRIGGER IF NOT EXISTS {table}_no_{event.lower()} "
         f"BEFORE {event} ON {table} "
         f"BEGIN SELECT RAISE(ABORT, '{ABORT_MESSAGE}'); END"
         for event in ("UPDATE", "DELETE")
+    )
+    return (
+        *aborting,
+        f"CREATE TRIGGER IF NOT EXISTS {table}_no_overwrite "
+        f"BEFORE INSERT ON {table} "
+        f"WHEN EXISTS (SELECT 1 FROM {table} WHERE digest = NEW.digest) "
+        f"OR EXISTS (SELECT 1 FROM {table} WHERE sequence = NEW.sequence) "
+        f"BEGIN SELECT RAISE(ABORT, '{ABORT_MESSAGE}'); END",
     )
 
 

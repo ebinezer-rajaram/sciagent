@@ -27,10 +27,11 @@ own sealed surface and the two cannot drift apart.
 from __future__ import annotations
 
 import ast
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from pathlib import Path
+from typing import Final
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,14 +86,48 @@ class _Function:
     references: list[SealedReference] = field(default_factory=list)
 
 
+#: Qualname given to a module's own body. Not a legal Python identifier, so no
+#: call can resolve to it: ``_called_name`` returns identifiers, and module-level
+#: code is reached by importing, never by calling. It is an entry point and never
+#: a callee.
+MODULE_SCOPE: Final = "<module>"
+
+
 class _Visitor(ast.NodeVisitor):
-    """Collect one ``_Function`` per definition, nested definitions included."""
+    """Collect one ``_Function`` per definition, nested definitions included.
+
+    Plus one for the module body itself, under :data:`MODULE_SCOPE`. Module-level
+    statements run at *import* time and reach a sealed partition exactly as a
+    function body does, and collecting only ``FunctionDef`` nodes missed them
+    entirely -- a module that planted ``TOKEN = SealedAccess(...)`` and defined
+    no function at all analysed clean (A32).
+
+    It missed them twice over, which is the part worth stating. A module
+    contributing no functions contributed nothing to the analyser's set of
+    *modules* either, so its surface pattern was reported as unmatched -- and
+    ``unmatched`` is the field that exists to make a surface declaration which
+    has stopped describing the code visible rather than quietly clean. The blind
+    spot disabled the instrument that was supposed to reveal it.
+    """
 
     def __init__(self, module: str, sealed: frozenset[str]) -> None:
         self.module = module
         self.sealed = sealed
         self.functions: list[_Function] = []
         self._scope: list[str] = []
+
+    def visit_Module(self, node: ast.Module) -> None:
+        """Collect the module body, then recurse into the definitions in it.
+
+        The body is everything *not* inside a function: top-level statements, and
+        class bodies, which also execute on import and are not functions. The
+        walk stops at each ``FunctionDef``, whose contents ``_enter`` owns --
+        without that, every function's references would be attributed to module
+        scope as well and the analyser would report the same violation twice
+        under two names.
+        """
+        self._collect(node, MODULE_SCOPE, _import_time_nodes(node))
+        self.generic_visit(node)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         self._scope.append(node.name)
@@ -108,8 +143,21 @@ class _Visitor(ast.NodeVisitor):
     def _enter(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         self._scope.append(node.name)
         qualname = ".".join(self._scope)
+        self._collect(node, qualname, ast.walk(node))
+        self.generic_visit(node)
+        self._scope.pop()
+
+    def _collect(
+        self, node: ast.AST, qualname: str, children: Iterable[ast.AST]
+    ) -> None:
+        """Record one ``_Function`` for ``qualname`` over the nodes ``children``.
+
+        Always appends, even when nothing was found: an empty ``_Function`` is
+        what puts its module into the analyser's module set, which is what makes
+        the surface pattern that matched it report as matched.
+        """
         function = _Function(module=self.module, qualname=qualname)
-        for child in ast.walk(node):
+        for child in children:
             if isinstance(child, ast.Call):
                 name = _called_name(child.func)
                 if name is not None:
@@ -121,12 +169,37 @@ class _Visitor(ast.NodeVisitor):
                         module=self.module,
                         function=qualname,
                         symbol=symbol,
-                        lineno=getattr(child, "lineno", node.lineno),
+                        lineno=getattr(child, "lineno", getattr(node, "lineno", 0)),
                     )
                 )
         self.functions.append(function)
-        self.generic_visit(node)
-        self._scope.pop()
+
+
+def _import_time_nodes(node: ast.AST) -> Iterator[ast.AST]:
+    """Yield every node under ``node`` that is not inside a function definition.
+
+    Class bodies are descended into: a class body executes when the module is
+    imported, exactly as the statements around it do, and it is not a function.
+
+    A function definition is descended into only as far as its decorators and its
+    argument defaults, which are evaluated at import while the body is not. The
+    body belongs to ``_enter``, under the function's own qualname; descending
+    into it here would report every violation twice, once under the function and
+    once under module scope.
+    """
+    stack: list[ast.AST] = list(ast.iter_child_nodes(node))
+    while stack:
+        current = stack.pop()
+        yield current
+        if isinstance(current, ast.FunctionDef | ast.AsyncFunctionDef):
+            stack.extend(current.decorator_list)
+            stack.extend(
+                default
+                for default in (*current.args.defaults, *current.args.kw_defaults)
+                if default is not None
+            )
+        else:
+            stack.extend(ast.iter_child_nodes(current))
 
 
 def _called_name(node: ast.expr) -> str | None:

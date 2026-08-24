@@ -10304,3 +10304,125 @@ read the tail properly. **The hook cannot catch this** — its own header says a
 false "fresh" is the failure mode it will not tolerate, and the gap is that
 `record` trusts the caller to have read the result. Read the tail before
 recording; a zero exit code from a pipeline is not a green suite.
+
+## 2026-08-24 — BACKLOG rank 13 / gate A32: three closures, and one they broke
+
+**Decision.** Closed all three defects the entry names. A `BEFORE INSERT` trigger
+guarded on `WHEN EXISTS (SELECT 1 FROM {table} WHERE digest = NEW.digest)` joins
+the update and delete triggers in `backing.py`, so both stores get it. The A14
+analyser now collects module-level and class-body statements under a synthetic
+`<module>` function. `SEALED_SYMBOLS` gained `"holdout"` and `"test"`. The
+systems boundary is pinned by a new test. Consequential: A17's licensed-boundary
+housekeeping test had to change, and did **not** widen `PLAUSIBILITY_DERIVATION`.
+
+**Why.** All three defects were reproduced before anything was written.
+
+*The REPLACE breach was real and the docstring was wrong about why it wasn't.*
+`store.py` claimed three enforcement layers and added that `PRAGMA
+recursive_triggers` is on so `REPLACE` cannot delete a row without firing delete
+triggers. Both sentences true; together insufficient, because **the pragma is per
+connection**. Measured against a store carrying both triggers, a raw
+`sqlite3.connect` at sqlite's defaults (`recursive_triggers` → `0`, confirmed in
+the probe) took a registered result from `[1.0]` to `[999.0]` and bumped its
+sequence number. sqlite 3.49.1. A `BEFORE INSERT` fires before conflict
+resolution is consulted, so it holds whatever the writer's pragmas say — which is
+the point, since the writer's pragmas are exactly what this package does not
+control. Side effect worth knowing: `INSERT OR IGNORE` of a duplicate digest is
+now a refusal rather than a silent no-op. The stores' own `append` returns the
+existing record before reaching an insert, so their documented idempotence never
+presents a duplicate digest to the trigger.
+
+*This supersedes the "Closes off" of **2026-08-02 — item 4: three enforcement
+layers, and why the triggers are not redundant**.* That entry probed all seven
+mutation routes and concluded "the pragma cannot be dropped as a performance
+nicety", which is true, and read as though the `INSERT OR REPLACE` route was
+therefore shut. Its measurement was sound for the connection it used; the error
+was the scope of the claim. It also cites the A12 fuzz arm as covering `INSERT
+OR REPLACE` "specifically for this reason" — and that arm issues its statements
+through `opened.query(...)`, i.e. the store's *own* connection, whose authorizer
+denies INSERT at prepare time. So the test named as the coverage could only ever
+exercise the one connection that was already protected, which is how a route
+probed, documented and fuzzed stayed open for three weeks. A guard tested only
+through the door it locks is untested.
+
+*The module-scope blind spot missed twice over.* A planted
+`TOKEN = SealedAccess(...)` with no `def` in the file analysed
+`clean=True, entry_points=(), unmatched_patterns=('module_violator',)`. The
+second half is the worse one: a module contributing no functions contributed
+nothing to the analyser's *module set* either, so `unmatched` — the field that
+exists to reveal a surface declaration which has stopped describing the code —
+was itself disabled by the blind spot.
+
+*What the lowercase literals do and do not buy.* They were free to add: the
+`src` analysis is clean with them (measured before adding). But they do **not**
+close the probe that motivated them. `_sealed_symbol` compares the *whole*
+string constant, so `store.query("... WHERE partition = 'holdout'")` — verified
+still returning sealed rows tokenlessly — is not matched, because the constant is
+the SQL text, not the literal inside it. Closing that needs substring matching on
+constants, which is noisy and is not in the **Gate.** line. Carried as an open
+hole, not as done. Note also that `"test"` is a landmine by exact match: a future
+parameter named `test` in an agent-reachable module trips A14. That is the
+analyser's stated soundness-over-precision posture, accepted knowingly.
+
+*The test as first written was too weak, and `/test-review` caught it.* The
+systems-boundary check compared against the two leaf modules only. Four import
+spellings that hand back a live `ExperimentStore` slipped past — verified by
+executing them, not by reading:
+`from sciagent.registry import store`, `from sciagent import registry`,
+`import sciagent.registry`, `from ..registry import ledger`. The first two work
+because `from package import submodule` is a language feature independent of
+`__init__`; the third runs the `__init__` that re-exports all five types. The
+check now resolves what an import *binds*, relative levels included, against
+every path a store is reachable through — and is pinned by eight reaching
+spellings and five permitted ones, rather than by one.
+
+**Closes off.** The A32 widening turned `test_a17_every_licensed_function_still_
+needs_its_licence` red — `sciagent.hypothesis.graph.<module>` now touches a
+plausibility symbol. A17's *criterion* was never affected: module scope is never
+a callee, and `graph.py` is not in `AGENT_TOOL_SURFACE`. The five module-scope
+references are all **definitions** — four in the `PLAUSIBILITY_SYMBOLS` tuple
+itself (lines 83-88) and one at the `plausibility: Probability` field (line 152).
+A module names what it defines.
+
+Rejected: adding `sciagent.hypothesis.graph.<module>` to
+`PLAUSIBILITY_DERIVATION`. That tuple's docstring argues "why these three, and no
+more", it is documented as a list of *functions*, and module scope is not one —
+the one-line fix would have widened a carefully bounded exemption to buy nothing.
+Also rejected: dropping `<module>` from the comparison outright, which would let
+a genuine module-level plausibility write in `graph.py` pass unseen. What landed
+holds module scope to a *stricter* rule than the functions get: every
+module-scope reference must fall on a line that defines a plausibility symbol,
+with the line set read from `graph.py`'s own AST so it moves when the declaration
+does. It covers **7 of 487 lines**. `PLAUSIBILITY_DERIVATION` is untouched.
+
+Still open, and not this gate's: the entry's optional hash chain over
+`(prev_hash, digest, result_digest)`, which would make an overwrite detectable in
+one pass instead of an A15 re-run; and the `store.query` SQL-string route above.
+
+## 2026-08-24 — docs/DECISIONS.md is binary to git, so rewriting it flips its line endings
+
+**Measured.** This file contains **two NUL bytes**, at offsets 614630 and
+614635, inside a code sample in an earlier entry that pasted literal NULs rather
+than the four-character escape text for them. Git's `text=auto` heuristic reads a
+NUL as binary, so `.gitattributes`' repository-wide `* text=auto eol=lf` **does
+not apply to this file**: no clean filter runs on check-in, no smudge on
+checkout. Every other tracked file normalises; this one is passed through byte
+for byte. Confirmed by comparing staged blobs — `partitions.py` came back with 0
+CR bytes, this file with 10400.
+
+**Why it matters.** Any tool that rewrites the whole file inherits the writing
+platform's convention, and git will not correct it. Python's `Path.write_text` is
+the trap: `read_text` folds CRLF to LF on the way in and `write_text` expands LF
+to `os.linesep` on the way out, so a read-modify-write on Windows converts all
+10,400 lines to CRLF. Staged, that presented as `10400 insertions(+), 10306
+deletions(-)` — the entire file rewritten — for a 94-line append. Caught at
+`git diff --cached --stat` during `/ship`, before the commit. On an append-only
+document a whole-file rewrite is worse than noise: it destroys the property that
+`git log -p` shows each decision as it arrived.
+
+**Closes off.** Append to this file with a shell heredoc, or read and write it in
+**binary** mode (`read_bytes`/`write_bytes`) — never `write_text`. Do not delete
+the two NUL bytes to make the problem go away: the entry holding them records a
+real hash collision, and editing an existing entry is forbidden by this file's
+own rule. Check `git diff --cached --stat` before committing it; the line count
+is the only tell, since the working tree looks correct in an editor either way.

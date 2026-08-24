@@ -198,7 +198,12 @@ the read/write race are guarded. docs/DECISIONS.md, 2026-08-16.
   indistinguishable from a clean sweep, so cheapness is affordable only where
   you could catch the miss yourself. `haiku` where a grep would recover the
   answer; `sonnet` for bounded judgement or extraction from prose; otherwise
-  omit the model and inherit the session. Never pin opus.
+  omit the model and inherit the session — **unless the session is itself
+  running below what the step needs**, in which case pin the stronger model
+  explicitly. Inheriting is the default because it usually lands on the strong
+  model, not because pinning is forbidden; in a Fable or Sonnet session that
+  reasoning inverts and omitting sends the expensive lenses to the weakest
+  model in this table, which is the false negative the rule exists to prevent.
 
 <!--
 The `src/sciagent/` path above is spelled from the repository root deliberately:

@@ -127,14 +127,17 @@ instead of all four sharing the weakest.
 
 | Lens | Model | Why that tier |
 |---|---|---|
-| 2 — agent→`plausibility` reachability | **omit it** | Inherits the session model. A miss here is a real invariant violation reaching `main`. |
+| 2 — agent→`plausibility` reachability | **omit it**, or pin up | Inherits the session model; pin a stronger one if the session is weak. A miss here is a real invariant violation reaching `main`. |
 | 3 — ordering sensitivity | `sonnet` | Bounded judgement, one site at a time. |
 | 4 — registry append-only | `haiku` | Pattern match; a miss is recoverable by a grep you can run in seconds. |
 | 6 — gate-vs-system ordering | `sonnet` | Mechanical, but there is a wrong answer available. |
 
 Omitting the model on lens 2 is deliberate and is not the same as forgetting it:
-inheriting is how that lens gets the strong model, since CLAUDE.md forbids
-pinning opus explicitly. The tiers are graded by what a **false negative** costs,
+inheriting is the usual way that lens gets the strong model. That holds only
+while the session is itself strong — check before relying on it. If the session
+is running on a weaker model, omitting hands the lens with the costliest miss
+in this table the weakest model in it, so pin a stronger one explicitly.
+The tiers are graded by what a **false negative** costs,
 not by what the lens costs to run — a cheap auditor reporting "nothing found" is
 indistinguishable from a clean sweep, so cheapness is only affordable where you
 could catch the miss yourself.

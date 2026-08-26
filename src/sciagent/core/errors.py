@@ -88,6 +88,35 @@ class UnknownParameterError(GrammarError):
 
 
 # --------------------------------------------------------------------------
+# External data snapshots
+# --------------------------------------------------------------------------
+
+
+class SnapshotError(SciAgentError):
+    """Base for faults in an external, byte-frozen data snapshot."""
+
+
+class SnapshotMismatchError(SnapshotError):
+    """A snapshot's bytes do not hash to the digest declared for them.
+
+    Raised rather than warned: a result computed from a catalogue that is not
+    the one its address names is a row attributed to data that did not produce
+    it, which is the found-data form of the confusion invariant 4 exists to
+    prevent. There is no recovery inside the process -- the snapshot has to be
+    re-fetched or the declaration corrected.
+    """
+
+
+class SnapshotMissingError(SnapshotError):
+    """A declared snapshot is not present on disk.
+
+    Separate from :class:`SnapshotMismatchError` because the remedies differ: a
+    missing snapshot is fetched, a mismatched one is a question about which
+    catalogue is the right one.
+    """
+
+
+# --------------------------------------------------------------------------
 # Registry, partitions and budget
 # --------------------------------------------------------------------------
 

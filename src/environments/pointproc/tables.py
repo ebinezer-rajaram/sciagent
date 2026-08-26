@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import subprocess
 import sys
 from collections.abc import Sequence
 from functools import lru_cache
@@ -55,6 +54,7 @@ from sciagent.inference.empirical import (
     ExperimentTemplate,
     structure_key,
 )
+from sciagent.paths import repo_root
 from sciagent.registry.metrics import MetricRegistry
 
 __all__ = [
@@ -127,18 +127,19 @@ def cache_root() -> Path:
     factor of 181, which is large enough that a cold worktree costs more than the
     contention a worktree per session avoids.
 
-    The main tree is found through ``git rev-parse --git-common-dir``, which is
-    the one participant that knows: a worktree's ``.git`` is a file pointing into
-    the main repository, and the common dir's parent is the main worktree. An
-    earlier attempt used an environment variable set in
-    ``.claude/settings.local.json``; that file is untracked, so no worktree
-    checkout could ever contain it and every worktree silently took the cold
-    path. Asking git needs no configuration and has nothing to forget.
+    The main tree is found by :func:`~sciagent.paths.repo_root`, which asks
+    ``git rev-parse --git-common-dir`` -- the one participant that knows, since a
+    worktree's ``.git`` is a file pointing into the main repository -- and falls
+    back to this checkout's own root when git cannot answer. That routine moved
+    to ``sciagent.paths`` at gate A25, when ``environments/qtm`` needed the same
+    answer for its data snapshot and a second copy of it would have been a second
+    thing to get wrong. It is domain-independent, so the move does not put
+    anything environment-shaped inside ``sciagent``.
 
     ``SCIAGENT_TABLE_CACHE`` still overrides, for a caller that wants an explicit
-    location. If git cannot answer -- no git on PATH, not a repository -- this
-    falls back to the tree's own ``.cache/tables``, which is the original
-    behaviour and what a source archive without ``.git`` gets.
+    location. When git cannot answer this falls back to the tree's own
+    ``.cache/tables``, which is the original behaviour and what a source archive
+    without ``.git`` gets.
 
     Sharing is safe because a cached file is content-addressed over the table's
     own address, ``ENV_VERSION`` and :data:`SIMULATOR_DIGEST` (see
@@ -155,41 +156,17 @@ def cache_root() -> Path:
     without moving the key. That is narrower than what it replaces and is not
     the environment protocol's job.
 
-    **The anchor is load-bearing and is asserted by a test.** This logic used to
-    live in ``tests/slice_tables.py``, where ``parents[1]`` was the repository
-    root. From ``src/environments/pointproc/`` the same index is ``src/``, and the
-    landmark check below would then reject it and fall back -- silently, to a
-    cold cache in the wrong place. Nothing about a wrong answer here is visible
-    except as time.
+    **The anchor is load-bearing and is asserted by a test.** It now lives in
+    :func:`~sciagent.paths.repo_root`, whose ``parents`` index is counted from
+    ``src/sciagent/`` and not from here; the test at
+    ``tests/test_matrix_runner.py`` still asserts this function's answer, because
+    what must stay true is that a *worktree* reads the main tree's cache.
+    Nothing about a wrong answer here is visible except as time.
     """
     override = os.environ.get("SCIAGENT_TABLE_CACHE")
     if override:
         return Path(override).expanduser().resolve()
-    here = Path(__file__).resolve().parents[3]
-    try:
-        common = subprocess.run(
-            ("git", "rev-parse", "--git-common-dir"),
-            cwd=here,
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=30,
-        ).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        return here / ".cache" / "tables"
-    if not common:
-        return here / ".cache" / "tables"
-    # `here / common` yields `common` unchanged when it is absolute, which is the
-    # worktree case; in the main tree git answers the relative `.git`.
-    root = (here / common).resolve().parent
-    # Landmark check, for the same reason `_hook_is_project_root` has one: git
-    # answers about whatever repository encloses this directory. A sciagent tree
-    # vendored inside another repo -- or one whose own `.git` is missing -- would
-    # otherwise put its cache in the *outer* repository's root, silently and
-    # nowhere near the tree it belongs to.
-    if not (root / "pyproject.toml").is_file() or not (root / "src").is_dir():
-        return here / ".cache" / "tables"
-    return root / ".cache" / "tables"
+    return repo_root() / ".cache" / "tables"
 
 
 #: Where built tables are kept between runs. Gitignored: derived, not authored.

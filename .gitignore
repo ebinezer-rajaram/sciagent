@@ -32,3 +32,13 @@ wheels/
 # scratch analysis about how Claude Code is configured, not project artefacts.
 # The record of what was decided belongs in docs/DECISIONS.md.
 docs/notes/
+
+# The QTM catalogue snapshot: 287MB of SCEDC data, fetched by
+# `scripts/fetch_qtm.py` and pinned by SHA-256 in `environments/qtm/snapshot.py`.
+# Not committed -- SCEDC publishes no licence text, so redistributing the bytes
+# is a question nobody here has an answer to, and the digest plus the fetch
+# script buys the reproducibility without needing one.
+#
+# Anchored with a leading slash: bare `data/` matches at every depth, so it
+# would also swallow `tests/data/`, `src/sciagent/data/` and `docs/data/`.
+/data/

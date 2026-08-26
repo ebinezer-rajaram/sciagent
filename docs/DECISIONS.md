@@ -10650,3 +10650,268 @@ blocked by a rule nobody wrote down — it is this decision, and the thing to
 supply with it is a measurement of the nudge, which is what was missing in the
 first place. It also rules out the cheaper reading of the gate, under which
 swapping the underscore for a hyphen would have discharged it.
+
+## 2026-08-26 — A25: the QTM snapshot is pinned but never redistributed, and the pipeline is measured against the real bytes
+
+**Decision.** Gate A25 lands `environments/qtm/`, and stops there. The entry's XL
+scope — the two preregistered tracks, the recalibration, D1–D6 on found data —
+is not built, and is recorded in `docs/BACKLOG.md` as an **ungated, unranked**
+idea section rather than closed with the tracked entry. Minting a gate and a rank
+for it is the user's call.
+
+Six choices settled along the way, two of them the user's:
+
+1. **The bytes are fetched, not committed.** `data/` is gitignored; the repo
+   carries SHA-256 literals and `scripts/fetch_qtm.py`, which refuses on
+   mismatch. The user's choice from four options.
+2. **Rescale to mean gap 1.0 is per *segment*, not global**, and is a versioned
+   config field (`IngestionConfig.rescale`) rather than a silent decision.
+3. **The detection threshold is a parameter of the address.** Both `9.5dev` and
+   `12dev` are pinned and ingest through one pipeline.
+4. **Clause 3 is structural, not conventional.** `data_version()` mixes
+   `PREREGISTRATION_DIGEST` into every segment's address.
+5. **`repo_root()` extracted** from `pointproc/tables.py`'s `cache_root()` into
+   `sciagent/paths.py`. `cache_root()` keeps its signature and behaviour.
+6. Scope, as above.
+
+**Why.** On (1), the entry's own risk register says *"get written SCEDC
+confirmation before redistributing the snapshot"*. Not committing the bytes is
+not a workaround for that question — it dissolves it, because no redistribution
+occurs. What reproducibility actually needs is that two people can confirm they
+hold the same catalogue, and a digest does that without anyone reading a licence.
+
+On (2), `docs/BACKLOG.md` lists the rescale *before* the segmentation, which
+reads as one global factor. Per-segment is taken instead because every diagnostic
+is scored against empirical tables built at `pointproc`'s reference operating
+point of one event per unit time, and Southern California's rate varies by orders
+of magnitude between a quiet month and an aftershock sequence. A single global
+factor would leave most segments nowhere near that operating point, and
+`force[arrival@...]:mean_rate` — the intervention channel, and not
+scale-invariant — would be compared against a distribution it has no relation to.
+The dispersion statistics are scale-invariant and lose nothing either way. The
+cost is that between-segment rate variation stops being visible; that variation
+is real seismology, but no scenario in the slice is about it.
+
+On (4), the test-review lens made the point that decided it: *"preregistered
+before any system runs on a segment"* is a claim about **time**, and no assertion
+can distinguish it from "is a module constant" unless the environment makes it
+structural. Putting the digest in the address converts it to a claim about
+dependency — a segment cannot be addressed, and so cannot be recorded against,
+unless the preregistration already exists.
+
+**Measured, on the real 1811362-row catalogue — expensive to reproduce, since it
+means a 287MB download.**
+
+- `qtm_final_9.5dev.hypo`: 201061306 bytes,
+  `0cd2010281a3b7c2c6c7162931d267cf65063ae29da61b606fa39f14d7539e31`
+- `qtm_final_12dev.hypo`: 99744391 bytes,
+  `b5438517ddb3ad7ab5777d5a5f1839a8b3aa41439ce0dffa66bdd394832d4dd6`
+- **The file is not delivered in time order.** `np.all(np.diff(days) >= 0)` is
+  `False` across all 1811362 rows. The total-order sort is required, not
+  defensive tidiness — which is the opposite of what was assumed when it was
+  written.
+- **Exactly one tied timestamp pair in 1811362 rows**, and `EVENTID` is unique
+  across every row, so `(time, id)` is total. One pair in 1.8M is far too rare to
+  test against, which is why the fixture plants 250.
+- The declared censoring model removes **27738 of 144049** post-cut events
+  (~19%) over the first 400000 rows.
+- **`blind_days = 10.0` binds the answer, not merely the cost.** For the M7.2 of
+  2010-04-04 the completeness floor is still 1.95 at ten days against an M0.3
+  cut, and would not fall below the cut for some 1585 days. The truncation is a
+  statement about Helmstetter et al.'s model validity — fitted over hours to days
+  — rather than a compute optimisation. An earlier docstring claimed the
+  opposite and was wrong.
+
+**A bug no test caught, and could not have.** `_EPOCH_DAYS` was
+`date(2008, 1, 1).toordinal()` = 733042, the *proleptic* ordinal, where
+`_days_from_civil` returns days since 1970 = 13879 — a constant offset of 719163
+days. Every number the pipeline produces is unaffected, because both consumers of
+`days` take differences: the censoring model within a window, the rescale within
+a segment. So it cancels exactly, and no assertion about any output could see it.
+It was still wrong: `Catalogue.days` is documented as days since 2008-01-01 and
+returned dates in 1969, so anything reading that column directly would have got
+nonsense. Found by printing real numbers from the real file and looking at them,
+which is the only thing that would have found it.
+
+**The test was too weak on the first attempt, and the review said so.**
+`evidence-checker` returned **TOO WEAK** on question 3, with the counterexample
+worked out: a stride-256 sliding-window segmentation passes every assertion the
+first version made — ten segments, each 512 long, each internally ascending,
+start times strictly increasing and distinct — while sharing 256 events with each
+neighbour and so violating "disjoint". The fix was to assert *coverage* rather
+than ordering. It also found that the fixture's Gutenberg-Richter magnitudes,
+floored at -1.0, left only 151 events above a real M0.3 cut, so a **correct**
+implementation would have failed the gate and the cheapest route to green was to
+drop the cut — the exact defect the cut exists to prevent. Four smaller gaps
+besides: censoring direction unestablished, `N_EVENTS` imported from the
+implementation under test so 512 was never pinned, the rescale unasserted, and
+`check=True` plus an uncontrolled `PYTHONHASHSEED` re-introducing a subprocess
+pattern retired on 2026-08-19.
+
+**Closes off.** Nothing has yet *run* on a QTM segment, so the transfer question
+the entry exists to ask is still unasked. The successor entry names its own
+prerequisite: template-matching false detections cluster after large marks, which
+is the same signature as the consensus edit, so the detector's reading must be
+bounded on semi-synthetic ETAS with and without an artifact model before a
+found-data D1 means anything. A sensitivity arm over `blind_days` belongs there
+too, now that it is known to bind. SPEC §13.1 states the found-data reading of §8
+and is consumed by that work rather than moved by it.
+
+## 2026-08-26 — A25 follow-up: what the preflight review found, and the one question it left open
+
+**Decision.** Six defects the `/preflight` review demonstrated by execution are
+fixed; one finding is escalated to the user rather than settled here. This
+supersedes nothing in the entry above — it corrects code that entry describes.
+
+**Fixed, each with the counterexample re-run against the fix.**
+
+1. **`IngestionConfig.address()` omitted the censoring parameters.** It rendered
+   `CENSORING_VERSION` — a string someone must remember to bump — while the five
+   floats that actually decide which events survive were absent. Demonstrated: a
+   model differing in all five parameters produced an *identical* `DataVersion`
+   over data it disagreed about by 2888 of 2910 events. A direct invariant-4
+   collision, and it falsified `data_version`'s own stated guarantee.
+   `AftershockIncompleteness.address()` now renders every field.
+2. **`rescale` was written into the address and read nowhere.** `rescale=
+   "global"` produced a *different* address over byte-identical segments, so a
+   row would have claimed globally-rescaled data while holding per-segment data.
+   The mirror image of an unaddressed parameter, and just as bad. Both schemes
+   are now implemented and `RESCALES` validates the field.
+3. **The censoring model deleted trigger-magnitude events.** On the primary
+   catalogue, 112 events at M>=3.0 and one at M>=4.0 (id 14607700, M4.03) fall
+   inside the M7.2's blind radius and were removed. `test_a25` asserted this
+   never happens and passed only because the fixture's three mainshocks are
+   thousands of events apart and never overlap. Those are the events the found
+   battery is drawn from, so losing them *in proportion to mark size* is the
+   exact confound the module exists to avoid. The floor is now truncated at the
+   trigger magnitude, declared rather than silent, and a new test asserts it on
+   the real catalogue where the guard is load-bearing.
+4. **`max_rows` changed what was ingested and was not in the address.** Moved
+   from a call argument onto `IngestionConfig`, so it cannot be forgotten.
+5. **`%g` truncated the magnitude cut to six significant figures**, collapsing
+   `0.3` and `0.30000001` onto one address. All config floats now render by
+   `repr`.
+6. **Three smaller ones:** `scripts/fetch_qtm.py --verify --force` reported
+   present, digest-matching files as MISSING; the same script renamed `.partial`
+   without comparing the byte count, so a truncated stream surfaced as "digest
+   mismatch of unknown cause" — the one outcome its docstring claims to prevent;
+   and `.gitignore`'s `data/` was unanchored, silently swallowing `tests/data/`
+   and `docs/data/`. Now `/data/`.
+
+**Why the rescale one is the interesting failure.** The original docstring
+argued for per-segment rescaling and said "nothing is lost". The review showed
+what is lost, by arithmetic rather than by measurement: normalising 512 events
+to a mean gap of 1.0 forces the span to **exactly 511.0**, for every segment,
+always. Simulated `pointproc` logs of the same length span 511 +/- 23. So total
+duration alone separates found data from simulated with certainty — in a track
+whose whole purpose is to compare the two. The claim was not merely unproven; it
+was false in a way that a moment's arithmetic would have shown, and the test
+asserting `mean(diff) == 1.0` *guaranteed* the degeneracy rather than catching
+it.
+
+**Left open, deliberately, for the user.** Which rescaling the found-data track
+should actually run at is a research decision with consequences for every future
+found-data number, and neither option is clean: `per-segment` destroys duration
+variance, `global` leaves most segments orders of magnitude from the operating
+point the empirical tables were built at. Gate A25 requires only that the choice
+be declared, addressed and read, which it now is. The default stays
+`per-segment`; `docs/BACKLOG.md`'s successor entry carries the question.
+
+**Also escalated, not settled.** The invariant-6 lens reports that SPEC §13.1 —
+the found-data reading of §8's dimensions — is evaluation apparatus written
+after the systems it will grade exist, and after V7's behaviour on the
+semi-synthetic slice was measured on 2026-08-16. Its text is a verbatim
+promotion of `docs/BACKLOG.md` from 2026-08-18, which is itself after both. My
+own reading is that the confound the invariant guards does not arise *yet*,
+because nothing has run on a QTM segment and no number exists that §13.1
+produced — and that the ordering is unavoidable for any post-freeze track, since
+every found-data scoring rule necessarily postdates V7. But that is an argument,
+not a clearance, and no prior entry adjudicates it. Recorded here so it is not
+lost; the call is the user's.
+
+**Closes off.** The review's remaining observations are unfixed and not
+defects: `IngestionConfig` is freely constructible and nothing binds a scored
+path to `REFERENCE_CONFIG`, and `expect_sha256` is opt-in. Both are latent —
+there is no scored path into this environment yet at all — and both become real
+at the moment the successor entry wires segments into a scenario. That is where
+they should be closed, not by a guard written now against a caller that does not
+exist.
+
+## 2026-08-26 — A25 re-review: the fixes needed fixing, and none of them had a test
+
+**Decision.** `/ship` §0 sends work back to `/preflight` when files changed after
+it reported, and the fixes recorded in the entry above are exactly that case.
+The re-review found seven more defects — three of them *introduced by those
+fixes* — and one fact that matters more than any of them.
+
+**The fact.** None of the addressing fixes had a test. Proved by mutation, not
+argued: with `AftershockIncompleteness.address` monkeypatched back to returning
+the bare version string, and with `magnitude_cut`, `rescale` and `max_rows`
+stripped out of `IngestionConfig.address`, **all sixteen tests passed**. The
+defect the first review found could have been reintroduced verbatim with the
+gate green. The only address assertions were containment checks on version
+literals — and containment of a version literal is precisely the check the fix's
+own docstring identifies as insufficient, since the literal is still there
+whatever the behaviour does.
+
+The same held for the censoring guard: deleting `out[triggers] = False` left
+gate A25 green on any machine without the 287MB snapshot, because the fixture's
+mainshocks were thousands of events apart and never fell inside one another's
+windows. A guard whose only witness is a file most checkouts do not have is not
+guarded.
+
+**Fixed.**
+
+1. **A subclass borrowed its parent's address.** `AftershockIncompleteness.
+   address()` rendered the five fields but not the type, and `completeness` and
+   `removed` are both overridable. Two configs disagreeing about 26277 of 65658
+   events shared one byte-identical `DataVersion` — the same defect as the first
+   round's, moved one level up: the fields address the *declaration*, the type
+   addresses what interprets them. Now rendered.
+2. **`_mean_gap`'s emptiness guard was dead code**, placed after the `days[-1]`
+   it guarded, so `rescale="global"` raised a bare `IndexError` on a catalogue
+   that retained nothing where `per-segment` returned `()`. Both introduced by
+   the previous round's rescale fix. The guard now precedes the indexing and
+   `ingest_segments` returns early on zero segments.
+3. **Four parse constants sat outside the address** — `N_EVENTS`, the epoch
+   offset, `usecols` and `skiprows` — covered only by the hand-maintained
+   `PIPELINE_VERSION`. This is the hazard gate A33 built `SIMULATOR_DIGEST` for
+   one directory away, after a bugfix landed without anyone bumping a literal.
+   All four are now rendered by value.
+4. **`trigger_magnitude`'s docstring was measurably false.** It claimed a lower
+   trigger "would remove nothing"; measured, a trigger of 2.0 removes **780**
+   against 4.0's 509, because `2.0 - 4.5 - 0.75*log10(1.157e-5) = 1.20` is above
+   the M0.3 cut. Removal is *non-monotone* in the parameter, because lowering it
+   both opens more windows and immunises more events.
+5. **`max_rows` was unvalidated** — `-5` escaped as a numpy `ValueError`,
+   `10**12` as a 58 TiB allocation attempt. Now a typed `MalformedDesignError`.
+6. Two smaller ones: `data_root` missing from `sciagent/paths.py`'s `__all__`,
+   and a test docstring asserting the catalogue "is written in time order",
+   which `ingest.py` measures as false in the same change set.
+
+**Tests added, and verified by mutation rather than by inspection.** Six
+mutations — deleting the trigger guard, reverting the censoring address, dropping
+the class name, stripping three config fields, making `global` silently behave as
+`per-segment`, and dropping the parse constants — are now all caught, none of
+them requiring the snapshot. The parse-constant test asserts against **literals**
+(`"n=512"`, `"epoch=13879"`) rather than against the imported constants, because
+importing them and asserting they appear would pass however they changed, which
+is the same self-referential trap `DECLARED_SEGMENT_LENGTH` exists to avoid.
+
+**Why this is worth an entry rather than a line in the last one.** The lesson is
+not that a fix was wrong; it is that *three consecutive fixes shipped without
+regression protection and the gate could not tell*. A test written to pin a
+property is worth what its mutation survival says and nothing more, and none of
+these were checked that way until the reviewer did it. That is a cheap step and
+it found the gap in one run.
+
+**Closes off.** Two suspicions are deliberately left: `IngestionConfig` is freely
+constructible with nothing binding a scored path to `REFERENCE_CONFIG`, and
+`expect_sha256` is opt-in so nothing ties the bytes ingested to the address
+recorded. Both are unreachable today — no code under `src/sciagent/` consumes
+the QTM `data_version` at all — and both become real the moment the successor
+entry wires segments into a scenario, which is where they should be closed. A
+full source digest over `environments/qtm/`, A33's stronger answer to defect 3,
+belongs there too: it needs `simulator_digest` shared out of
+`environments/pointproc/tables.py`, which is a refactor of a load-bearing tested
+function and not gate A25's business.

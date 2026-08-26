@@ -549,3 +549,20 @@ Design is frozen. New ideas enter `BACKLOG.md` with a rationale and a note on wh
 The known backlog at freeze: full likelihood-free engine, two-step-lookahead BOED, remaining variants and baselines, the 104-scenario benchmark, grammar sensitivity analysis (R5), the Rust market environment, real-data grounding, identifiability work, multi-provider evaluation, independent human study.
 
 **The next action is item 1: put the recorder on a websocket feed.** Everything else can start whenever. That cannot.
+
+### 13.1 Note: how §8 reads on found data (gate A25, 2026-08-26)
+
+§8's dimension table assumes a **known** true programme: D1 measures grammar distance to it, D3 divergence from it across an intervention battery. On the QTM found-data track there is no authored truth, so this note states which dimensions survive and what replaces the ones that do not. It is a reading of §8, not a change to it — the table above is unaltered, and the semi-synthetic track (where edits *are* authored) uses it exactly as written.
+
+| Dimension | Found-data reading |
+|---|---|
+| **D1 Structural edit recovery** | **Surrogate.** The ETAS consensus edit stands in for the truth: `AddDependency(size → arrival)`, preregistered in `environments/qtm/preregistration.py` and equal to S11's `SIZE_EXCITATION`. It is a consensus, not a ground truth, and any headline citing D1 here says so. |
+| **D2 Held-out predictive adequacy** | **Intact.** Needs only held-out diagnostics and a candidate, both of which exist. |
+| **D3 Intervention-response similarity** | **Not computable as defined** — there is no true programme to intervene on, and no intervening on Southern California. Replaced by the *found battery*: the in-network M5+ events, treated as natural experiments. This is a weaker instrument than §8's D3 and is reported under its own name, never pooled with simulated D3. |
+| **D4 Explanatory coverage** | **Intact.** Defined against registered results, which are as available here as anywhere. |
+| **D5 Enabled experiment value** | **Observational only.** The expected information gain of experiments a proposal makes available is computed over the observational design space; the intervention channel is absent for the same reason D3 is. |
+| **D6 Complexity** | **Intact.** A property of the proposal alone. |
+
+The two tracks are **never mixed and never pooled**. A semi-synthetic D3 and a found-data D3-surrogate are different quantities that happen to share a letter, and averaging them would produce a number describing neither.
+
+The observation process is declared rather than assumed: short-term aftershock incompleteness is carried as an S12-style nuisance (`environments/qtm/censoring.py`), executed and never scored. It has to be, because events thinning out after large marks is the same signature as the mechanism under test — see that module for why leaving it undeclared would manufacture the answer.

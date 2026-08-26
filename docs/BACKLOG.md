@@ -960,7 +960,7 @@ below binds framework apparatus on constructed cases, and wherever a change
 would move a number a recorded campaign already reported, the entry says so
 and routes it through a metric-version bump decided cold.
 
-## Real-data grounding on the SCEDC QTM catalog
+## DONE (2026-08-26, gate A25) — Real-data grounding on the SCEDC QTM catalog
 
 **Idea.** Ground the framework on the QTM catalog (Ross et al. 2019, Science):
 1.81M template-matched Southern California events 2008–2017, two text files
@@ -1005,6 +1005,60 @@ preregistered in the environment before any system runs on a segment.
 **Rank.** 18
 **Cost.** XL (pipeline + calibration ≈ 1–2 weeks). Compute: conventional arms
 $0; V7 on 20 found segments ≈ 40 calls ≈ $4–8 live.
+
+**Landed at gate A25, which is narrower than this entry.** What the gate
+required is built and green: `environments/qtm/` ingests the pinned snapshot to
+byte-identical `EventLog` segments across processes, the aftershock
+incompleteness model is declared, versioned and applied, and the ETAS consensus
+edit is preregistered and mixed into every segment's address. `DATA_VERSION` is
+computed from the bytes rather than declared. The snapshot itself is fetched by
+`scripts/fetch_qtm.py` and gitignored, so nothing is redistributed and SCEDC's
+missing licence text does not bind. SPEC §13.1 states the found-data reading of
+§8. What is *not* built is the section below.
+
+## Idea: the two QTM tracks, on top of gate A25's pipeline
+
+**Idea.** The rest of the entry above. Two preregistered tracks, never mixed:
+semi-synthetic (recalibrate the reference programme to QTM's operating point,
+author edits, simulate — full D1–D6) and found-data (run arms on real segments;
+D1 against the consensus surrogate, D2/D4/D6 intact, D5 observational only, D3
+only as the found battery of in-network M5+ events, per SPEC §13.1).
+
+**Rationale.** Gate A25 built the road, not the journey. Nothing has yet run on
+a QTM segment, so the transfer question the entry above exists to ask — does the
+system detect inadequacy where seismology knows the answer is the S11 edit, and
+does Stage B propose it? — is still unasked.
+
+**Touches.** Nothing frozen. It consumes SPEC §13.1 rather than moving it.
+Depends on the artifact bound named above: template-matching false detections
+cluster after large marks, the same signature as the consensus edit, so the
+detector's reading must be bounded on semi-synthetic ETAS with and without an
+artifact model before a found-data D1 means anything. The `blind_days` cap in
+`environments/qtm/censoring.py` binds the answer for the largest events by
+design, and a sensitivity arm over it belongs here.
+
+**Two questions this entry must settle before it produces a number.**
+
+*Which rescaling.* `environments/qtm/ingest.py`'s `RESCALES` declares two, and
+neither is clean. `per-segment` (the current default) normalises each segment to
+a mean gap of 1.0, which by arithmetic pins every segment's span to exactly
+511.0 — while simulated `pointproc` logs of the same length span 511 ± 23, so
+total duration alone separates found from simulated with certainty. `global`
+keeps that variance and instead leaves most segments orders of magnitude from
+the operating point the empirical tables were built at. A third scheme —
+normalising by a neighbourhood rate rather than by the segment's own or the
+catalogue's — is unimplemented and may be the right answer. Gate A25 required
+only that the choice be declared, addressed and read.
+
+*Whether SPEC §13.1 is admissible apparatus.* The invariant-6 lens reports that
+§13.1's found-data reading of §8 was written after the systems it will grade,
+and after V7's semi-synthetic behaviour was measured. Nothing has run on a QTM
+segment, so no number yet depends on it — but the ordering is what invariant 6's
+reason clause names, and no entry in `docs/DECISIONS.md` adjudicates it. Settle
+it before the first found-data arm runs, not after.
+
+**Deliberately ungated and unranked.** Minting a gate and a rank is the user's
+call, not a side effect of landing A25.
 
 ## DONE (2026-08-19, gate A26) — D4 is identically zero by construction, and
 ## D2 is not a proper score

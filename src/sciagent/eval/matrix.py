@@ -598,8 +598,10 @@ class CellReading:
     probe_inadequate: bool
     """Whether the harness-evaluated Stage A probe judged the space inadequate.
 
-    SPEC §12 criterion 4's observable under C1, and the same value for every arm
-    on a given (scenario, seed) -- see
+    SPEC §12 criterion 4's observable, and the same value for every arm on a
+    given (scenario, seed) -- which is why the criterion was reworded absolutely
+    on 2026-08-26 and moved to §12's Infrastructure block, C1's arm comparison
+    having been unfailable from the moment gate A29 made this reading shared. See
     :attr:`~sciagent.eval.campaign.ScenarioRun.probe`, which owns the guarantee
     and the reason the evaluation point is where it is.
 

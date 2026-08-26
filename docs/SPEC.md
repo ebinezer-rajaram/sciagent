@@ -515,18 +515,23 @@ All must hold.
 1. A1–A24 passing
 2. `sciagent` has zero imports from `environments`
 3. 100% reproducibility across 100 reruns
+4. The named Stage A probe discriminates: it fires on S11, and does not fire on S1–S7 or S9. `sciagent.eval.report.criterion_four` is the check, and gate A45 is the demonstration that some probe rate vector fails it. **Nothing calls it yet** — the report layer computes the per-cell rates it reads but does not assemble them into a verdict, so today this criterion is evaluated by hand. Wiring it is `docs/BACKLOG.md`'s *"Criterion 4's check has no production caller"*.
 
-**Capability** (V7 versus baselines, 20 seeds, S1–S12)
-4. On the named Stage A probe, fires on S11 at a rate at least matching B1's, at a false-positive rate on S1–S7 and S9 no higher than B1's.
+   **This criterion moved here from Capability on 2026-08-26**, taken cold and recorded in `docs/DECISIONS.md`, and its number was kept so that no other criterion renumbers. It grades the **instrument**, not any arm, and it belongs beside the other three for that reason. The history is worth keeping, because the criterion has now been wrong twice in two different ways.
 
-   Re-specified 2026-08-21 as **C1** of `docs/OPEN-DECISIONS.md` §1, taken cold and recorded in `docs/DECISIONS.md`. The original wording — *"Detects inadequacy on S11 at a rate at least matching B1"* — named no check, and two answered to the name: the whole-record posterior predictive check, and the Stage A probe SPEC F6's gate is conditional upon. They disagree, and the recorded matrix carries only the first while V7 acts on the second. It also stated a power with no size, so an arm firing on all twelve would have passed it.
+   The original wording — *"Detects inadequacy on S11 at a rate at least matching B1"* — named no check, and two answered to the name: the whole-record posterior predictive check, and the Stage A probe SPEC F6's gate is conditional upon. It also stated a power with no size, so an arm firing on all twelve would have passed it. That was re-specified 2026-08-21 as **C1** of `docs/OPEN-DECISIONS.md` §1.
 
-   **The probe is evaluated by the harness for every arm, whether or not the arm consults it**, and this criterion is read off that evaluation. It is taken before `investigate` is called, so its verdict is a function of the scenario and the seed alone — gate A29. Two consequences are stated here rather than left for a reader to discover:
+   C1 kept the comparative form, and gate A29 then made the comparison vacuous. **The probe is evaluated by the harness for every arm, whether or not the arm consults it**, and it is taken before `investigate` is called, so its verdict is a function of the scenario and the seed alone. `replicate_seeds` pairs every arm on one seed sequence, so V7's rate and B1's are bit-identical on every scenario and neither of C1's clauses could fail in either direction. A criterion no input can fail is not a criterion.
 
-   - *"B1 fired"* names a check B1 never consults. B1 holds no proposal layer and calls nothing; what the harness records for it is what the probe says of the space B1 was handed. Every arm's figure is that same reading.
-   - **This criterion is currently a report, not a bar, and that is not what C1 intended.** Both its clauses compare V7 against B1, `replicate_seeds` pairs every arm on one seed sequence, and the probe is now one instrument read by both arms — so the two rates are equal on every scenario, and *neither* the power clause nor the false-positive term can fail. Restoring a bar requires an **absolute** threshold (fires on S11; does not fire on S1–S7 or S9) in place of the comparison. That changes what V7 is graded on, so it is deliberately not taken here: it is open in `docs/BACKLOG.md`, to be decided cold as C1 was.
+   Three things follow, stated here rather than left for a reader to discover:
+
+   - **This is not a capability claim about any system, and no threshold could make it one.** The probe's value is identical for every arm by construction, so this criterion reads the same for B1, V1 and V7 forever. A29 removed V7-versus-B1 grading here permanently, which was the point of it — the comparison was the confound. A capability criterion on S11 detection would have to be built on a different instrument.
+   - **S8, S10 and S12 are deliberately unconstrained.** Per §4.5 they are the compound, non-identifiable and garden-path scenarios, where a firing probe is not evidence of a bad instrument. The quiet set is exactly the scenarios where the space is both adequate and identifiable.
+   - *"B1 fired"* named a check B1 never consults. B1 holds no proposal layer and calls nothing; what the harness records for it is what the probe says of the space B1 was handed. That phrasing is gone with the comparison, but the reading it described is what this criterion is now stated over directly.
 
    `CellReading.probe_inadequate` is the flag; `CellReading.inadequate` remains the whole-record check and is arm-dependent even in its verdict.
+
+**Capability** (V7 versus baselines, 20 seeds, S1–S12)
 5. Proposes an S11 extension exceeding B6-equivalent random structured generation on D3, with a non-overlapping 95% interval
 6. Achieves a discriminating three-stage plan on at least two of S5–S7
 7. Recovers the correct diagnosis on S12 after the garden-path signal

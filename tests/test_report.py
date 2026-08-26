@@ -313,6 +313,13 @@ class TestNothingCollapsesTheSixDimensions:
         assert {kind.__name__ for kind in EXPORTED_TYPES} == {
             "CellSummary",
             "Contrast",
+            # Gate A45's §12 criterion 4 verdict. Named here deliberately rather
+            # than by widening the assertion: this test exists to make a new
+            # exported dataclass a decision somebody takes, and taking it is
+            # confirming that `holds`, `fired_on_s11` and `false_positives`
+            # collapse nothing -- a boolean, a boolean and a scenario list, with
+            # no arithmetic over the six dimensions anywhere near them.
+            "CriterionFour",
             "DimensionSummary",
             "MatrixReport",
             "Preregistration",

@@ -11182,3 +11182,110 @@ still missed. **For the fifth bump: grep the string `spec8/`, not
 
 **Closes off.** Nothing. Both are notes for the next session that touches this
 machinery.
+
+## 2026-08-26 — A45: criterion 4 becomes an absolute bar, and moves to Infrastructure
+
+**Decision.** SPEC §12 criterion 4 is reworded absolutely — *fires on S11, does
+not fire on S1–S7 or S9* — and **moved from §12's Capability block to its
+Infrastructure block**. It keeps the number 4, so Infrastructure becomes 1–4 and
+Capability 5–9 and nothing else renumbers; every `criterion 8` / `criterion 10` /
+`criterion 11` reference through the code stays valid.
+`sciagent.eval.report.criterion_four` is the check.
+
+`docs/OPEN-DECISIONS.md` §1 carries the full reasoning, in two new `### Decided`
+sections, and is not repeated here. What this entry adds is the three things that
+are not in it.
+
+**The move is what decided it, and it was not on the table when the question was
+put.** `docs/BACKLOG.md`'s entry offered a binary — an absolute bar, or strike
+the criterion — and that is the pair the question was put as. (The write-up's own
+C1/C2/C3 list is a different set, drawn before A29 and assuming a comparison was
+still possible; only C3, the strike, survives into this decision at all.) I
+recommended the strike, on the ground that an
+apparatus check has no business in an exit contract that grades an agent, and
+**revised that on reading §12's section structure** — recorded as a revision
+rather than quietly, because the first recommendation was wrong for an
+instructive reason. §12's Capability heading reads *"(V7 versus baselines, 20
+seeds, S1–S12)"*, and after A29 criterion 4 cannot be a V7-versus-baseline
+comparison of anything. The defect was never that criterion 4 existed; it was
+that a correctly computed apparatus check sat under a heading whose own terms it
+cannot meet. Striking would have deleted a check that genuinely discriminates in
+order to fix a filing error.
+
+**Why "it currently passes" is not an argument against it.** The probe fires on
+S11 and stays quiet on the other eleven, measured 2026-08-16. So does every other
+Infrastructure criterion pass — *"A1–A24 passing"*, *"zero imports"*, *"100%
+reproducibility"* — and all three are kept as regression bars. A badly chosen
+probe or scenario set would fail this one, which is what makes it a bar rather
+than a description.
+
+**What made this session cold, which is a fact about the repository rather than
+about the decision.** The entry required this be taken outside a session that had
+watched V7 run. This one could not have: the recorded campaign predates A26 and
+is excluded from every report, so no V7 figure was readable while it was decided.
+See the entry below, which is about that and matters well beyond this gate.
+
+**Closes off.** The strike, and the comparative form permanently. Criterion 4
+grades the apparatus under this wording and no threshold could change that — the
+probe is computed before `investigate`, so its value is identical for B1, V1 and
+V7 forever. **A capability criterion on S11 detection is therefore still absent
+from §12 and would have to be built on a different instrument.** That is not
+scoped anywhere and is the honest residue of A29; if the slice is later held to
+want one, it is new work and not a rewording.
+
+## 2026-08-26 — A45: an import that was never there, and two traps worth naming
+
+**A `ruff --fix` hook silently reverted an import, and only `mypy` saw it.** I
+added `from collections.abc import Mapping` to `eval/report.py` *before* writing
+the function that used it. The `PostToolUse` formatter stripped it as unused, my
+edit-confirmation said the edit succeeded, and `from __future__ import
+annotations` meant the annotation referencing it still parsed at runtime — so the
+whole test file ran and passed collection. `uv run mypy` was red the entire time
+with `Name "Mapping" is not defined`, and I did not look; the `/test-review` lens
+reported it as an incidental finding. **Add the code before the import it needs,
+and re-read the import line rather than trusting that the edit landed.** An
+edit-succeeded message is a claim about the write, not about the file.
+
+**A non-contiguous set is where the test-review lens earned its keep, again by
+execution.** The quiet set of criterion 4 is S1–S7 *and S9* — S8 sits inside the
+span and is deliberately excluded, being compound. An implementation writing that
+as `range(1, 8)` drops S9 and accepts a probe firing on every S9 replicate, and it
+**passed all four of the first version's tests**, which perturbed only S3. The
+fix is that the test spells all eight out literally and never derives them, and
+in particular never imports the implementation's own constant, which would agree
+with the mistake.
+
+**Neither of these is recoverable from the diff**, which is why they are here. The
+third finding of the session is: adding a dataclass to `report.__all__` breaks
+`tests/test_report.py::TestNothingCollapsesTheSixDimensions::test_the_derived_type_list_covers_every_exported_dataclass`
+by design, so that a new export is a decision somebody takes. That one *is* in the
+test's own comment now, and cost one extra three-minute suite run.
+
+## 2026-08-26 — The recorded campaign cannot be reported, and no §12 criterion can be read until it is re-run
+
+**Work left incomplete, and what it waits on.** `.cache/campaign/spec9.db` holds
+1,120 rows and **none of them can appear in a report**. Their address is:
+
+```
+{"matrix":"spec9/1","partition":"dev","replicate":"00","scenario":"S1","system":"V1"}
+```
+
+No `dimensions` key and no `battery` key, and `d4_explanatory_coverage` reads
+`0x0.0p+0` — the identically-zero bug A26 fixed. The rows predate A26, A27, A29,
+A30, A31 and A42. `report._at_address` requires `dimensions ==
+DIMENSION_VERSION` and `battery is not None`, so every one is excluded.
+
+**This has been true since 2026-08-19 and was not caused by A42's bump**, which
+is worth saying because the bump looks like the culprit and is not. The rows were
+already three readings behind before `spec8/6` existed.
+
+**Consequences, which bind anything that wants numbers.** The matrix must be
+re-run from scratch before any §12 criterion — criterion 4 included, now that it
+is checkable — can be read off anything. `.cache/` is gitignored, so this state
+is local to one machine and no other surface has the rows either. The ledger is
+its own checkpoint, so a re-run resumes after a crash or an exhausted rate limit.
+
+**One trap in doing it.** A default `scripts/run_matrix.py` pass runs §9's seven
+arms and *not* B6, which is opt-in (`--systems B6`, one cell, twenty replicates of
+S11, no provider, no API cost). B6 is the comparator §12 criterion 5 names, so a
+default pass leaves criterion 5 unreadable and nothing says so at the time.

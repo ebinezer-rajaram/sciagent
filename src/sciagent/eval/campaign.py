@@ -169,12 +169,18 @@ class ScenarioRun:
     a false-positive rate "no higher than B1's" -- and
     :func:`~sciagent.eval.matrix.replicate_seeds` already pairs every arm on one
     seed sequence. Two arms reading one instrument at one seed agree exactly, so
-    *neither* clause can fail, on S11 or on S1-S7 and S9. Criterion 4 is a
-    report rather than a bar until an **absolute** threshold replaces the
-    comparison, which is a fresh decision about what V7 is graded on and is open
-    in ``docs/BACKLOG.md`` rather than taken here. An earlier version of this
-    paragraph claimed the false-positive term stayed falsifiable; it does not,
-    and gate A29's own S1 assertions are what show it.
+    *neither* clause could fail, on S11 or on S1-S7 and S9. An earlier version of
+    this paragraph claimed the false-positive term stayed falsifiable; it does
+    not, and gate A29's own S1 assertions are what show it.
+
+    **Resolved 2026-08-26, and not by restoring the comparison.** Criterion 4 was
+    reworded absolutely -- fires on S11, does not fire on S1-S7 or S9 -- and moved
+    to §12's Infrastructure block, because a reading identical across arms grades
+    the instrument and cannot grade an agent whatever threshold it carries. See
+    :func:`~sciagent.eval.report.criterion_four`, which is the check, and gate
+    A45, which demonstrates that some probe rate vector fails it. What the
+    paragraph above costs is therefore permanent and was accepted rather than
+    repaired: V7-versus-B1 grading on this instrument is gone for good.
 
     ``None`` where the scenario declares no Stage A design, rather than the
     check over an empty record -- which would be a documented ``p_value = 1``

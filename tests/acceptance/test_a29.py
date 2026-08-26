@@ -71,8 +71,14 @@ and S9. ``test_a29_the_probe_fires_on_s11_and_not_on_an_in_library_scenario``
 asserts that equality on S1 itself, which is one of the scenarios the
 false-positive clause is read on: this module proves the criterion unfailable in
 the course of establishing the gate. Restoring a bar needs an *absolute*
-threshold instead of a comparison, which changes what V7 is graded on and is left
-to ``docs/BACKLOG.md`` to decide cold.
+threshold instead of a comparison, which changes what V7 is graded on and was
+left to ``docs/BACKLOG.md`` to decide cold.
+
+**Decided 2026-08-26, gate A45.** The criterion was reworded absolutely -- fires
+on S11, does not fire on S1-S7 or S9 -- and moved out of §12's Capability block
+into Infrastructure, because what this gate established is that the reading is
+shared by every arm and therefore grades the instrument rather than any agent.
+The cost this section describes is permanent and was accepted, not repaired.
 
 What the tests establish
 ------------------------
@@ -341,7 +347,11 @@ class TestA29ProbeArmSymmetry:
     def test_a29_the_probe_fires_on_s11_and_not_on_an_in_library_scenario(
         self,
     ) -> None:
-        """The instrument discriminates, and criterion 4 cannot read that.
+        """The instrument discriminates, and criterion 4 as C1 worded it could not
+        read that.
+
+        The absolute wording taken at gate A45 on 2026-08-26 reads exactly this
+        discrimination, which is what that rewording was for.
 
         Without this, clause one of the gate is satisfied by a probe that fires
         on everything or on nothing. Symmetry is asserted on the quiet scenario

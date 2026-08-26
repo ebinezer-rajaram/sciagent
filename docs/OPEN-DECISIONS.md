@@ -5,8 +5,14 @@
 > the same day: that reading turned on A40 bumping `METRIC_VERSION`, which
 > `DIMENSION_VERSION` had already made unnecessary a day before. T1a's
 > fault-column triage survives the correction and rides with T3. All of it is in
-> `docs/DECISIONS.md`. The text below is left as it stood when the decisions were
-> taken: the record of what was known at the time, not a live question.
+> `docs/DECISIONS.md`.
+>
+> **§1 was then taken a second time, on 2026-08-26**, because C1 did not hold:
+> implementing it at gate A29 made the criterion unfailable. That is recorded in
+> §1's two `### Decided` sections, which are the one part of this file written
+> *after* its decision rather than before. Everything else below is left as it
+> stood when the decisions were taken — the record of what was known at the time,
+> not a live question.
 
 Two decisions this repository deliberately did not take while it was measuring,
 written up so they could be taken **cold**.
@@ -117,7 +123,69 @@ Costs nothing to build and answers no question. Worth naming because §12's own
 preamble already does this for a harder case — *"Explicitly not required:
 beating B4 or B5. That is the research question, not an exit criterion."*
 
-### Recommendation
+### Decided 2026-08-21, with gate A29: C1 — and it did not hold
+
+C1 was taken cold and implemented at A29. **It made the criterion unfailable**,
+which the recommendation below did not foresee and which is the single most
+important thing this section now records. Both of C1's clauses are comparisons
+of V7 against B1; A29 made the probe arm-symmetric, evaluated by the harness
+before `investigate` for every arm alike; and `replicate_seeds` pairs every arm
+on one seed sequence. So the two rates are bit-identical on every scenario and
+neither clause can come out either way. A29's own gate demonstrates it on S1.
+
+The fault is in the fork this section drew, not in A29. The table above splits
+**A — is the space adequate** from **B — did this system detect it** and says a
+re-specification must pick one. C1 picks B and then reads it off a check
+evaluated identically for every arm, which is A wearing B's clothes. The
+question the fork never asked is what a *comparison between two identical
+readings* could mean, and the answer is nothing.
+
+### Decided 2026-08-26, with gate A45: an absolute bar, filed under Infrastructure
+
+Taken cold, in a session that had not run V7 and could not have — the recorded
+matrix predates A26 and is excluded from every report by `_at_address`, so no
+V7 figure was readable while this was decided.
+
+**Criterion 4 is reworded absolutely — fires on S11, does not fire on S1–S7 or
+S9 — and moved from §12's Capability block to its Infrastructure block.** It
+keeps the number 4; Infrastructure becomes 1–4 and Capability 5–9, so no other
+criterion renumbers and the many `criterion 8` / `criterion 10` / `criterion 11`
+references through the code stay valid.
+
+The move is the substance. §12's Capability heading reads *"(V7 versus
+baselines, 20 seeds, S1–S12)"*, and after A29 criterion 4 cannot be a
+V7-versus-baseline comparison of anything — so it did not belong under that
+heading by the heading's own terms. That mismatch is what made a correctly
+computed apparatus check *read* as a claim about an agent.
+
+**C3 — strike it — was the other live option and was rejected.** Note that this
+is C3 of the three wordings below, none of which is the absolute bar that was
+actually taken: the options this second decision chose between came from
+`docs/BACKLOG.md`'s entry, which offered *an absolute bar or a strike*, and not
+from the C1/C2/C3 list below, which predates A29 and assumes a comparison is
+still possible. C3 is the only one of the three that survives into the second
+decision at all, and it was the standing recommendation when the question was
+put on 2026-08-26 — not the recommendation this file makes, which is C1 and is
+what failed. Striking fixes the misreading
+by deleting a check that genuinely discriminates: the probe fires on S11 and
+stays quiet on the other eleven, measured 2026-08-16, and a badly chosen probe
+or scenario set would fail the bar. Moving it fixes the misreading and keeps the
+check, beside §12's other apparatus bars — *"A1–A24 passing"*, *"zero imports"*,
+*"100% reproducibility"* — every one of which is also currently satisfied and
+kept as a regression bar. "This currently passes" is not an argument against an
+exit criterion; it is what one looks like when the thing works.
+
+**What no wording can buy, stated because the obvious expectation is wrong.**
+This does not restore V7-versus-B1 grading and no threshold could: the probe is
+computed before `investigate`, so its value is identical for every arm forever.
+Criterion 4 grades the apparatus under either option. A capability criterion on
+S11 detection has to be built on a different instrument, and is not in scope
+here.
+
+`sciagent.eval.report.criterion_four` is the check; gate A45 demonstrates that
+some probe rate vector fails it, which is what "a bar" means and what C1 lost.
+
+### Recommendation, as written before the decision
 
 **C1, with the probe evaluated by the harness for every arm.** It is the
 smallest change that makes the criterion mean something, it supplies the

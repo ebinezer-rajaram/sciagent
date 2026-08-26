@@ -137,8 +137,11 @@ class TestTheGate:
 
     Item 9's gate names the ten closed-world scenarios. The two that arrived with
     item 11 are run here as well rather than in a second place: they are the same
-    four systems on the same table, and SPEC §12 criterion 4 needs B1's detection
-    rate on S11 to be a measured floor rather than an assumption.
+    four systems on the same table, and B1's detection rate on S11 needs to be a
+    measured floor rather than an assumption. That rate was SPEC §12 criterion
+    4's comparator until 2026-08-26, when the criterion became an absolute bar
+    on the harness-evaluated probe; the floor is still worth measuring, and is
+    now measured for SPEC §5's sake rather than for §12's.
     """
 
     def test_every_system_completes_every_scenario(self) -> None:
@@ -254,7 +257,13 @@ class TestAbstention:
 
 
 class TestDetectionIsMeasuredNotAssumed:
-    """B1's Stage A rate, which SPEC §12 criterion 4 compares an LLM against."""
+    """B1's Stage A rate, measured rather than assumed.
+
+    SPEC §12 criterion 4 compared an LLM against this rate until 2026-08-26.
+    It no longer compares anything -- it is an absolute bar on the
+    harness-evaluated probe, identical for every arm -- so what these tests
+    establish is SPEC §5's Stage A floor, not a §12 comparator.
+    """
 
     def test_b1_detects_arrival_mechanisms_on_a_full_budget(self) -> None:
         """Evidence spread across experiments now accumulates instead of cancelling.

@@ -17,9 +17,11 @@ what detection is worth without experiment design.
 
 **"Beating B1 at detection" is no longer a thing an arm can do *on the probe***,
 and that is a property of the re-specification rather than of B1: every arm now
-reads one instrument, so every arm's probe rate is identical. See `docs/SPEC.md`
-§12 criterion 4, which says so and records what would be needed to make it a bar
-again.
+reads one instrument, so every arm's probe rate is identical. Criterion 4 was
+reworded absolutely on 2026-08-26 and moved to §12's Infrastructure block for
+exactly that reason -- a reading shared by every arm grades the instrument, and
+no threshold over it can grade an agent. See `docs/SPEC.md` §12 criterion 4 and
+:func:`~sciagent.eval.report.criterion_four`.
 
 The qualifier is load-bearing: the arms still differ on the *whole-record*
 check, and B1 is not the floor there either. On S11 at one seed B1's

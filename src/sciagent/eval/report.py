@@ -96,7 +96,7 @@ same reason.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Final
 
@@ -117,10 +117,12 @@ __all__ = [
     "DIMENSIONS",
     "CellSummary",
     "Contrast",
+    "CriterionFour",
     "DimensionSummary",
     "MatrixReport",
     "Preregistration",
     "contrast",
+    "criterion_four",
     "render",
     "summarise",
 ]
@@ -146,7 +148,7 @@ DIMENSIONS: Final[tuple[str, ...]] = (
 _INADEQUATE: Final = "inadequate"
 
 #: Payload key holding the harness-evaluated Stage A probe, which SPEC §12
-#: criterion 4 is read off under C1. Named beside :data:`_INADEQUATE` and never
+#: criterion 4 is read off. Named beside :data:`_INADEQUATE` and never
 #: confused with it: that one is the whole-record check, is arm-dependent even
 #: in its verdict, and is what :func:`contrast` conditions on.
 _PROBE_INADEQUATE: Final = "probe_inadequate"
@@ -286,19 +288,19 @@ class CellSummary:
     """Fraction of replicates whose Stage A probe fired: §12 criterion 4's rate.
 
     Beside :attr:`inadequate_rate` rather than replacing it, because the two
-    answer different questions and the criterion names this one. Under C1 the
+    answer different questions and the criterion names this one. The
     probe is evaluated by the harness for every arm, so on a given scenario this
     figure is the same across arms by construction -- which is what makes
     reading it *down* a scenario meaningful: the rate on S11 is the instrument's
     power and the rate on S1-S7 and S9 is its size.
 
-    That reading is a **report**, and criterion 4 as C1 words it is not a bar it
-    could fail. Both of C1's clauses compare V7's rate against B1's, and this
-    figure is identical across arms by the paragraph above, so neither can fail.
-    Making it a bar again needs an absolute threshold, which is open in
-    ``docs/BACKLOG.md`` and is not this field's to decide. Reported per cell
-    regardless, because the discrimination is real even where the comparison is
-    empty.
+    This is the figure :func:`criterion_four` is evaluated over. Under C1 the
+    criterion compared V7's rate against B1's and was therefore unfailable, since
+    the two are identical by the paragraph above; it was reworded absolutely on
+    2026-08-26 and moved to §12's Infrastructure block, so what it now asks of
+    this figure is that it be positive on S11 and zero on S1-S7 and S9. Reported
+    per cell regardless of that verdict, because the rate is what a reader needs
+    and the criterion is one reading of it rather than a replacement for it.
     """
 
     experiments: DimensionSummary
@@ -675,6 +677,139 @@ class Contrast:
         counts as an answer.
         """
         return self.treatment.point > self.comparator.point
+
+
+#: The scenario §12 criterion 4 requires the Stage A probe to fire on. S11 is
+#: the out-of-library case: its truth is in ``edit_grammar`` and absent from
+#: ``agent_grammar``, so the entertained space really is inadequate there.
+_MUST_FIRE: Final = ScenarioId("S11")
+
+#: The scenarios it requires the probe to stay quiet on -- the ones where the
+#: space is both adequate and identifiable, so a firing probe is a false alarm.
+#:
+#: **Not contiguous, and written out for that reason.** S8 sits inside the span
+#: and is not a member: per SPEC §4.5 it is compound, two edits against a space
+#: that holds them singly, so a strained probe there is not evidence of a bad
+#: instrument. S10 is non-identifiable by construction with a budget below the
+#: discriminating threshold, and S12 carries a censoring nuisance producing a
+#: strong spurious periodic signature. The criterion says nothing about those
+#: three in either direction, and a ``range`` here would quietly say something.
+_MUST_BE_QUIET: Final[tuple[ScenarioId, ...]] = (
+    ScenarioId("S1"),
+    ScenarioId("S2"),
+    ScenarioId("S3"),
+    ScenarioId("S4"),
+    ScenarioId("S5"),
+    ScenarioId("S6"),
+    ScenarioId("S7"),
+    ScenarioId("S9"),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class CriterionFour:
+    """SPEC §12 criterion 4's verdict on one campaign's Stage A probe rates.
+
+    A verdict about the **instrument**, not about any arm, and the type says so
+    by carrying no system field. Gate A29 made the probe arm-symmetric -- it is
+    evaluated by the harness before ``investigate`` is called, so its value is a
+    function of the scenario and the seed alone -- which means this verdict is
+    identical for B1, V1 and V7 by construction and always will be. That is why
+    §12 files criterion 4 under Infrastructure beside "A1-A24 passing" and "100%
+    reproducibility" rather than under Capability, whose heading reads "V7 versus
+    baselines" and whose other members really are comparisons.
+    """
+
+    holds: bool
+    """Whether the criterion is met: the probe fired on S11 and nowhere it must
+    not."""
+
+    fired_on_s11: bool
+    """Whether the probe fired on the out-of-library scenario at all -- the power
+    clause. ``False`` is an instrument that cannot see the one inadequacy the
+    slice is built around."""
+
+    false_positives: tuple[ScenarioId, ...]
+    """The scenarios the probe fired on where the space was adequate, in
+    :data:`_MUST_BE_QUIET` order -- the size clause, whose absence from the
+    original wording meant an instrument firing on all twelve would have passed.
+
+    Empty when the probe stayed quiet everywhere it had to, which includes the
+    case where it fired nowhere at all: a blind probe fails on
+    :attr:`fired_on_s11` and has no false positive to report.
+    """
+
+    def __post_init__(self) -> None:
+        """Refuse a verdict whose ``holds`` disagrees with its own two facts.
+
+        The second invariant asks for runtime assertions rather than comments,
+        and :class:`~sciagent.eval.campaign.Adjudication` takes the same guard
+        for the same reason -- a frozen dataclass of a few bare fields is exactly
+        where a comment would otherwise have been the whole of it. Without this,
+        the relation the field docstrings describe holds only inside
+        :func:`criterion_four`, and any other construction can state a passing
+        criterion over a failing instrument.
+        """
+        implied = self.fired_on_s11 and not self.false_positives
+        if self.holds is not implied:
+            raise MalformedDesignError(
+                f"a criterion 4 verdict states holds={self.holds} while its own "
+                f"facts imply {implied}: fired_on_s11={self.fired_on_s11} with "
+                f"{len(self.false_positives)} false positive(s). The criterion is "
+                f"the conjunction of those two, so a verdict is not free to "
+                f"disagree with them"
+            )
+
+
+def criterion_four(probe_rates: Mapping[ScenarioId, float]) -> CriterionFour:
+    """Return §12 criterion 4's verdict on a probe rate vector.
+
+    Guarantees a verdict that some input fails and some input passes, which is
+    the whole of gate A45. The wording it implements is absolute -- *fires on
+    S11; does not fire on S1-S7 or S9* -- and replaces the two V7-versus-B1
+    comparisons C1 gave it, which A29 made unfailable by making the probe
+    arm-symmetric: paired seeds put both arms on bit-identical rates, so neither
+    comparison could ever come out either way.
+
+    "Fires" is any positive rate and "does not fire" is exactly zero, which is
+    the criterion's own words. No numeric power threshold is imposed, because
+    choosing one is a further decision nobody has taken and defaulting to one
+    here would take it silently.
+
+    Raises :class:`~sciagent.core.errors.MalformedDesignError` naming the first
+    scenario missing from ``probe_rates``. A criterion evaluated on a partial
+    vector is the defect this wording exists to remove, arriving by a second
+    door: treating an absent scenario as zero fails an instrument nobody
+    measured, and treating it as inapplicable passes the criterion by leaving
+    nothing to check.
+    """
+    for scenario in (*_MUST_BE_QUIET, _MUST_FIRE):
+        if scenario not in probe_rates:
+            raise MalformedDesignError(
+                f"SPEC section 12 criterion 4 is defined over "
+                f"{len(_MUST_BE_QUIET) + 1} scenarios and this vector is missing "
+                f"{scenario}. A criterion evaluated on the scenarios that happen "
+                f"to be present is one no input can fail, which is what this "
+                f"criterion was re-worded to stop being."
+            )
+        rate = probe_rates[scenario]
+        if not 0.0 <= rate <= 1.0:
+            raise MalformedDesignError(
+                f"criterion 4 was handed {rate!r} as the probe rate on "
+                f"{scenario}, which is not a fraction of replicates. A "
+                f"non-finite rate is the missing-scenario case wearing a float: "
+                f"`nan > 0.0` is False, so it would read as a quiet scenario and "
+                f"pass the criterion on an instrument nobody measured"
+            )
+    fired = probe_rates[_MUST_FIRE] > 0.0
+    false_positives = tuple(
+        scenario for scenario in _MUST_BE_QUIET if probe_rates[scenario] > 0.0
+    )
+    return CriterionFour(
+        holds=fired and not false_positives,
+        fired_on_s11=fired,
+        false_positives=false_positives,
+    )
 
 
 # --------------------------------------------------------------------------

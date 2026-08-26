@@ -2080,7 +2080,25 @@ declared battery reports unchanged.
 **Rank.** 5
 **Cost.** S.
 
-## Criterion 4 is now unfailable, and needs an absolute bar or none at all
+## DONE (2026-08-26, gate A45) — Criterion 4 is now unfailable, and needs an absolute bar or none at all
+
+**Discharged.** The decision was taken cold on 2026-08-26 — in a session that had
+not run V7 and could not have, since the recorded matrix predates A26 and is
+excluded from every report — and written up as the second `### Decided` section
+of `docs/OPEN-DECISIONS.md` §1. The fork below offered an absolute bar or a
+strike; the bar was taken, **and one thing the entry did not offer was added**:
+criterion 4 moves from §12's Capability block to its Infrastructure block,
+keeping its number so that Infrastructure becomes 1–4, Capability 5–9 and nothing
+else renumbers.
+
+That move is why the bar was preferred to the strike. The entry is right that
+either option grades the apparatus rather than the agent, and right that this is
+the thing anyone taking the decision must know. What it did not name is that the
+Capability heading reads *"(V7 versus baselines, 20 seeds, S1–S12)"* — so the
+defect is not that criterion 4 exists but that it was filed under a heading whose
+own terms it cannot meet. Striking would have removed a genuinely discriminating
+check to fix a filing error. `sciagent.eval.report.criterion_four` is the check;
+`docs/DECISIONS.md` (2026-08-26) carries the reasoning.
 
 **Idea.** Replace §12 criterion 4's two V7-versus-B1 comparisons with an
 absolute statement about the Stage A probe — fires on S11, does not fire on
@@ -2136,3 +2154,43 @@ input fails it.
 **Held.** a cold decision on whether criterion 4 becomes an absolute bar or is
 struck
 **Cost.** S for the wording and the check; the semantic decision is the user's.
+
+## Criterion 4's check has no production caller
+
+**Idea.** Wire `sciagent.eval.report.criterion_four` into the report layer, so
+that SPEC §12 criterion 4 is evaluated by the thing that reports the campaign
+rather than by a reader assembling the vector by hand. `summarise` already builds
+`CellSummary.probe_inadequate_rate` per cell, and the rate is arm-invariant by
+gate A29, so the mapping the check needs is a projection of a `MatrixReport` and
+not a new measurement. Then `render` should show the verdict.
+
+**Rationale.** Gate A45 made criterion 4 falsifiable and left it uncalled. Found
+by `/code-review` on 2026-08-26, immediately after A45, and confirmed
+independently by two invariant lenses: the only reference to `criterion_four`
+outside its own module and its gate is the `__all__` entry. SPEC §12 says the
+function "is the check", and until something calls it that names a check no
+report performs — which is precisely the defect this repository already indicted
+once, as rank 8's *"The verifier has no production caller"*, landed at gate A30.
+Shipping the same shape twice in the same file's neighbourhood is worth
+recording rather than repeating.
+
+There is a second reason, sharper than tidiness. `criterion_four` takes a bare
+`Mapping[ScenarioId, float]`, and A45 gave it a range guard precisely because
+**the site that will build that mapping does not exist yet**, so the boundary
+could not be argued from the caller that would enforce it. A real caller settles
+what the check is defended against, and lets the guard be judged against
+something rather than against a hypothetical.
+
+**Touches.** `sciagent/eval/report.py` only — `summarise`'s return value or a
+function beside it, and `render`. No instrument, no payload, no address term, and
+no recorded row: the rate this reads is already in every `spec8/3`-or-later row.
+
+**Gate.** `test_a46_the_report_evaluates_criterion_four` — a `MatrixReport` built
+from rows whose probe rates fail the criterion carries a failing verdict, and one
+built from rows that satisfy it carries a passing verdict; a report missing a
+scenario the criterion names refuses rather than reporting a verdict over what is
+present.
+
+**Rank.** 22
+**Cost.** S. The check, its type and its gate all exist; this is the projection
+and the rendering.

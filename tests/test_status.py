@@ -437,10 +437,54 @@ class TestTheReportRendersIt:
         it advances, and the next thing anyone does here is write ``test_a26_``,
         which moves it to rank 2. A test that has to be edited to let correct
         work go green is a test that will be edited without being read.
+
+        The cursor has **three** legal forms and this covers all of them, which it
+        did not when the backlog still had an open entry to land on. Once every
+        entry is closed, held or gate-covered, :func:`status.backlog_cursor`
+        returns ``None`` and :func:`status.no_open_summary` speaks instead -- and
+        it distinguishes *satisfied* from *blocked on somebody*, which is the
+        whole reason it exists. Asserting only the naming form would leave both
+        exhausted branches unchecked, so a report announcing "nothing open" over
+        a genuinely open entry would go green.
         """
-        cursor = re.search(r"^cursor: BACKLOG rank (\d+) — (.+)$", rendered, re.M)
-        assert cursor is not None, rendered
         entries = status.parse_backlog_entries(BACKLOG.read_text(encoding="utf-8"))
+        cursor = re.search(r"^cursor: BACKLOG rank (\d+) — (.+)$", rendered, re.M)
+        if cursor is None:
+            held = [e for e in entries if e.held is not None and not e.closed]
+            exhausted = re.search(
+                r"^cursor: nothing open; (\d+) BACKLOG entr(?:y|ies) held on a "
+                r"decision$",
+                rendered,
+                re.M,
+            )
+            if exhausted is None:
+                # The other exhausted form: nothing is held either. Matching only
+                # the held one would fail on a correct report the day ranks 20 and
+                # 21 are decided, which is precisely the edit-to-go-green trap.
+                assert held == [], (
+                    f"the cursor claims everything is satisfied, but rank(s) "
+                    f"{[e.rank for e in held]!r} are held on a decision"
+                )
+                assert re.search(
+                    r"^cursor: every gate-tracked backlog item is satisfied$",
+                    rendered,
+                    re.M,
+                ), rendered
+            else:
+                assert len(held) == int(exhausted.group(1))
+            open_entries = [
+                entry
+                for entry in entries
+                if not entry.closed
+                and entry.held is None
+                and entry.gate not in _written(rendered)
+            ]
+            assert not open_entries, (
+                f"the cursor says nothing is open, but rank(s) "
+                f"{[e.rank for e in open_entries]!r} are neither closed, held, "
+                f"nor gate-covered"
+            )
+            return
         named = {entry.rank: entry for entry in entries}[int(cursor.group(1))]
         assert named.title == cursor.group(2)
         assert not named.closed and named.held is None
@@ -451,19 +495,40 @@ class TestTheReportRendersIt:
             for e in earlier
         )
 
-    def test_the_cursors_blocking_gate_is_named_in_the_gate_section(
+    def test_every_backlog_gate_is_named_in_the_gate_section(
         self, rendered: str
     ) -> None:
-        """Whichever entry the cursor lands on, its gate reaches a row.
+        """Every gate this backlog declares reaches the gate section somehow.
 
         This is the namespace fix: before it, a gate outside SPEC §6 reached no
         row at all and was left out of the "not named for a gate" tally too.
+
+        It used to ask this of the cursor's gate alone, which stopped being
+        answerable once the cursor ran out of entries to name -- and was the
+        weaker question anyway, since it left every *other* post-freeze gate
+        unchecked. A gate with no test is compressed onto the ``later:`` line
+        rather than given a row, so both placements count; what the namespace fix
+        rules out is a gate appearing in neither.
+
+        The ``later:`` line is **range-compressed** by
+        :func:`status.compress_ranges`, so it is expanded here rather than
+        searched. ``"A46" in "A45-A47"`` is false and ``"A4" in "A41"`` is true,
+        and a substring test would therefore both miss a gate in the interior of
+        a span and accept one that is only a numeric prefix of another.
         """
-        cursor = re.search(r"^cursor: BACKLOG rank (\d+) —", rendered, re.M)
-        assert cursor is not None, rendered
         entries = status.parse_backlog_entries(BACKLOG.read_text(encoding="utf-8"))
-        gate = {entry.rank: entry for entry in entries}[int(cursor.group(1))].gate
-        assert re.search(rf"^  A{gate}\s+\S", rendered, re.M) is not None
+        later = re.search(r"^  later: (.+?)(?: \(|$)", rendered, re.M)
+        deferred: set[int] = set()
+        for low, high in re.findall(
+            r"A(\d+)(?:-A(\d+))?", later.group(1) if later else ""
+        ):
+            deferred.update(range(int(low), int(high or low) + 1))
+        for entry in entries:
+            row = re.search(rf"^  A{entry.gate}\s+\S", rendered, re.M)
+            assert row is not None or entry.gate in deferred, (
+                f"gate A{entry.gate} (rank {entry.rank}) reaches neither a row "
+                f"nor the deferred line, so the report renders it nowhere"
+            )
 
     def test_every_held_entry_names_what_it_waits_on(self, rendered: str) -> None:
         """A hold that does not say what it waits on is a row nobody can act on.

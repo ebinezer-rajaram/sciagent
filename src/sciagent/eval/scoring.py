@@ -19,6 +19,14 @@ mapping so a report can say which dimension a headline figure is.
 Nothing here is reachable from a research system. Every function takes the truth,
 which no ``Investigation`` exposes, so these are harness-side by construction
 rather than by discipline.
+
+The second clause was a comment holding a line it could not hold until gate A41.
+An ``Investigation`` did expose the truth -- through the execution record its
+``history`` republished, through the registry config addressing that record, and
+through the readable structure keys of the table behind ``engine``. The claim is
+now enforced where it is made: see
+:class:`~sciagent.systems.base.Investigation`, and ``tests/acceptance/test_a41.py``
+for the traversal that checks it.
 """
 
 from __future__ import annotations
@@ -420,7 +428,8 @@ def dimension_vector(
 
     Guarantees every figure is derived here, from the truth and the table. A
     research system cannot influence one: the truth is not on the surface an
-    ``Investigation`` exposes, and this function is never called from inside one.
+    ``Investigation`` exposes -- gate A41 checks that by traversal rather than
+    asserting it here -- and this function is never called from inside one.
     """
     grown = table
     for defect in (candidate, truth):

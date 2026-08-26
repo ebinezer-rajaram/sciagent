@@ -389,7 +389,7 @@ class TestDecodingRefusesWhatDoesNotDenote:
 
 
 class TestTheBriefTellsTheTruthWithoutTellingTheAnswer:
-    """The brief is built from an ``Investigation``, which cannot reach the truth."""
+    """The brief is built from an ``Investigation``, whose surface A41 keeps clean."""
 
     def test_the_truths_parameters_do_not_appear_when_it_is_not_entertained(
         self,
@@ -398,8 +398,16 @@ class TestTheBriefTellsTheTruthWithoutTellingTheAnswer:
 
         The menu necessarily lists the Hawkes *structure* -- that is the space
         being searched. What must never appear is the particular parameter
-        assignment the environment was built with, and it does not, because the
-        only path to it is ``Scenario.truth`` and an ``Investigation`` has none.
+        assignment the environment was built with.
+
+        This docstring used to give as its reason *"the only path to it is
+        ``Scenario.truth`` and an ``Investigation`` has none"*. The assertion
+        passed; the reason was false, and gate A41 is what made it true. An
+        ``Investigation`` had three paths to the truth -- the execution record
+        its ``history`` republished, the registry config addressing that record,
+        and the readable structure keys of the table behind ``engine``. This test
+        checks the *brief*, and the table behind the brief was the leak; A41
+        checks the surface the brief is rendered from.
         """
         investigation = _investigation("S1", entertained=())
         brief = render_brief(investigation)

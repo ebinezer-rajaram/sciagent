@@ -245,6 +245,29 @@ def structure_key(defect: Defect) -> str:
     return "+".join(parts) if parts else "<null>"
 
 
+@lru_cache(maxsize=4096)
+def opaque_key(key: str) -> str:
+    """Return a structure key with everything but its identity removed.
+
+    Guarantees two properties, and both are what gate A41 asks for: equal keys
+    digest alike, so a caller holding a ``Defect`` still addresses its row; and
+    the digest carries no target, no construct and no parameter, so a caller
+    holding only the key learns nothing about the structure behind it.
+
+    One-way in the sense that matters here rather than the cryptographic one. A
+    system can digest any structure it is able to *construct* and compare -- it
+    could equally call :meth:`EmpiricalTable.holds` -- and that is not the leak.
+    The leak is enumeration: S11's truth is outside the agent grammar, so no
+    amount of constructing reaches it, and reading it off ``structures`` was the
+    only way in.
+
+    Memoised on the same argument space as :func:`structure_key`, and for the
+    same reason: the projection below digests every key in the table, and the
+    table is projected once per distinct table rather than once per run.
+    """
+    return hashlib.blake2b(key.encode("utf-8"), digest_size=16).hexdigest()
+
+
 def replicate_seed(table_seed: Seed, key: str, index: int) -> Seed:
     """Return the seed of one table replicate.
 
@@ -279,6 +302,23 @@ class EmpiricalTable:
     counts: FrozenDict[tuple[str, ExperimentTemplateId], tuple[int, ...]]
     replicates: int
     seed: Seed
+    opaque: bool = False
+    """Whether the structure keys are digests rather than renderings.
+
+    Set on the copy handed to a research system, and on no other. The rendering
+    :func:`structure_key` produces is a complete description of an edit set --
+    its type, its target, the construct it selects and every parameter -- so
+    enumerating ``structures`` on the framework's own table reads out every
+    structure the table was built over. On the §9 campaign table that is every
+    scenario's truth, because one table is threaded from cell to cell.
+
+    An opaque table answers exactly the questions a system has a defect in hand
+    to ask, and no others: :meth:`row`, :meth:`holds` and everything built on
+    them digest the key they compute, so a lookup by ``Defect`` is unchanged,
+    while ``structures`` and the keys of ``counts`` say nothing about what they
+    stand for. Gate A41 is the check; :attr:`~sciagent.inference.view.EngineView
+    .table` is the only thing that sets this.
+    """
 
     def __post_init__(self) -> None:
         if self.replicates <= 0:
@@ -310,19 +350,36 @@ class EmpiricalTable:
 
     @property
     def structures(self) -> tuple[str, ...]:
-        """Return every structure key in the table, in a fixed order."""
+        """Return every structure key in the table, in a fixed order.
+
+        Renderings on the framework's own table, digests on an
+        :attr:`opaque` one. What the keys *address* is the same either way.
+        """
         return tuple(sorted({key for key, _ in self.counts}))
+
+    def key_of(self, defect: Defect) -> str:
+        """Return the key ``defect``'s rows are stored under in *this* table.
+
+        :func:`structure_key` on the framework's own table, and its digest on an
+        :attr:`opaque` one. Every lookup goes through here, which is what makes
+        opacity a property of what can be *enumerated* rather than of what can be
+        asked: a caller holding the ``Defect`` addresses its row either way, and
+        a caller holding only the table learns nothing from the keys.
+        """
+        return (
+            opaque_key(structure_key(defect)) if self.opaque else structure_key(defect)
+        )
 
     def holds(self, defect: Defect) -> bool:
         """Return whether the table has a complete set of rows for ``defect``."""
-        key = structure_key(defect)
+        key = self.key_of(defect)
         return all(
             (key, template_id) in self.counts for template_id in sorted(self.templates)
         )
 
     def row(self, defect: Defect, template_id: ExperimentTemplateId) -> tuple[int, ...]:
         """Return the simulated cell counts for one (structure, template)."""
-        key = structure_key(defect)
+        key = self.key_of(defect)
         try:
             return self.counts[(key, template_id)]
         except KeyError as exc:
@@ -476,7 +533,22 @@ class EmpiricalTable:
         Idempotent: a structure already present is returned unchanged at a cost
         of zero, which is what makes expanding a hypothesis the table already
         covers free.
+
+        Refuses an :attr:`opaque` table, and the reason is arithmetic rather
+        than hygiene. A replicate's seed is
+        :func:`replicate_seed`\\ ``(seed, structure_key(defect), index)`` -- the
+        *rendering*, which an opaque table does not hold -- so extending one
+        would either draw a different sample under the digest or store rows the
+        framework's table could never reproduce. Unreachable from a system in any
+        case: ``ensure_structure`` lives on the engine, and
+        :class:`~sciagent.inference.view.EngineView` withholds it.
         """
+        if self.opaque:
+            raise TableError(
+                "cannot extend an opaque table: a replicate's seed is derived "
+                "from the structure's rendering, which this table does not hold, "
+                "so the rows would not be the ones the framework simulates"
+            )
         if self.holds(defect):
             return self, 0
         key = structure_key(defect)
@@ -570,7 +642,19 @@ class EmpiricalTable:
         window in which Windows refuses an ``open``. Two readers were too few to
         land in it. :func:`_read_text_contended` is the reader's half, and
         :meth:`load` goes through it.
+
+        Refuses an :attr:`opaque` table. :meth:`load` reconstructs a table with
+        ``opaque`` at its default, so a saved digest-keyed file would come back
+        claiming its digests were renderings and every lookup on it would miss.
+        The projection is a per-caller view of a stored artefact, not a second
+        artefact to store.
         """
+        if self.opaque:
+            raise TableError(
+                "cannot save an opaque table: load() reconstructs one with "
+                "readable keys, so the digests would be read back as renderings "
+                "and every row lookup would miss"
+            )
         payload = {
             "version": self.version,
             "replicates": self.replicates,
@@ -653,6 +737,91 @@ class EmpiricalTable:
                 f"different design"
             )
         return table
+
+
+@lru_cache(maxsize=8)
+def opaque_table(table: EmpiricalTable) -> EmpiricalTable:
+    """Return ``table`` with every structure key replaced by its digest.
+
+    Guarantees the projection answers every question ``table`` does that is
+    asked with a ``Defect`` in hand -- :meth:`~EmpiricalTable.row`,
+    :meth:`~EmpiricalTable.holds`, :meth:`~EmpiricalTable.probabilities`,
+    :meth:`~EmpiricalTable.estimate` -- with identical numbers, and no question
+    that is asked with only the table in hand. This is what
+    :attr:`~sciagent.inference.view.EngineView.table` hands a research system,
+    and gate A41 is the check.
+
+    Memoised, and the cache is what makes it affordable rather than a nicety.
+    :func:`sciagent.experiments.boed.predictive` reads ``engine.table`` once per
+    hypothesis per template per node of a planning search, and
+    :attr:`~sciagent.systems.base.Investigation.engine` builds a fresh
+    :class:`~sciagent.inference.view.EngineView` on every access, so nothing
+    upstream can hold the projection for it. Rebuilding the §9 matrix table's 780
+    rows on each of those reads would be the dominant cost of planning.
+
+    Keyed by the table's value, which is sound and cheap: an
+    :class:`EmpiricalTable` is a frozen dataclass over
+    :class:`~sciagent.core.types.FrozenDict`\\ s, whose ``__hash__`` is computed
+    once and cached, and the engine replaces its table wholesale on
+    ``ensure_structure`` -- so an extended table is a cache miss and gets its own
+    projection, which is the correct answer rather than a stale one.
+
+    The bound is small on purpose. Entries are whole tables, a session holds few
+    distinct ones at a time, and an unbounded cache here would retain every
+    intermediate table a growing engine passed through.
+
+    **The cache is process-global, and that is a wider scope than the property it
+    replaced.** :attr:`~sciagent.inference.view.EngineView.table` used to return
+    ``self._engine.table``, so anything done to what came back was confined to
+    that engine. What comes back now is shared by value across every
+    :class:`~sciagent.inference.view.EngineView` in the process, and the §9
+    campaign runs many cells in one -- so an entry is served to a later cell than
+    the one that first built it. Under the ordinary reading that is simply
+    correct: the projection is a pure function of the table, two cells holding
+    the same table *should* get the same projection, and no number a system is
+    scored on is read from it (``estimate``, ``log_likelihood`` and ``posterior``
+    all read the engine's own ``_table``).
+
+    It is stated because it stops being merely correct under tampering.
+    ``object.__setattr__`` reaches a frozen slots dataclass, and a subclass with a
+    dishonest ``__eq__`` can win an :func:`functools.lru_cache` key comparison; by
+    either route a cached entry outlives the caller that placed it. Both sit
+    outside the threat model :class:`~sciagent.inference.view.EngineView` sets for
+    itself -- it "makes tampering deliberate rather than accidental" and says so
+    -- and a guard here would be the kind of comment holding a line it cannot
+    hold that this project refuses to write. So the scope is written down rather
+    than defended, which is the honest half of the answer and the only half
+    available.
+
+    Raises :class:`~sciagent.core.errors.TableError` if the digest is not
+    injective over the keys it is given. Re-keying a mapping is exactly the
+    operation where a collision is *silent*: two structures would land on one
+    key, the comprehension would keep whichever came second, and a system would
+    read one structure's likelihoods under another's name with nothing raising.
+    The bound is a birthday collision on 128 bits over a few hundred structures,
+    so this fires on no table that will ever exist -- which is the point. A
+    condition that cannot happen and would be undetectable if it did is worth one
+    comparison of two integers.
+    """
+    if table.opaque:
+        return table
+    counts = {
+        (opaque_key(key), template_id): row
+        for (key, template_id), row in table.counts.items()
+    }
+    if len(counts) != len(table.counts):
+        raise TableError(
+            f"digesting the structure keys collapsed {len(table.counts)} rows to "
+            f"{len(counts)}, so two distinct structures share one opaque key; the "
+            f"projection would serve one structure's counts under the other"
+        )
+    return EmpiricalTable(
+        templates=table.templates,
+        counts=FrozenDict[tuple[str, ExperimentTemplateId], tuple[int, ...]](counts),
+        replicates=table.replicates,
+        seed=table.seed,
+        opaque=True,
+    )
 
 
 # --------------------------------------------------------------------------
@@ -1070,6 +1239,8 @@ __all__ = [
     "EmpiricalTable",
     "EmpiricalTableEngine",
     "ExperimentTemplate",
+    "opaque_key",
+    "opaque_table",
     "replicate_seed",
     "structure_key",
 ]

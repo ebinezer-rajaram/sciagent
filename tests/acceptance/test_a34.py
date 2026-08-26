@@ -151,27 +151,40 @@ SCENARIO = "S1"
 ARMS = ("B4", "B5")
 
 
-def _investigation(table: EmpiricalTable) -> Investigation:
-    """Return a fresh investigation on ``table``, built the way the harness does.
+def _built(table: EmpiricalTable) -> tuple[Investigation, EmpiricalTableEngine]:
+    """Return a fresh investigation on ``table``, and the engine behind it.
 
     Constructed directly rather than through
     :func:`~sciagent.eval.campaign.run_scenario` because this gate reads the
     investigation's own history and graph afterwards, which a scored run does not
     hand back.
+
+    The engine comes back too because ``_replay`` needs the table an arm *grew*,
+    and since gate A41 ``investigation.engine.table`` is the opaque projection a
+    system sees -- correct for a lookup, and not something a second engine can be
+    built over. The harness holds the engine it created; a system never does.
     """
     target = scenario(SCENARIO)
     graph = null_seeded_graph(AGENT_GRAMMAR, METRICS, table, slice_designs())
-    return Investigation(
+    engine = EmpiricalTableEngine(graph, table, simulate=simulator(GRAMMAR))
+    investigation = Investigation(
         scenario_id=target.id,
         designs=target.designs,
         truth=target.executed,
         executor=executor(
             GRAMMAR, store=ExperimentStore.in_memory(), budget=target.budget
         ),
-        engine=EmpiricalTableEngine(graph, table, simulate=simulator(GRAMMAR)),
+        engine=engine,
         graph=graph,
         seed=target.seed,
     )
+    return investigation, engine
+
+
+def _investigation(table: EmpiricalTable) -> Investigation:
+    """Return a fresh investigation on ``table``, discarding the engine."""
+    investigation, _ = _built(table)
+    return investigation
 
 
 def _system(arm: str) -> Retrieval | BeamSearch:
@@ -308,10 +321,10 @@ def _sequences() -> dict[str, tuple[tuple[str, ...], tuple[str, ...], int]]:
     table: EmpiricalTable = gate_table()
     built: dict[str, tuple[tuple[str, ...], tuple[str, ...], int]] = {}
     for arm in ARMS:
-        investigation = _investigation(table)
+        investigation, engine = _built(table)
         total = int(investigation.budget.remaining)
         _system(arm).investigate(investigation)
-        table = investigation.engine.table
+        table = engine.table
         built[arm] = (
             _ran(investigation),
             _replay(table, _proposed(investigation)),

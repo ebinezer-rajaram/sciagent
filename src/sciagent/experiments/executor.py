@@ -85,6 +85,7 @@ __all__ = [
     "CompiledOperation",
     "ExecutionResult",
     "Executor",
+    "ObservedExecution",
     "OperationCompiler",
 ]
 
@@ -162,6 +163,93 @@ class ExecutionResult:
         that cite the same experiment id cited the same bits.
         """
         return ExperimentId(str(self.record.digest))
+
+    def observed(self) -> ObservedExecution:
+        """Return this execution as the system that asked for it may see it.
+
+        Guarantees the result carries no path to the structure the experiment was
+        run against -- gate A41. Two fields are dropped rather than copied, and
+        both were a way to read the answer:
+
+        * :attr:`defect` **is** the scenario's truth, so
+          ``history[-1].defect`` scored a perfect diagnosis off the record of
+          having run something;
+        * :attr:`record` addresses the row by its content, and
+          :meth:`Executor._config` writes ``defect_key(defect)`` into that
+          address -- so the truth was in ``record.key.config`` as a readable
+          string as well.
+
+        :attr:`ExperimentRecord.sequence` survives as a field of its own because
+        it is the only thing anything downstream reads off the row:
+        :meth:`~sciagent.verify.relevance.EvidenceIndex.from_history` needs the
+        registry's ordering and nothing else about it.
+
+        This is a projection and not a view. There is no private field holding
+        the original, so the truth is absent from the object rather than
+        unreachable through it -- which is what SPEC's second invariant means by
+        enforcing with structure instead of a comment.
+        """
+        return ObservedExecution(
+            design=self.design,
+            seed=self.seed,
+            result=self.result,
+            experiment=self.experiment,
+            manipulated=self.manipulated,
+            collateral=self.collateral,
+            held_fixed=self.held_fixed,
+            budget=self.budget,
+            sequence=self.record.sequence,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ObservedExecution:
+    """One experiment as the system that ran it may see it.
+
+    Every field of :class:`ExecutionResult` that describes *what was done and
+    what came back*, and none that describes what it was done *to*. See
+    :meth:`ExecutionResult.observed` for which two were dropped and why.
+
+    A system is handed these by :attr:`~sciagent.systems.base.Investigation
+    .history` and by :meth:`~sciagent.systems.base.Investigation.run`.
+
+    Where the defect goes, precisely, because an earlier wording of this
+    paragraph got it wrong and it is a claim about exactly the thing this class
+    exists for. :meth:`~sciagent.systems.base.Investigation.run` is
+    ``self._executor.run(...).observed()``: the :class:`ExecutionResult` is a
+    temporary and the investigation keeps no reference to it. What persists is
+    the registry row, inside the store, whose content address is computed over
+    ``defect_key(defect)`` among the other four components -- so the truth
+    survives where SPEC's fourth invariant needs it and nowhere an investigation
+    can be asked for it.
+    """
+
+    design: ExperimentDesign
+    seed: Seed
+    result: DiagnosticVector
+    experiment: ExperimentId
+    """The registry content address of this experiment, which is its id."""
+
+    manipulated: frozenset[ComponentId]
+    collateral: frozenset[ComponentId]
+    """Derived from the programme DAG (SPEC §3.3), never declared. These are the
+    components an intervention reached without being aimed at, and SPEC §7.2
+    licenses a total-effect claim over their union but no narrower one."""
+
+    budget: Budget
+    """The budget *after* this experiment was charged."""
+
+    held_fixed: frozenset[ComponentId]
+    """Components clamped at every event index of this run. See
+    :attr:`ExecutionResult.held_fixed`."""
+
+    sequence: int
+    """The registry's monotonic insertion order, and its only notion of time.
+
+    Required, unlike :attr:`ExecutionResult.held_fixed`'s empty default. There is
+    one construction site -- :meth:`ExecutionResult.observed` -- and a default
+    here would be a plausible-looking zero standing in for a real registry
+    position, which SPEC §7.1 clause 3 orders evidence by."""
 
 
 class Executor:

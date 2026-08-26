@@ -14,6 +14,18 @@ could supply a probability, a plausibility or a score.
 Ground truth is held by :class:`~sciagent.eval.scenarios.Scenario` and reaches an
 :class:`Investigation` as a private attribute with no public accessor: a system
 runs designs *against* the truth without being able to read it.
+
+That sentence used to be the whole of the arrangement, and gate A41 found it
+false in three places. The private attribute was never the leak; what leaked was
+everything the framework handed *back*. :meth:`Investigation.run` returned the
+executor's :class:`~sciagent.experiments.executor.ExecutionResult`, whose
+``defect`` is the truth and whose ``record`` addresses the row by a content
+config with ``defect_key(defect)`` in it; and :attr:`Investigation.engine` gave
+out an :class:`~sciagent.inference.empirical.EmpiricalTable` whose structure keys
+are readable renderings of every structure in it, the truth included. A system
+is now handed :class:`~sciagent.experiments.executor.ObservedExecution` and a
+table keyed by digest, both of which are projections with no field the truth
+could sit in.
 """
 
 from __future__ import annotations
@@ -41,7 +53,7 @@ from sciagent.core.types import (
 )
 from sciagent.experiments import boed
 from sciagent.experiments.dsl import ExperimentDesign
-from sciagent.experiments.executor import ExecutionResult, Executor
+from sciagent.experiments.executor import Executor, ObservedExecution
 from sciagent.hypothesis.graph import HypothesisGraph
 from sciagent.hypothesis.validator import find_duplicate
 from sciagent.inference.empirical import (
@@ -80,6 +92,15 @@ class Investigation:
     exceed the budget, and cannot write a number: the only mutating operations
     are :meth:`run` and :meth:`propose`, and both take structure and return
     framework-computed consequences.
+
+    The first clause is checked rather than asserted. Gate A41 traverses this
+    class's public surface -- every name without a leading underscore, following
+    what each returns -- and refuses any object that is, or renders, the
+    scenario's truth. It found three routes when it was written, and what closed
+    them is structural: :meth:`run` and :attr:`history` hand over an
+    :class:`~sciagent.experiments.executor.ObservedExecution`, which has no
+    ``defect`` field and no registry row, and :attr:`engine`'s table is keyed by
+    digest. Nothing here relies on a caller declining to look.
 
     Not immutable, unlike most of the framework. An investigation *is* the
     accumulating record of what a system did, and the engine it wraps is
@@ -126,7 +147,7 @@ class Investigation:
         self._graph = graph
         self._seed = seed
         self._stage_a = stage_a
-        self._history: list[ExecutionResult] = []
+        self._history: list[ObservedExecution] = []
         self._proposed: dict[HypothesisId, Defect] = {}
         self._targets: dict[ExperimentId, tuple[HypothesisId, ...]] = {}
 
@@ -171,8 +192,13 @@ class Investigation:
         return self._executor.budget
 
     @property
-    def history(self) -> tuple[ExecutionResult, ...]:
-        """Return every experiment run, in the order it was run."""
+    def history(self) -> tuple[ObservedExecution, ...]:
+        """Return every experiment run, in the order it was run.
+
+        A projection, not the executor's own record: see
+        :meth:`~sciagent.experiments.executor.ExecutionResult.observed` for the
+        two fields it drops and gate A41 for why.
+        """
         return tuple(self._history)
 
     @property
@@ -228,13 +254,20 @@ class Investigation:
         design: ExperimentDesign,
         *,
         targets: Sequence[HypothesisId] = (),
-    ) -> ExecutionResult:
+    ) -> ObservedExecution:
         """Carry out one design against the hidden truth, and record it.
 
         Guarantees the seed is derived from the scenario seed, the design id and
         the step index, so a rerun of the same system on the same scenario
         performs byte-identical executions, and two different designs at the same
-        step do not share a stream.
+        step do not share a stream; and that what comes back says what was done
+        and what was measured, but not what it was done *to*.
+
+        The second half is gate A41 and is why this returns an
+        :class:`~sciagent.experiments.executor.ObservedExecution` rather than the
+        executor's own record. Closing only :attr:`history` would have left the
+        shorter path open -- the object a system leaks the truth through is the
+        one this method hands it.
 
         ``targets`` names the hypotheses this experiment was aimed at. It is
         structure, so a system may state it and SPEC F7 is untouched; it is
@@ -257,7 +290,7 @@ class Investigation:
                 f"{sorted(str(d.id) for d in self._designs)!r}"
             )
         seed = replicate_seed(self._seed, str(design.id), len(self._history))
-        result = self._executor.run(design, self._truth, seed)
+        result = self._executor.run(design, self._truth, seed).observed()
         self._engine.record(result.experiment, design.template(), result.result)
         self._history.append(result)
         if targets:

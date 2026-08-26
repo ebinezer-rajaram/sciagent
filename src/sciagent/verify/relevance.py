@@ -54,7 +54,7 @@ from sciagent.core.types import (
     Scope,
     estimand_endpoints,
 )
-from sciagent.experiments.executor import ExecutionResult
+from sciagent.experiments.executor import ObservedExecution
 from sciagent.hypothesis.graph import HypothesisGraph, Relation
 
 __all__ = [
@@ -106,10 +106,15 @@ class RelevanceClause(Enum):
 class EvidenceRecord:
     """One registered experiment, as the verifier needs to see it.
 
-    A projection of :class:`~sciagent.experiments.executor.ExecutionResult` and
-    its registry row, and not a second source of truth: everything here is
-    copied from one or the other by :meth:`EvidenceIndex.from_history`, so a
-    verdict cites the same bits the registry holds.
+    A projection of :class:`~sciagent.experiments.executor.ObservedExecution`,
+    and not a second source of truth: everything here is copied from it by
+    :meth:`EvidenceIndex.from_history`, so a verdict cites the same bits the
+    registry holds.
+
+    That used to read *"of ``ExecutionResult`` and its registry row"*, and gate
+    A41 narrowed what it is a projection of. The verifier never wanted the
+    defect the experiment was run against, and ``sequence`` -- the one thing it
+    read off the row -- is now a field of the record it is handed.
     """
 
     experiment: ExperimentId
@@ -162,7 +167,7 @@ class EvidenceIndex:
     @classmethod
     def from_history(
         cls,
-        history: Sequence[ExecutionResult],
+        history: Sequence[ObservedExecution],
         *,
         scope: Scope,
         targets: Mapping[ExperimentId, tuple[HypothesisId, ...]] | None = None,
@@ -185,7 +190,7 @@ class EvidenceIndex:
                 held_fixed=result.held_fixed,
                 targets=aimed.get(result.experiment, ()),
                 scope=scope,
-                sequence=result.record.sequence,
+                sequence=result.sequence,
             )
             for result in history
         )

@@ -71,7 +71,7 @@ from sciagent.experiments.dsl import (
     ForceArrival,
     QueryDiagnostic,
 )
-from sciagent.experiments.executor import ExecutionResult
+from sciagent.experiments.executor import ObservedExecution
 from sciagent.hypothesis.graph import HypothesisGraph
 from sciagent.inference.binning import OutcomeSpace
 from sciagent.registry.store import ExperimentStore
@@ -260,7 +260,7 @@ class RegisteredWorld:
 
     program: GenerativeProgram
     store: ExperimentStore
-    history: tuple[ExecutionResult, ...]
+    history: tuple[ObservedExecution, ...]
     evidence: EvidenceIndex
     graph: HypothesisGraph
 
@@ -301,8 +301,11 @@ def registered_world(structures: Mapping[str, Defect] | None = None) -> Register
             n_events=N_EVENTS,
         ),
     )
+    # Projected, as an Investigation projects what it hands a system (gate A41):
+    # the verifier is given what a system could have cited, not the executor's
+    # own truth-bearing record.
     history = [
-        runner.run(design, frozenset(), Seed(1000 + replicate))
+        runner.run(design, frozenset(), Seed(1000 + replicate)).observed()
         for design in designs
         for replicate in range(REPLICATES)
     ]

@@ -10915,3 +10915,191 @@ full source digest over `environments/qtm/`, A33's stronger answer to defect 3,
 belongs there too: it needs `simulator_digest` shared out of
 `environments/pointproc/tables.py`, which is a refactor of a load-bearing tested
 function and not gate A25's business.
+
+## 2026-08-26 — A41: the truth was on the investigation surface three ways, not two
+
+**Decision.** `Investigation.run` and `Investigation.history` hand a system an
+`ObservedExecution`, a projection carrying what was done and what came back and
+neither the defect it was done to nor the registry row addressing it; and
+`EngineView.table` hands over an `EmpiricalTable` whose structure keys are
+blake2b digests rather than renderings.
+
+**The entry named two read paths. There were three.** `docs/BACKLOG.md` rank 19
+names `ExecutionResult.defect` and `EngineView.table`'s readable `structures`.
+The gate's traversal found a third that nobody had written down: `Executor.
+_config` writes `"defect": defect_key(defect)` into the content address, so
+`history[i].record.key.config["defect"]` was the truth as a plain string, at
+depth six of the surface. That is why the projection drops `record` as well as
+`defect`, and why `sequence` — the only field anything downstream reads off the
+row, for `EvidenceIndex.from_history` — is lifted into a field of its own.
+
+Worth recording because it is the concrete case for the criterion's *"checked by
+traversal rather than by name"*, which reads like a stylistic preference until
+it catches something. A gate written to the entry's own list would have closed
+two of three and reported the surface clean.
+
+**Why opacity is a field on `EmpiricalTable` and not a change to `structure_key`.**
+Digesting inside `structure_key` is a two-line change and was rejected twice
+over. `EmpiricalTable.version` hashes over the structure keys and *is* the cache
+address, so every cached table would miss — `matrix-2000-20260803-e084e2009916.
+json` is 780 rows at 2000 replicates — buying a multi-hour re-simulation for a
+change with no numerical content. And `replicate_seed` is keyed on the
+*rendering*, so the framework needs the readable key exactly where a system must
+not have it. The two requirements are not reconcilable in one function; they are
+reconcilable in two tables.
+
+`EngineView.table` therefore returns `opaque_table(engine.table)` under
+`lru_cache(maxsize=8)`. **The cache is load-bearing rather than a nicety**, and
+that is the non-obvious part: `boed.predictive` reads `engine.table` once per
+hypothesis per template per node of a planning search, and `Investigation.engine`
+constructs a fresh `EngineView` on every access, so no caller upstream is able to
+hold the projection for it. Uncached, every one of those reads rebuilds 780 rows.
+Measured: an `EmpiricalTable` is hashable and caches its hash (2 µs on the second
+call), so keying the cache by value is cheap; and the digests are byte-identical
+across two independent processes, which is what invariant 3 needs of them.
+
+**An opaque table refuses `save` and `with_structure`.** `with_structure` for an
+arithmetic reason and not for hygiene: a replicate's seed is `replicate_seed(seed,
+structure_key(defect), index)`, the rendering an opaque table no longer holds, so
+extending one would draw a *different sample* under the digest and store rows the
+framework could never reproduce. `save` because `load` reconstructs with `opaque`
+at its default, so a saved digest-keyed file would come back claiming its digests
+were renderings and every row lookup would miss. Neither is reachable from a
+system — `ensure_structure` lives on the engine, which `EngineView` withholds —
+so both are guards against a framework mistake, not against an agent.
+
+**The gate's second clause reads "a defect's parameters" generically, and the
+test review is what forced that.** `/test-review` returned TOO WEAK on the first
+version, which checked structure keys against the scenario's own truth alone. The
+reviewer implemented the counterfeit that satisfies that reading — opaque exactly
+where S1's truth would show — and got all five A41 tests green with **15 of the
+gate table's 20 keys still fully legible**, S2, S3, S4, S6, S7, S8 and S12's
+truths among them. It further showed that S11's key, the leak the entry's own
+rationale names, was caught only by the coincidence that one of its floats equals
+S1's `base_rate`; change one grid value and the motivating example walks through.
+
+Three things settle the reading. The gate line switches from "the scenario's
+truth" in clause 1 to "a defect's" in clause 2 inside one sentence. The Idea's
+stated motive is other cells — *"every previous cell's truth ... is in the
+artefact each campaign loads"*. And under the scoped reading clause 2 is dead
+text, because clause 1's traversal already reaches `engine.table.structures` at
+depth four; it only earns its place as a second conjunct if it is about defects
+the scenario is not about. The gate now checks every key against every nameable
+defect — the closed set plus every slice scenario's `truth` and `executed` — and
+intersects the view's keys with the engine's.
+
+**A measured hazard for anyone writing a traversal test here.** The first version
+escaped the object graph entirely and ran numpy's test suite in place of its
+criterion. The route: `EditGrammar.structures()` returns a **generator**;
+a generator exposes `gi_frame.f_globals`; that is every global of the defining
+module, including its imports; `numpy.test` is a callable taking no required
+argument, so the traversal called it. The fix is the `_PROJECT` restriction —
+containers are always descended, but only a type this repository defines has its
+public accessors read — and its measured cost on the real surface is **2 objects,
+both generators**. Nothing else foreign is reachable at all. A traversal that
+calls what it finds needs a boundary at the repository edge, not only a depth
+bound.
+
+**Consequence outside the gate.** Landing A41 exhausted `docs/BACKLOG.md`'s gated
+entries, so `scripts/status.py`'s cursor took its documented second form —
+`nothing open; 2 BACKLOG entries held on a decision` — and two `tests/test_status.
+py` tests that matched only the naming form went red. Both now cover both forms
+and assert the exhausted branch's *claim* rather than tolerating it; verified
+non-vacuous by recomputing it with A41 pretended unwritten, where it names rank
+19 and fails. The second was renamed `test_every_backlog_gate_is_named_in_the_
+gate_section`: asking the question of the cursor's gate alone stops being
+answerable the moment the cursor names nothing, and left every other post-freeze
+gate unchecked besides.
+
+**Closes off.** The criterion is about the *public* surface, so a projection
+carrying a private `_defect` would clear it — that is the criterion's own word
+and the same standing `EngineView._engine` already has, which `inference/view.py`
+concedes in its own docstring. It makes reading the truth deliberate rather than
+impossible. Nothing checks argument-taking methods either, and no traversal can;
+`run` is pinned by name instead. Two docstring claims that were false until now —
+`eval/scoring.py`'s "the truth is not on the surface an `Investigation` exposes",
+stated twice — now point at the gate rather than asserting it, and
+`tests/test_llm.py`'s reason for its brief assertion ("the only path to it is
+`Scenario.truth` and an `Investigation` has none") is corrected: the assertion
+always passed, the reason never held.
+
+**Verified.** `uv run mypy` — Success, 155 source files. `uv run pytest -n 4
+--dist loadfile` — **1767 passed, 7 skipped in 185.00s**, recorded green against
+tree `8130caa8`.
+
+## 2026-08-26 — A41, addendum: what preflight changed after the entry above
+
+**Why this is a second entry.** The entry above closed with a verification line
+naming tree `8130caa8`. `/preflight` then changed four files, so that hash no
+longer describes what would land, and this file is append-only. The final
+verified tree is `6ce82a80` — `uv run mypy` Success over 155 source files,
+`uv run ruff check .` clean, `uv run pytest -n 4 --dist loadfile` **1767 passed,
+7 skipped in 184.89s**, recorded. Nothing above is retracted; four things were
+added to it.
+
+**`/code-review` found two defects in tests written minutes earlier — to fix a
+test.** Both in `tests/test_status.py`, both confirmed by execution rather than
+by reading:
+
+1. `no_open_summary` has **two** exhausted forms, not one. With nothing held it
+   returns `"every gate-tracked backlog item is satisfied"`. The branch added
+   above matched only `"nothing open; N ... held on a decision"`, so it would
+   have gone red on a correct report the day ranks 20 and 21 are decided. That
+   is exactly the trap the test's own docstring warns about — *"a test that has
+   to be edited to let correct work go green is a test that will be edited
+   without being read"* — reintroduced while editing that very test. Worth
+   recording because the warning did not prevent it: the docstring was read,
+   the second form was simply not known to exist.
+2. The `later:` line is **range-compressed** by `compress_ranges`, so the
+   substring test `f"A{gate}" in deferred` was wrong in both directions.
+   Measured: `"A46" in "A45-A47"` is `False` — a gate in a span's interior reads
+   as unrendered — and `"A4" in "A41"` is `True`, a numeric prefix falsely
+   accepting. The line is now parsed and its spans expanded.
+
+**Lens 3 named a silent failure mode in the re-keying, now made loud.**
+`opaque_table` rebuilds `counts` under `opaque_key`, and a dict comprehension
+resolves a collision by keeping whichever key arrives second — so two structures
+would share one opaque key and a system would read one's likelihoods under the
+other's name with nothing raising. The bound is a birthday collision on 128 bits
+over a few hundred structures, about 10^-34, so the guard fires on no table that
+will ever exist. It is there because the failure would be **undetectable**, not
+because it is likely, and comparing two integers is the whole cost.
+
+**Lens 2's finding, and the half of it deliberately left open.** No invariant 2
+violation: `estimate`, `log_likelihood` and `posterior` all read the engine's own
+`_table`, and `rg "\.engine\b" src/sciagent/eval/ src/sciagent/verify/` returns
+nothing, so no scored number is read from the projection at all. What the lens
+established is a **scope change that was unstated**: `EngineView.table` used to
+return `self._engine.table`, confining anything done to the result to that
+engine, and now returns a process-global entry shared by value — while the §9
+campaign runs many cells in one process. It demonstrated two ways a cached entry
+outlives its caller: `object.__setattr__` reaches a frozen slots dataclass, and a
+subclass with a dishonest `__eq__` wins an `lru_cache` key comparison.
+
+**Left open, on purpose.** Both routes are outside the threat model
+`inference/view.py` sets for itself in its own words — it "makes tampering
+deliberate rather than accidental" — and a guard in `opaque_table` would be the
+comment holding a line it cannot hold that this project has twice refused to
+write, once in that file's own history (`cb07d72e`, whose message records the
+docstring overclaiming twice before an audit caught each one). So the scope is
+written into `opaque_table`'s docstring rather than defended. **What would change
+this:** a scored quantity ever being read off `EngineView.table`. Today none is;
+the day one is, this becomes a violation rather than a scope note, and the
+reconciliation in `eval/campaign.py` explicitly declines to cover table
+replacement, so nothing else would catch it.
+
+**One docstring in the change above was wrong about its own mechanism.**
+`ObservedExecution`'s said *"The framework keeps the `ExecutionResult`, which it
+needs"*. It does not: `Investigation.run` is
+`self._executor.run(...).observed()`, so that object is a temporary discarded on
+the same line. What persists is the registry row, whose content address is
+computed over `defect_key(defect)`. A false sentence about where the truth lives,
+inside the docstring introduced to explain why the truth is now safe — which is
+the class of error `/preflight` exists to catch, since the code was correct and
+only the account of it was not.
+
+**Closes off.** Nothing further from the five lenses. Lens 3's one open caveat —
+that `id()` reuse could in principle prune the A41 traversal — is closed by the
+code rather than left: `found.append(obj)` fires on first discovery, so every id
+in `seen` maps to an object the traversal still holds a reference to, and a live
+object's id cannot be reused.

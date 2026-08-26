@@ -53,7 +53,11 @@ from typing import Protocol
 from sciagent.core.edits import Defect
 from sciagent.core.types import ExperimentId, HypothesisId, Probability
 from sciagent.inference.binning import DiagnosticVector
-from sciagent.inference.empirical import EmpiricalTable, EmpiricalTableEngine
+from sciagent.inference.empirical import (
+    EmpiricalTable,
+    EmpiricalTableEngine,
+    opaque_table,
+)
 from sciagent.inference.interface import LikelihoodEstimate, Observation
 
 __all__ = ["EngineView", "ReadableEngine"]
@@ -124,8 +128,24 @@ class EngineView:
 
     @property
     def table(self) -> EmpiricalTable:
-        """Return the table the engine reads its likelihoods from."""
-        return self._engine.table
+        """Return the table the engine reads its likelihoods from, opaquely keyed.
+
+        Every number in it is the engine's own, and every lookup a system makes
+        -- which is always by a ``Defect`` it already holds -- returns exactly
+        what the engine's table returns. What it does not return is the *list* of
+        structures: those keys are digests here, and renderings on the engine's
+        own table.
+
+        Gate A41 is why. :func:`~sciagent.inference.empirical.structure_key`
+        renders an edit set completely -- type, target, construct, every
+        parameter -- so ``structures`` on the engine's table reads out every
+        structure it was built over. The §9 campaign threads one table from cell
+        to cell, so that list is every scenario's truth, S11's out-of-library one
+        included; a system could have read the answer off the artefact instead of
+        investigating for it. The projection is memoised per table, so this
+        property stays a read rather than a rebuild.
+        """
+        return opaque_table(self._engine.table)
 
     @property
     def observations(self) -> tuple[Observation, ...]:

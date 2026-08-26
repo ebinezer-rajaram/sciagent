@@ -208,6 +208,7 @@ def _reading(d1: float = 1.0) -> CellReading:
             d5_enabled_experiment_value=0.75,
             d6_complexity=12.0,
             n_held_out=3,
+            n_comparison=1,
         ),
         score=ClosedWorldScore(
             truth_mass=Probability(0.5),

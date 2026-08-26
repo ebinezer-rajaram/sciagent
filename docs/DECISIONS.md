@@ -11103,3 +11103,82 @@ that `id()` reuse could in principle prune the A41 traversal — is closed by th
 code rather than left: `found.append(obj)` fires on first discovery, so every id
 in `seen` maps to an object the traversal still holds a reference to, and a live
 object's id cannot be reused.
+
+## 2026-08-26 — A42: D4 compares against the entertained set, and now says how big it was
+
+**Decision.** SPEC §8 words D4 as "likelihood improvement on previously
+poorly-explained registered results", and never says *whose* set the improvement
+is over. The fork `docs/BACKLOG.md` rank 20 left open is settled: the comparison
+set is the **system's own entertained hypotheses**, which is what A26
+implemented, and the size of that set is reported beside the figure as
+`n_comparison`, the way `n_held_out` accompanies D2 and D3. Taken cold, before
+any code was written.
+
+**Why.** The alternative was a fixed per-scenario reference set, and it is not
+the same change dressed differently: it re-reads what the dimension *means*,
+making D4 a property of the scenario rather than of what the system entertained,
+and it would have stranded the recorded rows under a reading they were not scored
+by. Reporting the size alongside is additive and costs the dimension nothing.
+What it buys is that the figure becomes readable at all. D4 falls as more
+alternatives are entertained — with the candidate excluded, `best` is a max over
+the others, so entertaining one more can only raise it — and a system with a rich
+library therefore scores below one entertaining a single weak alternative. That
+is a difference in breadth reported as a difference in explanatory power, and
+without the second term a reader cannot tell them apart. It also separates the
+two ways D4 reaches `0.0`: an empty comparison set from a candidate outperformed
+on every observation, which in a ledger row were indistinguishable from each
+other *and* from the identically-zero bug A26 fixed.
+
+**Closes off.** The fixed-reference-set reading, unless something later reopens
+§8. D4's *value* is untouched — the A26 reading stands, no recorded number moves,
+and the deduplication added here cannot change it, since a max over duplicates
+equals a max over the deduplicated set and deduplication cannot empty a non-empty
+set. So this is a second term, not a re-scoring. `DIMENSION_VERSION` bumps to
+`spec8/6` for the payload key and `METRIC_VERSION` deliberately does not; both
+are argued in full at the constant's own docstring in `eval/scoring.py` and are
+not repeated here. **Not** settled by this: `docs/BACKLOG.md` rank 21 (A45),
+whether §12 criterion 4 becomes an absolute bar or is struck. Different question,
+still waiting on a cold decision.
+
+## 2026-08-26 — A42: what the gate cost that the diff does not show
+
+**The first version of the A-test passed under a wrong implementation, and
+`/test-review` demonstrated that rather than suspecting it.** The lens injected a
+structure-deduped but *filter-less* count — one taken over the entertained
+structures without the `table.holds` filter — and watched all five of the
+original tests go green under it. That implementation reports
+`(d4=0.0, n_comparison=1.0)` for an empty-by-filter row *and* for an outperformed
+row, which is the gate's own clause negated verbatim.
+
+**The cause is a property of the fixture, and it will trap the next gate too.**
+Every case drew its alternatives from `closed_set()`, and `gate_table()` holds a
+row for all five members — `null`, `hawkes`, `regime_switching`, `seasonality`,
+`poisson_mixture`. So `table.holds(...)` is `True` for every structure such a
+test can construct, and any code path guarded by that filter is unreachable from
+the library alone. A test that needs to exercise it must build a structure the
+table lacks. `test_a42.py`'s `_unheld_structure()` takes the first single-edit
+defect from `GRAMMAR.enumerate_edits()` the table has no row for, and costs no
+simulation, because `dimension_vector` grows the table for the candidate and the
+truth only and never for an entertained structure.
+
+**The bump touched six literal sites, and `mypy` can only ever see four of
+them.** Counted after the fact, because the first version of this entry claimed
+nine and eight and `/code-review` caught the arithmetic: the sites are the
+definition in `eval/scoring.py`, four `assert DIMENSION_VERSION == "spec8/N"`
+pins in `test_a30.py`, `test_a31.py`, `test_a42.py` and `test_a44.py`, and one
+dict *value* in `tests/test_matrix.py`. Only the four asserts narrow to a
+`Literal`, so only those can trip `comparison-overlap` under `strict`. The
+definition is the thing being changed, and the dict value is invisible to the
+type checker.
+
+In this session the split fell out as: three sites updated by a targeted edit
+before any check ran, one written correct because its file was new, **one caught
+by `mypy`** (`test_a44.py`, which was simply not in the file list the edit
+named), and **one caught only by the full suite** (`tests/test_matrix.py`), at
+the price of a second three-minute run. The comment directly above that last line
+had already predicted exactly this from the A30 bump, in those words, and it was
+still missed. **For the fifth bump: grep the string `spec8/`, not
+`assert DIMENSION_VERSION ==`.**
+
+**Closes off.** Nothing. Both are notes for the next session that touches this
+machinery.

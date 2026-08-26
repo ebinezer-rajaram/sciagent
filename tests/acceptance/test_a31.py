@@ -603,14 +603,15 @@ class TestA31ThePayloadCarriesAgencyAndMasses:
         is not: the metric version addresses every cached empirical table, and
         this change touches no estimator.
         """
-        # The literal moved to `spec8/5` at gate A30, which is the next scoring
-        # change of exactly the kind this assertion was written to notice -- the
-        # payload gained the adjudication and contradiction fields SPEC 12
-        # criteria 8 and 10 read. Updating it keeps the assertion's purpose:
-        # what it pins is that the term moves when a reading changes and only
-        # then, and a literal is what makes each bump arrive here as a decision
-        # rather than as silence.
-        assert DIMENSION_VERSION == "spec8/5"
+        # The literal has moved twice since: to `spec8/5` at gate A30, and to
+        # `spec8/6` at gate A42, each the next scoring change of exactly the kind
+        # this assertion was written to notice -- the payload gained the
+        # adjudication and contradiction fields SPEC 12 criteria 8 and 10 read,
+        # and then D4's comparison-set size. Updating it keeps the assertion's
+        # purpose: what it pins is that the term moves when a reading changes and
+        # only then, and a literal is what makes each bump arrive here as a
+        # decision rather than as silence.
+        assert DIMENSION_VERSION == "spec8/6"
 
         current = _row("S9", "B1")
         stale = dataclasses.replace(

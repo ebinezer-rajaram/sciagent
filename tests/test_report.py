@@ -177,6 +177,7 @@ def reading(**overrides: float) -> CellReading:
             d5_enabled_experiment_value=values["d5"],
             d6_complexity=values["d6"],
             n_held_out=3,
+            n_comparison=1,
         ),
         score=ClosedWorldScore(
             truth_mass=Probability(values["truth_mass"]),

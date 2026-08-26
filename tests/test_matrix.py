@@ -135,6 +135,7 @@ def stub_reading(**overrides: float) -> CellReading:
             d5_enabled_experiment_value=0.25,
             d6_complexity=12.0,
             n_held_out=3,
+            n_comparison=1,
         ),
         score=ClosedWorldScore(
             truth_mass=Probability(0.5),
@@ -419,20 +420,20 @@ class TestAnAddressCoversWhatDeterminesACell:
             "matrix": "spec9/1",
             # Literal rather than `DIMENSION_VERSION`, deliberately: this is
             # what makes a bump something a session has to notice and account
-            # for. `spec8/5` is A30 -- the payload gained `claims`,
-            # `adjudicated`, `adjudication_rate`, `contradictions` and
-            # `zombie_claims`, so a `spec8/4` row cannot answer a question about
-            # SPEC 12 criterion 8 or 10. `spec8/4` was A31, which added the
-            # autonomy fraction, F10's two tiers and criterion 9's three masses;
-            # `spec8/3` was A29, which added `probe_p_value` and
-            # `probe_inadequate`.
+            # for. `spec8/6` is A42 -- the payload gained `n_comparison`, so a
+            # `spec8/5` row carries a D4 whose comparison set is unknown.
+            # `spec8/5` was A30, which added `claims`, `adjudicated`,
+            # `adjudication_rate`, `contradictions` and `zombie_claims`;
+            # `spec8/4` was A31, which added the autonomy fraction, F10's two
+            # tiers and criterion 9's three masses; `spec8/3` was A29, which
+            # added `probe_p_value` and `probe_inadequate`.
             #
-            # This is the assertion the mechanism above is *for*, and A30 is
-            # where it earned its keep: mypy caught the two sibling pins because
-            # they compare against `DIMENSION_VERSION` and narrow to a
-            # `Literal`, and could not catch this one because it is a dict
-            # value. The suite did.
-            "dimensions": "spec8/5",
+            # This is the assertion the mechanism above is *for*, and it has now
+            # earned its keep twice, at A30 and again at A42: mypy caught the
+            # sibling pins both times because they compare against
+            # `DIMENSION_VERSION` and narrow to a `Literal`, and could not catch
+            # this one because it is a dict value. The suite did, both times.
+            "dimensions": "spec8/6",
             "battery": battery_key(BATTERY),
             "partition": "dev",
             "replicate": "07",

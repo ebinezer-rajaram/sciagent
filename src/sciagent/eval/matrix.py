@@ -736,6 +736,13 @@ class CellReading:
             "d5_enabled_experiment_value": self.dimensions.d5_enabled_experiment_value,
             "d6_complexity": self.dimensions.d6_complexity,
             "n_held_out": float(self.dimensions.n_held_out),
+            # A42's second term for D4, beside the figure for the reason
+            # `n_held_out` sits beside D2 and D3: the dimension is a comparison,
+            # and it falls as more alternatives are entertained, so a row that
+            # does not say what it improved on cannot be read across arms. Zero
+            # distinguishes an empty comparison set from a candidate that was
+            # outperformed -- both of which report `d4 == 0.0`.
+            "n_comparison": float(self.dimensions.n_comparison),
             "truth_mass": float(self.score.truth_mass),
             "log_score": self.score.log_score,
             "leading_mass": float(self.score.leading_mass),

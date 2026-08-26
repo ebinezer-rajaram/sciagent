@@ -1963,7 +1963,15 @@ reachable from `EngineView.table` does not disclose a defect's parameters.
 **Rank.** 19
 **Cost.** M. No API the shipped systems use is affected.
 
-## D4 now rewards entertaining fewer alternatives
+## DONE (2026-08-26, gate A42) — D4 now rewards entertaining fewer alternatives
+
+**Discharged.** The fork below was taken cold on 2026-08-26, before any code was
+written: the comparison set is the **system's own entertained hypotheses**, which
+is what A26 implemented, and a fixed per-scenario reference set is ruled out. So
+the second half of the Idea is what gate A42 built — the size reported beside D4
+as `n_comparison`, and `DIMENSION_VERSION` bumped to `spec8/6` for the payload
+key. D4's value is unchanged. `docs/DECISIONS.md` (2026-08-26) carries the
+reasoning and what the alternative would have cost.
 
 **Idea.** Decide, cold, what D4's comparison set is: the system's own entertained
 hypotheses (what A26 implemented) or a fixed per-scenario reference set. If the

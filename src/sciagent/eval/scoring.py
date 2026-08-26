@@ -126,7 +126,18 @@ __all__ = [
 #: :class:`~sciagent.eval.campaign.ScenarioRun` by
 #: :func:`~sciagent.eval.campaign.adjudicate`, which recomputes nothing the run
 #: did not already hold.
-DIMENSION_VERSION: Final = "spec8/5"
+#:
+#: ``spec8/6`` is A42, and bumps for the same reason a fourth time:
+#: :meth:`~sciagent.eval.matrix.CellReading.as_payload` gained ``n_comparison``,
+#: so a ``spec8/5`` row carries a D4 whose comparison set is unknown, and a
+#: reader pooling the two generations would average the dimension over rows that
+#: cannot say what they improved on. **D4's value is unchanged** -- the A26
+#: reading stands, and ``docs/BACKLOG.md``'s fork between the entertained set and
+#: a fixed reference set was settled in favour of the former -- so this bump adds
+#: a second term rather than restating the first. D1-D6 are again unchanged, no
+#: cached table moves, and no estimator is touched: the count comes off the set
+#: :func:`_explanatory_coverage` already built to compute the figure.
+DIMENSION_VERSION: Final = "spec8/6"
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,6 +276,23 @@ class DimensionVector:
     """How many designs D2 and D3 were averaged over. Zero means the battery was
     empty and both are ``nan``, rather than a silent ``0`` that would read as a
     measurement."""
+
+    n_comparison: int
+    """How many distinct structures D4 was compared against.
+
+    D4 is an improvement over the best *other* entertained hypothesis, so its
+    value depends on how many alternatives the system entertained: one more can
+    only raise that best and therefore only lower D4. The figure cannot be read
+    across arms without this term, and it is what separates the two ways D4
+    reaches ``0.0`` -- ``0`` here is a candidate that had nothing to improve on,
+    and any positive value *beside a zero D4* is one that improved on nothing.
+    Beside a positive D4 it is simply the denominator, and says how much
+    competition the improvement was measured against.
+
+    Counted by structure and after the table filter, so it is the size of the set
+    the comparison actually ran against rather than of the set that was offered.
+    Two ids carrying one structure are one alternative, and an alternative the
+    table holds no row for was not compared against at all."""
 
 
 #: Which dimension a task's headline figure is, per SPEC §8's "primary
@@ -438,19 +466,19 @@ def dimension_vector(
     known = dict(entertained or {})
     belief = dict(posterior or {})
     predictive, similarity = _held_out_dimensions(candidate, truth, grown, held_out)
+    coverage, compared = _explanatory_coverage(candidate, grown, observations, known)
     return (
         DimensionVector(
             d1_structural_distance=grammar.distance(candidate, truth),
             d2_held_out_predictive=predictive,
             d3_intervention_similarity=similarity,
-            d4_explanatory_coverage=_explanatory_coverage(
-                candidate, grown, observations, known
-            ),
+            d4_explanatory_coverage=coverage,
             d5_enabled_experiment_value=_enabled_value(
                 candidate, grown, held_out, known, belief
             ),
             d6_complexity=grammar.code_length(candidate),
             n_held_out=len(held_out),
+            n_comparison=compared,
         ),
         grown,
     )
@@ -504,8 +532,8 @@ def _explanatory_coverage(
     table: EmpiricalTable,
     observations: Sequence[Observation],
     entertained: Mapping[HypothesisId, Defect],
-) -> float:
-    """Return D4: how much better the candidate explains what was already seen.
+) -> tuple[float, int]:
+    """Return D4 and the size of the set it was compared against.
 
     Per recorded experiment, the candidate's log-likelihood against the best any
     *other* entertained hypothesis achieved, converted to bits. Only positive
@@ -531,14 +559,34 @@ def _explanatory_coverage(
     Returns ``0.0`` when the exclusion leaves nothing to compare against. There
     is no alternative the candidate improves on, which is a coverage of zero and
     not a missing measurement.
+
+    **The second element is what that zero cannot say on its own**, and the whole
+    of A42. The figure reaches ``0.0`` down two paths meaning opposite things --
+    an empty comparison set, and a candidate outperformed on every observation --
+    and in a ledger row the two were indistinguishable from each other and from
+    the identically-zero bug A26 fixed. The size separates them: ``0`` is the
+    empty set, and any positive value with a zero coverage is a candidate that
+    rescued nothing from a set that existed. It is also what makes the figure
+    comparable across arms at all, since D4 falls as more alternatives are
+    entertained.
+
+    The size is of the set actually compared against, which is narrower than
+    ``entertained`` twice over: deduplicated by structure, on the reasoning
+    above, and filtered to what the table holds a row for, because a structure
+    with no row was never a term in the maximum. It is reported whether or not
+    any observation was scored -- an empty ``observations`` leaves the comparison
+    set unexamined rather than absent, the distinction
+    :attr:`DimensionVector.n_held_out` draws for D2 and D3.
     """
-    scored = [
-        entertained[node_id]
-        for node_id in sorted(entertained)
-        if entertained[node_id] != candidate and table.holds(entertained[node_id])
-    ]
+    scored: list[Defect] = []
+    for node_id in sorted(entertained):
+        structure = entertained[node_id]
+        if structure == candidate or not table.holds(structure):
+            continue
+        if structure not in scored:
+            scored.append(structure)
     if not observations or not scored:
-        return 0.0
+        return 0.0, len(scored)
     total = 0.0
     for observation in observations:
         best = max(
@@ -551,7 +599,7 @@ def _explanatory_coverage(
             candidate, observation.template, observation.result
         ).log_likelihood
         total += max(0.0, (mine - best) / math.log(2.0))
-    return total
+    return total, len(scored)
 
 
 def _enabled_value(

@@ -963,7 +963,13 @@ class TestA30EveryCampaignRunIsAdjudicated:
         that moves and ``METRIC_VERSION`` is not: the metric version addresses
         every cached empirical table, and this change touches no estimator.
         """
-        assert DIMENSION_VERSION == "spec8/5"
+        # The literal moved to `spec8/6` at gate A42, which is the next scoring
+        # change of the kind this assertion exists to notice -- the payload
+        # gained D4's comparison-set size. What it pins is unchanged: the term
+        # moves when a reading changes and only then, and the stale row below is
+        # still `spec8/4`, so the exclusion is exercised across two generations
+        # rather than one.
+        assert DIMENSION_VERSION == "spec8/6"
 
         current = _campaign((Cell("V1", ScenarioId("S9"), 1),), _built_reading)[0]
         stale = dataclasses.replace(

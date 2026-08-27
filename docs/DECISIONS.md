@@ -11520,3 +11520,113 @@ neither is code work. Until rank 24 is settled the §9 primary contrast is
 unanswered — not unanswerable, since both candidate conditioning events are
 already recorded in every row and either reading is readable off this campaign
 without re-running anything.
+
+## 2026-08-27 — §12 read against the completed campaign: criterion 5 fails as a tie, on every quantity recorded
+
+**Measured, and expensive to reproduce.** The first read of all twelve §12
+criteria against the finished matrix — 1,120 rows at `spec8/6` in
+`.cache/campaign/spec9.db`, plus B6's twenty in `.cache/campaign/criterion5.db`.
+Eight hold, two fail, one is unmeasured, one states no bar. Criteria 1–3 are gate
+results and `scripts/status.py --run` recovers them; the other nine are not
+derivable from any single command, which is why they are written down here.
+
+| # | criterion | verdict |
+|---|---|---|
+| 1 | A1–A24 passing | holds — all 24 green by execution |
+| 2 | zero `sciagent` → `environments` imports | holds |
+| 3 | 100% reproducibility across 100 reruns | holds — A15 4/4 |
+| 4 | Stage A probe discriminates | **fails** — rank 23, held |
+| 5 | V7's S11 extension exceeds B6 on D3 | **fails** — below |
+| 6 | discriminating three-stage plan on ≥2 of S5–S7 | not measured |
+| 7 | correct diagnosis on S12 | V7 0.150; §12 states no threshold |
+| 8 | zero contradictions, zero zombies | holds — 0.000/0.000 in all 56 cells |
+| 9 | correct abstention on S9 and S10 | holds on the sum reading; ambiguous |
+| 10 | ≥90% of claims adjudicated | holds — 72,880/72,880 |
+| 11 | autonomy fraction reported for every investigation | holds — 1120/1120 finite |
+| 12 | interface changes documented | holds — `docs/SCALE-UP.md`, A39 |
+
+Criterion 7 is worth one line beside its row: V7 recovers S12 on **3/20**, which
+is V1's, V3's and V4's rate exactly, and **B4 does better at 6/20**. §12 sets no
+threshold, so this fails nothing; it is not a result in V7's favour either.
+
+**Criterion 5's comparator was recorded on 2026-08-27 and never read against the
+arm it exists to compare.** The 2026-08-27 entry above records that
+`criterion5.db` holds B6's twenty replicates and stops there. Paired on the same
+twenty seeds, the same battery `3#2e9ef3a1660578ec` and the same address:
+
+```
+B6/S11  d3 0.6969628430490871   d1 1.5000  escalated 1.700
+V7/S11  d3 0.6969628430490871   d1 1.5000  escalated 1.300
+paired difference V7 - B6 on D3: exactly 0.000000  [0.000000, 0.000000]
+```
+
+Bit-identical on every one of the twenty seeds; both intervals are degenerate.
+**Criterion 5 fails**, and not for want of a comparator. Derived twice — raw
+hex off both ledgers, then re-derived through `summarise()` — because a tie to
+the last bit is the shape a parsing error also takes.
+
+**It is not only an instrument artefact, and that is the part that most wants
+stating.** D3 is computed over the *leading* structure
+(`scoring.dimension_vector`), so an extension that never wins the posterior
+cannot move it, and on this campaign none did — which on its own would make the
+tie uninformative rather than negative. But
+`ScenarioRun.structural_distance` — the distance from the truth to the **nearest
+entertained** structure, which *is* proposal-sensitive and *is* in every row —
+reads the same for every arm on S11:
+
+| arm | nearest entertained | D1 (leader) | escalated |
+|---|---|---|---|
+| B1 | 1.000000 | 1.0000 | 0.000 |
+| B4 | 1.000000 | 1.5000 | 3.000 |
+| B5 | 1.000000 | 1.1500 | 1.000 |
+| V1 | 1.000000 | 1.5000 | 0.000 |
+| V3 | 1.000000 | 1.5000 | 1.450 |
+| V4 | 1.000000 | 1.5000 | 1.650 |
+| V7 | 1.000000 | 1.5000 | 1.300 |
+| B6 | 1.000000 | 1.5000 | 1.700 |
+
+It is a `min` over entertained structures under the environment's grammar with no
+clamp and no default short of `inf`, so 1.000000 is a floor the library already
+reaches — B1 and V1 entertain nothing beyond it (`escalated` 0.000) and sit on it
+too. **No proposal from any arm — LLM, random draw, or retrieval — ever landed
+closer to S11's truth than the best library member already was.** Whichever
+quantity criterion 5 is re-instrumented to read, this campaign answers it the
+same way. Filed as `docs/BACKLOG.md` rank 25 / gate A49 with that disclosure on
+the entry, for the reason rank 24 put its own tie on itself.
+
+**A mild spec ambiguity in criterion 9.** *"Null and abstain mass exceeding any
+single defect's mass"* on S9 and S10 has two readings and §12 fixes neither. Read
+per component it fails on S9 for B1, B4, V1 and V7, where `abstain_mass` is
+0.0000 and `max_defect_mass` is also 0.0000 and the strict inequality does not
+hold. Read as (null + abstain) > max defect it holds on both scenarios for every
+arm — V7/S10 is 0.8264 + 0.1736 against 0.1068. **Resolved as the sum**, because
+on S9 the null *is* the truth and demanding that an arm decline to commit to the
+correct answer is not what the criterion can mean. Recorded rather than filed:
+unlike ranks 23–25 the two readings do not disagree about the verdict, so nothing
+waits on it.
+
+**The record now carries two D3 figures for S11 and nothing says which is
+current.** The 2026-08-18 entry *"V7 is V1, to six decimals, everywhere it is
+scored"* quotes D3 V7/S11 = 0.6662, B4/S11 = 0.5464 and 21/240 differing
+replicates. Those are **campaign-1** figures — correct when written, and now
+excluded by `report._at_address`, which requires `dimensions == spec8/6` and a
+battery term the `spec8/1` rows do not carry. On campaign 2 the same comparison
+is **19/240**, and D3 on S11 is 0.6970 for B4, V1, V4, V7 *and* B6 alike. The
+conclusion is unchanged and stronger — D1, D2, D3, D6, `correct`, `identified`
+and `structural_distance` never differ between V7 and V1 anywhere in campaign 2 —
+but a reader taking 0.6662 off that entry gets a number `report_matrix.py` no
+longer produces. Not a defect: A40's selection is doing exactly its job, and the
+older entry may not be edited. This one is the pointer.
+
+**Criterion 6's blocker is half discharged.** The 2026-08-03 entry made it
+unreachable on two counts: no intervention template in the design set, and
+nothing that reads a plan off a run. `slice_designs()` now ends with
+`forced_design()`, so the first is gone. The second stands — the ledger's thirty
+reading fields record `experiments` and `escalated` but no plan and no stage — so
+criterion 6 remains unmeasured, and by a reporting gap rather than a design-space
+one.
+
+**Work left incomplete.** Ranks 23, 24 and now 25 are all held on cold decisions
+and none is code work. **This session read the S11 numbers in detail and is
+therefore the session none of the three may be decided in**, which is rank 24's
+own blindness argument applied to the session that extended it.

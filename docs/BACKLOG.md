@@ -2386,3 +2386,83 @@ A probe, B1's detection, or the arm's own whole-record PPC as now — and on
 whether §9's two statements of the claim should be reconciled in wording as well
 as in code
 **Cost.** S. One filter and its gate; no instrument moves and no row is re-run.
+
+---
+
+## Criterion 5 compares two extensions on a dimension that cannot see either
+
+**Idea.** SPEC §12 criterion 5 asks whether V7 *"proposes an S11 extension
+exceeding B6-equivalent random structured generation on D3, with a non-overlapping
+95% interval"*. `sciagent.eval.scoring.dimension_vector` computes D3 over the
+**leading** structure, so a proposed extension reaches that figure only by winning
+the posterior. On the recorded campaign no arm's proposal ever does, and the
+comparison is a tie to the last bit. Give criterion 5 a quantity a proposal can
+move. Four candidates, and choosing between them is the decision:
+
+1. D3 over the best *proposed* extension rather than over the posterior leader;
+2. D4, which already reads the entertained set rather than the leader (A26, A42);
+3. `ScenarioRun.structural_distance` — distance to the nearest entertained
+   structure — which is proposal-sensitive and already in every row;
+4. leave the dimension alone and record criterion 5 as answered. A tie is an
+   answer, and §12 already says beating a baseline is not an exit criterion.
+
+**Rationale.** Measured 2026-08-27 on the completed matrix, S11 at twenty seeds,
+B6 paired to V7 on the same seeds, the same battery `3#2e9ef3a1660578ec` and the
+same address:
+
+```
+B6/S11  d3 0.6969628430490871   d1 1.5000  escalated 1.700
+V7/S11  d3 0.6969628430490871   d1 1.5000  escalated 1.300
+paired difference V7 - B6 on D3: exactly 0.000000  [0.000000, 0.000000]
+```
+
+Both arms propose — V7 1.3 extensions per replicate, B6 1.7 — and D3 reports the
+same plain-Hawkes library member (`d1` 1.5000) for both, and for B4, V1 and V4
+besides. Five arms, one number, on all twenty seeds.
+
+**The disclosure that decides what this entry is worth, stated here because the
+entry can check it and whoever decides should not have to.** The tie is not only
+an instrument artefact. `structural_distance` is a `min` over entertained
+structures under the environment's grammar, with no clamp — a genuinely
+proposal-sensitive quantity, recorded in every row — and on S11 it is
+**1.000000 for all eight arm-cells**, B1 and V1 included, which entertain nothing
+beyond the library (`escalated` 0.000) and reach it anyway. No proposal from any
+arm, LLM or random or retrieval, ever landed closer to S11's truth than the best
+library member. **Re-instrumenting criterion 5 cannot turn this campaign into a
+pass**, and it should not be adopted in the belief that it might. What it would
+buy is a criterion whose failure means something — today's means only that no
+extension led — and a comparison that would separate the arms on a campaign where
+one of them did better.
+
+**This is the third instrument the completed matrix has shown to be pointed at a
+quantity adjacent to the one its criterion names**, after rank 23's size clause
+and rank 24's conditioning event. The pattern the rank 23 entry names holds here
+too: the wording was written without a measurement in front of it.
+
+**Not a defect in the scorer.** `dimension_vector`'s docstring is explicit that
+D1, D2, D3 and D6 are functions of the leading structure and that D4 and D5 read
+the entertained set; the split is deliberate and documented. Criterion 5 picked
+the half that cannot see what it asks about.
+
+**Touches.** SPEC §12 criterion 5's dimension only — not the treatment, the
+comparator, the scenario or the non-overlap rule, all of which are preregistered
+and stay. Under candidates 2, 3 and 4 it touches no instrument, no payload and no
+address term, and is readable off the recorded campaign without re-running
+anything; candidate 1 is the one that is not.
+
+**Gate.** `test_a49_criterion_five_reads_a_quantity_a_proposal_can_move` — on a
+matrix where the treatment's proposal is strictly closer to the truth than the
+comparator's, the criterion separates the two arms where D3-over-the-leader
+reports them equal; a matrix where neither proposal leads still yields a verdict
+rather than a tie by construction; and the non-overlap rule still fails a genuine
+overlap.
+
+**Rank.** 25
+**Held.** a cold decision on which of the four quantities criterion 5 reads —
+and, before that, on whether it should be re-instrumented at all, given that both
+proposal-sensitive quantities already recorded answer "tie"
+**Cost.** M. Candidates 2, 3 and 4 are a re-read of recorded rows. Candidate 1 is
+not: the payload carries `escalated` and `entertained` as counts, not the proposed
+structures, so it needs the recorded runs re-scored. That costs compute and no
+model calls — V7's S11 cell replays from `spec9-v3.json`, which is `transcript/3`
+and the one corpus that still replays, and B6 carries no provider at all.

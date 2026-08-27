@@ -123,6 +123,7 @@ __all__ = [
     "Preregistration",
     "contrast",
     "criterion_four",
+    "criterion_four_of",
     "render",
     "summarise",
 ]
@@ -810,6 +811,242 @@ def criterion_four(probe_rates: Mapping[ScenarioId, float]) -> CriterionFour:
         fired_on_s11=fired,
         false_positives=false_positives,
     )
+
+
+def _probe_rates(report: MatrixReport) -> dict[ScenarioId, float]:
+    """Return one Stage A probe rate per scenario of ``report``.
+
+    Guarantees the projection is a *function*: a scenario appearing in several
+    arms' cells contributes one rate or nothing at all, and that rate does not
+    depend on the order the rows arrived in. Gate A29 is what makes it possible
+    -- the probe is evaluated by the harness before ``investigate`` is called, so
+    its verdict is a function of the scenario and the seed alone.
+
+    **Deduplicated by seed, not read off the cells, and the difference is a bug
+    this had.** A29 guarantees the per-replicate *verdict* is a function of
+    ``(scenario, seed)``. It says nothing about how many replicates an arm ran,
+    and ``scripts/run_matrix.py --replicates N`` exists precisely so one can run
+    fewer -- so a smoke run of one arm beside a full pass of another leaves a
+    ledger where two cells report 0.25 and 0.5 for a scenario on which every
+    shared seed agreed. Comparing :attr:`CellSummary.probe_inadequate_rate`
+    across arms called that an A29 breach and refused a campaign that holds no
+    breach at all. What the criterion wants is the instrument's rate over the
+    distinct seeds the scenario was run at, which is what this returns.
+
+    Raises :class:`~sciagent.core.errors.MalformedDesignError` naming both arms
+    when two of them disagree **on one seed**. That is the real A29 breach, and
+    refusing is the only honest answer: averaging or taking the first would
+    report a verdict over a number nobody chose, and the thing that had broken
+    would be precisely the invariant making the projection meaningful. Compared
+    exactly rather than within a tolerance, because bit-identical is what A29
+    provides -- a tolerance here would be a claim that near-agreement is
+    agreement, which is a decision nobody has taken.
+    """
+    rates, conflict = _probe_scan(report)
+    if rates is None:
+        raise MalformedDesignError(
+            f"the Stage A probe disagrees by arm on {conflict}. Gate A29 "
+            f"evaluates the probe in the harness before `investigate` is called, "
+            f"so its verdict is a function of the scenario and the seed alone "
+            f"and every arm's is identical; two values mean that guarantee has "
+            f"broken, and SPEC section 12 criterion 4 has no reading under which "
+            f"one of them is the campaign's"
+        )
+    return rates
+
+
+def _probe_scan(
+    report: MatrixReport,
+) -> tuple[dict[ScenarioId, float] | None, str | None]:
+    """Return the per-scenario probe rates, or the first arm disagreement.
+
+    Guarantees both halves are independent of the order ``report.rows`` arrived
+    in, which :func:`render` needs and states: *"a report built from the same
+    rows in a different order renders identically"*.
+
+    **Every arm at a contested coordinate is collected before anything is
+    described, and that is a fix rather than a flourish.** An earlier version
+    compared each incoming row against whichever arm currently held the
+    position, so with three or more arms it reported whichever *pair* happened to
+    be adjacent in ``rows``. Confirmed by execution: three rows on one
+    ``(scenario, seed)`` where two arms agree and a third does not produced
+    ``A recorded 0.0 and C recorded 1.0`` under one order and ``B recorded 0.0
+    and C recorded 1.0`` under another. SPEC §9 runs five arms over most
+    scenarios, so three-way coordinates are the normal case rather than a corner
+    of one, and the string reaches both a rendered line and an exception message.
+
+    **Split out of :func:`_probe_rates` so that rendering does not go through an
+    exception.** :func:`render` must not raise -- ``scripts/report_matrix.py``
+    already wraps its :func:`contrast` call precisely so a failure there "should
+    not stop the table printing", and a criterion-4 line that threw would
+    suppress the whole D1-D6 table over a fault in one line of it. Returning the
+    conflict lets :func:`_criterion_four_line` report it as a third outcome while
+    :func:`criterion_four_of` still refuses, so neither caller has to catch
+    anything.
+
+    A conflict makes the rates unfit to read a verdict off, so on a conflict
+    there are no rates: the first half is ``None``.
+
+    **The scan covers every scenario in the report, not only the nine criterion
+    4 names, and that is deliberate.** A disagreement on S8, S10 or S12 --
+    scenarios SPEC §4.5 leaves the criterion silent about -- still suppresses the
+    verdict on the nine it constrains. The narrower scan is defensible and was
+    rejected: gate A29 is one mechanism, so a probe that disagrees by arm
+    *anywhere* has broken the guarantee the other nine rates rest on too, and
+    reporting a verdict over them would be reporting it over an instrument
+    already known to be unsound. It fails safe in the only direction available --
+    it can turn ``holds`` or ``FAILS`` into a breach notice, never the reverse --
+    and the breach is louder than any verdict it displaces. Stated here because
+    both reviews read the scope off the signature and got the narrower one.
+    """
+    # Every observation at a coordinate, so the description below is a function
+    # of the set rather than of the order it was assembled in.
+    observed: dict[tuple[ScenarioId, int], set[tuple[str, float]]] = {}
+    rows_at: dict[tuple[ScenarioId, int], dict[str, LedgerEntry]] = {}
+    seeds_by_arm: dict[ScenarioId, dict[str, set[int]]] = {}
+    for row in report.rows:
+        system, scenario = _coordinate(row)
+        target = ScenarioId(scenario)
+        seed = int(row.key.seed)
+        coordinate = (target, seed)
+        # Through `_flags`, so a present-but-non-boolean payload is refused by
+        # the guard that already exists for it rather than compared as a float.
+        observed.setdefault(coordinate, set()).add(
+            (system, _flags((row,), _PROBE_INADEQUATE)[0])
+        )
+        rows_at.setdefault(coordinate, {})[system] = row
+        seeds_by_arm.setdefault(target, {}).setdefault(system, set()).add(seed)
+
+    conflicts = [
+        f"{target} at seed {seed}, where "
+        + " and ".join(f"{system} recorded {value!r}" for system, value in sorted(arms))
+        for (target, seed), arms in observed.items()
+        if len({value for _system, value in arms}) > 1
+    ]
+    conflicts.extend(_straddling_seed_tables(seeds_by_arm))
+    conflicts.sort()
+
+    grouped: dict[ScenarioId, dict[int, LedgerEntry]] = {}
+    for (target, seed), by_system in rows_at.items():
+        # The arm that sorts first, so which row represents an agreeing
+        # coordinate does not depend on the order `rows` arrived in. Where they
+        # agree the choice cannot move the rate; where they do not, there is no
+        # rate to move.
+        grouped.setdefault(target, {})[seed] = by_system[min(by_system)]
+    # Seeds sorted, so the fold is over one sequence whatever order `rows` came
+    # in -- `_rate` is exactly rounded but is still a fold over a list.
+    if conflicts:
+        # `None` rather than the rates, so the unfitness is in the type instead
+        # of in this docstring. A caller writing `rates, _ = _probe_scan(...)`
+        # would otherwise hold a full nine-scenario vector describing an
+        # instrument known to be broken, and `criterion_four` would return
+        # `holds=True` over it. Invariant 2 asks for runtime assertions rather
+        # than comments, and a value that cannot be obtained is stronger than
+        # either.
+        others = (
+            f" (and {len(conflicts) - 1} other coordinate(s))"
+            if len(conflicts) > 1
+            else ""
+        )
+        return None, f"{conflicts[0]}{others}"
+    return {
+        target: _rate([seeds[seed] for seed in sorted(seeds)], _PROBE_INADEQUATE)
+        for target, seeds in grouped.items()
+    }, None
+
+
+def _straddling_seed_tables(
+    seeds_by_arm: Mapping[ScenarioId, Mapping[str, set[int]]],
+) -> list[str]:
+    """Return a description per scenario whose arms ran incomparable seed sets.
+
+    Guarantees the union-by-seed projection in :func:`_probe_scan` never pools
+    two arms that were run against **different scenario-seed tables**, which is
+    the hole that projection opened and which the per-arm rate comparison it
+    replaced happened to close.
+
+    **Why nesting is the right test, rather than equality.**
+    ``replicate_seeds`` pairs every arm on one seed sequence and
+    ``scripts/run_matrix.py --replicates N`` truncates it, so a legitimate
+    ledger holds seed sets that are *prefixes of one stream* -- nested, possibly
+    unequal. That is the case the rate comparison wrongly refused. Two arms whose
+    sets are neither nested were drawn from different streams, and their
+    replicates are not comparable at all.
+
+    **The disjoint case is the one that bites**, because it shares no coordinate
+    and so trips no per-seed disagreement: measured, V7 holding S11 at seeds 0
+    and 1 with the probe firing on both, beside B1 holding it at 500 and 501 with
+    the probe firing on neither, produced a pooled rate of 0.5 and rendered
+    ``holds`` -- off two cells reporting 1.0 and 0.0, which is as flat a
+    contradiction of A29 as the ledger can express.
+    :func:`_refuse_reseeded` does not reach it either: it keys on
+    ``(system, scenario, replicate)``, so it catches a re-seeded *arm* and is
+    blind to two arms carrying different tables.
+
+    **This tests pairwise inclusion, which is weaker than the prefix argument
+    above, and the two coincide only because a failed replicate aborts.**
+    :func:`~sciagent.eval.matrix.run_matrix` iterates replicates in order and
+    lets an exception propagate with the completed cells already recorded -- it
+    does not skip one and carry on -- so a recorded seed set is always
+    ``{f(0)..f(n-1)}`` and a family of those is totally ordered by inclusion.
+    Nesting is therefore exactly "every arm drew a prefix of one stream" *today*.
+
+    Give ``run_matrix`` a skip-and-continue path -- the obvious motivation is a
+    transient provider failure in an LLM arm -- and that stops being true: V7
+    missing index 5 while B1 misses index 12, both otherwise 0..19, is one
+    stream, legitimately recorded, and non-nested. **This function would refuse
+    it.** Whoever adds that path has to widen this predicate from "nested" to
+    "drawn from one stream", which the seeds themselves can answer since
+    :func:`~sciagent.eval.matrix.replicate_seeds` is a pure function of the
+    scenario seed. Recorded here rather than left to be rediscovered, because
+    nothing about the guard's own text would lead a reader to ``run_matrix``'s
+    abort semantics.
+
+    Verified inert on real data: in the recorded §9 campaign every arm's seed set
+    is *equal* for every scenario, not merely nested, so the relaxation this
+    function permits is exercised only by tests.
+    """
+    straddling: list[str] = []
+    for target, by_arm in seeds_by_arm.items():
+        arms = sorted(by_arm)
+        for index, left in enumerate(arms):
+            for right in arms[index + 1 :]:
+                first, second = by_arm[left], by_arm[right]
+                if first <= second or second <= first:
+                    continue
+                straddling.append(
+                    f"{target}, where {left} ran seeds {sorted(first)!r} and "
+                    f"{right} ran {sorted(second)!r}: neither set contains the "
+                    f"other, so the two arms were drawn from different "
+                    f"scenario-seed tables and pooling their replicates would "
+                    f"report a rate belonging to neither"
+                )
+    return straddling
+
+
+def criterion_four_of(report: MatrixReport) -> CriterionFour:
+    """Return SPEC §12 criterion 4's verdict on a whole campaign.
+
+    Guarantees the verdict is :func:`criterion_four`'s own, on the rates
+    ``report`` carries. This is the production caller SPEC §12 asserts exists
+    when it says that function *"is the check"* -- before it, the criterion was
+    evaluated by a reader assembling the rate vector by hand, which is the defect
+    ``docs/BACKLOG.md`` rank 8 already indicted once for the verifier.
+
+    **A function over a finished report rather than a field on one**, because
+    criterion 4 is defined over nine named scenarios and an ordinary report
+    covers fewer: ``--scenarios S11`` and B6's single opt-in cell both produce
+    one. A field would have to be built for those too, so it would either refuse
+    every partial report or carry ``None`` -- an absence dressed as a verdict,
+    which is what the criterion's own wording exists to stop.
+
+    Raises :class:`~sciagent.core.errors.MalformedDesignError` if the report is
+    missing a scenario the criterion names, or if two arms disagree about one
+    scenario's rate. Both come from the layers below and neither is caught here:
+    a verdict over the scenarios that happen to be present is exactly the reading
+    :func:`criterion_four` refuses.
+    """
+    return criterion_four(_probe_rates(report))
 
 
 # --------------------------------------------------------------------------
@@ -1740,6 +1977,8 @@ def render(report: MatrixReport) -> str:
         f"not clipped to each dimension's support"
     )
     lines.append("")
+    lines.append(_criterion_four_line(report))
+    lines.append("")
     lines.extend(f"  {line}" for line in _CAVEAT.splitlines())
     lines.append("")
     lines.append("  dimensions, in SPEC sec. 8's order:")
@@ -1753,6 +1992,79 @@ def render(report: MatrixReport) -> str:
     for cell in report.cells:
         lines.extend(_cell_block(cell, header))
     return "\n".join(lines) + "\n"
+
+
+def _criterion_four_line(report: MatrixReport) -> str:
+    """Return the one line reporting SPEC §12 criterion 4, or why it was not read.
+
+    Guarantees a report covering fewer than the nine scenarios the criterion
+    names still renders, and says so rather than reporting a verdict over what is
+    present. ``--scenarios S11`` and B6's one opt-in cell both produce such a
+    report, so a rendering that refused them would make criterion 4's arrival a
+    regression for every partial campaign.
+
+    **Not evaluated is a third outcome, not a quiet pass.** The line says which
+    scenarios are missing, because the reader's next question is what would have
+    to be run, and because a blank where a verdict belongs reads as a verdict
+    nobody objected to.
+
+    A disagreement between arms is reported here as a **fourth** outcome rather
+    than raised: it means gate A29's guarantee has broken, which is a finding
+    about the harness, and a finding is worth more printed above the table than
+    thrown in place of it.
+    """
+    label = "criterion 4"
+    rates, conflict = _probe_scan(report)
+    # On `rates`, not on `conflict`: the two move together, and branching on the
+    # value this function goes on to use is what lets `mypy` hold the pairing.
+    if rates is None:
+        # **A distinct marker, not a second "not evaluated".** A partial report
+        # and a broken harness are opposite findings -- one says "you ran one
+        # scenario", the other says the arm-symmetry every rate here depends on
+        # has failed -- and an operator skimming, or a CI grep, could not tell
+        # them apart while both opened with the same three words.
+        return (
+            f"  {label:<16s}A29 BREACH, no verdict -- the Stage A probe "
+            f"disagrees by arm on {conflict}"
+        )
+    absent = tuple(
+        target for target in (*_MUST_BE_QUIET, _MUST_FIRE) if target not in rates
+    )
+    if absent:
+        return (
+            f"  {label:<16s}not evaluated -- defined over "
+            f"{len(_MUST_BE_QUIET) + 1} scenarios, and this report does not "
+            f"cover {', '.join(absent)}"
+        )
+    # Through `criterion_four_of`, not `criterion_four`. Both reach the same
+    # verdict, and routing the rendered line through the public entry point is
+    # what stops this module reproducing, inside the fix for it, the defect
+    # `docs/BACKLOG.md` rank 22 indicts: a function documented as the production
+    # caller and called by nothing but its own gate. It cannot raise here -- the
+    # two branches above have already excluded both of its refusal cases -- so
+    # the second scan it costs buys the guarantee that the path a reader is told
+    # about is the path that runs.
+    verdict = criterion_four_of(report)
+    if verdict.holds:
+        # The quiet set is derived rather than spelled, so this sentence cannot
+        # go on asserting `S1-S7 and S9` after the set moves. It is also not
+        # contiguous, which a hand-written range would quietly lose.
+        return (
+            f"  {label:<16s}holds -- Stage A probe fired on {_MUST_FIRE} and "
+            f"stayed quiet on {', '.join(_MUST_BE_QUIET)}"
+        )
+    # Both clauses, not the first that fails. The criterion is a conjunction, and
+    # an instrument that is blind on S11 *and* fires where the space is adequate
+    # is failing twice; reporting only the power clause loses the size clause
+    # from the one surface a human reads.
+    clauses = []
+    if not verdict.fired_on_s11:
+        clauses.append(f"did not fire on {_MUST_FIRE}")
+    if verdict.false_positives:
+        clauses.append(
+            f"fired where the space is adequate: {', '.join(verdict.false_positives)}"
+        )
+    return f"  {label:<16s}FAILS -- Stage A probe {'; '.join(clauses)}"
 
 
 def _cell_block(cell: CellSummary, header: str) -> list[str]:

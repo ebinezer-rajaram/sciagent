@@ -11289,3 +11289,234 @@ its own checkpoint, so a re-run resumes after a crash or an exhausted rate limit
 arms and *not* B6, which is opt-in (`--systems B6`, one cell, twenty replicates of
 S11, no provider, no API cost). B6 is the comparator §12 criterion 5 names, so a
 default pass leaves criterion 5 unreadable and nothing says so at the time.
+
+## 2026-08-26 — gate A46: criterion 4 gains a production caller, and every review refuted the thing before it
+
+**Decision.** `criterion_four` is called from the report layer as
+`criterion_four_of(report)` — a function over a finished `MatrixReport`, not a
+field on one — and `render` prints its verdict.
+
+**The entry left that fork open** (*"`summarise`'s return value or a function
+beside it"*) and one constraint decides it: criterion 4 is defined over nine
+scenarios and an ordinary report covers fewer. `--scenarios S11`, B6's single
+opt-in cell and `tests/acceptance/test_a43.py` all build one-cell reports. A
+mandatory field would have to be built for each, so it would either refuse every
+partial report or carry `None` — an absence dressed as a verdict, which is the
+reading the criterion's re-wording exists to remove.
+
+**A gap in the gate line itself, recorded rather than closed.** The line never
+says the projection must *call* `criterion_four`, though wiring it in is the
+entry's whole point. Two of the three refuted candidates below satisfied its
+letter by re-implementing the check. Asserting the call would mean patching,
+which this suite does not do and which pins a mechanism rather than a meaning;
+`test_a46_the_projection_has_no_second_opinion` asserts the property instead —
+the report's verdict must equal the criterion's own on the same rates.
+
+### Four things tried and abandoned, none of them found by me
+
+**1. A test that sampled where the standard quantifies.** The first A46 test
+instantiated two of the gate's three clauses at one scenario each. `/test-review`
+did not argue; it built three implementations and ran them green against the
+whole file: the quiet set as a contiguous `range(1, 8)` losing S9; a rate
+threshold at 0.5 *in an implementation that genuinely delegates*, so one firing
+replicate in twenty reads as quiet; and presence required for the eight quiet
+scenarios only, an absent S11 read as 0.0. The fix is the one A45 had already
+made and A46 had not — loop where the standard quantifies.
+
+**2. Projecting the rate off the cells.** The first implementation compared
+`CellSummary.probe_inadequate_rate` across arms and called any difference an A29
+breach. A29 guarantees the per-replicate *verdict* is a function of
+`(scenario, seed)`; it says nothing about how many replicates an arm ran, and
+`--replicates N` exists so one can run fewer. A smoke pass beside a full pass
+would have been refused as a broken invariant with nothing broken. Found by
+`/code-review`, reproduced at 4 vs 2 replicates.
+
+**3. A `render` that could raise.** The same refusal propagated out of
+`render`, so one bad line would have suppressed the whole D1–D6 table.
+`scripts/report_matrix.py` already wraps its `contrast` call for exactly this
+reason. The scan now *returns* the conflict rather than raising, so the
+rendering path holds no exception at all.
+
+**4. Comparing each row against the running holder.** The conflict message was
+then order-dependent: with three or more arms it named whichever *pair* happened
+to be adjacent in `rows`. The invariant-3 lens confirmed it by execution — the
+same three rows gave `A recorded 0.0 and C recorded 1.0` under one order and
+`B recorded 0.0 and C recorded 1.0` under another. **This is the normal case,
+not a corner:** SPEC §9 runs four arms on every scenario and five on S11, and
+the string reaches both a rendered line and an exception message, against
+`render`'s stated byte-identical guarantee. Every observation at a coordinate is
+now collected before anything is described.
+
+**And one defect in the fix for defect 2.** Its regression test was built from
+the passing pattern, where every rate is exactly 1.0 or 0.0 — which the *old*
+implementation also compared equal. It would have passed before and after and
+established nothing. It now fires the probe on seeds 0 and 1 of 4, so the arms
+report 0.5 and 1.0 while agreeing on every shared seed, and asserts that premise
+itself.
+
+**The invariant-2 lens found the contract held by prose.** `_probe_scan`
+returned rates that were unfit whenever a conflict was set, with the unfitness
+stated in a docstring — the exact shape invariant 2 names when it asks for
+runtime assertions rather than comments. It now returns `None` for the rates.
+That paid immediately: `mypy` then caught a branch still testing `conflict`
+instead of `rates`, which is the guard doing what the comment could not.
+
+**Ordering, checked rather than assumed.** Criterion 4's SPEC row dates from the
+initial commit `7f69717` (2026-08-01), three days before the LLM proposal layer
+`a380a21` and ten before the V3/V4 ablation `200d218`. A46 is a caller for
+apparatus specified before either system existed, so it does not reopen the
+confound invariant 6 exists to prevent.
+
+### Work left deliberately incomplete
+
+**The conflict branch has never been seen against real data.** The invariant-2
+lens verified A29's arm-symmetry structurally — `runner.py` builds
+`null_seeded_graph(...)` identically for every `task.cell.system` — but argued
+from content-addressing alone that the *threaded* table growing from cell to cell
+cannot perturb the null's Stage A rows. If it could, the union-of-seeds rate
+would still be right but the conflict branch would begin firing on sound
+campaigns. The re-run is the measurement: the criterion-4 line will read
+`not evaluated` if it fires.
+
+### Two things that are not derivable from the diff
+
+**The five stale `DONE` headings were omission, not decision.** A30, A31, A32,
+A35 and A41 landed without their headings being marked, against a convention 14
+other gate-landing commits follow. Nothing anywhere records a reason. The effect
+was **cosmetic, not functional**: `status.py`'s cursor reads `gates.get(...)`
+directly and never trusted the heading, so `/next` was never stalled.
+
+**`tests/test_status.py` asserted the backlog is never finished.** Marking A46
+done emptied the gated backlog, and `assert cursor is not None` expired with it.
+`None` is documented (*"`None` if none is open"`*) and rendered (*"every
+gate-tracked backlog item is satisfied"*), so the assertion had encoded a passing
+state of the project as an invariant. It now holds the property the old line
+reached for and still fails in both directions. Recorded because it is a test
+edited to accommodate the change under review, which is the category that
+deserves to be visible later.
+
+## 2026-08-26 — the matrix is re-run, and criterion 4 fails because no calibrated probe can pass it
+
+**Measured, and expensive to reproduce.** The §9 matrix was re-run from scratch
+on Windows, the one reference platform, into `.cache/campaign/spec9.db` beside
+the 1,120 unreportable `spec8/1` rows it does not replace. The conventional pass
+— V1, B4, B5 on all twelve scenarios and B1 on S9 and S11, 38 cells, 760
+replicates — ran clean, simulating 401,724 rows. B6 followed into its **own**
+ledger, `.cache/campaign/criterion5.db`, 20 replicates, 408,000 rows.
+
+**Stage A probe rates, over twenty seeds, identical across every arm as A29
+requires:**
+
+| S1 | S2 | S3 | S4 | S5 | S6 | S7 | S8 | S9 | S10 | S11 | S12 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 0.000 | 0.050 | 0.000 | 0.100 | 0.050 | 0.050 | 0.000 | 0.000 | 0.000 | 0.000 | **0.850** | 0.000 |
+
+**SPEC §12 criterion 4 FAILS**, on the size clause, at S2, S4, S5 and S6. The
+instrument is not at fault and this is the point of recording it: 5 firings in
+160 quiet draws is a rate of **0.031**, *below* the realised size of at most
+0.045 that A9 measures for this probe. A test of positive size produces false
+positives; the criterion forbids all of them. A correctly calibrated probe clears
+it with probability `(1 - 0.045)^160 = 0.00063` — about one campaign in 1,583.
+The separation the instrument actually delivers, 0.850 against 0.031, is large
+and is what SPEC F6's Stage A gate needs.
+
+Filed as `docs/BACKLOG.md` rank 23 / gate A47, **held on a cold decision** over
+which form the size clause takes. This is criterion 4's third distinct
+mis-specification, and the first to be found with a measurement in front of it
+rather than by reading.
+
+**Why no earlier run saw this.** The 2026-08-16 sweep recorded the probe as quiet
+on the other eleven scenarios; the 2026-08-18 entry records that it *"measured a
+seed set the matrix never runs"*. On the matrix's own seeds the size appears, and
+nothing in the sweep predicted which four scenarios it lands on.
+
+**A defect caught one report before it would have fired.** While the LLM cells
+were still filling, S11 carried per-arm rates of `{0.85, 1.0}` — 0.85 on the
+twenty-replicate arms and 1.0 on V7's single smoke replicate. Gate A46's first
+implementation compared per-arm *rates* and would have refused this exact report
+as an A29 breach, on a campaign holding no breach. `/code-review` found it a few
+hours before the run produced it. The union-by-seed projection returns 0.85 over
+the twenty distinct seeds and renders. **The conflict branch did not fire
+anywhere**, which is the first real-data evidence for A29's arm-symmetry — the
+open question the A46 entry above records as unmeasured.
+
+**Two corrected estimates, both mine, both wrong by an order of magnitude.**
+The A40 entry's "≈2h for the 18 LLM cells" describes a *replay*, where no call
+goes out, and I quoted it against a recording pass. Correcting from the smoke's
+143.8s I then projected 6–14 hours, which was wrong the other way: briefs are
+shared far more heavily than replicate count suggests, and **101 replicates cost
+10 distinct model calls**, most replicates resolving from the corpus in 0.2s. The
+useful figure for planning a recording pass is therefore the count of *distinct
+briefs*, not of replicates, and neither prior estimate was built on it.
+
+**Work left incomplete.** The 18 LLM cells were still running when this was
+written; `docs/CORPUS.md` needs a row and a `sha256sum` line for
+`.cache/transcripts/spec9-v3.json` (`transcript/3`, agent-sdk / claude-opus-5 /
+effort=high) once the file stops moving, and `tests/acceptance/test_a35.py`
+compares digests for whichever corpora are present, so that is a check rather
+than bookkeeping. The pre-A36 corpora were backed up to
+`.cache/transcripts/backup-2026-08-26/` before any of this ran, digests verified
+against `docs/CORPUS.md`; both originals are untouched.
+
+## 2026-08-27 — the campaign is complete, and the preregistered contrast has no conditioning population
+
+**Measured, and expensive to reproduce.** The §9 matrix finished: **1,120 rows at
+`spec8/6`, 56 cells, seven arms, every cell at exactly twenty replicates**, into
+`.cache/campaign/spec9.db` beside the 1,120 unreportable `spec8/1` rows it does
+not replace. 972,284 rows simulated on the LLM pass alone. `criterion5.db` holds
+B6's twenty. The report renders and criterion 4 is evaluated by the production
+path for the first time.
+
+**S11 detection rates, the numbers the primary contrast turns on:**
+
+| arm | Stage A probe (before `investigate`) | whole-record PPC (after) |
+|---|---|---|
+| B1 | 0.850 | **1.000** |
+| B4 | 0.850 | **0.000** |
+| V7 | 0.850 | **0.000** |
+
+`contrast` refuses: *"no replicate of V7 on S11 detected inadequacy, so a
+contrast conditional on inadequacy detection has no answer on this matrix."* The
+implemented conditioning event is the arm's **own** post-`investigate` check, and
+B1 keeps it firing only because it holds no proposal layer and leaves the space
+as it found it. V7 and B4 expand; the inadequacy is explained away before the
+check is read. **Conditioning on a post-treatment quantity selects against the
+arms that succeeded, and more strongly the better they do** — here, to zero.
+Filed as `docs/BACKLOG.md` rank 24 / gate A48, held on a cold decision, with the
+observation that §9's headline claim says "conditional on **conventional**
+detection" while its shorter statement drops the word and the code followed the
+shorter one.
+
+**Both findings are about the apparatus, and neither is a defect in it.**
+Criterion 4 (rank 23) and the contrast (rank 24) are the two things the matrix
+was built to read, and each turned out to be mis-specified in a way only a
+completed run could show. The instruments themselves behave: the probe separates
+0.850 on S11 from 0.031 across the quiet set, `criterion_four` reports the
+failure, `contrast` refuses cleanly and exits 3 rather than printing a number.
+
+**A number that reproduced exactly, and is worth keeping.** The re-recorded
+corpus holds **112 distinct calls — the same count as the orphaned 2026-08-18
+corpus**, nine days and one address-scheme bump apart. A38's changes moved what
+is hashed (tool schema `name`, the structural menu's position, a sample index in
+the address); the count reproducing says they did not move what is *asked*. Byte
+sizes differ (397,133 against 659,740) because the responses do, which is what a
+model rejecting `temperature` gives on any two passes. Digest
+`1b4957ed73c9caf0c042a449c16d51eef7a66df0c035eda49150ee7586c00e82`, recorded in
+`docs/CORPUS.md`; all three corpora verify under the `sha256sum -c` recipe there,
+which also confirms the two pre-bump files were never touched.
+
+**Cost, corrected twice and now grounded.** The driver is **distinct briefs, not
+replicates**. V7's 240 replicates cost ~10 calls and ran at 0.2s each, because
+briefs repeat and repeats resolve from the corpus. V3 and V4's 120 replicates
+cost the remaining ~100 and ran at 84–199s each, because those arms carry memory
+into the brief — raw history and graph respectively — so no two replicates
+present the same one and none can hit the corpus. Any future estimate for a
+recording pass should be built on the brief count of the arms involved; the
+replicate count misleads by an order of magnitude in either direction depending
+on which arms dominate.
+
+**Work left incomplete.** Ranks 23 and 24 are both held on cold decisions and
+neither is code work. Until rank 24 is settled the §9 primary contrast is
+unanswered — not unanswerable, since both candidate conditioning events are
+already recorded in every row and either reading is readable off this campaign
+without re-running anything.

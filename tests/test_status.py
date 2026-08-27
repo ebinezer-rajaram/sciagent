@@ -369,12 +369,64 @@ class TestTheRealBacklogFile:
         assert gates >= set(range(25, 41))
         assert min(gates) == 25
 
-    def test_every_rank_is_distinct_and_the_cursor_resolves(self) -> None:
+    def test_every_rank_is_distinct_and_the_cursor_is_well_formed(self) -> None:
+        """Ranks are unique, and the cursor is either open work or nothing left.
+
+        **This asserted ``cursor is not None`` until 2026-08-26**, when gate A46
+        closed the last gated entry and the assumption expired. ``None`` is not a
+        failure and never was: :func:`status.backlog_cursor` documents it as
+        "``None`` if none is open", and :func:`status.cursor_line` renders it as
+        *"every gate-tracked backlog item is satisfied"*. A test asserting the
+        backlog is never finished would have to fail the moment it was.
+
+        What is worth holding is that a resolved cursor is open and unheld, and
+        that an unresolved one is not a parse failure wearing the same face.
+
+        **The first replacement for the old line could not fail**, and
+        ``/code-review`` said so: it re-derived
+        :func:`status.backlog_cursor`'s own skip condition from the same
+        ``entries`` and ``gates`` it had just passed in, so it was true by
+        construction for any input on which that function returns ``None``.
+
+        The second replacement was worse, and is worth recording because it
+        looked stronger. It asserted that every entry marked ``DONE`` has a gate
+        with tests -- a real property, and one nothing else checks over the real
+        file -- but :func:`_gates` here returns an **empty** map by design, so it
+        failed on all twenty-two closed entries at once. A check is only
+        independent if the fixture can express what it is checking.
+
+        What is actually independent, given an empty gate map, is the **ordering**
+        guarantee: :func:`status.backlog_cursor` documents "lowest rank first",
+        and every open entry satisfies its skip condition equally, so landing on
+        the wrong one is a failure the condition cannot describe.
+        """
         entries = status.parse_backlog_entries(BACKLOG.read_text(encoding="utf-8"))
         assert len({entry.rank for entry in entries}) == len(entries)
-        cursor = status.backlog_cursor(entries, _gates(), execute=False)
+        gates = _gates()
+        cursor = status.backlog_cursor(entries, gates, execute=False)
+
+        # A backlog that parsed to nothing also produces `None`, and that is a
+        # parse failure wearing a finished backlog's face.
+        assert entries, "the real BACKLOG parsed to no gated entries at all"
+
+        buildable = [
+            entry for entry in entries if not entry.closed and entry.held is None
+        ]
+        if not buildable:
+            assert cursor is None
+            return
+
+        # The ordering guarantee, which is the part not already implied by the
+        # skip condition: `backlog_cursor` promises "lowest rank first", so a
+        # cursor landing on any other open entry is wrong even though every
+        # open entry satisfies the same predicate. This is what fails if the
+        # iteration stops trusting `**Rank.**`.
         assert cursor is not None
         assert not cursor.closed and cursor.held is None
+        assert cursor.rank == min(entry.rank for entry in buildable), (
+            f"cursor resolved to rank {cursor.rank} while rank "
+            f"{min(entry.rank for entry in buildable)} is open and unheld"
+        )
 
     def test_every_gate_line_names_a_test_for_its_own_gate(self) -> None:
         """``status.py`` attributes a test by its name, not by the entry it sits in."""

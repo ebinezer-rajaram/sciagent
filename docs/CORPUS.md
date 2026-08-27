@@ -36,8 +36,26 @@ on Windows and on Linux is byte-identical.
 |---|---|---|---|---|
 | `.cache/transcripts/spec9.json` | 112 | 659,740 | `transcript/2` | `claude-agent-sdk` / `claude-opus-5` / `effort=high` |
 | `.cache/transcripts/llm_smoke.json` | 2 | 12,130 | `transcript/2` | `claude-agent-sdk` / `claude-opus-5` / `effort=high` |
+| `.cache/transcripts/spec9-v3.json` | 112 | 397,133 | `transcript/3` | `claude-agent-sdk` / `claude-opus-5` / `effort=high` |
 
-**Both are `transcript/2`, and this process addresses calls as `transcript/3`.
+`spec9-v3.json` is the corpus behind the **re-run** §9 campaign of 2026-08-27 —
+the 18 LLM cells (V7, V3, V4) of a fresh 1,120-row matrix, recorded because the
+scheme bump below left the original unreplayable and nothing else could restore
+it. It is `transcript/3`, so it is the one corpus here that **does** replay under
+this process.
+
+Its call count is **112, identical to `spec9.json`'s**, which is worth recording
+rather than passing over: the two were recorded nine days apart, under a changed
+tool schema, a relocated structural menu and an address carrying a sample index,
+and they still resolve to the same number of distinct briefs. An address covers
+the brief, not the scenario or the seed, so that count is a property of how the
+slice's briefs collide rather than of either recording — and it reproducing
+exactly is evidence the bump changed what is hashed without changing what is
+asked. The byte sizes differ (397,133 against 659,740) because the responses
+differ, which is what a model that rejects `temperature` produces on any two
+passes.
+
+**The first two are `transcript/2`, and this process addresses calls as `transcript/3`.
 Neither replays.** Gate A36 moved the scheme deliberately: the tool schema's
 `name` field no longer names a mechanism, the structural menu moved from the
 brief into the system block so a cache can hold it, and an address now carries a
@@ -98,6 +116,7 @@ the same answer twice would hide that they asked the same question.
 ```
 e2361f03dce79bb5e9d0badd76635b2e2928f790375df82cef63dac78749c49c  .cache/transcripts/spec9.json
 a9053d1ab8c4be611609f794f5fb9b4f55a78ed24bb6f162dccd4e10de12458b  .cache/transcripts/llm_smoke.json
+1b4957ed73c9caf0c042a449c16d51eef7a66df0c035eda49150ee7586c00e82  .cache/transcripts/spec9-v3.json
 ```
 
 ## What these corpora do not contain

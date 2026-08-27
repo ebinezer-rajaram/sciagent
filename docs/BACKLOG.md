@@ -1424,7 +1424,7 @@ system ran, and both flags are recorded and distinguishable in the payload.
 **Rank.** 3
 **Cost.** M. The decision it was held on was taken 2026-08-21.
 
-## The verifier has no production caller
+## DONE (2026-08-23, gate A30) — The verifier has no production caller
 
 **Idea.** Wire claim authorship and adjudication into campaign runs:
 `claims_from_run` (or agent-authored claims when they exist) adjudicated by
@@ -1451,7 +1451,7 @@ silently absent.
 **Rank.** 8
 **Cost.** M–L.
 
-## The ledger payload omits what three §12 criteria read
+## DONE (2026-08-22, gate A31) — The ledger payload omits what three §12 criteria read
 
 **Idea.** Extend `CellReading.as_payload` with the fields §12 reads and the
 run already computes or could: autonomy fraction (criterion 11 / F10), the
@@ -1477,7 +1477,7 @@ masses; render shows the autonomy fraction beside every dimension block.
 **Rank.** 7
 **Cost.** M.
 
-## Append-only is breached by a foreign REPLACE, and A14 has a module-scope blind spot
+## DONE (2026-08-24, gate A32) — Append-only is breached by a foreign REPLACE, and A14 has a module-scope blind spot
 
 **Idea.** Three closures, probe-verified as real: (1) a `BEFORE INSERT`
 trigger aborting when the digest already exists, so a foreign connection's
@@ -1593,7 +1593,7 @@ Worth reconciling the two sentences if this entry is ever read as the contract.
 **Rank.** 11
 **Cost.** M.
 
-## Refusals break replay, and the corpus has no in-repo hash
+## DONE (2026-08-23, gate A35) — Refusals break replay, and the corpus has no in-repo hash
 
 **Idea.** Record model refusals as first-class transcripts so a scored
 replicate containing one replays (`REPLAY` currently raises
@@ -1917,7 +1917,7 @@ pool them, and the replayed campaign reports `store.misses == 0`.
 **Rank.** 12
 **Cost.** M (≈ 20 min conventional + ≈ 2 h replay + report plumbing). API $0.
 
-## The ground truth is on the `Investigation` public surface, twice
+## DONE (2026-08-26, gate A41) — The ground truth is on the `Investigation` public surface, twice
 
 **Idea.** Close two read paths by which a research system can reach the
 scenario's truth, and replace the comments that currently claim it cannot with
@@ -2155,7 +2155,7 @@ input fails it.
 struck
 **Cost.** S for the wording and the check; the semantic decision is the user's.
 
-## Criterion 4's check has no production caller
+## DONE (2026-08-26, gate A46) — Criterion 4's check has no production caller
 
 **Idea.** Wire `sciagent.eval.report.criterion_four` into the report layer, so
 that SPEC §12 criterion 4 is evaluated by the thing that reports the campaign
@@ -2194,3 +2194,195 @@ present.
 **Rank.** 22
 **Cost.** S. The check, its type and its gate all exist; this is the projection
 and the rendering.
+
+---
+
+## Criterion 4's size clause demands a false-positive rate no calibrated probe can deliver
+
+**Idea.** SPEC §12 criterion 4 says the Stage A probe *"does not fire on S1–S7 or
+S9"*, and `sciagent.eval.report.criterion_four` implements "does not fire" as
+**exactly zero** — deliberately, because A45 declined to invent a threshold
+nobody had chosen. The probe is a posterior-predictive check that fires when
+`p < alpha`. A test of positive size produces false positives; a criterion
+forbidding all of them cannot be met by a calibrated one. Give the size clause a
+form that a correctly-behaving probe can satisfy. Three candidates, and choosing
+between them is the decision:
+
+1. a tolerance tied to the probe's own measured size — fire-rate per quiet
+   scenario at or below `alpha`, which is what the instrument promises;
+2. the clause stated over the **pooled** quiet set rather than per scenario, so
+   it reads the instrument's size as one figure over 160 draws instead of eight
+   figures over 20;
+3. drop the size clause and keep the power clause, with size left to A9, which
+   already measures it and is the gate that owns it.
+
+**Rationale.** Measured on the first re-derived matrix, 2026-08-26, Windows, 38
+conventional cells at twenty seeds — the run that made criterion 4 readable for
+the first time. Probe rates, identical across arms as A29 requires:
+
+| scenario | rate | | scenario | rate |
+|---|---|---|---|---|
+| S1, S3, S7, S9 | 0.000 | | S2, S5, S6 | 0.050 |
+| S11 | **0.850** | | S4 | 0.100 |
+
+The power clause passes with room. The size clause fails on four scenarios, at
+one or two firings out of twenty each — **5 firings in 160 quiet draws, a rate of
+0.031**. `sciagent/inference/ppc.py` records A9's measurement of the probe's
+realised size as *"at most 0.045 over 200 correctly-specified scenarios"*. The
+observed rate is therefore **below** the instrument's own nominal size: this is a
+calibrated test behaving better than its specification, and failing the criterion
+anyway.
+
+What that costs the criterion, arithmetically:
+
+```
+P(no false positive on one quiet scenario) = (1 - 0.045)^20  = 0.3982
+P(no false positive on all eight)          = (1 - 0.045)^160 = 0.000632
+                                           ~ one campaign in 1,583
+```
+
+So a correctly calibrated probe passes criterion 4 about **0.06%** of the time.
+A45 struck the previous wording because *"a criterion no input can fail is not a
+criterion"*; this is that argument's mirror, and it is the third distinct way
+criterion 4 has been wrong. SPEC §12 already says it "has now been wrong twice in
+two different ways" — this entry is the third, and the pattern is worth naming:
+each previous wording was written without a measurement in front of it, and this
+one is the first that has one.
+
+**Why this was not visible before.** `docs/DECISIONS.md` (2026-08-16) records the
+probe as firing on S11 and staying quiet on the other eleven. The 2026-08-18
+entry records why that does not contradict the above: *"the seed sweep measured a
+seed set the matrix never runs"*. On the matrix's own seeds the size shows up,
+and no reading of the sweep would have predicted which scenarios it lands on.
+
+**Not a defect in the probe, and not in A46.** The instrument discriminates
+sharply — 0.850 against 0.031 is a large separation, and it is what SPEC F6's
+Stage A gate needs. `criterion_four` reports the failure correctly and
+`criterion_four_of` renders it. Everything here works; the bar is in the wrong
+place.
+
+**Touches.** SPEC §12 criterion 4's size clause, and gate A45, which made it an
+absolute bar and chose exactly-zero on the explicit ground that *"no numeric
+power threshold is imposed, because choosing one is a further decision nobody has
+taken"*. That reasoning was right for the power clause and is what this entry
+asks to revisit for the size clause. It touches no instrument, no payload, no
+address term and no recorded row: every rate it reads is already in every
+`spec8/3`-or-later row, so whichever form is chosen is re-readable off the
+recorded campaign without re-running anything.
+
+**Gate.** `test_a47_the_size_clause_admits_a_calibrated_probe` — a probe firing
+at or below its A9-measured size on the quiet set passes the criterion, and one
+firing materially above it fails; the power clause still fails a probe silent on
+S11, and S8, S10 and S12 still move the verdict in neither direction.
+
+**Rank.** 23
+**Held.** a cold decision on which of the three forms the size clause takes, and
+on whether the tolerance is A9's measured 0.045 or the probe's nominal alpha
+**Cost.** S. The check, its type, its gate and its production caller all exist;
+this changes one comparison and the gate that pins it.
+
+---
+
+## The preregistered contrast conditions on an event the arms it compares extinguish
+
+**Idea.** SPEC §9's primary contrast is *"On S11 Stage B, conditional on
+inadequacy detection, does V7 exceed B4 on D3?"*, and
+`sciagent.eval.report.contrast` implements "inadequacy detection" as the
+replicate's own `inadequate` flag — the whole-record posterior predictive check,
+taken **after** `investigate` returns. Read it instead off a detection that does
+not depend on the arm being scored: the Stage A probe, which `campaign.py` takes
+*before* `investigate` and which is therefore arm-invariant, or B1's detection,
+which is what "conventional detection" most plausibly names.
+
+**Rationale.** Measured on the completed matrix, 2026-08-27, S11 at twenty seeds:
+
+| arm | Stage A probe (pre-`investigate`) | whole-record PPC (post) |
+|---|---|---|
+| B1 — PPC-only, no expansion | 0.850 | **1.000** |
+| B4 — retrieval | 0.850 | **0.000** |
+| V7 — hybrid | 0.850 | **0.000** |
+
+`contrast` therefore refuses, and says so rather than computing anything:
+
+> contrast unavailable: no replicate of V7 on S11 detected inadequacy, so a
+> contrast conditional on inadequacy detection has no answer on this matrix.
+
+**The conditioning event is extinguished by the thing the contrast exists to
+measure.** B1 holds no proposal layer, so it leaves the space as it found it and
+the whole-record check still fires on every replicate. V7 and B4 expand the
+space; by the time `engine.ppc()` is read, the inadequacy it would have detected
+has been explained away. Conditioning a treatment-versus-comparator contrast on a
+post-treatment quantity selects exactly against the arms that succeeded, and it
+does so *more* strongly the better they do. On this matrix it selects both to
+zero.
+
+**What the contrast would actually say under each candidate, stated because this
+entry can check it and a reader deciding it should not have to.** Both candidate
+events are already recorded, so the outcome is computable now rather than after a
+decision — and withholding it while proposing the change would leave whoever
+decides unable to see whether the proposal favours the arm it is about. On S11,
+**V7's and B4's D3 are bit-identical on every one of the twenty seeds**, at
+`0.6969628430490871`; B1's is `0.4784019635420516`, also constant. An
+arm-invariant conditioning event selects the *same seed set for both arms* by
+construction, so under either candidate the V7-versus-B4 paired difference on D3
+is **exactly zero — a tie, not a win for the treatment arm.** No choice of
+arm-invariant event can turn it into a directional advantage for V7. That is the
+disclosure that matters here: this change cannot manufacture the result the
+headline claim is hoping for, and it should not be adopted in the belief that it
+might.
+
+Found by the invariant-6 lens querying the ledger during review of this entry,
+not by the entry's author, who had the same access and reported the detection
+rates without the outcome.
+
+**A verified-cold decision is what this should get, and it has not had one.**
+Gate A45 settled criterion 4's previous wording *"in a session that had not run
+V7 and could not have"* — structurally blind, and recorded as such in
+`docs/OPEN-DECISIONS.md`. Both this entry and rank 23 were written the same day
+their campaign completed, by a session that had just read the numbers, and they
+argue a reading rather than only logging facts. `**Held.**` is what stops that
+mattering, since nothing here is implemented. But the eventual pick should go
+through the same blindness check A45 had rather than being taken straight off
+these two entries.
+
+**The wording supports the other reading, and this is the ambiguity worth
+resolving.** §9's headline claim is *"Conditional on **conventional** detection
+that the current model space is inadequate"* — "conventional" reads as *detected
+by a conventional method*, which is B1 or the Stage A probe, not the treatment
+arm's own post-hoc check. §9's shorter statement of the contrast drops the word,
+and the implementation followed the shorter one. `report.py` already keeps the
+two keys deliberately apart, and its comment on `_PROBE_INADEQUATE` names the
+distinction exactly: the whole-record check *"is arm-dependent even in its
+verdict"*.
+
+Under the arm's-own reading the contrast is **unanswerable in principle** for any
+arm that expands successfully, which is every arm the claim is about. Under the
+conventional-detection reading it conditions on 0.850 of S11 replicates (probe)
+or 1.000 (B1) and is answerable now, off rows already recorded.
+
+**Not a defect in `contrast`.** It refuses cleanly, names the reason, and its
+docstring already states that conditioning is *"a filter on replicates, not a
+caption"* and that relaxing it must be explicit. `--contrast` exits 3 rather than
+printing a number. Everything behaves; the question is which event the filter
+should read.
+
+**Touches.** SPEC §9's primary contrast and its headline claim — the conditioning
+event only, not the treatment, the comparator, the scenario or the dimension, all
+of which are preregistered and stay. B4 remains the comparator by prior
+designation. It touches no instrument, no payload and no address term: both
+candidate events are already in every `spec8/3`-or-later row, so whichever is
+chosen is readable off the recorded campaign without re-running anything.
+
+**Gate.** `test_a48_the_contrast_conditions_on_an_arm_invariant_event` — a
+contrast on a matrix where the treatment expands successfully still has a
+conditioning population; the filter admits replicates the *probe* flagged rather
+than those the arm's own post-hoc check flagged; and a contrast whose
+conditioning population is genuinely empty still refuses rather than reporting
+over everything.
+
+**Rank.** 24
+**Held.** a cold decision on which event "inadequacy detection" names — the Stage
+A probe, B1's detection, or the arm's own whole-record PPC as now — and on
+whether §9's two statements of the claim should be reconciled in wording as well
+as in code
+**Cost.** S. One filter and its gate; no instrument moves and no row is re-run.

@@ -47,7 +47,7 @@ import sys
 import textwrap
 from pathlib import Path
 
-from environments.pointproc.matrix import SPEC9_CONTRAST
+from environments.pointproc.matrix import CRITERION5_CONTRAST, SPEC9_CONTRAST
 from environments.pointproc.scenarios import scenario
 from sciagent.core.errors import MalformedDesignError
 from sciagent.core.types import (
@@ -58,7 +58,14 @@ from sciagent.core.types import (
     ScenarioId,
 )
 from sciagent.eval.matrix import CampaignAddress
-from sciagent.eval.report import Contrast, contrast, render, summarise
+from sciagent.eval.report import (
+    Contrast,
+    CriterionFive,
+    contrast,
+    criterion_five,
+    render,
+    summarise,
+)
 from sciagent.eval.scenarios import ScenarioClass
 from sciagent.experiments.dsl import ExperimentDesign
 from sciagent.registry.ledger import CampaignLedger
@@ -103,6 +110,19 @@ def _parser() -> argparse.ArgumentParser:
             "state for a partial campaign and should not stop the table printing"
         ),
     )
+    parser.add_argument(
+        "--criterion5",
+        type=Path,
+        default=None,
+        metavar="LEDGER",
+        help=(
+            "path to criterion 5's comparator ledger (B6's opt-in cell, "
+            "recorded separately from §9's matrix); prints SPEC §12 "
+            "criterion 5's verdict off the union of the two ledgers. Off by "
+            "default: a campaign that has not run the comparator is a "
+            "legitimate state and should not stop the table printing"
+        ),
+    )
     return parser
 
 
@@ -141,6 +161,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(render(report), end="")
 
+    # The two analyses are independent, so a refusal in one must not skip the
+    # other -- both flags' help text promises a failure "should not stop the
+    # table printing", and the same holds between the blocks. Exit 3 still
+    # means "at least one requested analysis was unavailable"; the stderr line
+    # names which.
+    status = 0
+
     if args.contrast:
         try:
             result = contrast(
@@ -163,9 +190,59 @@ def main(argv: list[str] | None = None) -> int:
             # the table above has already printed. Exit 3 distinguishes it from
             # the missing-ledger 2 and from a real crash.
             print(f"contrast unavailable: {error}", file=sys.stderr)
-            return 3
-        print(_contrast_lines(result))
-    return 0
+            status = 3
+        else:
+            print(_contrast_lines(result))
+
+    if args.criterion5 is not None:
+        if not args.criterion5.exists():
+            print(f"no ledger at {args.criterion5}", file=sys.stderr)
+            return 2
+        with CampaignLedger.open(args.criterion5) as comparator:
+            merged = (*entries, *comparator.entries())
+        # The union, because the treatment's rows live in the campaign's
+        # ledger and the comparator's in its own -- same seeds, same battery,
+        # same address, recorded by separate passes (see CRITERION5_CONTRAST's
+        # declared residual). Restricted to the criterion's own scenario
+        # before summarising: the campaign's other ~1,100 rows were already
+        # summarised for the table above, and re-folding them here would
+        # double the script's dominant cost to add one 20-row cell. The
+        # scenario is read off the key's config, which the registry stores as
+        # plain text exactly so a caller can do this without interpreting it.
+        s11 = str(CRITERION5_CONTRAST.scenario)
+        try:
+            joint = summarise(
+                tuple(row for row in merged if row.key.config.get("scenario") == s11),
+                address=address,
+                scenario_class=scenario_class,
+                battery=battery,
+                platform=args.platform,
+                numpy_version=args.numpy,
+                grammar=GrammarVersion(args.grammar),
+            )
+            reading = contrast(
+                joint,
+                scenario=CRITERION5_CONTRAST.scenario,
+                treatment=CRITERION5_CONTRAST.treatment,
+                comparator=CRITERION5_CONTRAST.comparator,
+                dimension=CRITERION5_CONTRAST.dimension,
+                # Read off the declaration, for the reason the --contrast
+                # block records: a declaration-vs-arguments mismatch must
+                # surface as `preregistered False`, never as a silently
+                # different question.
+                conditional_on_inadequacy=CRITERION5_CONTRAST.conditional_on_inadequacy,
+                preregistration=CRITERION5_CONTRAST,
+            )
+            verdict = criterion_five(reading)
+        except MalformedDesignError as error:
+            # Same shape as the contrast block above: the table has printed,
+            # and a comparator ledger whose cell is absent or unusable is a
+            # finding, not a crash.
+            print(f"criterion 5 unavailable: {error}", file=sys.stderr)
+            status = 3
+        else:
+            print(_criterion_five_lines(reading, verdict))
+    return status
 
 
 def _contrast_lines(result: Contrast) -> str:
@@ -188,8 +265,9 @@ def _contrast_lines(result: Contrast) -> str:
             "",
             *_residual_lines(result),
             "  Exploratory. Overlap and direction are two readings, not one",
-            "  verdict; SPEC sec. 12 criterion 5 asks for non-overlap and does",
-            "  not make non-overlap sufficient.",
+            "  verdict, and neither is sufficient alone. SPEC sec. 12",
+            "  criterion 5 reads its own comparison -- V7 against B6 on the",
+            "  entertained distance, --criterion5 -- not this one.",
             "",
             "  If 'same seeds' is False, conditioning left the arms on different",
             "  worlds and part of the difference between them is that, which",
@@ -200,6 +278,52 @@ def _contrast_lines(result: Contrast) -> str:
             "  intervals above. It is the reading the paired design was for, and",
             "  the two can disagree: arm intervals that overlap are compatible",
             "  with a within-seed difference that excludes zero.",
+        ]
+    )
+
+
+def _criterion_five_lines(result: Contrast, verdict: CriterionFive) -> str:
+    """Return the criterion 5 block, read off the verdict rather than recomputed.
+
+    The direction row says "closer" where the §9 block says "exceeds", because
+    the entertained distance runs the other way: lower is closer, and
+    :func:`~sciagent.eval.report.criterion_five` owns that reading. The two arm
+    rows keep the §9 block's ``point [low, high] n=`` shape so a reader weighs
+    them the same way.
+    """
+    # Both clauses, not the first that fails -- the rule report.py's
+    # _criterion_four_line states for the same conjunction shape: reporting
+    # one clause loses the other from the one surface a human reads, and a
+    # reader would conclude fixing direction alone would pass.
+    if verdict.holds:
+        outcome = "holds -- strictly closer, intervals disjoint"
+    else:
+        clauses = []
+        if not verdict.closer:
+            clauses.append("treatment is not strictly closer")
+        if verdict.overlaps:
+            clauses.append("intervals overlap")
+        outcome = f"FAILS -- {'; '.join(clauses)}"
+    return "\n".join(
+        [
+            f"SPEC sec. 12 criterion 5 on {result.scenario} -- {result.dimension}",
+            f"  {'preregistered':<22s}{result.preregistered}",
+            f"  {result.treatment_system:<22s}{result.treatment.point:>10.4f}  "
+            f"[{result.treatment.low:>10.4f}, {result.treatment.high:>10.4f}]  "
+            f"n={result.treatment.n_finite}",
+            f"  {result.comparator_system:<22s}{result.comparator.point:>10.4f}  "
+            f"[{result.comparator.low:>10.4f}, {result.comparator.high:>10.4f}]  "
+            f"n={result.comparator.n_finite}",
+            f"  {'treatment closer':<22s}{verdict.closer}",
+            f"  {'intervals overlap':<22s}{verdict.overlaps}",
+            f"  {'verdict':<22s}{outcome}",
+            "",
+            *_residual_lines(result),
+            "  Lower is closer: the entertained distance is a min over what the",
+            "  arm entertained, so a proposal moves it the moment it is",
+            "  entertained rather than only by winning the posterior. A tie at",
+            "  the library's own distance means no proposal from either arm",
+            "  landed closer to the truth than the best library member.",
         ]
     )
 

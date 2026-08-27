@@ -20,44 +20,44 @@ the confound C1 diagnosed. It also removed the variance the criterion was
 reading: ``replicate_seeds`` pairs every arm on one seed sequence, so V7's rate
 and B1's are bit-identical on every scenario and **neither clause can fail**.
 
-The instrument is not the problem. The probe fires on S11 and stays quiet on the
-other eleven, measured 2026-08-16, and that discrimination is real. What was
-missing is a *threshold*, and the reason there was not one is that C1 inherited
-the comparative form from the wording it replaced, where the comparison was the
-whole point.
-
 The decision this gate encodes
 ------------------------------
 
 Taken cold on 2026-08-26 and recorded in ``docs/DECISIONS.md``: criterion 4 is
 **moved from §12's Capability block to its Infrastructure block** and reworded as
-an absolute bar, rather than struck.
-
-The move is the substance, not presentation. §12's Capability heading reads
-*"(V7 versus baselines, 20 seeds, S1-S12)"*, and after A29 criterion 4 cannot be
-a V7-versus-baseline comparison of anything -- so it does not belong under that
-heading by the heading's own terms. That mismatch is what made the criterion
-*read* as a claim about an agent when it is a claim about an instrument. Striking
-it would have fixed the misreading by deleting a check that genuinely
-discriminates; moving it fixes the misreading and keeps the check, beside §12's
-other apparatus bars -- "A1-A24 passing", "zero imports", "100% reproducibility"
--- which are also all currently satisfied and are kept as regression bars anyway.
-
-Criterion 4 keeps its number. Infrastructure becomes 1-4 and Capability becomes
-5-9, so no other criterion is renumbered and the many ``criterion 8`` /
-``criterion 10`` / ``criterion 11`` references through the code stay valid.
+an absolute bar, rather than struck. The move is the substance: §12's Capability
+heading reads *"(V7 versus baselines, 20 seeds, S1-S12)"*, and after A29
+criterion 4 cannot be a V7-versus-baseline comparison of anything. Criterion 4
+keeps its number, so nothing else renumbers.
 
 **What this cannot buy, because the obvious expectation is wrong.** It does not
 restore V7-versus-B1 grading, and no threshold could: the probe is computed
-before ``investigate``, so its value is identical for every arm by construction,
-and an absolute bar is therefore the same pass or fail for B1, V1 and V7 forever.
-Criterion 4 grades the apparatus under this wording, and a capability criterion
-on S11 detection would have to be built on some other instrument.
+before ``investigate``, so its value is identical for every arm by construction.
+Criterion 4 grades the apparatus, and a capability criterion on S11 detection
+would have to be built on some other instrument.
+
+Revised at gate A47 (2026-08-27)
+--------------------------------
+
+A45's bar implemented "does not fire" as exactly zero -- deliberately, because
+choosing a threshold was a decision nobody had taken. The completed campaign
+then took the measurement: a correctly calibrated probe cleared exactly-zero
+about once in 1,583 campaigns, and the recorded campaign failed it at a pooled
+rate *below* the instrument's A9-measured size. The decision A47 encodes moved
+the size clause to the **pooled** quiet set against ``SIZE_TOLERANCE`` (0.045),
+and the input became per-scenario **counts**, because pooled rates cannot be
+recovered from per-scenario rates once draw counts differ.
+
+This file holds A45's own claim under the new form: the criterion is a bar that
+some input fails and some input passes, evaluated over all nine named scenarios
+or not at all. The per-scenario exactly-zero pins this file used to carry were
+that wording's, not this claim's, and ``test_a47.py`` now owns the boundary --
+at, below and above the tolerance, and the draws-weighted pooling.
 
 Which scenarios the criterion names, and which it does not
 ----------------------------------------------------------
 
-Fires on S11; quiet on S1-S7 and S9. **S8, S10 and S12 are deliberately
+Fires on S11; pooled size over S1-S7 and S9. **S8, S10 and S12 are deliberately
 unconstrained**, and that is not an oversight to be tidied up by a stricter
 implementation. Per SPEC §4.5, S8 is compound (two edits, so a single-edit space
 can be genuinely strained), S10 is non-identifiable by construction with a budget
@@ -72,28 +72,13 @@ acceptance case is here beside the rejection cases and neither stands alone.
 
 from __future__ import annotations
 
-import math
+from typing import cast
 
 import pytest
 
 from sciagent.core.errors import MalformedDesignError
 from sciagent.core.types import ScenarioId
-from sciagent.eval.report import CriterionFour, criterion_four
-
-
-def _rates(**overrides: float) -> dict[ScenarioId, float]:
-    """Return a probe-rate vector over S1-S12, perturbed by ``overrides``.
-
-    The unperturbed vector is the discriminating instrument the slice measured:
-    quiet everywhere, firing on S11. Each case below changes one entry, so what a
-    test pins is the effect of that entry and not of a whole hand-built vector.
-    """
-    rates = {ScenarioId(f"S{index}"): 0.0 for index in range(1, 13)}
-    rates[ScenarioId("S11")] = 1.0
-    for name, value in overrides.items():
-        rates[ScenarioId(name)] = value
-    return rates
-
+from sciagent.eval.report import CriterionFour, ProbeCount, criterion_four
 
 #: The eight scenarios the criterion requires the probe to stay quiet on, spelled
 #: out rather than derived. ``range(1, 8)`` plus S9 is the natural way to write
@@ -112,16 +97,36 @@ _QUIET = (
     ScenarioId("S9"),
 )
 
+#: SPEC §9's replicate count: twenty draws a scenario, so the quiet set is 160.
+_DRAWS = 20
+
+
+def _counts(**overrides: tuple[int, int]) -> dict[ScenarioId, ProbeCount]:
+    """Return a probe-count vector over S1-S12, perturbed by ``overrides``.
+
+    The unperturbed vector is the discriminating instrument the slice measured:
+    quiet everywhere, firing on S11. Each case below changes one entry, so what a
+    test pins is the effect of that entry and not of a whole hand-built vector.
+    """
+    counts = {
+        ScenarioId(f"S{index}"): ProbeCount(fired=0, draws=_DRAWS)
+        for index in range(1, 13)
+    }
+    counts[ScenarioId("S11")] = ProbeCount(fired=_DRAWS, draws=_DRAWS)
+    for name, (fired, draws) in overrides.items():
+        counts[ScenarioId(name)] = ProbeCount(fired=fired, draws=draws)
+    return counts
+
 
 class TestA45CriterionFour:
-    """§12 criterion 4 is a bar, and some probe rate vector fails it."""
+    """§12 criterion 4 is a bar, and some probe count vector fails it."""
 
     def test_a45_criterion_four_is_falsifiable(self) -> None:
         """The gate: a probe blind to S11 is rejected.
 
         The criterion's power clause, and half of what the gate asks for. The
-        other half -- that a probe firing on an adequate space is also rejected
-        -- is the sibling test below rather than a second block here, because a
+        other half -- that a probe firing beyond its size is also rejected --
+        is the sibling test below rather than a second block here, because a
         failure in this block would short-circuit it and leave assertions that
         were never watched failing.
 
@@ -130,12 +135,12 @@ class TestA45CriterionFour:
         reason is not usable even when its boolean is right. This vector fires
         nowhere, so nothing about it is a false positive.
         """
-        blind = criterion_four(_rates(S11=0.0))
+        blind = criterion_four(_counts(S11=(0, _DRAWS)))
         assert not blind.holds
         assert not blind.fired_on_s11
         assert blind.false_positives == ()
 
-    def test_a45_a_probe_firing_on_an_adequate_space_is_rejected(self) -> None:
+    def test_a45_a_probe_firing_beyond_its_size_is_rejected(self) -> None:
         """The size clause, on **every** scenario the criterion names.
 
         One representative scenario is not enough, and the reason is specific
@@ -145,29 +150,35 @@ class TestA45CriterionFour:
         probe firing on every S9 replicate while passing a test that only ever
         perturbs S3. Looping over all eight is what closes that.
 
-        The absence of this term is what ``docs/OPEN-DECISIONS.md`` §1 calls the
-        original wording's clearest defect: it stated a power with no size, so an
-        arm firing on all twelve scenarios would have passed.
+        Eight firings in twenty put the pooled rate at 8/160 = 0.05, above the
+        tolerance whichever scenario carries them. The absence of any size term
+        is what ``docs/OPEN-DECISIONS.md`` §1 called the original wording's
+        clearest defect: it stated a power with no size, so an arm firing on
+        all twelve scenarios would have passed.
         """
         for scenario in _QUIET:
-            verdict = criterion_four(_rates(**{scenario: 0.05}))
-            assert not verdict.holds, f"a probe firing on {scenario} is not quiet"
+            verdict = criterion_four(_counts(**{scenario: (8, _DRAWS)}))
+            assert not verdict.holds, f"a probe at 0.05 pooled via {scenario} passed"
             assert verdict.fired_on_s11
             assert verdict.false_positives == (scenario,)
 
-    def test_a45_any_firing_at_all_is_a_false_positive(self) -> None:
-        """The quiet clause is "does not fire", not "fires seldom".
+    def test_a45_a_firing_within_the_measured_size_is_reported_not_failed(
+        self,
+    ) -> None:
+        """One firing in 160 draws holds, and is still named a false positive.
 
-        0.05 is the smallest non-zero rate twenty replicates can produce, so the
-        sibling test above already rejects every threshold at or above one
-        replicate in twenty. This pins the boundary itself: the criterion's words
-        are *does not fire*, so any positive rate is a false positive, and a
-        threshold chosen anywhere in between would be a numeric decision nobody
-        has taken.
+        The boundary this file used to pin -- *any* positive rate fails -- was
+        A45's exactly-zero wording, revised at gate A47 after the measurement
+        showed a calibrated probe failing it in all but one campaign in 1,583.
+        What survives the revision is the reporting claim: a firing on an
+        adequate space is a false positive whether or not the pooled rate
+        tolerates it, and a verdict that stopped listing them would hide the
+        one figure a reader needs beside a passing rate.
         """
-        verdict = criterion_four(_rates(S6=0.005))
-        assert not verdict.holds
+        verdict = criterion_four(_counts(S6=(1, _DRAWS)))
+        assert verdict.holds
         assert verdict.false_positives == (ScenarioId("S6"),)
+        assert verdict.quiet_fired == 1
 
     def test_a45_the_criterion_accepts_a_discriminating_instrument(self) -> None:
         """The instrument the slice measured passes, so the bar is satisfiable.
@@ -177,13 +188,13 @@ class TestA45CriterionFour:
         fails it *and* something passes it.
 
         The firing clause is ``> 0`` rather than a rate threshold, which is the
-        entry's own wording -- "fires on S11; does not fire on S1-S7 or S9" --
-        and deliberately not strengthened here. Choosing a numeric power
-        threshold is a further decision nobody has taken, and inventing one in a
-        test would be taking it.
+        entry's own wording -- "fires on S11" -- and deliberately not
+        strengthened here. Choosing a numeric power threshold is a further
+        decision nobody has taken, and inventing one in a test would be taking
+        it.
         """
-        assert criterion_four(_rates()).holds
-        assert criterion_four(_rates(S11=0.05)).holds
+        assert criterion_four(_counts()).holds
+        assert criterion_four(_counts(S11=(1, _DRAWS))).holds
 
     def test_a45_the_unconstrained_scenarios_do_not_move_the_verdict(self) -> None:
         """S8, S10 and S12 say nothing about the criterion, in either direction.
@@ -195,7 +206,7 @@ class TestA45CriterionFour:
         instrument that is behaving correctly.
         """
         for scenario in ("S8", "S10", "S12"):
-            verdict = criterion_four(_rates(**{scenario: 1.0}))
+            verdict = criterion_four(_counts(**{scenario: (_DRAWS, _DRAWS)}))
             assert verdict.holds, f"{scenario} is not part of the criterion"
             assert verdict.false_positives == ()
 
@@ -203,11 +214,11 @@ class TestA45CriterionFour:
         """A missing scenario raises rather than defaulting to a verdict.
 
         Both defaults are wrong in the way this gate exists to prevent. Treating
-        an absent scenario as ``0.0`` fails an instrument nobody measured;
-        treating it as "not applicable" passes the criterion by having nothing
-        left to check, which is unfailability arriving by a second door. The
-        message names the scenario, so a caller handed a partial report can tell
-        which one.
+        an absent scenario as zero draws shrinks the pooled denominator against
+        an instrument nobody measured; treating it as "not applicable" passes
+        the criterion by having nothing left to check, which is unfailability
+        arriving by a second door. The message names the scenario, so a caller
+        handed a partial report can tell which one.
 
         Every scenario the criterion names is deleted in turn, not a
         representative one. A criterion deriving its quiet set from whichever
@@ -220,44 +231,52 @@ class TestA45CriterionFour:
         always blamed S11 would pass the S1 iteration.
         """
         for scenario in (*_QUIET, ScenarioId("S11")):
-            partial = _rates()
+            partial = _counts()
             del partial[scenario]
             with pytest.raises(MalformedDesignError, match=rf"missing {scenario}\."):
                 criterion_four(partial)
 
     def test_a45_a_verdict_cannot_contradict_itself(self) -> None:
-        """``holds`` may not disagree with the two facts it is a conjunction of.
+        """``holds`` may not disagree with the facts it is a conjunction of.
 
         The house discipline for this shape is written down and cited to the
         second invariant: :class:`~sciagent.eval.campaign.Adjudication` guards
         its four bare ints in ``__post_init__`` because "a frozen dataclass of
         four bare ints is exactly where a comment would otherwise have been the
-        whole of it". This type is two booleans and a tuple in the same position
-        and takes the same guard, so the relation between the fields is enforced
-        rather than merely described by the field docstrings.
+        whole of it". This type takes the same guard, so the relation between
+        the fields is enforced rather than merely described by the field
+        docstrings.
         """
         with pytest.raises(MalformedDesignError, match="holds"):
             CriterionFour(
-                holds=True, fired_on_s11=False, false_positives=(ScenarioId("S1"),)
+                holds=True,
+                fired_on_s11=False,
+                false_positives=(ScenarioId("S1"),),
+                quiet_fired=1,
+                quiet_draws=160,
             )
         with pytest.raises(MalformedDesignError, match="holds"):
-            CriterionFour(holds=False, fired_on_s11=True, false_positives=())
+            CriterionFour(
+                holds=False,
+                fired_on_s11=True,
+                false_positives=(),
+                quiet_fired=0,
+                quiet_draws=160,
+            )
 
-    def test_a45_a_rate_that_is_not_a_rate_is_refused(self) -> None:
-        """A non-finite or out-of-range rate raises rather than reading as quiet.
+    def test_a45_a_count_that_is_not_a_count_is_refused(self) -> None:
+        """A fractional count raises rather than pooling as a rate.
 
-        The third door into the same defect the missing-scenario guard closes.
-        ``nan > 0.0`` is ``False``, so a NaN on a quiet scenario would read as
-        "did not fire" and pass the criterion on a scenario nobody successfully
-        measured -- which is the partial vector again, wearing a float.
+        The successor of this file's rate-range guard, kept because the same
+        defect survives the counts migration by one route ``mypy`` cannot
+        close at runtime: a caller mechanically converting A45-era rates ends
+        up with ``fired=0.5``, which passes the ``[0, draws]`` range check and
+        would poison the pooled sum silently. Integrality is asserted by the
+        value type itself, so no path carries a rate to the comparison.
 
-        Unreachable through today's only producer: ``_flags`` refuses any value
-        but ``0.0`` or ``1.0`` and ``mean`` raises on an empty array rather than
-        returning ``nan``. Guarded anyway because :func:`criterion_four` takes a
-        bare mapping from any caller, and it has no production caller yet -- the
-        site that will build this mapping does not exist, so the boundary cannot
-        be argued from the one that does.
+        ``cast`` rather than a plain literal, because the guard under test is
+        the *runtime* one: ``mypy`` already rejects the literal, and this test
+        is about the caller ``mypy`` never saw.
         """
-        for bad in (math.nan, -0.1, 1.5):
-            with pytest.raises(MalformedDesignError, match="S6"):
-                criterion_four(_rates(S6=bad))
+        with pytest.raises(MalformedDesignError, match="integer"):
+            ProbeCount(fired=cast(int, 0.5), draws=_DRAWS)

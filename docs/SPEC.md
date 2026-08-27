@@ -414,13 +414,13 @@ Twenty seeds per cell. Roughly 1,100 investigations. Days of compute on the toy 
 
 **Preregistered primary contrast (slice-level, exploratory):**
 
-> On S11 Stage B, conditional on inadequacy detection, does V7 exceed **B4** on D3 (intervention-response similarity)?
+> On S11 Stage B, conditional on the Stage A probe detecting inadequacy, does V7 exceed **B4** on D3 (intervention-response similarity)?
 
-B4 is designated in advance as the comparator because it is the baseline most likely to deflate the claim. Slice results are exploratory by construction and inform the frozen campaign; they are not reportable as confirmatory findings.
+B4 is designated in advance as the comparator because it is the baseline most likely to deflate the claim. The conditioning event is the **Stage A probe** (`CellReading.probe_inadequate`) — harness-evaluated before `investigate` and arm-invariant by gate A29, so it cannot select against the arms that succeed. Named explicitly in both statements of the claim since 2026-08-27 (gate A48, `docs/DECISIONS.md`): the earlier wording said only "inadequacy detection", the implementation followed it onto the arm's own post-run check, and the completed campaign showed that event extinguished by successful expansion — an arm that explains the inadequacy away records no detection to condition on. Slice results are exploratory by construction and inform the frozen campaign; they are not reportable as confirmatory findings.
 
 **Headline claim, preserved narrow:**
 
-> Conditional on conventional detection that the current model space is inadequate, does an LLM-guided hypothesis-expansion system propose useful executable explanatory structure more effectively than retrieval, symbolic search and fixed-expansion baselines?
+> Conditional on conventional detection — the Stage A probe — that the current model space is inadequate, does an LLM-guided hypothesis-expansion system propose useful executable explanatory structure more effectively than retrieval, symbolic search and fixed-expansion baselines?
 
 It does not depend on every agency metric, every scenario class, every provider, or market transfer. Those are secondary.
 
@@ -515,13 +515,15 @@ All must hold.
 1. A1–A24 passing
 2. `sciagent` has zero imports from `environments`
 3. 100% reproducibility across 100 reruns
-4. The named Stage A probe discriminates: it fires on S11, and does not fire on S1–S7 or S9. `sciagent.eval.report.criterion_four` is the check, and gate A45 is the demonstration that some probe rate vector fails it. **Nothing calls it yet** — the report layer computes the per-cell rates it reads but does not assemble them into a verdict, so today this criterion is evaluated by hand. Wiring it is `docs/BACKLOG.md`'s *"Criterion 4's check has no production caller"*.
+4. The named Stage A probe discriminates: it fires on S11, and its pooled fire rate over S1–S7 and S9 is at or below its A9-measured size of 0.045. `sciagent.eval.report.criterion_four` is the check and `criterion_four_of` is its production caller — gate A46 wired it into `render`, so the verdict is a line of every complete report. Gate A45 demonstrates that some probe vector fails it; gate A47, that a correctly calibrated probe can pass it.
 
-   **This criterion moved here from Capability on 2026-08-26**, taken cold and recorded in `docs/DECISIONS.md`, and its number was kept so that no other criterion renumbers. It grades the **instrument**, not any arm, and it belongs beside the other three for that reason. The history is worth keeping, because the criterion has now been wrong twice in two different ways.
+   **This criterion moved here from Capability on 2026-08-26**, taken cold and recorded in `docs/DECISIONS.md`, and its number was kept so that no other criterion renumbers. It grades the **instrument**, not any arm, and it belongs beside the other three for that reason. The history is worth keeping, because the criterion has now been wrong three times in three different ways.
 
    The original wording — *"Detects inadequacy on S11 at a rate at least matching B1"* — named no check, and two answered to the name: the whole-record posterior predictive check, and the Stage A probe SPEC F6's gate is conditional upon. It also stated a power with no size, so an arm firing on all twelve would have passed it. That was re-specified 2026-08-21 as **C1** of `docs/OPEN-DECISIONS.md` §1.
 
    C1 kept the comparative form, and gate A29 then made the comparison vacuous. **The probe is evaluated by the harness for every arm, whether or not the arm consults it**, and it is taken before `investigate` is called, so its verdict is a function of the scenario and the seed alone. `replicate_seeds` pairs every arm on one seed sequence, so V7's rate and B1's are bit-identical on every scenario and neither of C1's clauses could fail in either direction. A criterion no input can fail is not a criterion.
+
+   The absolute rewording that replaced C1 read "does not fire" as exactly zero, and the completed campaign showed the mirror defect: the probe is a posterior predictive check firing at `p < alpha`, a test of positive size produces false positives, and a criterion forbidding all of them is cleared by a correctly calibrated probe about once in 1,583 campaigns — `(1 − 0.045)^160`. The recorded campaign failed it at 5 firings in 160 quiet draws, a pooled rate of 0.031, *below* the instrument's measured size. Re-specified 2026-08-27 (gate A47, `docs/DECISIONS.md`): the size clause is stated over the **pooled** quiet set against A9's measured 0.045 — not per scenario, where twenty seeds make every rate a multiple of 0.05 and any smaller tolerance is exactly-zero again — and `criterion_four` takes counts, because rates cannot be pooled once draw counts differ.
 
    Three things follow, stated here rather than left for a reader to discover:
 
@@ -532,7 +534,7 @@ All must hold.
    `CellReading.probe_inadequate` is the flag; `CellReading.inadequate` remains the whole-record check and is arm-dependent even in its verdict.
 
 **Capability** (V7 versus baselines, 20 seeds, S1–S12)
-5. Proposes an S11 extension exceeding B6-equivalent random structured generation on D3, with a non-overlapping 95% interval
+5. Proposes an S11 extension landing strictly closer to the truth than B6-equivalent random structured generation's, read on the entertained distance (`ScenarioRun.structural_distance` — a min over everything the arm entertained; lower is closer), with a non-overlapping 95% interval. `sciagent.eval.report.criterion_five` is the check and `scripts/report_matrix.py --criterion5` its caller. *Re-instrumented 2026-08-27 (gate A49, `docs/DECISIONS.md`): the original reading — "exceeding … on D3" — was computed over the posterior leader, which a proposal moves only by winning the posterior, so whenever no extension led the comparison tied by construction and its failure meant nothing. The treatment, the comparator, the scenario and the non-overlap rule are unchanged. Disclosed with the decision: on the recorded campaign every arm ties at 1.0 on this quantity too, so the re-instrumentation cannot turn that campaign into a pass.*
 6. Achieves a discriminating three-stage plan on at least two of S5–S7
 7. Recovers the correct diagnosis on S12 after the garden-path signal
 8. Zero graph contradictions and zero zombie hypotheses across all runs

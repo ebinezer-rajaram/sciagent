@@ -187,13 +187,19 @@ COMPARATOR: tuple[float, ...] = (0.45, 0.55, 0.55, 0.65, 0.50)
 
 
 def reading(
-    *, d3: float = 0.5, d2: float = -2.0, inadequate: bool = True
+    *,
+    d3: float = 0.5,
+    d2: float = -2.0,
+    inadequate: bool = True,
+    probe_inadequate: bool = True,
 ) -> CellReading:
     """Return a ``CellReading`` varying only what this module varies.
 
     ``CellReading`` is constructible only through the whole vector -- the
     invariant made structural in ``eval/matrix.py`` -- so everything else is
-    fixed, recognisable filler.
+    fixed, recognisable filler. ``probe_inadequate`` is the flag conditioning
+    reads since gate A48; it defaults to firing so every fixture that does not
+    vary it keeps its full conditioning population.
     """
     return CellReading(
         dimensions=DimensionVector(
@@ -216,7 +222,7 @@ def reading(
         ppc_p_value=0.2,
         inadequate=inadequate,
         probe_p_value=0.03,
-        probe_inadequate=True,
+        probe_inadequate=probe_inadequate,
         agency=AgencyMetrics(
             system="V7",
             scenario=ScenarioId("S11"),
@@ -455,22 +461,27 @@ class TestA37PairedContrastsReportThePairedDifference:
     def test_a37_refuses_the_paired_reading_when_conditioning_crossed_the_arms(
         self,
     ) -> None:
-        # The case a real campaign can reach, and the reason ``Contrast.paired``
-        # exists: seeds are paired by construction, and conditioning on each arm's
-        # own inadequacy flag pulls them apart. V7 detects on seeds 0,1,2 and B4
-        # on 1,2,3, so both arms keep three replicates and nothing in the counts
-        # betrays it -- only the seeds do.
+        # Until gate A48 this was a case a real campaign could reach:
+        # conditioning read each arm's own whole-record flag, which could pull
+        # the paired seeds apart. The filter now reads the Stage A probe,
+        # arm-invariant by A29, so on any real ledger the sets agree by
+        # construction -- and what this pins is that a hand-built report whose
+        # probe flags *do* differ by arm (the A29-breach shape, refused on the
+        # criterion-4 path by `_probe_counts`) is reported rather than
+        # silently repaired: the probe flags V7 on seeds 0,1,2 and B4 on
+        # 1,2,3, so both arms keep three replicates and nothing in the counts
+        # betrays it -- only the seeds do, and the paired reading is refused.
         result = contrast_of(
             report_of(
                 arm(
                     "V7",
-                    [reading(d3=0.9, inadequate=True)] * 3
-                    + [reading(d3=0.9, inadequate=False)],
+                    [reading(d3=0.9, probe_inadequate=True)] * 3
+                    + [reading(d3=0.9, probe_inadequate=False)],
                 ),
                 arm(
                     "B4",
-                    [reading(d3=0.1, inadequate=False)]
-                    + [reading(d3=0.1, inadequate=True)] * 3,
+                    [reading(d3=0.1, probe_inadequate=False)]
+                    + [reading(d3=0.1, probe_inadequate=True)] * 3,
                 ),
             )
         )

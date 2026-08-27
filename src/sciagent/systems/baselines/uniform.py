@@ -1,9 +1,13 @@
 """B6: uniform structured generation, the comparator SPEC §12 criterion 5 names.
 
-Criterion 5 asks whether V7 proposes an S11 extension exceeding "B6-equivalent
-random structured generation" on D3. It had no comparator: SPEC §5 defers B6 to
-the full benchmark, and ``docs/DECISIONS.md`` (2026-08-04) records the criterion
-as unmeasured because *"no B6 exists"*. This is that arm's proposal source.
+Criterion 5 asks whether V7 proposes an S11 extension landing strictly closer
+to the truth than "B6-equivalent random structured generation"'s, read on the
+entertained distance since gate A49 (2026-08-27) -- it read D3-over-the-leader
+until the completed campaign showed that figure ties by construction whenever
+no extension wins the posterior. It had no comparator either way: SPEC §5
+defers B6 to the full benchmark, and ``docs/DECISIONS.md`` (2026-08-04) records
+the criterion as unmeasured because *"no B6 exists"*. This is that arm's
+proposal source.
 
 The whole design is one sentence
 --------------------------------

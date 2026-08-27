@@ -115,13 +115,17 @@ from sciagent.verify.numerical import CONFIDENCE_LEVEL, Z_TWO_SIDED
 
 __all__ = [
     "DIMENSIONS",
+    "SIZE_TOLERANCE",
     "CellSummary",
     "Contrast",
+    "CriterionFive",
     "CriterionFour",
     "DimensionSummary",
     "MatrixReport",
     "Preregistration",
+    "ProbeCount",
     "contrast",
+    "criterion_five",
     "criterion_four",
     "criterion_four_of",
     "render",
@@ -143,16 +147,35 @@ DIMENSIONS: Final[tuple[str, ...]] = (
     "d6_complexity",
 )
 
-#: Payload key §9's primary contrast conditions on. Named here because
-#: :func:`contrast` filters replicates by it, and a typo would silently produce
-#: an unconditioned contrast reported as a conditioned one.
+#: Payload key holding the arm's own whole-record posterior predictive check,
+#: taken *after* ``investigate`` returns -- arm-dependent even in its verdict.
+#: Rendered per cell; since gate A48 it conditions nothing. §9's contrast
+#: conditioned on it until 2026-08-27, and the completed campaign showed why it
+#: cannot: an arm that expands successfully explains the inadequacy away before
+#: this check is read, so the conditioning event was extinguished by exactly
+#: the arms the contrast exists to measure -- on the recorded matrix, to zero.
 _INADEQUATE: Final = "inadequate"
 
-#: Payload key holding the harness-evaluated Stage A probe, which SPEC §12
-#: criterion 4 is read off. Named beside :data:`_INADEQUATE` and never
-#: confused with it: that one is the whole-record check, is arm-dependent even
-#: in its verdict, and is what :func:`contrast` conditions on.
+#: Payload key holding the harness-evaluated Stage A probe -- taken *before*
+#: ``investigate`` and arm-invariant by gate A29. SPEC §12 criterion 4 is read
+#: off it, and since gate A48 it is the event §9's primary contrast conditions
+#: on. Named beside :data:`_INADEQUATE` and never confused with it, because a
+#: typo either way would silently answer the other question under this one's
+#: name.
 _PROBE_INADEQUATE: Final = "probe_inadequate"
+
+#: Payload key holding the distance from the truth to the nearest *entertained*
+#: structure -- ``ScenarioRun.structural_distance``, a ``min`` over everything
+#: the arm entertained, with no clamp. Distinct from ``d1_structural_distance``,
+#: which reads the posterior **leader** alone: a proposed extension moves this
+#: figure the moment it is entertained, and moves D1 only by winning the
+#: posterior. SPEC §12 criterion 5 reads this one, since gate A49 -- the
+#: recorded campaign showed the leader's figure ties by construction whenever
+#: no extension leads, which is a failure that means nothing. **Lower is
+#: closer**: the direction runs the other way from every dimension in
+#: :data:`DIMENSIONS`, which is why :func:`criterion_five` states it explicitly
+#: rather than borrowing :attr:`Contrast.exceeds`.
+_ENTERTAINED_DISTANCE: Final = "structural_distance"
 
 #: What :func:`render` says about every figure it prints. SPEC §9: slice results
 #: "are exploratory by construction ... they are not reportable as confirmatory
@@ -281,8 +304,14 @@ class CellSummary:
     """Fraction of replicates whose posterior predictive check judged the
     entertained space inadequate.
 
-    SPEC §9's primary contrast is *conditional on inadequacy detection*, so this
-    is the conditioning variable rather than one result among several.
+    A per-cell result, and no longer anything's conditioning variable: until
+    gate A48 §9's primary contrast conditioned on this flag, and the completed
+    campaign showed it extinguished by exactly the arms the contrast measures
+    -- an arm that expands successfully explains the inadequacy away before
+    this check is read. The contrast now conditions on
+    :attr:`probe_inadequate_rate`'s flag. This figure stays rendered because
+    the whole-record check still answers its own question: whether the space
+    the arm *ended* with explains the record.
     """
 
     probe_inadequate_rate: float
@@ -295,13 +324,17 @@ class CellSummary:
     reading it *down* a scenario meaningful: the rate on S11 is the instrument's
     power and the rate on S1-S7 and S9 is its size.
 
-    This is the figure :func:`criterion_four` is evaluated over. Under C1 the
-    criterion compared V7's rate against B1's and was therefore unfailable, since
-    the two are identical by the paragraph above; it was reworded absolutely on
-    2026-08-26 and moved to §12's Infrastructure block, so what it now asks of
-    this figure is that it be positive on S11 and zero on S1-S7 and S9. Reported
-    per cell regardless of that verdict, because the rate is what a reader needs
-    and the criterion is one reading of it rather than a replacement for it.
+    This is the per-cell rendering of the figure :func:`criterion_four` reads
+    -- the verdict itself goes through :func:`_probe_counts`, which pools
+    distinct seeds across cells rather than averaging cell rates. Under C1 the
+    criterion compared V7's rate against B1's and was therefore unfailable,
+    since the two are identical by the paragraph above; it was reworded
+    absolutely on 2026-08-26 and moved to §12's Infrastructure block, and on
+    2026-08-27 gate A47 gave the size clause its pooled form, so what the
+    criterion now asks is that the probe fire on S11 and that its pooled
+    quiet-set rate sit at or below :data:`SIZE_TOLERANCE`. Reported per cell
+    regardless of that verdict, because the rate is what a reader needs and
+    the criterion is one reading of it rather than a replacement for it.
     """
 
     experiments: DimensionSummary
@@ -568,20 +601,22 @@ class Contrast:
     Deduplicated, so this is a seed *set* and not a per-replicate list: read
     :attr:`DimensionSummary.n_finite` for an arm's count, never ``len`` of this.
 
-    Reported because **conditioning can break the pairing** that
+    Reported because **conditioning used to break the pairing** that
     :mod:`sciagent.eval.matrix` goes to some length to establish. Seeds are a
     function of the scenario and the replicate index alone, never of the system,
     precisely so that §9's contrast is not partly a comparison of worlds at twenty
-    draws an arm. But conditioning on inadequacy detection filters each arm by its
-    *own* flag, so the two can end up on overlapping-but-different seed sets --
-    and then some of the difference between the arms is the difference between the
+    draws an arm. Until gate A48 the filter read each arm's *own* whole-record
+    flag, so the two could end up on overlapping-but-different seed sets -- and
+    then some of the difference between the arms was the difference between the
     worlds they were left with.
 
-    Carried rather than resolved: which reading §9's "conditional on inadequacy
-    detection" intends -- each arm on its own detections, or both on the seeds
-    where they agree -- is not settled by the text, and choosing here would decide
-    it by fiat in the report layer. :attr:`paired` makes the answer visible in any
-    given case, which is what a reader needs to interpret the contrast.
+    Gate A48 settled the ambiguity this field used to carry: the conditioning
+    event is the Stage A probe, whose verdict is a function of the scenario and
+    the seed alone (A29), so "each arm on its own detections" and "both on the
+    seeds where they agree" name the same set and both arms keep it by
+    construction. The fields stay, because :attr:`paired` is how a report
+    *shows* that rather than asserting it -- and a hand-built report that
+    violates A29 is refused elsewhere, not silently repaired here.
     """
     paired_difference: DimensionSummary | None
     """The mean within-seed difference, ``treatment - comparator``, or ``None``.
@@ -617,8 +652,10 @@ class Contrast:
 
     ``None`` is a **refusal**, not an absence of interest, and it does not stop
     the contrast: an unpaired matrix still gets everything above. Two cases reach
-    it. The seed sets differ, which is :attr:`paired` being ``False`` -- ordinary,
-    since conditioning filters each arm by its own flag. Or the sets agree while
+    it. The seed sets differ, which is :attr:`paired` being ``False`` -- since
+    gate A48 no longer ordinary but the A29-breach shape, because the filter
+    reads the arm-invariant probe and a real ledger's arms keep one seed set by
+    construction; see :attr:`treatment_seeds`. Or the sets agree while
     one arm carries two rows for a seed: :func:`_seeds_of` deduplicates, so equal
     sets do not imply one reading per seed, and there is then no fact of the
     matter about which row that seed contributes. Picking one would be this module
@@ -706,6 +743,68 @@ _MUST_BE_QUIET: Final[tuple[ScenarioId, ...]] = (
     ScenarioId("S9"),
 )
 
+#: The size clause's bar: the pooled quiet-set fire rate at or below which the
+#: probe is behaving as calibrated. It is A9's own measured bound --
+#: ``sciagent/inference/ppc.py`` records the probe's realised size as *"at most
+#: 0.045 over 200 correctly-specified scenarios"* -- and deliberately not the
+#: nominal alpha of 0.05, because the measured figure is the promise this
+#: instrument actually makes. Chosen together with the pooled form on
+#: 2026-08-27, recorded in ``docs/DECISIONS.md``: at twenty seeds a
+#: per-scenario rate is a multiple of 0.05, so any per-scenario bar below that
+#: admits zero firings and is the exactly-zero clause gate A47 exists to
+#: remove.
+SIZE_TOLERANCE: Final = 0.045
+
+
+@dataclass(frozen=True, slots=True)
+class ProbeCount:
+    """One scenario's Stage A probe outcome as counts: firings over draws.
+
+    Counts rather than a rate, because criterion 4's size clause is pooled --
+    total firings over total draws across the quiet set -- and rates cannot be
+    pooled once draw counts differ, which ``scripts/run_matrix.py
+    --replicates N`` makes a real ledger state rather than a hypothetical one.
+    A mean of per-scenario rates quietly reweights the scenarios; the counts
+    carry their own weights.
+    """
+
+    fired: int
+    """Distinct seeds on which the probe fired."""
+
+    draws: int
+    """Distinct seeds the scenario was measured at."""
+
+    def __post_init__(self) -> None:
+        """Refuse counts that describe no measurement.
+
+        Zero draws is an unmeasured scenario wearing an integer -- the
+        missing-scenario case :func:`criterion_four` refuses by name, arriving
+        by a second door -- and a firing count outside ``[0, draws]`` is not a
+        fraction of anything. Guarded here, at the type, so no path can carry
+        either to the comparison. The integrality check is runtime rather than
+        left to ``mypy`` because a float firing count -- half of A45's
+        rate-shaped input, surviving a mechanical migration -- would pass the
+        range check and poison the pooled sum silently.
+        """
+        if not (isinstance(self.fired, int) and isinstance(self.draws, int)):
+            raise MalformedDesignError(
+                f"a probe count holds fired={self.fired!r}, "
+                f"draws={self.draws!r}; counts are integers, and a fractional "
+                f"count is a rate wearing a count's name"
+            )
+        if self.draws < 1:
+            raise MalformedDesignError(
+                f"a probe count over {self.draws} draw(s) describes no "
+                f"measurement. A scenario with no draws is a missing scenario, "
+                f"and criterion 4 refuses those by name rather than by zero"
+            )
+        if not 0 <= self.fired <= self.draws:
+            raise MalformedDesignError(
+                f"{self.fired} firing(s) in {self.draws} draw(s) is not a "
+                f"fraction of replicates; a count outside [0, draws] would "
+                f"reach the pooled rate as a number nobody measured"
+            )
+
 
 @dataclass(frozen=True, slots=True)
 class CriterionFour:
@@ -722,8 +821,8 @@ class CriterionFour:
     """
 
     holds: bool
-    """Whether the criterion is met: the probe fired on S11 and nowhere it must
-    not."""
+    """Whether the criterion is met: the probe fired on S11 and its pooled
+    quiet-set rate is at or below :data:`SIZE_TOLERANCE`."""
 
     fired_on_s11: bool
     """Whether the probe fired on the out-of-library scenario at all -- the power
@@ -732,16 +831,40 @@ class CriterionFour:
 
     false_positives: tuple[ScenarioId, ...]
     """The scenarios the probe fired on where the space was adequate, in
-    :data:`_MUST_BE_QUIET` order -- the size clause, whose absence from the
-    original wording meant an instrument firing on all twelve would have passed.
+    :data:`_MUST_BE_QUIET` order.
 
-    Empty when the probe stayed quiet everywhere it had to, which includes the
-    case where it fired nowhere at all: a blind probe fails on
-    :attr:`fired_on_s11` and has no false positive to report.
+    Informational since gate A47: a firing on an adequate space is still a
+    false positive, but the verdict fails on the pooled *rate* of them rather
+    than on their existence -- a test of positive size produces false
+    positives, and a criterion forbidding all of them was cleared by a
+    correctly calibrated probe about once in 1,583 campaigns. Kept on the
+    verdict because a reader judging a passing rate needs to see where the
+    firings landed.
+
+    Empty exactly when :attr:`quiet_fired` is zero, which includes the blind
+    probe: that one fails on :attr:`fired_on_s11` and has no false positive to
+    report.
     """
 
+    quiet_fired: int
+    """Total probe firings across the eight quiet scenarios' draws."""
+
+    quiet_draws: int
+    """Total draws across the eight quiet scenarios -- 160 on a full campaign
+    at twenty seeds, and something else on a partial one, which is why the
+    counts are carried rather than the rate alone."""
+
+    @property
+    def quiet_rate(self) -> float:
+        """Return the pooled quiet-set fire rate the size clause is read on.
+
+        A property rather than a field, so it cannot disagree with the counts
+        it is derived from.
+        """
+        return self.quiet_fired / self.quiet_draws
+
     def __post_init__(self) -> None:
-        """Refuse a verdict whose ``holds`` disagrees with its own two facts.
+        """Refuse a verdict whose ``holds`` disagrees with its own facts.
 
         The second invariant asks for runtime assertions rather than comments,
         and :class:`~sciagent.eval.campaign.Adjudication` takes the same guard
@@ -751,41 +874,80 @@ class CriterionFour:
         :func:`criterion_four`, and any other construction can state a passing
         criterion over a failing instrument.
         """
-        implied = self.fired_on_s11 and not self.false_positives
+        if self.quiet_draws < 1 or not 0 <= self.quiet_fired <= self.quiet_draws:
+            raise MalformedDesignError(
+                f"a criterion 4 verdict states {self.quiet_fired} firing(s) in "
+                f"{self.quiet_draws} quiet draw(s), which is not a pooled "
+                f"count over a measured quiet set"
+            )
+        # Three relations, because each closes a different hand-built lie: a
+        # scenario outside the quiet set (or out of canonical order) is a list
+        # describing firings the pool never counted; more named scenarios than
+        # firings is arithmetically impossible, since each named scenario
+        # fired at least once; and the emptiness parity catches a count with
+        # no locations. `len(list) <= fired` is the strongest count relation
+        # available here -- the verdict does not carry per-scenario counts, so
+        # equality cannot be demanded.
+        ordered = tuple(
+            scenario
+            for scenario in _MUST_BE_QUIET
+            if scenario in set(self.false_positives)
+        )
+        if ordered != self.false_positives:
+            raise MalformedDesignError(
+                f"a criterion 4 verdict names false positives "
+                f"{self.false_positives!r}, which is not a subset of the quiet "
+                f"set in its canonical order; a firing outside "
+                f"{_MUST_BE_QUIET!r} is not a false positive the size clause "
+                f"counted"
+            )
+        if len(self.false_positives) > self.quiet_fired or bool(
+            self.false_positives
+        ) is not (self.quiet_fired > 0):
+            raise MalformedDesignError(
+                f"a criterion 4 verdict states {self.quiet_fired} quiet "
+                f"firing(s) while naming {len(self.false_positives)} firing "
+                f"scenario(s); the two describe the same firings and are not "
+                f"free to disagree"
+            )
+        implied = self.fired_on_s11 and self.quiet_rate <= SIZE_TOLERANCE
         if self.holds is not implied:
             raise MalformedDesignError(
                 f"a criterion 4 verdict states holds={self.holds} while its own "
-                f"facts imply {implied}: fired_on_s11={self.fired_on_s11} with "
-                f"{len(self.false_positives)} false positive(s). The criterion is "
-                f"the conjunction of those two, so a verdict is not free to "
+                f"facts imply {implied}: fired_on_s11={self.fired_on_s11} with a "
+                f"pooled quiet rate of {self.quiet_fired}/{self.quiet_draws} "
+                f"against the tolerance {SIZE_TOLERANCE}. The criterion is the "
+                f"conjunction of those two, so a verdict is not free to "
                 f"disagree with them"
             )
 
 
-def criterion_four(probe_rates: Mapping[ScenarioId, float]) -> CriterionFour:
-    """Return §12 criterion 4's verdict on a probe rate vector.
+def criterion_four(probe_counts: Mapping[ScenarioId, ProbeCount]) -> CriterionFour:
+    """Return §12 criterion 4's verdict on a probe count vector.
 
-    Guarantees a verdict that some input fails and some input passes, which is
-    the whole of gate A45. The wording it implements is absolute -- *fires on
-    S11; does not fire on S1-S7 or S9* -- and replaces the two V7-versus-B1
-    comparisons C1 gave it, which A29 made unfailable by making the probe
-    arm-symmetric: paired seeds put both arms on bit-identical rates, so neither
-    comparison could ever come out either way.
+    Guarantees a verdict that some input fails and some input passes -- gate
+    A45's whole claim, kept under gate A47's rewording of the size clause:
+    *fires on S11; pooled quiet-set rate at or below its measured size*. The
+    exactly-zero clause A45 chose was the measurement's to revise: a correctly
+    calibrated probe cleared it about once in 1,583 campaigns, and the recorded
+    campaign failed it at a rate *below* the instrument's own measured size.
+    The decision -- pooled, against :data:`SIZE_TOLERANCE` -- was taken
+    2026-08-27 and is recorded in ``docs/DECISIONS.md``.
 
-    "Fires" is any positive rate and "does not fire" is exactly zero, which is
-    the criterion's own words. No numeric power threshold is imposed, because
-    choosing one is a further decision nobody has taken and defaulting to one
-    here would take it silently.
+    "Fires" on S11 is any positive count, exactly as under A45. No numeric
+    power threshold is imposed, because choosing one is a further decision
+    nobody has taken and defaulting to one here would take it silently.
 
     Raises :class:`~sciagent.core.errors.MalformedDesignError` naming the first
-    scenario missing from ``probe_rates``. A criterion evaluated on a partial
-    vector is the defect this wording exists to remove, arriving by a second
-    door: treating an absent scenario as zero fails an instrument nobody
-    measured, and treating it as inapplicable passes the criterion by leaving
-    nothing to check.
+    scenario missing from ``probe_counts``. A criterion evaluated on a partial
+    vector is the defect the A45 wording exists to remove, arriving by a second
+    door: treating an absent scenario as zero draws would shrink the pooled
+    denominator, and treating it as inapplicable passes the criterion by
+    leaving nothing to check. A count that is not a count never reaches here:
+    :class:`ProbeCount` refuses it at construction.
     """
     for scenario in (*_MUST_BE_QUIET, _MUST_FIRE):
-        if scenario not in probe_rates:
+        if scenario not in probe_counts:
             raise MalformedDesignError(
                 f"SPEC section 12 criterion 4 is defined over "
                 f"{len(_MUST_BE_QUIET) + 1} scenarios and this vector is missing "
@@ -793,31 +955,37 @@ def criterion_four(probe_rates: Mapping[ScenarioId, float]) -> CriterionFour:
                 f"to be present is one no input can fail, which is what this "
                 f"criterion was re-worded to stop being."
             )
-        rate = probe_rates[scenario]
-        if not 0.0 <= rate <= 1.0:
+        if not isinstance(probe_counts[scenario], ProbeCount):
+            # The A45-era API took rates, so the likeliest wrong caller is a
+            # mechanical migration still passing floats -- which would
+            # otherwise surface as an untyped AttributeError three lines
+            # down, naming no scenario.
             raise MalformedDesignError(
-                f"criterion 4 was handed {rate!r} as the probe rate on "
-                f"{scenario}, which is not a fraction of replicates. A "
-                f"non-finite rate is the missing-scenario case wearing a float: "
-                f"`nan > 0.0` is False, so it would read as a quiet scenario and "
-                f"pass the criterion on an instrument nobody measured"
+                f"criterion 4 was handed {probe_counts[scenario]!r} for "
+                f"{scenario}, which is not a ProbeCount. Since gate A47 the "
+                f"criterion reads counts, not rates: rates cannot be pooled "
+                f"once draw counts differ"
             )
-    fired = probe_rates[_MUST_FIRE] > 0.0
+    fired = probe_counts[_MUST_FIRE].fired > 0
+    quiet_fired = sum(probe_counts[scenario].fired for scenario in _MUST_BE_QUIET)
+    quiet_draws = sum(probe_counts[scenario].draws for scenario in _MUST_BE_QUIET)
     false_positives = tuple(
-        scenario for scenario in _MUST_BE_QUIET if probe_rates[scenario] > 0.0
+        scenario for scenario in _MUST_BE_QUIET if probe_counts[scenario].fired > 0
     )
     return CriterionFour(
-        holds=fired and not false_positives,
+        holds=fired and quiet_fired / quiet_draws <= SIZE_TOLERANCE,
         fired_on_s11=fired,
         false_positives=false_positives,
+        quiet_fired=quiet_fired,
+        quiet_draws=quiet_draws,
     )
 
 
-def _probe_rates(report: MatrixReport) -> dict[ScenarioId, float]:
-    """Return one Stage A probe rate per scenario of ``report``.
+def _probe_counts(report: MatrixReport) -> dict[ScenarioId, ProbeCount]:
+    """Return one Stage A probe count per scenario of ``report``.
 
     Guarantees the projection is a *function*: a scenario appearing in several
-    arms' cells contributes one rate or nothing at all, and that rate does not
+    arms' cells contributes one count or nothing at all, and that count does not
     depend on the order the rows arrived in. Gate A29 is what makes it possible
     -- the probe is evaluated by the harness before ``investigate`` is called, so
     its verdict is a function of the scenario and the seed alone.
@@ -830,8 +998,10 @@ def _probe_rates(report: MatrixReport) -> dict[ScenarioId, float]:
     ledger where two cells report 0.25 and 0.5 for a scenario on which every
     shared seed agreed. Comparing :attr:`CellSummary.probe_inadequate_rate`
     across arms called that an A29 breach and refused a campaign that holds no
-    breach at all. What the criterion wants is the instrument's rate over the
-    distinct seeds the scenario was run at, which is what this returns.
+    breach at all. What the criterion wants is the instrument's firings over
+    the distinct seeds the scenario was run at, which is what this returns --
+    as counts since gate A47, because the size clause pools them and rates do
+    not pool once draw counts differ.
 
     Raises :class:`~sciagent.core.errors.MalformedDesignError` naming both arms
     when two of them disagree **on one seed**. That is the real A29 breach, and
@@ -842,8 +1012,8 @@ def _probe_rates(report: MatrixReport) -> dict[ScenarioId, float]:
     provides -- a tolerance here would be a claim that near-agreement is
     agreement, which is a decision nobody has taken.
     """
-    rates, conflict = _probe_scan(report)
-    if rates is None:
+    counts, conflict = _probe_scan(report)
+    if counts is None:
         raise MalformedDesignError(
             f"the Stage A probe disagrees by arm on {conflict}. Gate A29 "
             f"evaluates the probe in the harness before `investigate` is called, "
@@ -852,13 +1022,13 @@ def _probe_rates(report: MatrixReport) -> dict[ScenarioId, float]:
             f"broken, and SPEC section 12 criterion 4 has no reading under which "
             f"one of them is the campaign's"
         )
-    return rates
+    return counts
 
 
 def _probe_scan(
     report: MatrixReport,
-) -> tuple[dict[ScenarioId, float] | None, str | None]:
-    """Return the per-scenario probe rates, or the first arm disagreement.
+) -> tuple[dict[ScenarioId, ProbeCount] | None, str | None]:
+    """Return the per-scenario probe counts, or the first arm disagreement.
 
     Guarantees both halves are independent of the order ``report.rows`` arrived
     in, which :func:`render` needs and states: *"a report built from the same
@@ -875,7 +1045,7 @@ def _probe_scan(
     scenarios, so three-way coordinates are the normal case rather than a corner
     of one, and the string reaches both a rendered line and an exception message.
 
-    **Split out of :func:`_probe_rates` so that rendering does not go through an
+    **Split out of :func:`_probe_counts` so that rendering does not go through an
     exception.** :func:`render` must not raise -- ``scripts/report_matrix.py``
     already wraps its :func:`contrast` call precisely so a failure there "should
     not stop the table printing", and a criterion-4 line that threw would
@@ -884,8 +1054,8 @@ def _probe_scan(
     :func:`criterion_four_of` still refuses, so neither caller has to catch
     anything.
 
-    A conflict makes the rates unfit to read a verdict off, so on a conflict
-    there are no rates: the first half is ``None``.
+    A conflict makes the counts unfit to read a verdict off, so on a conflict
+    there are no counts: the first half is ``None``.
 
     **The scan covers every scenario in the report, not only the nine criterion
     4 names, and that is deliberate.** A disagreement on S8, S10 or S12 --
@@ -934,10 +1104,11 @@ def _probe_scan(
         # rate to move.
         grouped.setdefault(target, {})[seed] = by_system[min(by_system)]
     # Seeds sorted, so the fold is over one sequence whatever order `rows` came
-    # in -- `_rate` is exactly rounded but is still a fold over a list.
+    # in -- `_probe_count`'s integer sum is exact but is still a fold over a
+    # list.
     if conflicts:
-        # `None` rather than the rates, so the unfitness is in the type instead
-        # of in this docstring. A caller writing `rates, _ = _probe_scan(...)`
+        # `None` rather than the counts, so the unfitness is in the type instead
+        # of in this docstring. A caller writing `counts, _ = _probe_scan(...)`
         # would otherwise hold a full nine-scenario vector describing an
         # instrument known to be broken, and `criterion_four` would return
         # `holds=True` over it. Invariant 2 asks for runtime assertions rather
@@ -950,9 +1121,20 @@ def _probe_scan(
         )
         return None, f"{conflicts[0]}{others}"
     return {
-        target: _rate([seeds[seed] for seed in sorted(seeds)], _PROBE_INADEQUATE)
+        target: _probe_count([seeds[seed] for seed in sorted(seeds)])
         for target, seeds in grouped.items()
     }, None
+
+
+def _probe_count(rows: Sequence[LedgerEntry]) -> ProbeCount:
+    """Return the probe's firings over ``rows``, one row per distinct seed.
+
+    Through :func:`_flags`, so a present-but-non-boolean payload is refused by
+    the guard that already exists for it rather than counted as a fraction of
+    a firing.
+    """
+    flags = _flags(rows, _PROBE_INADEQUATE)
+    return ProbeCount(fired=int(sum(flag == 1.0 for flag in flags)), draws=len(flags))
 
 
 def _straddling_seed_tables(
@@ -1027,10 +1209,10 @@ def _straddling_seed_tables(
 def criterion_four_of(report: MatrixReport) -> CriterionFour:
     """Return SPEC §12 criterion 4's verdict on a whole campaign.
 
-    Guarantees the verdict is :func:`criterion_four`'s own, on the rates
+    Guarantees the verdict is :func:`criterion_four`'s own, on the counts
     ``report`` carries. This is the production caller SPEC §12 asserts exists
     when it says that function *"is the check"* -- before it, the criterion was
-    evaluated by a reader assembling the rate vector by hand, which is the defect
+    evaluated by a reader assembling the vector by hand, which is the defect
     ``docs/BACKLOG.md`` rank 8 already indicted once for the verifier.
 
     **A function over a finished report rather than a field on one**, because
@@ -1042,11 +1224,166 @@ def criterion_four_of(report: MatrixReport) -> CriterionFour:
 
     Raises :class:`~sciagent.core.errors.MalformedDesignError` if the report is
     missing a scenario the criterion names, or if two arms disagree about one
-    scenario's rate. Both come from the layers below and neither is caught here:
-    a verdict over the scenarios that happen to be present is exactly the reading
-    :func:`criterion_four` refuses.
+    scenario's probe verdict. Both come from the layers below and neither is
+    caught here: a verdict over the scenarios that happen to be present is
+    exactly the reading :func:`criterion_four` refuses.
     """
-    return criterion_four(_probe_rates(report))
+    return criterion_four(_probe_counts(report))
+
+
+#: The scenario SPEC §12 criterion 5 is stated over. S11 is the out-of-library
+#: case -- the one scenario whose truth a proposal can approach and a library
+#: cannot reach -- so a criterion-5 verdict anywhere else grades nothing the
+#: criterion names. Held separately from :data:`_MUST_FIRE`, which is the same
+#: scenario for criterion 4's own reason; the two criteria would not
+#: necessarily move together if either were ever restated.
+_CRITERION5_SCENARIO: Final = ScenarioId("S11")
+
+
+@dataclass(frozen=True, slots=True)
+class CriterionFive:
+    """SPEC §12 criterion 5's verdict on one entertained-distance contrast.
+
+    The criterion asks whether the treatment *"proposes an S11 extension
+    exceeding"* its comparator *"with a non-overlapping 95% interval"* -- and
+    since gate A49 "exceeding" is read on the entertained distance, where
+    **lower is closer**. The direction is held here as its own field rather
+    than borrowed from :attr:`Contrast.exceeds`, whose ``>`` reads the wrong
+    way for a distance: an arm can "exceed" on a similarity and only *approach*
+    on a distance, and conflating the two is how a strictly farther proposal
+    would have read as a win.
+    """
+
+    holds: bool
+    """Whether the criterion is met: strictly closer, intervals disjoint."""
+
+    closer: bool
+    """Whether the treatment's entertained set sits strictly closer to the
+    truth than the comparator's, on the point estimate. Equality is ``False``:
+    a tie of the genuine quantity is a verdict, not a win."""
+
+    overlaps: bool
+    """Whether the two 95% intervals intersect, copied from the contrast.
+    ``True`` fails the criterion whatever the direction, exactly as the
+    wording this re-instruments demanded."""
+
+    treatment_system: str
+    comparator_system: str
+    """Which arms the verdict compared, copied from the contrast.
+
+    Carried because ``closer`` is directional and the direction belongs to a
+    *pair*: a verdict read off a contrast whose arms were swapped states
+    ``holds=True`` for the criterion's inverse claim, and a bare three-boolean
+    verdict could never show it. Unlike :class:`CriterionFour` -- an
+    instrument verdict that deliberately carries no system field -- criterion
+    5 is a Capability comparison, and a comparison that cannot say what it
+    compared is not reportable. The framework does not know which names are
+    *right* (the preregistration in ``environments`` owns that), so this is
+    self-description, not validation: check :attr:`Contrast.preregistered` on
+    the contrast for the label.
+    """
+
+    def __post_init__(self) -> None:
+        """Refuse a verdict whose ``holds`` disagrees with its own two facts.
+
+        The same discipline :class:`CriterionFour` takes, for the same reason:
+        a frozen dataclass of three booleans and two names is exactly where a
+        comment would otherwise have been the whole of the invariant.
+        """
+        if self.treatment_system == self.comparator_system:
+            raise MalformedDesignError(
+                f"a criterion 5 verdict compares {self.treatment_system!r} "
+                f"with itself; a direction between one arm and itself is not "
+                f"a comparison"
+            )
+        implied = self.closer and not self.overlaps
+        if self.holds is not implied:
+            raise MalformedDesignError(
+                f"a criterion 5 verdict states holds={self.holds} while its "
+                f"own facts imply {implied}: closer={self.closer} with "
+                f"overlaps={self.overlaps}. The criterion is the conjunction "
+                f"of strictly-closer and non-overlap, so a verdict is not free "
+                f"to disagree with them"
+            )
+
+
+def criterion_five(result: Contrast) -> CriterionFive:
+    """Return §12 criterion 5's verdict on an entertained-distance contrast.
+
+    Guarantees the verdict is read off the quantity a proposal can move.
+    Criterion 5 compared two extension mechanisms on D3-over-the-leader until
+    2026-08-27, and the completed campaign showed what that reads: an extension
+    reaches the leader's figure only by winning the posterior, so whenever no
+    extension leads the comparison ties by construction and its failure means
+    nothing. Gate A49 re-points it at :data:`_ENTERTAINED_DISTANCE`, which
+    moves the moment a proposal is entertained. The choice is recorded in
+    ``docs/DECISIONS.md``, with the disclosure the BACKLOG entry carries: on
+    the recorded campaign every arm ties at 1.0 on this quantity too, so the
+    re-instrumentation buys a criterion whose failure means something, not a
+    pass.
+
+    Raises :class:`~sciagent.core.errors.MalformedDesignError` for a contrast
+    on any other dimension -- accepting one would let the old instrument back
+    in under the new name -- on any scenario but S11, conditioned on anything
+    (criterion 5 states no conditioning event, so a conditioned reading
+    answers a different question under the same name), or over an arm whose
+    summary excluded non-finite distances: ``inf`` is a replicate that
+    entertained nothing, and censoring it flatters exactly the arm that
+    failed most.
+    """
+    if result.dimension != _ENTERTAINED_DISTANCE:
+        raise MalformedDesignError(
+            f"criterion 5 reads {_ENTERTAINED_DISTANCE!r} and this contrast "
+            f"reads {result.dimension!r}. The dimension is the decision gate "
+            f"A49 encodes -- a verdict over anything else is the old "
+            f"instrument under the new name"
+        )
+    if result.scenario != _CRITERION5_SCENARIO:
+        raise MalformedDesignError(
+            f"criterion 5 is stated over {_CRITERION5_SCENARIO} and this "
+            f"contrast is on {result.scenario}. S11 is the out-of-library "
+            f"scenario -- the one whose truth a proposal can approach and a "
+            f"library cannot reach -- and the verdict does not travel"
+        )
+    if result.conditioned_on_inadequacy:
+        raise MalformedDesignError(
+            "criterion 5 states no conditioning event, and this contrast was "
+            "conditioned on inadequacy detection. A conditioned reading "
+            "answers a different question under the same name; run the "
+            "contrast with conditional_on_inadequacy=False"
+        )
+    censored = {
+        system: summary.n_non_finite
+        for system, summary in (
+            (result.treatment_system, result.treatment),
+            (result.comparator_system, result.comparator),
+        )
+        if summary.n_non_finite
+    }
+    if censored:
+        # `structural_distance` is `inf` on a replicate that entertained
+        # nothing at all, and `_summarise` excludes non-finite values -- a
+        # design built for D2, where `-inf` is a legitimate score. On a
+        # distance the exclusion censors an arm's *worst* outcomes, in the
+        # direction that favours the arm that failed most, so a verdict over
+        # the finite remainder answers a different question than the
+        # criterion's.
+        raise MalformedDesignError(
+            f"criterion 5 has no verdict over a censored arm: "
+            f"{censored!r} non-finite entertained distance(s) were excluded "
+            f"from the interval(s). An infinite distance is a replicate that "
+            f"entertained nothing, and dropping it flatters exactly the arm "
+            f"that failed most; that is a finding to report, not a number to "
+            f"compute"
+        )
+    closer = result.treatment.point < result.comparator.point
+    return CriterionFive(
+        holds=closer and not result.overlaps,
+        closer=closer,
+        overlaps=result.overlaps,
+        treatment_system=result.treatment_system,
+        comparator_system=result.comparator_system,
+    )
 
 
 # --------------------------------------------------------------------------
@@ -1761,7 +2098,11 @@ def contrast(
     primary contrast that way -- "conditional on inadequacy detection" -- and
     conditioning is a **filter on replicates**, not a caption. A contrast that
     ignored it would answer a different question under the same name, so the
-    stricter reading is the default and relaxing it is explicit.
+    stricter reading is the default and relaxing it is explicit. The event the
+    filter reads is the **Stage A probe** (gate A48): pre-treatment and
+    arm-invariant by A29, where the arm's own whole-record check is
+    post-treatment and was extinguished on the recorded campaign by exactly
+    the arms the contrast exists to measure.
 
     Guarantees the arms are re-aggregated from the report's own rows, so the
     conditioned figures are means over the replicates that actually detected
@@ -1772,7 +2113,16 @@ def contrast(
     leaves an arm empty, or if either interval is unavailable. Each of those is a
     fact about the matrix worth reporting, and none of them is a number.
     """
-    known = (*DIMENSIONS, "truth_mass", "log_score", "experiments")
+    # `_ENTERTAINED_DISTANCE` since gate A49: criterion 5 reads it, and it is
+    # in every recorded row -- a min over entertained structures, not one of
+    # §8's six dimensions.
+    known = (
+        *DIMENSIONS,
+        "truth_mass",
+        "log_score",
+        "experiments",
+        _ENTERTAINED_DISTANCE,
+    )
     if dimension not in known:
         raise MalformedDesignError(
             f"{dimension!r} is not a dimension this report holds; it holds "
@@ -1891,7 +2241,7 @@ def _arm(
     system: str,
     conditional_on_inadequacy: bool,
 ) -> tuple[LedgerEntry, ...]:
-    """Return one arm's rows, conditioned on inadequacy detection if asked."""
+    """Return one arm's rows, conditioned on the Stage A probe if asked."""
     rows = tuple(
         row for row in report.rows if _coordinate(row) == (system, str(scenario))
     )
@@ -1908,13 +2258,20 @@ def _arm(
     # a present-but-non-boolean one have to be refused -- the second is the one an
     # earlier version of this line missed, and it perturbed the arm silently
     # rather than raising. See _flags.
-    flags = _flags(rows, _INADEQUATE)
+    #
+    # The flag is the Stage A probe, not the arm's own whole-record check --
+    # gate A48, decided 2026-08-27. The probe is taken before `investigate` and
+    # is arm-invariant by A29, so it cannot select against the arms that
+    # succeed; the whole-record check is post-treatment, and on the recorded
+    # campaign it selected both expanding arms to zero.
+    flags = _flags(rows, _PROBE_INADEQUATE)
     detected = tuple(row for row, flag in zip(rows, flags, strict=True) if flag == 1.0)
     if not detected:
         raise MalformedDesignError(
-            f"no replicate of {system} on {scenario} detected inadequacy, so a "
-            f"contrast conditional on inadequacy detection has no answer on this "
-            f"matrix. That is a finding to report, not a number to compute"
+            f"no replicate of {system} on {scenario} was flagged by the Stage A "
+            f"probe, so a contrast conditional on inadequacy detection has no "
+            f"answer on this matrix. That is a finding to report, not a number "
+            f"to compute"
         )
     return detected
 
@@ -2014,10 +2371,11 @@ def _criterion_four_line(report: MatrixReport) -> str:
     thrown in place of it.
     """
     label = "criterion 4"
-    rates, conflict = _probe_scan(report)
-    # On `rates`, not on `conflict`: the two move together, and branching on the
-    # value this function goes on to use is what lets `mypy` hold the pairing.
-    if rates is None:
+    counts, conflict = _probe_scan(report)
+    # On `counts`, not on `conflict`: the two move together, and branching on
+    # the value this function goes on to use is what lets `mypy` hold the
+    # pairing.
+    if counts is None:
         # **A distinct marker, not a second "not evaluated".** A partial report
         # and a broken harness are opposite findings -- one says "you ran one
         # scenario", the other says the arm-symmetry every rate here depends on
@@ -2028,7 +2386,7 @@ def _criterion_four_line(report: MatrixReport) -> str:
             f"disagrees by arm on {conflict}"
         )
     absent = tuple(
-        target for target in (*_MUST_BE_QUIET, _MUST_FIRE) if target not in rates
+        target for target in (*_MUST_BE_QUIET, _MUST_FIRE) if target not in counts
     )
     if absent:
         return (
@@ -2045,24 +2403,38 @@ def _criterion_four_line(report: MatrixReport) -> str:
     # the second scan it costs buys the guarantee that the path a reader is told
     # about is the path that runs.
     verdict = criterion_four_of(report)
+    # The pooled figure renders on both outcomes: a reader judging either
+    # verdict needs the rate beside the bar it was compared against, and the
+    # counts beside the rate because 5/160 and 1/32 are different evidence for
+    # one figure.
+    size = (
+        f"{verdict.quiet_fired}/{verdict.quiet_draws} = "
+        f"{verdict.quiet_rate:.4f} against {SIZE_TOLERANCE}"
+    )
     if verdict.holds:
-        # The quiet set is derived rather than spelled, so this sentence cannot
-        # go on asserting `S1-S7 and S9` after the set moves. It is also not
-        # contiguous, which a hand-written range would quietly lose.
+        # The firing scenarios are listed even on a pass: a rate within
+        # calibration still has locations, and hiding them is how the next
+        # reader re-derives them by hand.
+        where = (
+            f", firing on {', '.join(verdict.false_positives)}"
+            if verdict.false_positives
+            else ""
+        )
         return (
             f"  {label:<16s}holds -- Stage A probe fired on {_MUST_FIRE} and "
-            f"stayed quiet on {', '.join(_MUST_BE_QUIET)}"
+            f"its quiet-set rate is within its measured size: {size}{where}"
         )
     # Both clauses, not the first that fails. The criterion is a conjunction, and
-    # an instrument that is blind on S11 *and* fires where the space is adequate
-    # is failing twice; reporting only the power clause loses the size clause
-    # from the one surface a human reads.
+    # an instrument that is blind on S11 *and* fires beyond its size is failing
+    # twice; reporting only the power clause loses the size clause from the one
+    # surface a human reads.
     clauses = []
     if not verdict.fired_on_s11:
         clauses.append(f"did not fire on {_MUST_FIRE}")
-    if verdict.false_positives:
+    if verdict.quiet_rate > SIZE_TOLERANCE:
         clauses.append(
-            f"fired where the space is adequate: {', '.join(verdict.false_positives)}"
+            f"fired beyond its measured size on the quiet set: {size} "
+            f"({', '.join(verdict.false_positives)})"
         )
     return f"  {label:<16s}FAILS -- Stage A probe {'; '.join(clauses)}"
 

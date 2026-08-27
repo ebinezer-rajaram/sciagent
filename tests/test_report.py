@@ -313,16 +313,26 @@ class TestNothingCollapsesTheSixDimensions:
         assert {kind.__name__ for kind in EXPORTED_TYPES} == {
             "CellSummary",
             "Contrast",
+            # Gate A49's §12 criterion 5 verdict: three booleans -- `holds`,
+            # `closer`, `overlaps` -- plus the two arm names the direction
+            # belongs to, read off one contrast on one quantity, with no
+            # arithmetic over the six dimensions anywhere near them.
+            "CriterionFive",
             # Gate A45's §12 criterion 4 verdict. Named here deliberately rather
             # than by widening the assertion: this test exists to make a new
             # exported dataclass a decision somebody takes, and taking it is
-            # confirming that `holds`, `fired_on_s11` and `false_positives`
-            # collapse nothing -- a boolean, a boolean and a scenario list, with
-            # no arithmetic over the six dimensions anywhere near them.
+            # confirming that `holds`, `fired_on_s11`, `false_positives` and
+            # (since gate A47) the two pooled quiet-set counts collapse nothing
+            # -- booleans, a scenario list and two integers counting one
+            # probe's firings, with no arithmetic over the six dimensions
+            # anywhere near them.
             "CriterionFour",
             "DimensionSummary",
             "MatrixReport",
             "Preregistration",
+            # Gate A47's per-scenario probe counts: two integers, firings over
+            # draws for one scenario's Stage A probe. Nothing dimensional in it.
+            "ProbeCount",
         }
 
     @pytest.mark.parametrize("kind", EXPORTED_TYPES, ids=lambda k: k.__name__)
@@ -857,14 +867,19 @@ def contrast_report(
 ) -> MatrixReport:
     """Return a report with a V7 arm and a B4 arm on S11, both on D3.
 
-    Every replicate detects inadequacy unless ``flags`` says otherwise, because
-    §9's contrast is conditional on detection and an arm of non-detectors has no
-    contrast to compute. ``reading``'s own default is the opposite, which is right
-    for a general cell and wrong for this fixture.
+    Every replicate carries a firing Stage A probe unless ``flags`` says
+    otherwise, because §9's contrast is conditional on detection, the event
+    gate A48 names is the probe, and an arm the probe never flagged has no
+    contrast to compute. Both flags are set explicitly rather than one left to
+    ``reading``'s default, so the fixture states which event it is about
+    instead of inheriting it.
     """
 
     def arm(values: Sequence[float]) -> list[CellReading]:
-        return [reading(**{"d3": v, "inadequate": 1.0, **flags}) for v in values]
+        return [
+            reading(**{"d3": v, "inadequate": 1.0, "probe_inadequate": 1.0, **flags})
+            for v in values
+        ]
 
     return report_of(
         rows("V7", "S11", arm(treatment)) + rows("B4", "S11", arm(comparator)),
@@ -1028,12 +1043,23 @@ class TestThePreregisteredContrast:
     def test_conditioning_drops_the_replicates_that_did_not_detect(self) -> None:
         # "Conditional on inadequacy detection" is a filter on replicates, not a
         # note in the caption. A contrast that ignored it would answer a
-        # different question from the one §9 preregistered.
+        # different question from the one §9 preregistered. The event is the
+        # Stage A probe (gate A48): `probe_inadequate` varies here and
+        # `inadequate` is held firing everywhere, so a filter reading the old
+        # flag keeps all four replicates and fails the n_finite assertion. The
+        # probe's vector is identical across the two arms, as A29 guarantees of
+        # any real ledger.
         entries = rows(
             "V7",
             "S11",
-            [reading(d3=0.9, inadequate=1.0)] * 3 + [reading(d3=0.1, inadequate=0.0)],
-        ) + rows("B4", "S11", [reading(d3=0.2, inadequate=1.0)] * 4)
+            [reading(d3=0.9, inadequate=1.0, probe_inadequate=1.0)] * 3
+            + [reading(d3=0.1, inadequate=1.0, probe_inadequate=0.0)],
+        ) + rows(
+            "B4",
+            "S11",
+            [reading(d3=0.2, inadequate=1.0, probe_inadequate=1.0)] * 3
+            + [reading(d3=0.2, inadequate=1.0, probe_inadequate=0.0)],
+        )
         report = report_of(entries, classes={"S11": "out_of_library"})
 
         conditioned = contrast(
@@ -1060,9 +1086,10 @@ class TestThePreregisteredContrast:
         self,
     ) -> None:
         # eval/matrix.py pairs seeds across arms so that §9's contrast is not
-        # partly a comparison of worlds. Conditioning filters each arm by its own
-        # inadequacy flag, which can undo that -- so the contrast reports whether
-        # it did, rather than leaving a between-worlds component invisible.
+        # partly a comparison of worlds. Since gate A48 the filter reads the
+        # Stage A probe, which is arm-invariant by A29 -- so on any real ledger
+        # conditioning keeps the arms on one seed set by construction, and
+        # `paired` is how the report shows that rather than asserts it.
         both = contrast_report([0.9] * 4, [0.1] * 4)
         result = contrast(
             both,
@@ -1074,17 +1101,22 @@ class TestThePreregisteredContrast:
         assert result.paired is True
         assert result.treatment_seeds == result.comparator_seeds
 
-        # Now make the arms detect on different replicates: V7 on 0,1,2 and B4 on
-        # 1,2,3. Both arms keep three replicates, so nothing about the counts
-        # betrays it -- only the seeds do.
+        # A hand-built report whose probe flags differ by arm -- V7 flagged on
+        # 0,1,2 and B4 on 1,2,3 -- is the A29-breach shape. `_probe_counts`
+        # refuses it on the criterion-4 path; `contrast` does not repair it,
+        # it *reports* it: both arms keep three replicates, so nothing about
+        # the counts betrays the break -- only the seeds do, and `paired` is
+        # the field that carries them to a reader.
         entries = rows(
             "V7",
             "S11",
-            [reading(d3=0.9, inadequate=1.0)] * 3 + [reading(d3=0.9, inadequate=0.0)],
+            [reading(d3=0.9, probe_inadequate=1.0)] * 3
+            + [reading(d3=0.9, probe_inadequate=0.0)],
         ) + rows(
             "B4",
             "S11",
-            [reading(d3=0.1, inadequate=0.0)] + [reading(d3=0.1, inadequate=1.0)] * 3,
+            [reading(d3=0.1, probe_inadequate=0.0)]
+            + [reading(d3=0.1, probe_inadequate=1.0)] * 3,
         )
         crossed = contrast(
             report_of(entries, classes={"S11": "out_of_library"}),
@@ -1098,11 +1130,13 @@ class TestThePreregisteredContrast:
         assert crossed.treatment_seeds != crossed.comparator_seeds
 
     def test_a_contrast_with_no_conditioned_replicate_raises(self) -> None:
-        # Not a zero and not an empty interval: if no replicate detected
-        # inadequacy then §9's question has no answer on this matrix, and that is
-        # a finding to report rather than a number to compute.
-        report = contrast_report([0.9] * 4, [0.1] * 4, inadequate=0.0)
-        with pytest.raises(MalformedDesignError, match="inadequa"):
+        # Not a zero and not an empty interval: if the probe flagged no
+        # replicate then §9's question has no answer on this matrix, and that is
+        # a finding to report rather than a number to compute. `inadequate`
+        # stays firing everywhere, so a filter that fell back to the old flag
+        # returns here instead of raising.
+        report = contrast_report([0.9] * 4, [0.1] * 4, probe_inadequate=0.0)
+        with pytest.raises(MalformedDesignError, match="Stage A probe"):
             contrast(
                 report,
                 scenario=ScenarioId("S11"),

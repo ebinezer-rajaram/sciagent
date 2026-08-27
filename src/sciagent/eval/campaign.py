@@ -176,11 +176,17 @@ class ScenarioRun:
     **Resolved 2026-08-26, and not by restoring the comparison.** Criterion 4 was
     reworded absolutely -- fires on S11, does not fire on S1-S7 or S9 -- and moved
     to §12's Infrastructure block, because a reading identical across arms grades
-    the instrument and cannot grade an agent whatever threshold it carries. See
-    :func:`~sciagent.eval.report.criterion_four`, which is the check, and gate
-    A45, which demonstrates that some probe rate vector fails it. What the
-    paragraph above costs is therefore permanent and was accepted rather than
-    repaired: V7-versus-B1 grading on this instrument is gone for good.
+    the instrument and cannot grade an agent whatever threshold it carries.
+    **Revised once more on 2026-08-27 (gate A47):** the exactly-zero half of
+    that wording failed a correctly calibrated probe in all but one campaign
+    in ~1,583, so the size clause is now the *pooled* quiet-set rate at or
+    below A9's measured 0.045. See
+    :func:`~sciagent.eval.report.criterion_four`, which is the check (over
+    counts, since rates cannot be pooled across unequal draw counts), gate
+    A45, which demonstrates some probe vector fails it, and gate A47, which
+    demonstrates a calibrated one passes. What the paragraph above costs is
+    therefore permanent and was accepted rather than repaired: V7-versus-B1
+    grading on this instrument is gone for good.
 
     ``None`` where the scenario declares no Stage A design, rather than the
     check over an empty record -- which would be a documented ``p_value = 1``

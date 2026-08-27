@@ -11630,3 +11630,48 @@ one.
 and none is code work. **This session read the S11 numbers in detail and is
 therefore the session none of the three may be decided in**, which is rank 24's
 own blindness argument applied to the session that extended it.
+
+## 2026-08-27 — ranks 23–25 decided: pooled size at 0.045, the probe as the conditioning event, structural_distance for criterion 5
+
+**Decision.** The user took all three held decisions in one sitting, in a fresh
+session, choosing the recommended option each time. (1) **A47:** criterion 4's
+size clause is stated over the **pooled** quiet set — one rate over 160 draws —
+against **A9's measured 0.045**, not per scenario and not the nominal 0.05.
+(2) **A48:** the §9 primary contrast conditions on the **Stage A probe**, and
+both of §9's statements of the claim are reconciled to name it explicitly.
+(3) **A49:** criterion 5 is re-instrumented to read
+**`ScenarioRun.structural_distance`** — distance from truth to nearest
+entertained structure — keeping the B6 comparator and the non-overlap rule.
+
+**Why.** A47: at twenty seeds a per-scenario rate is a multiple of 0.05, so any
+per-scenario tolerance below 0.05 admits zero firings — the exactly-zero clause
+again, arithmetic independent of any recorded outcome; and dropping the clause
+would leave the matrix's realised size unchecked, since A9's sweep "measured a
+seed set the matrix never runs" (2026-08-18). 0.045 over alpha because it is the
+instrument's own recorded promise (`ppc.py`). A48: the probe is pre-treatment
+and arm-invariant by A29, so it cannot select against arms that succeed;
+B1's whole-record firing is a multiplicity artefact OPEN-DECISIONS §1 already
+declined to build a bar on. A49: `structural_distance` is the only recorded
+quantity that is proposal-sensitive *and* keeps criterion 5's
+closeness-to-truth meaning; D4 measures rescue, not proximity, and re-scoring
+for D3-over-proposals costs a re-derivation no other candidate needs.
+
+**On the blindness rank 24 asked for.** The previous entry closes by naming its
+own session as the one none of the three may be decided in. This session is not
+that session, and the entries' deliberate disclosures did the rest: for ranks 24
+and 25 every candidate yields the same verdict on the recorded campaign — the
+V7−B4 paired difference is exactly zero under any arm-invariant event, and no
+proposal from any arm ever beat the library on S11 — so no pick could favour V7.
+Rank 23 is the one place the form moves the recorded verdict (pooled passes at
+0.031, per-scenario fails on S4's 0.100); the pick rests on the resolution
+argument above, which was stated to the user before the outcome-difference was.
+
+**Closes off.** The three-way hold on the backlog's gated tail: A47, A48 and
+A49 are now build work under `/next`'s ordinary path. Criterion 4 keeps no
+per-scenario clause, so a single scenario's excursion within a passing pooled
+rate is not a failure — S4 at 0.100 is inside the bar, by design. The §9
+contrast becomes answerable on the recorded campaign (conditioning on 0.850 of
+S11 replicates) and its answer is the disclosed tie, not a V7 win. Criterion 5's
+D3-over-the-leader reading is retired; a future campaign passes it only by a
+proposal landing strictly closer to truth than the library, with non-overlapping
+intervals.

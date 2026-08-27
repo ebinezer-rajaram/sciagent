@@ -2197,7 +2197,23 @@ and the rendering.
 
 ---
 
-## Criterion 4's size clause demands a false-positive rate no calibrated probe can deliver
+## DONE (2026-08-27, gate A47) — Criterion 4's size clause demands a false-positive rate no calibrated probe can deliver
+
+**Discharged.** The user took the decision on 2026-08-27, recorded in
+`docs/DECISIONS.md`: candidate 2 — the clause stated over the **pooled** quiet
+set, one rate over 160 draws — against **A9's measured 0.045** rather than the
+nominal alpha. The deciding argument was arithmetic, not the recorded outcome:
+at twenty seeds a per-scenario rate is a multiple of 0.05, so candidate 1 with
+any sub-0.05 tolerance admits zero firings and is the exactly-zero clause
+again; and candidate 3 would leave the matrix's own realised size unchecked,
+since A9's sweep measured a seed set the matrix never runs (2026-08-18).
+`criterion_four` now takes per-scenario counts (`ProbeCount`), because pooled
+rates cannot be recovered from per-scenario rates once draw counts differ, and
+`SIZE_TOLERANCE` carries the 0.045 beside its provenance. Gate A47 pins the
+boundary at, below and above the tolerance, the draws-weighted pooling, the
+power clause's survival and the S8/S10/S12 silence; A45's tests were revised to
+the pooled form and A46's exercise it through the report path. The recorded
+campaign now passes criterion 4 at 5/160 = 0.031.
 
 **Idea.** SPEC §12 criterion 4 says the Stage A probe *"does not fire on S1–S7 or
 S9"*, and `sciagent.eval.report.criterion_four` implements "does not fire" as
@@ -2283,7 +2299,23 @@ this changes one comparison and the gate that pins it.
 
 ---
 
-## The preregistered contrast conditions on an event the arms it compares extinguish
+## DONE (2026-08-27, gate A48) — The preregistered contrast conditions on an event the arms it compares extinguish
+
+**Discharged.** The user took the decision on 2026-08-27, recorded in
+`docs/DECISIONS.md`: "inadequacy detection" names the **Stage A probe** —
+pre-treatment and arm-invariant by A29, so it cannot select against the arms
+that succeed — and §9's two statements are reconciled in wording as well as in
+code, both now naming the probe. B1's detection was declined because its
+whole-record firing is the multiplicity artefact `docs/OPEN-DECISIONS.md` §1
+already refused to build a bar on. The blindness this entry asked for was
+served by its own disclosure: every arm-invariant candidate yields the same
+verdict on the recorded campaign — the V7−B4 paired difference on D3 is
+exactly zero — so no pick could favour V7, and the decision was taken in a
+fresh session on the principle, with the outcome-difference stated after the
+argument. `contrast`'s filter reads `probe_inadequate`; the empty-population
+refusal is kept and names the probe. On the recorded campaign the §9 primary
+contrast now conditions on 0.850 of S11 replicates and answers: the disclosed
+tie.
 
 **Idea.** SPEC §9's primary contrast is *"On S11 Stage B, conditional on
 inadequacy detection, does V7 exceed B4 on D3?"*, and
@@ -2389,7 +2421,23 @@ as in code
 
 ---
 
-## Criterion 5 compares two extensions on a dimension that cannot see either
+## DONE (2026-08-27, gate A49) — Criterion 5 compares two extensions on a dimension that cannot see either
+
+**Discharged.** The user took the decision on 2026-08-27, recorded in
+`docs/DECISIONS.md`: re-instrument, as candidate 3 —
+`ScenarioRun.structural_distance`, the distance from the truth to the nearest
+entertained structure. It is the only recorded quantity that is both
+proposal-sensitive and faithful to the criterion's closeness-to-truth meaning:
+D4 measures rescue rather than proximity, candidate 1 needs the recorded runs
+re-scored, and candidate 4 leaves the criterion pointed at a quantity that
+cannot see what it names. `criterion_five` in `sciagent.eval.report` states
+the direction explicitly (lower is closer — `Contrast.exceeds` reads the wrong
+way for a distance), refuses any other dimension or scenario and any
+conditioned contrast; `CRITERION5_CONTRAST` declares the comparison beside
+`SPEC9_CONTRAST`, and `scripts/report_matrix.py --criterion5 <ledger>` is the
+production caller, reading the union of the campaign's ledger and B6's. As the
+entry disclosed, this cannot turn the recorded campaign into a pass — every
+arm ties at 1.000000 — and was not adopted in the belief that it might.
 
 **Idea.** SPEC §12 criterion 5 asks whether V7 *"proposes an S11 extension
 exceeding B6-equivalent random structured generation on D3, with a non-overlapping

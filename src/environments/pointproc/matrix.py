@@ -42,13 +42,16 @@ reading and a §9 reading are different claims and keep different cell sets.
 The preregistered contrast
 --------------------------
 
-    On S11 Stage B, conditional on inadequacy detection, does V7 exceed **B4**
-    on D3 (intervention-response similarity)?
+    On S11 Stage B, conditional on the Stage A probe detecting inadequacy,
+    does V7 exceed **B4** on D3 (intervention-response similarity)?
 
 B4 is the comparator by *prior* designation, because it is the baseline most
 likely to deflate the claim. It is in this table for that reason and not because
 retrieval is interesting on S11. Reporting the contrast against a different
-baseline is permitted only if the report says that is what happened.
+baseline is permitted only if the report says that is what happened. The
+conditioning event is named since gate A48: the earlier wording said only
+"inadequacy detection", and the arm's own post-run check answered to it until
+the completed campaign showed that event extinguished by successful expansion.
 
 Slice results are **exploratory by construction**. They inform the frozen
 campaign; they are not reportable as confirmatory findings, and anything quoting
@@ -68,6 +71,7 @@ __all__ = [
     "ALL_CELLS",
     "CORE_SYSTEMS",
     "CRITERION5_CELLS",
+    "CRITERION5_CONTRAST",
     "REPLICATES",
     "SPEC9_CELLS",
     "SPEC9_CONTRAST",
@@ -119,10 +123,12 @@ SPEC9_CELLS: Final[tuple[Cell, ...]] = _cells()
 
 #: SPEC §12 criterion 5's comparator cell, which is **not** part of §9's matrix.
 #:
-#: Criterion 5 reads: "Proposes an S11 extension exceeding B6-equivalent random
-#: structured generation on D3, with a non-overlapping 95% interval." It names an
-#: arm SPEC §5 defers to the full benchmark, so until gate A28 the criterion had
-#: a comparator by name and nothing to compare against. This is that comparator.
+#: Criterion 5 asks for an S11 extension landing strictly closer to the truth
+#: than "B6-equivalent random structured generation"'s, on the entertained
+#: distance with a non-overlapping 95% interval (re-instrumented from
+#: D3-over-the-leader at gate A49). It names an arm SPEC §5 defers to the full
+#: benchmark, so until gate A28 the criterion had a comparator by name and
+#: nothing to compare against. This is that comparator.
 #:
 #: Separate from :data:`SPEC9_CELLS` rather than appended to it, and the reason is
 #: written three lines above that tuple: *do not add an arm*. §9's 56 cells are
@@ -195,5 +201,45 @@ SPEC9_CONTRAST: Final = Preregistration(
         "exists for, and its D3 is bounded above by the best its library can do. "
         "This is a property of the comparison §9 asks for rather than a defect: "
         "R1 is whether generation beats retrieval where retrieval cannot reach.",
+    ),
+)
+
+#: SPEC §12 criterion 5's comparison, as data rather than as prose.
+#:
+#: Here for the same reason :data:`SPEC9_CONTRAST` is: it names two systems and
+#: a scenario, and the framework may not know one. The dimension is
+#: ``structural_distance`` -- the distance from the truth to the nearest
+#: *entertained* structure -- per the 2026-08-27 decision gate A49 encodes:
+#: criterion 5 read D3-over-the-leader until the completed campaign showed that
+#: figure ties by construction whenever no extension wins the posterior, which
+#: is every failure the criterion could report. **Lower is closer** on a
+#: distance, so the verdict comes from
+#: :func:`~sciagent.eval.report.criterion_five`, which states the direction,
+#: and not from :attr:`~sciagent.eval.report.Contrast.exceeds`, whose ``>``
+#: reads the wrong way here.
+#:
+#: Unconditioned, because criterion 5 states no conditioning event -- unlike
+#: §9's primary contrast -- and :func:`~sciagent.eval.report.criterion_five`
+#: refuses a conditioned reading rather than relabelling it.
+#:
+#: The one protocol delta worth declaring is where the rows live: B6 is not a
+#: §9 arm, so its twenty replicates sit in their own ledger
+#: (``criterion5.db``) beside the campaign's, recorded on the same seeds, the
+#: same battery and the same address. Reading this contrast therefore means
+#: summarising the union of the two ledgers, which is what
+#: ``scripts/report_matrix.py --criterion5`` does.
+CRITERION5_CONTRAST: Final = Preregistration(
+    scenario=ScenarioId("S11"),
+    treatment="V7",
+    comparator="B6",
+    dimension="structural_distance",
+    conditional_on_inadequacy=False,
+    residual_asymmetries=(
+        "Separate recording passes. B6 is criterion 5's opt-in comparator, not "
+        "a section-9 arm, so its cell was recorded into its own ledger rather "
+        "than the campaign's. Same seeds, same battery, same address -- the "
+        "union is what this contrast reads -- but the rows were produced by a "
+        "different invocation, and nothing in the address distinguishes a "
+        "pass that ran alone from one that ran with the matrix.",
     ),
 )

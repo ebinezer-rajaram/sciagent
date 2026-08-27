@@ -82,11 +82,14 @@ thing that would otherwise be quietly dropped as redundant:
   and the non-contiguity note at ``report.py``'s ``_MUST_BE_QUIET``.
 - **A rate threshold at 0.5**, in an implementation that *does* delegate to
   :func:`~sciagent.eval.report.criterion_four` and so satisfies the entry's
-  "production caller" idea while still being wrong. One firing replicate in
-  twenty is rate 0.05, which the criterion fails and a rounding projection
-  passes. Every rate here that is meant to be positive but small is that case;
-  a module built only from 0.0 and 1.0 cannot separate the criterion's ``> 0``
-  boundary from any other threshold in ``(0, 1)``.
+  "production caller" idea while still being wrong. When this gate was written
+  the criterion read "does not fire" as exactly zero, so one firing replicate
+  in twenty -- rate 0.05 -- was a failing campaign a rounding projection
+  passed. Gate A47 then moved the size clause to the pooled quiet set against
+  ``SIZE_TOLERANCE``, so the small-rate cases here now probe the pooled
+  boundary through the report path instead; the S11 power clause keeps its
+  ``> 0`` reading, and a module built only from 0.0 and 1.0 still cannot
+  separate it from a threshold.
 - **Presence required for the eight quiet scenarios only**, with an absent S11
   read as 0.0 -- the "treat a missing scenario as zero" default the criterion's
   own docstring names. That report is ``--scenarios S1,...,S9``, and clause 3
@@ -136,6 +139,7 @@ from sciagent.eval.matrix import (
 )
 from sciagent.eval.report import (
     MatrixReport,
+    ProbeCount,
     criterion_four,
     criterion_four_of,
     render,
@@ -384,29 +388,37 @@ class TestA46ReportEvaluatesCriterionFour:
                 criterion_four_of(_report(partial))
             assert "criterion 4" in str(raised.value)
 
-    def test_a46_a_single_firing_replicate_is_not_quiet(self) -> None:
-        """One firing replicate in twenty fails the criterion.
+    def test_a46_the_pooled_size_clause_reaches_the_report(self) -> None:
+        """Both sides of gate A47's boundary, read through the report path.
 
-        The criterion's own words are *fires* and *does not fire*, which
-        :func:`~sciagent.eval.report.criterion_four` reads as any positive rate
-        against exactly zero. A projection that rounds, thresholds or otherwise
-        imposes a power level passes this campaign, and does so while genuinely
-        delegating to the criterion -- so the "it calls the real check" defence
-        does not reach it. Every quiet scenario in turn, for the same reason the
-        clause above is looped.
+        Until A47 this test pinned the opposite: one firing replicate in
+        twenty *failed*, because the clause was exactly-zero. The revision is
+        the recorded 2026-08-27 decision, and what this now establishes is
+        that the report layer reads the pooled form rather than a per-scenario
+        one -- one firing in 160 quiet draws is 0.00625 and holds, still
+        naming the scenario as a false positive; eight firings on one scenario
+        is 8/160 = 0.05, above the 0.045 tolerance, and fails. Every quiet
+        scenario in turn, for the same reason the clause above is looped: a
+        projection deriving the quiet set as a contiguous range loses S9.
         """
         for name in QUIET:
-            rates = {**_passing(), name: 1.0 / REPLICATES}
-            report = _report(rates, replicates=REPLICATES)
-            cell = next(one for one in report.cells if one.scenario == name)
-            assert 0.0 < cell.probe_inadequate_rate < 1.0
-
-            verdict = criterion_four_of(report)
-            assert verdict.holds is False, (
-                f"{name} firing on 1 of {REPLICATES} replicates is a rate of "
-                f"{cell.probe_inadequate_rate}, which is not quiet"
+            within = criterion_four_of(
+                _report({**_passing(), name: 1.0 / REPLICATES}, replicates=REPLICATES)
             )
-            assert verdict.false_positives == (ScenarioId(name),)
+            assert within.holds is True, (
+                f"{name} at one firing in 160 quiet draws is within the "
+                f"instrument's measured size"
+            )
+            assert within.false_positives == (ScenarioId(name),)
+
+            beyond = criterion_four_of(
+                _report({**_passing(), name: 8.0 / REPLICATES}, replicates=REPLICATES)
+            )
+            assert beyond.holds is False, (
+                f"{name} at eight firings in 160 quiet draws is 0.05, beyond "
+                f"the tolerance"
+            )
+            assert beyond.false_positives == (ScenarioId(name),)
 
     def test_a46_a_single_firing_replicate_on_s11_is_firing(self) -> None:
         """The other side: no power threshold is imposed on S11 either.
@@ -443,9 +455,15 @@ class TestA46ReportEvaluatesCriterionFour:
         )
         for rates in vectors:
             report = _report(rates, replicates=REPLICATES)
+            # The cell rate recovers the count exactly because the fixture runs
+            # every cell at REPLICATES replicates; `round` undoes the division
+            # `_rows` performed, not a lossy estimate of it.
             expected = criterion_four(
                 {
-                    ScenarioId(str(cell.scenario)): cell.probe_inadequate_rate
+                    ScenarioId(str(cell.scenario)): ProbeCount(
+                        fired=round(cell.probe_inadequate_rate * cell.replicates),
+                        draws=cell.replicates,
+                    )
                     for cell in report.cells
                 }
             )

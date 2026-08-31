@@ -11675,3 +11675,125 @@ S11 replicates) and its answer is the disclosed tie, not a V7 win. Criterion 5's
 D3-over-the-leader reading is retired; a future campaign passes it only by a
 proposal landing strictly closer to truth than the library, with non-overlapping
 intervals.
+
+## 2026-08-27 — item 15: the re-instrumented report, read off the completed campaign
+
+**Decision.** The §9 matrix's reporting step is discharged under the
+instruments ranks 23–25 chose (gates A47–A49, commit 29a7558). All three
+verdicts rendered by the production path in one invocation, exit 0:
+
+- **Criterion 4 holds.** The Stage A probe fired on S11 and the pooled
+  quiet-set rate is 5/160 = 0.0312 against A9's measured 0.045, firing on S2,
+  S4, S5 and S6 — S4's per-scenario 0.100 is inside the bar, by design (A47
+  keeps no per-scenario clause).
+- **The preregistered contrast answers instead of refusing.** Conditioned on
+  the Stage A probe (A48), 17 of 20 S11 replicates condition per arm, same
+  seeds, and V7 = B4 = 0.6970 on D3 with a paired difference of exactly
+  0.0000 [0.0000, 0.0000], n=17. The disclosed tie, now produced by the
+  instrument rather than predicted from a peek. Exploratory, as §9's slice
+  results are by construction.
+- **Criterion 5 FAILS as a tie.** V7 and B6 both report structural_distance
+  1.0000 [1.0000, 1.0000], n=20: no proposal from either arm was entertained
+  strictly closer to S11's truth than the best library member, and the
+  intervals overlap — both clauses of A49's conjunction fail. The union of
+  the two ledgers carries the one declared residual (separate recording
+  passes), printed under the block.
+
+**The campaign behind it, verified at current addresses.** Item 15 has no
+A-gate, so what was tested is stated here instead: before reporting, every
+replicate of §9's 56 cells was checked against the ledger by content address —
+`cell_key` under the live `CampaignAddress` (env
+`pointproc/pointproc/1.1.0+1.2.0+1.1.0`, data `pointproc/generated/1.0.0`,
+metric `metrics/9b1c54c9d49f49f656c30e32d21d4a7b`, partition dev, dimensions
+`spec8/6`, battery `3#2e9ef3a1660578ec`): **held 1120, missing 0**. Nothing
+was run; a resumed pass would skip every cell. The ledger holds the 1,120
+unreportable `spec8/1` rows beside them, per invariant 4.
+
+**One platform.** Every cell was recorded on the desktop —
+`MINGW64_NT-10.0-26200 x86_64` — and the report was taken on the same machine
+under numpy 2.5.1. The invocation:
+
+    uv run python scripts/report_matrix.py .cache/campaign/spec9.db \
+      --platform "$(uname -sm)" --numpy 2.5.1 --grammar pointproc/1.1.0 \
+      --env-version pointproc/pointproc/1.1.0+1.2.0+1.1.0 \
+      --data-version pointproc/generated/1.0.0 \
+      --metric-version metrics/9b1c54c9d49f49f656c30e32d21d4a7b \
+      --contrast --criterion5 .cache/campaign/criterion5.db
+
+**Why.** The verdicts live only in the union of two ledgers and the code at
+29a7558; the ledgers are not in git, and the campaign that filled them is days
+of compute plus a recorded LLM corpus. The alternative — leaving the previous
+entry's peeks as the only record — would leave no statement that the built
+instruments, run as production code, reproduce them.
+
+**Closes off.** §11 item 15's reporting duties: platform stated and single,
+the contrast reported as exploratory against the preregistered comparator B4,
+D1–D6 rendered separately throughout — no total, no mean of the six, no rank
+column, which is §8 holding. R1's answer on this campaign: generation did not
+beat retrieval where retrieval cannot reach — every V7 and B6 proposal left
+the entertained distance at the library's own. Nothing of item 15 is left
+incomplete; what a future campaign must show to pass criterion 5 (a proposal
+strictly closer than the library, intervals disjoint) is stated at A49.
+
+## 2026-08-27 — S11 Stage B was unwinnable by construction: the proposal menu cannot express the truth, and the evidence loop never surfaces it
+
+**Finding, of the spec-ambiguity kind.** SPEC §4.5 states S11's task as
+"detecting the inadequacy and extending the space", and F7's menu boundary
+makes the second half inexpressible. Every proposal arm — V7, V3, V4, and B6
+— proposes through `structural_menu(AGENT_GRAMMAR)`
+(`runner.py` builds all four on `AGENT_GRAMMAR`; the graph itself is
+`null_seeded_graph(AGENT_GRAMMAR, ...)`), and
+`sciagent/systems/llm/encoding.py`'s own docstring states the consequence:
+the menu from the agent grammar "contains no way to say" a size→arrival
+dependency — which is S11's truth, `AddDependency(size -> arrival)`.
+
+**Measured, three ways, off the recorded campaign.**
+
+1. **The distance floor is closed-form.** `EditGrammar._ground_distance`
+   admits a parameter term only when type, target *and construct* all match.
+   No agent-grammar cell has the truth's `size|exponential` construct, so
+   every expressible single-edit proposal sits at ground distance ≥ 1.5 at
+   any parameterisation (enumerated: 1.5, 1.5, 1.5, 2.0, 1.5 over the five
+   cells; multi-edit defects are ≥ 1.5 as well). The null, always
+   entertained, is at 1.0. `structural_distance` therefore cannot move below
+   1.0 for any proposer, and criterion 5's "strictly closer than the
+   library" is arithmetically unattainable. The recorded verdict — V7 and B6
+   tied at 1.0000, n=20 each — is what *every* possible arm scores. For
+   contrast, `edit_grammar`'s own truth cell sits at 0.5714 at grid-0
+   parameters: the bar is reachable, just not through this menu.
+2. **The evidence loop is closed from the other side.** In the recorded
+   corpus (`spec9-v3.json`, 112 calls), `query:size_gap_correlation` — the
+   diagnostic carrying S11's signature — is listed as *available* in 112 of
+   112 briefs and *observed* in 0 of 112. BOED selects by information gain
+   over entertained hypotheses; no agent-grammar hypothesis makes that query
+   informative, so no arm ever runs it, so no brief ever shows the model the
+   one number pointing at size.
+3. **The model behaved sensibly given both walls.** The 112 payloads propose
+   regime-switching, Hawkes-variant and size-mixture structures with
+   coherent diagnostic rationales — the right reasoning over evidence that
+   never contained the signature, through a vocabulary that could not have
+   expressed the answer.
+
+**What this reverses.** The 2026-08-27 item-15 entry reports the §9 contrast
+and criterion 5 as ties. Those numbers stand; what does not stand is reading
+them as an answer to R1. An instrument that returns the identical tie for
+any proposer whatsoever does not distinguish reasoning from retrieval. R1 is
+*unanswered*, not answered in the negative. This is the third instrument
+mis-specification only a completed campaign could expose, after criterion
+4's zero-clause (2026-08-26) and the post-treatment conditioning event
+(rank 24). Stage A is unaffected: the probe detects at 0.850 on S11 against
+0.031 pooled quiet, and that half of S11's task is measured and works.
+
+**Work left deliberately incomplete, and what it waits on.** The resolution
+is an architectural decision on the frozen spec's boundary — how Stage B
+extension is actually supposed to happen (a wider declared proposal grammar;
+a detection-gated menu widening; or re-scoping S11 to detection only) — so
+it goes through `docs/BACKLOG.md` per §13, not through this file. Scoping in
+progress in this session; the invariant-6 constraint on any candidate is
+already clear: the menu is part of the system under test, so widening it is
+in bounds, while moving criterion 5 or D1's metric to meet the recorded
+campaign is exactly the confound that invariant names. Any mechanism must
+also move an address term (the campaign address carries no system-version
+term, so an unbumped re-run would *skip* every cell as already recorded
+rather than re-run it), and must widen B6 identically to V7 or criterion 5's
+comparison stops being one.

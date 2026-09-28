@@ -3715,7 +3715,7 @@ than the earlier wording implies.
 worktree-isolated session is refused:
 
 ```
-$ git -C "C:/Users/Ebinezer/Documents/Startup/sciagent" merge --ff-only worktree-delegation-gate
+$ git -C <repo> merge --ff-only worktree-delegation-gate
 Refusing to run it — a worktree-isolated session's git operations must target
 its own worktree.
 ```

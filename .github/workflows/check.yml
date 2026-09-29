@@ -20,12 +20,22 @@
 # is load-bearing: without it a module's tests split across workers and each
 # re-simulates table rows its siblings already built, which is slower than
 # serial. One measured test goes from 0.00s to 118.14s under the default `load`.
+#
+# Timeout: green runs measured 21-30 minutes (2026-08-19 to 2026-08-31), so the
+# old 30-minute cap cancelled most runs at the finish line. 45 leaves headroom.
+# README-only pushes skip the job: no test reads the README. docs/ is not
+# skipped, because the acceptance tests read SPEC.md and DECISIONS.md.
 
 name: check
 
 on:
   push:
+    paths-ignore:
+      - "README.md"
   pull_request:
+    paths-ignore:
+      - "README.md"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -33,7 +43,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -41,6 +51,7 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
+          enable-cache: true
 
       - name: Install dependencies
         run: uv sync --locked

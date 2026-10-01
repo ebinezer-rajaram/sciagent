@@ -281,3 +281,22 @@ The Wiener–Hopf grid check found that the old first bin under-resolved the
 PowerK(c=0.05) norms by about 0.006. At 0.01, finer grids change the norms by
 less than 3e-4, and null-norm noise is unchanged. Heavy-tailed kernels remain
 limited by the support (max lag of 10 mean gaps), which is a stated limit.
+
+## 2026-10-02 — Intervention language: forced events excite but are exogenous
+
+The primitives are `force_events`, `inject_marks`, `censor` and `clamp_rate`,
+plus `compose`. Every experiment is a fresh run from empty history.
+- **Forced events** enter history but are not endogenous. They are never
+  censored, because the experimenter placed them.
+- **Mark injection** overrides only generated events.
+- **Clamping** replaces λ, so the model's λ is not evaluated inside a clamp.
+  Clamped and censored windows go to `Dataset.excluded`.
+- **The mark sampler** is called for every event, and overrides are applied
+  afterwards. The RNG stream therefore never shifts, which makes
+  inject-on-Hawkes byte-identical to its control: the S11 discriminator has an
+  exact null.
+- **Caps** are validated in the agent's time units.
+
+Sampler requirement found here: an exp-link truth with positive
+self-excitation can explode slowly. The truth sampler must reject by a bounded
+pilot simulation (a cap on events and time), not by waiting for `max_events`.

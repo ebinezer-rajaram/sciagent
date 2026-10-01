@@ -829,3 +829,110 @@ def test_structural_input_errors() -> None:
 
     with pytest.raises(InvalidSimulationInputError):
         simulate(structure, psi, coef, CHANNELS, missing, 10.0, rng)
+
+
+# --------------------------------------------------------------------------
+# Plans (the simulator side of interventions; semantics in test_interventions)
+# --------------------------------------------------------------------------
+
+
+def _planned(
+    model_: tuple[Structure, PsiAssignment, Coefficients],
+    plan: sim.Plan,
+    horizon: float = 100.0,
+    seed: int = 0,
+) -> sim.PlannedRun:
+    structure, psi, coef = model_
+    return sim.simulate_planned(
+        structure,
+        psi,
+        coef,
+        CHANNELS,
+        marks_exp,
+        horizon,
+        np.random.default_rng(seed),
+        plan,
+    )
+
+
+def test_empty_plan_is_simulate() -> None:
+    structure, psi, coef = hawkes(0.5, 0.5, 2.0)
+    run = _planned((structure, psi, coef), sim.Plan(), 200.0, seed=3)
+    log = simulate(
+        structure, psi, coef, CHANNELS, marks_exp, 200.0, np.random.default_rng(3)
+    )
+    assert run.log.times.tobytes() == log.times.tobytes()
+    assert not run.forced.any()
+    assert not run.clamped.any()
+    assert run.forced.shape == run.clamped.shape == (log.n,)
+
+
+def test_plan_flags_forced_and_clamped_events() -> None:
+    plan = sim.Plan(
+        forced=(sim.ForcedEvent(5.0, {"size": 2.0}), sim.ForcedEvent(50.0)),
+        clamps=(sim.RateClamp(20.0, 30.0, 5.0),),
+        overrides=(sim.MarkOverride(60.0, 70.0, "sign", 1.0),),
+    )
+    run = _planned(hawkes(0.5, 0.5, 2.0), plan, seed=1)
+    t = run.log.times
+    np.testing.assert_array_equal(t[run.forced], [5.0, 50.0])
+    assert run.log.marks["size"][t == 5.0][0] == 2.0
+    assert np.array_equal(run.clamped, (t >= 20.0) & (t < 30.0))
+    in_override = (t >= 60.0) & (t < 70.0)
+    assert np.all(run.log.marks["sign"][in_override] == 1.0)
+
+
+def test_clamp_replaces_an_invalid_intensity() -> None:
+    """Inside a clamp the model's λ is never evaluated: a negative one is fine."""
+    plan = sim.Plan(clamps=(sim.RateClamp(0.0, 100.0, 1.0),))
+    run = _planned(poisson(-1.0), plan, seed=2)
+    assert run.log.n > 50
+    assert run.clamped.all()
+
+
+def test_forced_events_respect_the_thinning_bound() -> None:
+    """A dense forced schedule on a PowerK truth: windows end at every forced
+    time, and λ never exceeds its bound (BoundViolationError would be raised)."""
+    model_ = model(
+        (Excite(KernelKind.POWER, Mark("size"), ALL),),
+        ({"power_c": 0.05, "power_p": 2.5},),
+        0.3,
+        ((0.4,),),
+        Link.SOFTPLUS,
+    )
+    forced = tuple(sim.ForcedEvent(1.0 + 0.37 * k) for k in range(200))
+    run = _planned(model_, sim.Plan(forced=forced), 100.0, seed=4)
+    assert int(run.forced.sum()) == 200
+    assert np.all(np.diff(run.log.times) > 0.0)
+
+
+@pytest.mark.parametrize(
+    "plan",
+    [
+        sim.Plan(forced=(sim.ForcedEvent(2.0), sim.ForcedEvent(1.0))),
+        sim.Plan(forced=(sim.ForcedEvent(1.0), sim.ForcedEvent(1.0))),
+        sim.Plan(forced=(sim.ForcedEvent(101.0),)),
+        sim.Plan(forced=(sim.ForcedEvent(-1.0),)),
+        sim.Plan(forced=(sim.ForcedEvent(1.0, {"colour": 1.0}),)),
+        sim.Plan(clamps=(sim.RateClamp(0.0, 2.0, 1.0), sim.RateClamp(1.0, 3.0, 1.0))),
+        sim.Plan(clamps=(sim.RateClamp(2.0, 1.0, 1.0),)),
+        sim.Plan(clamps=(sim.RateClamp(0.0, 1.0, -1.0),)),
+        sim.Plan(clamps=(sim.RateClamp(0.0, 1.0, math.nan),)),
+        sim.Plan(overrides=(sim.MarkOverride(0.0, 1.0, "colour", 1.0),)),
+        sim.Plan(
+            overrides=(
+                sim.MarkOverride(0.0, 2.0, "size", 1.0),
+                sim.MarkOverride(1.0, 3.0, "size", 2.0),
+            )
+        ),
+    ],
+)
+def test_malformed_plans_rejected(plan: sim.Plan) -> None:
+    with pytest.raises(InvalidSimulationInputError):
+        _planned(poisson(1.0), plan)
+
+
+def test_forced_mark_values_are_checked() -> None:
+    plan = sim.Plan(forced=(sim.ForcedEvent(1.0, {"sign": 0.5}),))
+    with pytest.raises(InvalidSimulationInputError):
+        _planned(poisson(1.0), plan)

@@ -48,12 +48,28 @@ exactly rounded ``math.fsum`` (``sciagent.core.reductions``), so the output
 does not depend on numpy's summation order. :func:`intensity` never uses the
 recursion, which lets the time-rescaling tests check one path against the other.
 
-**Extension (P2).** Interventions will add forced events, mark injection,
-censoring windows and rate clamps. The loop in :class:`_Thinning` is shaped for
-that: a forced-event schedule caps the window in :meth:`_Thinning._window_end`
-and is appended through :meth:`_History.append` like any accepted event; a rate
-clamp is a transform in :meth:`_Thinning._rate` and :meth:`_Thinning._rate_bound`
-(it must stay monotone for the bound to remain a bound). None is implemented.
+**Plans (interventions).** :func:`simulate_planned` runs the same loop under a
+:class:`Plan`, the simulator-level form of an intervention (the language is in
+``interventions.py``; censoring is observation only, so it is not here):
+
+- *Forced events* are inserted into history at their scheduled times. Every
+  look-ahead window ends at the next forced time, and is then treated as open
+  at that end, so no generated event can coincide with a forced one. A forced
+  event excites like any other; it is flagged in :class:`PlannedRun`.
+- *Rate clamps* set ``λ := c`` on ``[start, end)``. Windows also end at every
+  clamp boundary, so each window is wholly inside or outside a clamp; inside,
+  ``c`` is both the thinning bound and the rate, and the model's λ is not
+  evaluated at all (so an explosive or negative λ there is not an error).
+  Events generated under a clamp enter history and are flagged.
+- *Mark overrides* replace one channel's mark of every generated (not forced)
+  event in ``[start, end)``, after the sampler has drawn it and before the
+  event enters history.
+
+The sampler is called once for every event, forced ones included, and
+overrides are applied after the call, so a plan never shifts the generator's
+stream: draws are, in time order, a candidate gap, an acceptance uniform, and
+on acceptance (or at a forced time) the sampler's marks. With an empty plan the
+loop is exactly :func:`simulate`'s.
 
 ψ values need not lie on the grids in ``grids.py`` (a truth may be off-grid);
 they must be assigned for every slot, finite and inside the parameter's domain.
@@ -62,11 +78,14 @@ they must be assigned for every slot, finite and inside the parameter's domain.
 from __future__ import annotations
 
 import math
+from bisect import bisect_right
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from itertools import pairwise
 from typing import Final, Protocol
 
 import numpy as np
+import numpy.typing as npt
 from scipy.special import gammaln, xlogy
 
 from sciagent.core.errors import SciAgentError
@@ -152,6 +171,58 @@ class Coefficients:
 
     intercept: float
     per_feature: tuple[tuple[float, ...], ...]
+
+
+@dataclass(frozen=True)
+class ForcedEvent:
+    """An exogenous event at ``time``; ``marks`` sets some or all of its channels.
+
+    Channels not given are drawn from the sampler.
+    """
+
+    time: float
+    marks: Mapping[str, float] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class RateClamp:
+    """``λ := rate`` on ``[start, end)``."""
+
+    start: float
+    end: float
+    rate: float
+
+
+@dataclass(frozen=True)
+class MarkOverride:
+    """``channel := value`` for every generated event in ``[start, end)``."""
+
+    start: float
+    end: float
+    channel: str
+    value: float
+
+
+@dataclass(frozen=True)
+class Plan:
+    """A simulator-level intervention schedule (see the module docstring).
+
+    ``forced`` strictly increasing in time; ``clamps`` sorted and disjoint;
+    ``overrides`` on one channel disjoint. All inside ``[0, horizon]``.
+    """
+
+    forced: tuple[ForcedEvent, ...] = ()
+    clamps: tuple[RateClamp, ...] = ()
+    overrides: tuple[MarkOverride, ...] = ()
+
+
+@dataclass(frozen=True, eq=False)
+class PlannedRun:
+    """Every event of a planned run, with which were forced and which clamped."""
+
+    log: EventLog
+    forced: npt.NDArray[np.bool_]
+    clamped: npt.NDArray[np.bool_]
 
 
 # --------------------------------------------------------------------------
@@ -779,7 +850,12 @@ class _Evaluator:
 
 
 class _Thinning:
-    """Ogata's thinning with locally bounded, adaptively sized windows."""
+    """Ogata's thinning with locally bounded, adaptively sized windows.
+
+    Under a :class:`Plan` (see the module docstring), windows also end at
+    forced times and clamp boundaries; ``forced`` and ``clamped`` record, per
+    event in history order, how it arose.
+    """
 
     def __init__(
         self,
@@ -788,16 +864,28 @@ class _Thinning:
         horizon: float,
         rng: np.random.Generator,
         max_events: int,
+        plan: Plan,
     ) -> None:
         self.ev = evaluator
         self.marks = marks
         self.horizon = horizon
         self.rng = rng
         self.max_events = max_events
+        self.plan = plan
+        self.forced: list[bool] = []
+        self.clamped: list[bool] = []
+        self._next_forced = 0
+        self._edges = [x for c in plan.clamps for x in (c.start, c.end)]
+        self._clamp: float | None = None  # the clamp rate on the current window
+        self._open_end = False  # whether the current window excludes its end
 
     def run(self) -> None:
         s, width = 0.0, 1.0
-        while s < self.horizon:
+        while True:
+            self._insert_forced(s)
+            if s >= self.horizon:
+                return
+            self._clamp = self._clamp_at(s)
             end = self._window_end(s, width)
             bound = self._rate_bound(s, end)
             while bound * (end - s) > _MAX_EXPECTED and end - s > _MIN_WINDOW:
@@ -806,19 +894,48 @@ class _Thinning:
             width = end - s
             if bound * width < _MIN_EXPECTED:
                 width *= 2.0
+            self._open_end = end == self._forced_time()
             accepted = self._thin(s, end, bound)
             s = end if accepted is None else accepted
 
+    def _forced_time(self) -> float:
+        """Time of the next forced event not yet inserted (inf when none)."""
+        if self._next_forced < len(self.plan.forced):
+            return self.plan.forced[self._next_forced].time
+        return math.inf
+
+    def _insert_forced(self, s: float) -> None:
+        """Insert every forced event scheduled at or before ``s`` (only at ``s``)."""
+        while self._forced_time() <= s:
+            event = self.plan.forced[self._next_forced]
+            marks = dict(self.marks(self.rng))
+            marks.update(event.marks)
+            self._append(event.time, marks, forced=True, clamped=False)
+            self._next_forced += 1
+
+    def _clamp_at(self, s: float) -> float | None:
+        """The clamp rate on ``[s, next edge)``, or None outside every clamp."""
+        i = bisect_right(self._edges, s)
+        return self.plan.clamps[i // 2].rate if i % 2 else None
+
     def _window_end(self, s: float, width: float) -> float:
-        """End of the next look-ahead window (P2: also cap at the next forced event)."""
-        return min(s + width, self.horizon)
+        """End of the next look-ahead window, also capped at forced times and edges."""
+        end = min(s + width, self.horizon, self._forced_time())
+        i = bisect_right(self._edges, s)
+        if i < len(self._edges):
+            end = min(end, self._edges[i])
+        return end
 
     def _rate(self, t: float) -> float:
-        """λ at t (P2: a rate clamp would apply here)."""
+        """λ at t; the clamp rate inside a clamp."""
+        if self._clamp is not None:
+            return self._clamp
         return float(self.ev.apply_link(self.ev.eta(np.array([t])))[0])
 
     def _rate_bound(self, s: float, end: float) -> float:
-        """Upper bound on λ over ``(s, end]`` (P2: and here, monotonically)."""
+        """Upper bound on λ over ``(s, end]``; exactly the clamp rate in a clamp."""
+        if self._clamp is not None:
+            return self._clamp
         eta_hi = self.ev.eta_upper(s, end)
         if self.ev.link is Link.IDENTITY and eta_hi < 0.0:
             raise NegativeIntensityError(
@@ -837,7 +954,7 @@ class _Thinning:
         t = s
         while True:
             t = t + float(self.rng.exponential(1.0 / bound))
-            if t > end:
+            if t > end or (self._open_end and t >= end):
                 return None
             if t <= s:  # a zero draw: λ at s itself excludes the event at s
                 continue
@@ -851,8 +968,22 @@ class _Thinning:
             if float(self.rng.random()) * bound < lam:
                 if self.ev.history.n >= self.max_events:
                     raise ExplosionError(f"more than {self.max_events} events by t={t}")
-                self.ev.history.append(t, self.marks(self.rng))
+                marks = dict(self.marks(self.rng))
+                for override in self.plan.overrides:
+                    if override.start <= t < override.end:
+                        marks[override.channel] = override.value
+                clamped = self._clamp is not None
+                self._append(t, marks, forced=False, clamped=clamped)
                 return t
+
+    def _append(
+        self, t: float, marks: Mapping[str, float], *, forced: bool, clamped: bool
+    ) -> None:
+        if self.ev.history.n >= self.max_events:
+            raise ExplosionError(f"more than {self.max_events} events by t={t}")
+        self.ev.history.append(t, marks)
+        self.forced.append(forced)
+        self.clamped.append(clamped)
 
 
 # --------------------------------------------------------------------------
@@ -927,9 +1058,93 @@ def simulate(
         raise InvalidSimulationInputError(f"horizon must be positive, got {horizon}")
     if max_events < 0:
         raise InvalidSimulationInputError(f"max_events must be ≥ 0, got {max_events}")
+    return simulate_planned(
+        structure,
+        psi,
+        coef,
+        channels,
+        marks,
+        horizon,
+        rng,
+        Plan(),
+        max_events=max_events,
+    ).log
+
+
+def _check_plan(plan: Plan, horizon: float, channels: tuple[ChannelSpec, ...]) -> None:
+    """Times finite and inside ``[0, horizon]``; ordering; known channels."""
+    names = sorted(spec.name for spec in channels)
+
+    def inside(t: float, what: str) -> float:
+        v = _finite(t, what)
+        if not 0.0 <= v <= horizon:
+            raise InvalidSimulationInputError(f"{what} {v} is outside [0, {horizon}]")
+        return v
+
+    previous = -math.inf
+    for event in plan.forced:
+        t = inside(event.time, "forced event time")
+        if t <= previous:
+            raise InvalidSimulationInputError("forced times must strictly increase")
+        previous = t
+        unknown = sorted(c for c in event.marks if c not in names)
+        if unknown:
+            raise InvalidSimulationInputError(f"forced marks on unknown {unknown}")
+    previous = 0.0
+    for clamp in plan.clamps:
+        a, b = inside(clamp.start, "clamp start"), inside(clamp.end, "clamp end")
+        if not previous <= a < b:
+            raise InvalidSimulationInputError("clamps must be sorted and disjoint")
+        if _finite(clamp.rate, "clamp rate") < 0.0:
+            raise InvalidSimulationInputError(f"clamp rate {clamp.rate} < 0")
+        previous = b
+    by_channel: dict[str, list[tuple[float, float]]] = {}
+    for o in plan.overrides:
+        a, b = inside(o.start, "override start"), inside(o.end, "override end")
+        if not a < b:
+            raise InvalidSimulationInputError(f"empty override window [{a}, {b})")
+        if o.channel not in names:
+            raise InvalidSimulationInputError(f"override on unknown {o.channel!r}")
+        _finite(o.value, f"override value of {o.channel}")
+        by_channel.setdefault(o.channel, []).append((a, b))
+    for channel in sorted(by_channel):
+        spans = sorted(by_channel[channel])
+        for (_, b0), (a1, _) in pairwise(spans):
+            if a1 < b0:
+                raise InvalidSimulationInputError(f"overlapping overrides on {channel}")
+
+
+def simulate_planned(
+    structure: Structure,
+    psi: PsiAssignment,
+    coef: Coefficients,
+    channels: tuple[ChannelSpec, ...],
+    marks: MarkSampler,
+    horizon: float,
+    rng: np.random.Generator,
+    plan: Plan,
+    *,
+    max_events: int = 100_000,
+) -> PlannedRun:
+    """:func:`simulate` under a :class:`Plan`; every event, with how it arose.
+
+    ``max_events`` counts forced events too. Raises as :func:`simulate`, and
+    :class:`InvalidSimulationInputError` for a malformed plan (a mark value is
+    checked when its event enters history).
+    """
+    if not math.isfinite(horizon) or horizon <= 0.0:
+        raise InvalidSimulationInputError(f"horizon must be positive, got {horizon}")
+    if max_events < 0:
+        raise InvalidSimulationInputError(f"max_events must be ≥ 0, got {max_events}")
     ev = _evaluator(structure, psi, coef, channels, None, horizon, recursive=True)
-    _Thinning(ev, marks, horizon, rng, max_events).run()
-    return ev.history.to_log(horizon)
+    _check_plan(plan, horizon, channels)
+    thinning = _Thinning(ev, marks, horizon, rng, max_events, plan)
+    thinning.run()
+    forced = np.array(thinning.forced, dtype=np.bool_)
+    clamped = np.array(thinning.clamped, dtype=np.bool_)
+    forced.setflags(write=False)
+    clamped.setflags(write=False)
+    return PlannedRun(ev.history.to_log(horizon), forced, clamped)
 
 
 def _single(

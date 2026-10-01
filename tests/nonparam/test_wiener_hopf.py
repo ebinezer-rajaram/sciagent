@@ -374,3 +374,47 @@ def test_ridge_resolves_a_collinear_driver() -> None:
     assert np.all(np.isfinite(est.kernels))
     assert est.norms[0] == pytest.approx(est.norms[1], abs=1e-6)
     assert float(est.norms.sum()) == pytest.approx(0.5, abs=0.1)
+
+
+SHARPEST = {
+    # the sharpest kernels the ψ grid allows (grids.py): ExpK at exp_rate 8,
+    # PowerK at power_c 0.05 with the lightest and heaviest power_p
+    "exp_rate=8": (exp_sampler(8.0), exp_cdf(8.0)),
+    "power_c=0.05,p=2": (lomax_sampler(0.05, 2.0), lomax_cdf(0.05, 2.0)),
+    "power_c=0.05,p=1.2": (lomax_sampler(0.05, 1.2), lomax_cdf(0.05, 1.2)),
+}
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("name", sorted(SHARPEST))
+def test_sharpest_grid_kernels_are_resolved(name: str) -> None:
+    """The default grid resolves the sharpest ψ-grid kernels' norms.
+
+    Two checks over 4 seeds at n≈20000 (η = 0.5, cross 0.4):
+
+    - Resolution, paired and so free of sampling noise: the default grid's
+      norms agree with a 5x finer first bin and 40 bins on the same data. The
+      former default (first_edge 0.05) failed this for PowerK(c=0.05, p=2) by
+      0.006 in the self norm; refining past first_edge 0.01 moves it < 3e-4.
+    - Accuracy against the truth's mass *inside the support* (η·F(max_lag)):
+      PowerK(p=1.2) keeps only 65% of its mass within 10 mean inter-event
+      times, a support limit, not a resolution one. Measured means: ExpK(8)
+      0.505 / 0.395, PowerK(p=2) 0.490 / 0.400 (targets 0.4975 / 0.398),
+      PowerK(p=1.2) 0.328 / 0.250 (targets 0.327 / 0.262). Per-seed sd ≤ 0.025,
+      so the mean of 4 has sd ≤ 0.013.
+    """
+    sampler, cdf = SHARPEST[name]
+    fine = WienerHopfConfig(first_edge=DEFAULT.first_edge / 5, n_bins=40)
+    norms, fine_norms = [], []
+    for seed in range(4):
+        rng = np.random.default_rng(700 + seed)
+        log = simulate(
+            rng, mu=0.5, eta=0.5, lags=sampler, horizon=20000.0, mark_coef=0.8
+        )
+        norms.append(estimate_kernels(log, (SIZE,)).norms)
+        fine_norms.append(estimate_kernels(log, (SIZE,), config=fine).norms)
+    mean = np.mean(norms, axis=0)
+    np.testing.assert_allclose(mean, np.mean(fine_norms, axis=0), atol=2e-3)
+    inside = float(cdf(np.array([DEFAULT.max_lag]))[0])
+    assert abs(mean[0] - 0.5 * inside) < 0.03
+    assert abs(mean[1] - 0.4 * inside) < 0.04

@@ -265,3 +265,19 @@ pointproc v2:
 
 Note for the sampler: `ExpOf(size)` with a ≥ 1 has an infinite mean under Exp(1)
 sizes, so stationarity must be checked, not assumed.
+
+## 2026-10-02 — Independent review of the P1 proofs; Wiener–Hopf first bin 0.05 → 0.01
+
+An independent Opus reviewer checked the evidence-wall note, the distance metric
+proof and the Wiener–Hopf derivation.
+- **Distance:** sound. Exhaustive triangle probes showed no excess.
+- **Wiener–Hopf:** sound with gaps. The estimand is now stated as the
+  grid-projected best linear predictor, with its consistency assumptions.
+- **Evidence-wall note:** one real error. Corollary 3 used weak convergence
+  where TV convergence is needed; the corrected route bins the statistic and
+  uses Portmanteau. Ten smaller gaps were also fixed.
+
+The Wiener–Hopf grid check found that the old first bin under-resolved the
+PowerK(c=0.05) norms by about 0.006. At 0.01, finer grids change the norms by
+less than 3e-4, and null-norm noise is unchanged. Heavy-tailed kernels remain
+limited by the support (max lag of 10 mean gaps), which is a stated limit.

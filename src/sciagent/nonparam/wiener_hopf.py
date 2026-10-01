@@ -33,7 +33,8 @@ products). The cross-covariance measure of the drivers,
 part at τ = 0 **for every pair of drivers**, not just on the diagonal, because
 all drivers jump at the same times; ``S_{ed}`` is its weight (``Λ`` for
 arrival with arrival, ``Λ E[z]`` for arrival with z, ``Λ E[z²]`` for z with z,
-``Λ`` for sign with sign). ``c_{ed}`` is the regular part (pairs of distinct events).
+``Λ`` for sign with sign). ``c_{ed}`` is the regular part (pairs of distinct
+events).
 
 λ is predictable, so for u > 0, ``E[dX_e(t-u) dN(t)] = E[dX_e(t-u) λ(t)] dt``.
 Subtracting means (``Λ_0 = μ + Σ_d ‖φ_d‖ Λ_d``) and substituting the filter,
@@ -43,9 +44,33 @@ for all u > 0 and every driver e.
 
 With one driver this is Bacry-Muzy's ``g = φ + φ * g`` for ``g = c/Λ``. These
 are exactly the orthogonality conditions of the least-squares linear predictor
-of dN from the drivers' past, so they hold whenever the true intensity *is*
-linear in the drivers, whatever the joint law of the marks, and their operator
-(``S δ + c``, the drivers' covariance operator) is positive semidefinite.
+of dN from the drivers' past. The derivation uses only predictability of λ and
+second-order stationarity, so it holds for any mark law in which each event's
+mark is adapted (known at its event time, possibly history-dependent) and has
+``E w² < ∞``, with the process stationary and ergodic so that the empirical
+moments converge. It does *not* need marks independent of the past. Their
+operator (``S δ + c``, the drivers' covariance operator) is positive
+semidefinite.
+
+The estimand, and when it is the truth
+--------------------------------------
+What is estimated is the **grid-projected best linear predictor**: the φ,
+piecewise constant on the lag grid and zero beyond ``max_lag``, that solves the
+Galerkin system below. It equals the true kernels only when the truth is a
+linear filter in these drivers whose kernels are themselves piecewise constant
+on the grid; otherwise it is the Galerkin projection of the truth's normal
+equations onto the grid, and it converges to the true φ only as the grid
+refines and the support grows. Consistency of the estimate for that projected
+estimand needs:
+
+(a) stationarity and ergodicity of the event-and-mark process;
+(b) adapted marks with ``E w² < ∞`` (fourth moments for a √n rate);
+(c) a true intensity that is nonnegative without clipping (else the "linear"
+    truth is not the filter);
+(d) G positive definite (see Regularisation);
+(e) ridge → 0;
+(f) for the projection to be the truth: φ piecewise constant on the grid with
+    support ≤ ``max_lag``.
 
 Discretisation (Galerkin, exact pair sums)
 ------------------------------------------
@@ -82,12 +107,23 @@ Lag grid and support
 Lags are in units of the data's mean inter-event time ``T/n`` (so the estimate
 is time-scale equivariant). The support is ``[0, max_lag)``; the first bin is
 ``[0, first_edge)`` and the remaining edges are log-spaced up to ``max_lag``.
-Defaults: ``max_lag = 10``, ``first_edge = 0.05``, 24 bins. The support
+Defaults: ``max_lag = 10``, ``first_edge = 0.01``, 24 bins. The support
 trades coverage against noise: a null kernel's norm has an sd growing like
 ``sqrt(max_lag / n)``, because every bin's pair count is noisy (measured on
 Poisson arrivals, n ≈ 3000, 20 seeds: 0.038 at max_lag 10, 0.076 at 20). Ten
 mean inter-event times hold 99% of ``ExpK`` mass for rates ≥ 0.5 and 92% at
 rate 0.25; heavy Lomax tails are cut (see Limits).
+
+``first_edge`` was set by simulation against the sharpest kernels the ψ grid
+allows (``glm/grids.py``): ExpK at exp_rate 8 and PowerK at power_c 0.05,
+η = 0.5 with a size cross-kernel of 0.4, n ≈ 20000, 8 seeds. With the former
+first_edge 0.05, PowerK(c=0.05, p=2) norms were off their grid-converged values
+by (-0.006, +0.005), a resolution bias, while a 5x finer first bin with 40 bins
+moved them by < 3e-4 from first_edge 0.01. ExpK(8) was already resolved at
+0.05. PowerK(p=1.2) and ExpK(0.25) are support-limited (65% and 92% of mass
+within 10), not resolution-limited: no grid refinement changes them. The finer
+first bin leaves the null-norm sd unchanged (40 seeds, n ≈ 3000: identical to
+3 decimals), because that noise is set by the support, not the binning.
 
 Log spacing is chosen over uniform because the grammar's kernels range from
 sharp (exp rate 8, Lomax c = 0.05) to heavy-tailed (Lomax p = 1.2): narrow bins
@@ -99,15 +135,25 @@ zero beyond the last edge.
 
 Regularisation
 --------------
-The system is well-posed without help. G is the drivers' covariance operator
-tested on the bins; for a stable Hawkes process its spectral density
-``Λ / |1 - φ̂(ω)|²`` is at least ``Λ / (1 + ‖φ‖)²``, so G is bounded below by
-a multiple of ``diag(Δ)`` unless driver weights are collinear. The ridge
-``ridge · diag(S_{dd} Δ_j)`` (dimensionless, fixed in the config: no
-data-dependent tuning, so no randomness and no search) only guards degenerate
-inputs, e.g. a sign channel that is constant (collinear with
-arrivals). Variance is controlled by the bin widths, not by shrinkage, because
-shrinkage biases the norms that the tests and B-np read.
+G is the drivers' covariance operator tested on the bins. With one driver
+(a stable univariate Hawkes process) its spectral density ``Λ / |1 - φ̂(ω)|²``
+is at least ``Λ / (1 + ‖φ‖)²``, so the population G is bounded below by a
+multiple of ``diag(Δ)``. For several drivers this is **assumed, not proved**:
+we require ``S = E[w wᵀ] Λ`` nonsingular (no driver an exact linear combination
+of the others) and the population G ≻ 0. Collinear drivers (a constant sign
+channel duplicates arrivals) violate it.
+
+The *empirical* Ĝ need not be PSD at all: the ``1/(T - |τ|)`` edge correction
+and the subtraction of estimated means each break the Gram structure that makes
+the population operator PSD. The ridge ``ridge · diag(S_{dd} Δ_j)``
+(dimensionless, fixed in the config: no data-dependent tuning, so no randomness
+and no search) covers both cases: it makes a collinear system solvable
+(splitting the norm evenly) and keeps a slightly indefinite Ĝ from being
+singular. Its bias is O(ridge): it inflates the diagonal by a relative factor
+of at most ``ridge``, so norms shrink by ≲ ``ridge · ‖φ‖`` (measured at the
+default 1e-3 vs 1e-9, n ≈ 20000: -1.4e-4 self, -3e-4 cross). Variance is
+controlled by the bin widths, not by shrinkage, because a larger ridge biases
+the norms that the tests and B-np read.
 
 Baseline: ``μ = Λ_0 - Σ_d ‖φ_d‖ Λ_d`` (Bacry-Muzy's ``(I - ‖φ‖) Λ`` for this
 single-output case), with the empirical ``Λ_d = Σ_k w_{k,d} / T``.
@@ -165,7 +211,7 @@ class WienerHopfConfig:
     """
 
     max_lag: float = 10.0
-    first_edge: float = 0.05
+    first_edge: float = 0.01
     n_bins: int = 24
     ridge: float = 1e-3
     intensity_floor: float = 1e-6

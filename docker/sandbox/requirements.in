@@ -1,0 +1,9 @@
+# Top-level requirements of the AG-o Python sandbox (SPEC §4.0, `python` tool).
+# numpy and scipy are pinned to the versions in the repository's uv.lock, so a
+# fit the agent runs privately uses the same numerics as the framework's own.
+# Resolved, with hashes, into requirements.lock by:
+#   uv pip compile docker/sandbox/requirements.in --python-version 3.12 --python-platform x86_64-manylinux_2_28 --generate-hashes --exclude-newer 2026-10-01 -o docker/sandbox/requirements.lock
+numpy==2.5.1
+scipy==1.18.0
+pandas
+statsmodels

@@ -184,3 +184,21 @@ request costs the agent nothing. A tool use outside the layer voids the run
 (SPEC §9) rather than aborting it. The served-model check accepts a
 `canonicalModel` that is the pinned id with its date suffix stripped, as
 measured live for Haiku.
+
+## 2026-10-01 — Sandbox: one Docker container per call, opaque run directories
+
+Each `python` call is one fresh container. It runs with `--network none`, a
+read-only root, a read-only `data/` and a writable `work/`, non-root, with no
+capabilities, plus pids, memory, file-size and wall-time limits. There is no
+persistent kernel, so replay is a deterministic re-execution, and state
+persists only through files in `work/`; the system prompt must say so. The
+image pins numpy and scipy to the framework's versions.
+
+Measured overhead is 0.5 s per call, plus 0.5–2.4 s of imports.
+
+Known limits:
+- `/proc/self/mountinfo` reveals the host path of the run directory, so run
+  directories must be named opaquely (no truth id, seed, arm or condition),
+  or anonymisation leaks.
+- Isolation is at the container level on the Docker Desktop VM, not gVisor.
+- The total disk use in `work/` is unbounded.

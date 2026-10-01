@@ -149,3 +149,19 @@ reads. Negative kernel values are reported, not clipped. B-np's intensity is
 floored at 1e-6 × the mean rate for scoring.
 
 Calibrated null cross-kernel norm: sd ≈ 0.067 at ~3k events.
+
+## 2026-10-01 — Simulator: interval-arithmetic thinning bound, independent of the likelihood
+
+The Ogata thinning bound comes from interval arithmetic over each column on
+the look-ahead window. It combines per-event kernel ranges, exact sin/cos
+ranges, gates that include 0, interval products, the signs of θ and the
+monotone link. So it stays valid for signed marks and negative coefficients.
+Exceeding it raises an error, as does negative identity-link intensity.
+
+The simulator deliberately shares no code with `features.py` or
+`likelihood.py`. Time-rescaling of its output under their compensator is then a
+genuine cross-check for SPEC §6.3 test 1.
+
+`gamma_shape` must be at least 1, because the density is unbounded at lag 0
+below that. Speed is 0.4 s for a 5k-event ExpK log and 4–7 s for power or
+gamma kernels, which the exact `fsum` folds dominate.

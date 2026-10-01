@@ -10,7 +10,11 @@ predictives ``p_k`` of one design's outcome, that
 * the erasure channel attains ``EIG = eps * H(w)`` exactly       (tightness);
 * the ratio ``EIG / sum w_k w_l KL`` approaches 1                (tightness);
 * the size-gap correlation of iid marks against *any* fixed gaps has
-  permutation mean 0 and variance ``1/(n-1)`` exactly           (Lemma 2).
+  permutation mean 0 and variance ``1/(n-1)`` exactly           (Lemma 2);
+* the Hellinger triangle inequality behind Prop. 4, on one Gaussian example.
+
+Not checked here: Prop. 1(d), the BC^m testing bounds of §4, the asymptotics of
+Corollary 3, the plug-in bias of Remark 3, and Prop. 5.
 
 None of this proves anything: the proofs are in the note. The script exists so
 that a sign error or a dropped factor in the note shows up as a failure. It also
@@ -384,7 +388,7 @@ def v1_illustration() -> None:
 
 
 def check_fsd_triangle() -> None:
-    """Hellinger triangle inequality behind Prop. 3, on a Gaussian example."""
+    """Hellinger triangle inequality behind Prop. 4, on a Gaussian example."""
     par = (0.0, 0.0445)
     truth = (-0.1342, 0.0308)
     print("FSD (Hellinger) as the model-free estimate converges to the truth:")

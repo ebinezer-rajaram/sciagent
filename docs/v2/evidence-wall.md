@@ -3,8 +3,16 @@
 P1 deliverable for SPEC §2.4 and Q6. This note states the evidence-wall proposition,
 proves it with explicit and tight constants, derives v1's 0/112 as a corollary,
 and sets out the falsification-seeking design (FSD) criterion, including its own blind
-spot. `scripts/evidence_wall_check.py` checks every inequality numerically. That script
-is a guard against algebra slips, not a proof. Logarithms are natural (nats). v1's code
+spot. `scripts/evidence_wall_check.py` checks numerically:
+
+- the identity (0) and Proposition 1(a)–(b), on random discrete and Gaussian cases;
+- the tightness examples;
+- Lemma 2, by exact enumeration;
+- the Hellinger triangle inequality behind Proposition 4, on one example.
+
+It does **not** check Proposition 1(d), the testing bounds in §4, the asymptotics of
+Corollary 3, Remark 3 or Proposition 5. It is a guard against algebra slips, not a
+proof. Logarithms are natural (nats). v1's code
 reported bits, which are nats divided by $\ln 2$.
 
 ## 1. Setup
@@ -32,7 +40,8 @@ $w_kp_k\le p_w$, so $p_k\ll p_w$ and every term is finite.
 
 ## 2. The proposition
 
-**Proposition 1 (evidence wall).** Let $\varepsilon=\max_{k,l}\mathrm{TV}(p_k,p_l)$ and
+**Proposition 1 (evidence wall).** Let $K\ge2$, so every $w_k\in(0,1)$. If $K=1$,
+EIG is 0 trivially. Let $\varepsilon=\max_{k,l}\mathrm{TV}(p_k,p_l)$ and
 $\kappa=\max_{k,l}\mathrm{KL}(p_k\|p_l)$.
 
 - **(a) Divergence bound.**
@@ -86,7 +95,9 @@ $\mathrm{TV}\le\sqrt{\mathrm{KL}/2}$.
    $\mathrm{TV}(p_k,p_l)=\varepsilon$ for $k\ne l$, and
    $I(Y;H)=H(w)-(1-\varepsilon)H(w)=\varepsilon H(w)$. So no bound of the form
    $f(\varepsilon)H(w)$ with $f(\varepsilon)<\varepsilon$ holds.
-2. *The constant 1 in (a) cannot be lowered.* Take $w=(1-\delta,\delta)$,
+2. *The constant 1 in the first inequality of (a) cannot be lowered.* (Items 2 and 3
+   concern only that first inequality. For the second form, $(1-\sum w_k^2)\kappa$, the
+   same example gives a ratio of $\tfrac12$.) Take $w=(1-\delta,\delta)$,
    $p_1=\mathrm{Bern}(e)$ and $p_2=\mathrm{Bern}(\tfrac12)$. As $\delta\to0$ the ratio
    EIG/bound tends to
    $\mathrm{KL}(p_2\|p_1)/(\mathrm{KL}(p_2\|p_1)+\mathrm{KL}(p_1\|p_2))$. This limit
@@ -104,13 +115,23 @@ $\mathrm{TV}\le\sqrt{\mathrm{KL}/2}$.
 1. *Parameter uncertainty.* If each $h_k$ carries a parameter posterior, $p_k$ is the
    parameter-averaged predictive and everything above holds verbatim. For a continuum of
    hypotheses, $H(w)$ can be infinite, so use (a).
-2. *Lookahead does not help.* An adaptive policy that chooses designs as a functional of
-   $(w,\{p_k\})$, such as $T$-step BOED, depends on the truth only through realised
-   outcomes. Its total information $I(Y_{1:T};H)$ is again a functional of $H_e$.
+2. *Adaptive and lookahead policies.* Suppose a policy, such as $T$-step BOED, chooses
+   designs as a functional of $(w,\{p_k\})$. The criterion it optimises is a functional
+   of $H_e$'s joint predictives, so truth-independence (c) carries over. The bound does
+   not carry over as it stands. By the chain rule,
+   $I(Y_{1:T};H)=\sum_t\mathbb E\,\mathrm{EIG}_t$. Here $\mathrm{EIG}_t$ uses the
+   posterior $w_t$ and the *conditional* predictives $p_k(\cdot\mid y_{<t})$, so
+   Proposition 1(b) gives
+   $I(Y_{1:T};H)\le\sum_t\mathbb E[\varepsilon_tH(w_t)]\le T\sup_t\varepsilon_t\log K$,
+   where $\varepsilon_t$ is the largest TV between those conditional predictives.
+   Marginal invariance does not imply conditional invariance. A design that is walled on
+   its own can become informative after other outcomes have been observed.
 3. *Coarsening.* Binning $Y$, as v1 did, can only lower EIG, by the data-processing
-   inequality. An EIG *estimated* from $M$ simulations per hypothesis is different: its
-   plug-in estimate on $C$ cells has positive bias of order $(C-1)(K-1)/M$. For an
-   invariant design, the estimated EIG is therefore estimator noise.
+   inequality. An EIG *estimated* from $M$ simulations per hypothesis is different. Take
+   equal weights and $C$ cells. The Miller–Madow approximation then puts the plug-in
+   estimate's positive bias at about $(C-1)(K-1)/(2KM)$ nats. That comes from the
+   mixture-entropy bias $-(C-1)/(2KM)$ and the conditional-entropy bias $-(C-1)/(2M)$.
+   For an invariant design, the estimated EIG is therefore estimator noise.
 
 ## 3. Corollary: v1's `size_gap_correlation` and the 0/112
 
@@ -126,7 +147,10 @@ closed-set member is uncoupled", and the mechanisms modulate only arrival rates.
 **Lemma 2 (exact).** Assume (U) and condition on $n$, the gaps and the multiset of
 marks. Then $T$ follows the permutation law of
 $\sum_ia_ib_{\pi(i)}/(\|a\|\|b\|)$, where $a$ and $b$ are the centred gaps and marks.
-That law has **mean 0 and variance exactly $1/(N-1)$**, for *any* gap sequence.
+That law has **mean 0 and variance exactly $1/(N-1)$**, for *any* gap sequence with
+$\|a\|>0$ and $\|b\|>0$. If the gaps or the marks are constant, v1's implementation
+returns $T=0$. That outcome is the same under every hypothesis, and with continuous marks
+and gaps it has probability 0 once $N\ge2$.
 
 *Proof.* Conditionally, every arrangement of the marks is equally likely, and the
 denominators are invariant under permutation. Take $\sum a=\sum b=0$. Then
@@ -143,14 +167,31 @@ gaps.)
   depends on $h$ only through the law of the event count, and not at all when $n$ is
   fixed.
 - **Approximate.** The remaining dependence on $h$ sits in the higher moments of the
-  permutation law, through the empirical shape of the gaps. Stationary ergodic gaps with
-  finite variance satisfy Noether's condition, $\max_i a_i^2/\|a\|^2\to0$. The
-  Wald–Wolfowitz–Hájek permutation CLT then gives $\sqrt{N-1}\,T\Rightarrow N(0,1)$
-  under every $h\in H_e$. So
-  $\varepsilon_N=\max_{k,l}\mathrm{TV}(\mathcal L_k(T),\mathcal L_l(T))\to0$, and
-  Proposition 1(b) gives $\mathrm{EIG}(T)\le\varepsilon_N\log K\to0$. I expect
-  $\varepsilon_N=O(N^{-1/2})$ from an Edgeworth expansion but have not proved the rate.
-  Nothing here relies on it.
+  permutation law, through the empirical shape of the gaps.
+  - *Joint condition.* Assume Hoeffding's condition (Hoeffding 1951)
+    $$N\cdot\frac{\max_ia_i^2}{\|a\|^2}\cdot\frac{\max_ib_i^2}{\|b\|^2}\to0\quad\text{in probability}.$$
+    Hájek (1961) gives the sharp Lindeberg-type condition. Hoeffding's condition holds,
+    for example, when the gaps are stationary and ergodic and both gaps and marks have
+    finite fourth moments. Then $\max_i|a_i|=o_p(N^{1/4})$ whatever the dependence,
+    while $\|a\|^2/N$ converges. Heavy-tailed sizes can break it, so it is a hypothesis
+    and not a consequence of (U).
+  - *The CLT.* Under that condition, the combinatorial CLT gives
+    $\sqrt{N-1}\,T\Rightarrow N(0,1)$ conditionally on the gaps and the mark multiset.
+    The conditional cell probabilities below are bounded and converge in probability,
+    so bounded convergence makes the same limit hold unconditionally under every
+    $h\in H_e$.
+  - *Why this does not yet bound EIG.* Weak convergence does not give TV convergence.
+    So it does not bound the EIG of the unbinned $T$. That would need a local limit
+    theorem plus Scheffé's lemma, which this note does not claim.
+  - *The binned statistic.* v1 binned its outcomes, and that binned statistic is what
+    is bounded here. Fix a finite partition of the $\sqrt{N-1}\,T$ scale into intervals
+    $B_1,\dots,B_C$. Their boundaries carry no mass under the continuous limit
+    $N(0,1)$. By the Portmanteau theorem, every cell probability under every $h\in H_e$
+    converges to the same Gaussian cell probability. With finitely many cells, the
+    largest pairwise TV $\varepsilon_N$ of the binned laws therefore tends to 0.
+    Proposition 1(b) then gives $\mathrm{EIG}(\text{binned }T)\le\varepsilon_N\log K\to0$.
+  - *Rate.* I expect $\varepsilon_N=O(N^{-1/2})$ from an Edgeworth expansion but have
+    not proved the rate. Nothing here relies on it.
 - Under $h^{*}$ (size-excited arrivals), a large mark shortens the next gap, so
   $\mathbb E_{h^{*}}T<0$ and stays bounded away from 0 as $N$ grows. Proposition 1(c)
   says this shift does not enter EIG at all.
@@ -162,9 +203,12 @@ gaps.)
 - **SDs.** Lemma 2 predicts an SD of $1/\sqrt{510}=0.0443$. Null, Hawkes,
   poisson_mixture and seasonality read 0.0444–0.0462, within one or two SEs. (The SE of
   an SD over 200 draws is about 0.0022.)
-- **regime_switching** reads 0.0392, about 2.3 SE low. By Lemma 2, either that is chance
-  or that mechanism's logs had a different event count; 0.0392 corresponds to
-  $N\approx650$. I could not tell which without re-running v1.
+- **regime_switching** reads 0.0392, about 2.3 SE low.
+  - The replicates had a fixed $n=512$, so a different event count cannot explain it.
+  - In v1.0 that mechanism modulates arrivals only, and sizes are iid, so (U) holds and
+    Lemma 2 predicts exactly 0.0443.
+  - The deviation is therefore chance: a two-sided $p\approx0.02$ on one row of five,
+    about 0.1 familywise.
 - **S11's truth** reads $-0.1342\pm0.0308$.
 
 Treat each row as Gaussian and weight the closed set uniformly:
@@ -178,8 +222,8 @@ Treat each row as Gaussian and weight the closed set uniformly:
 | EIG if S11 were entertained, $w=1/6$ each | 0.377 (vs $\log6=1.79$) |
 
 The diagnostic carries about 1,300 times more evidence against the entertained set than
-it carries about it. Even the small 0.0035 comes mostly from SD differences that Lemma 2
-attributes to event-count or sampling effects. This matches the record:
+it carries about it. With $n$ fixed, Lemma 2 makes the first two moments identical
+across the closed set. So the small 0.0035 is sampling noise in the recorded SDs. This matches the record:
 
 - BOED never selected the design, on any of the twelve scenarios (DECISIONS
   2026-08-16).
@@ -202,8 +246,14 @@ For a design $(e,d)$ with outcome statistic $S$, define three predictive laws:
 - $q^{\rm par}_{e,d}$: the law of $S$ under the framework-fitted best entertained model
   (the MAP structure with certified $\hat\theta,\hat\psi$, SPEC §2.2). The posterior
   mixture $p_w$ works identically.
-- $q^{\rm np}_{e,d}$: the law of $S$ when the linear process with the Wiener–Hopf kernel
-  estimates (SPEC §2.3) is simulated under $e$, with the intensity clipped at 0.
+- $q^{\rm np}_{e,d}$: the law of $S$ when a linear process is simulated under $e$. Three
+  things specify it:
+  - its kernels are the Wiener–Hopf estimates (SPEC §2.3) on the implementation's fixed
+    grid $G$ (bin width and support);
+  - its intensity is clipped at 0;
+  - its marks come from an explicit **mark model**: iid resampling of the empirical
+    marks, so marks do not depend on history. Wiener–Hopf estimates no mark law, so
+    this choice is part of the definition.
 - $q^{*}_{e,d}$: the law of $S$ under the truth.
 
 $$\mathrm{FSD}(e,d)=\mathrm{He}^2\big(q^{\rm par}_{e,d},\,q^{\rm np}_{e,d}\big),\qquad (e,d)^{\rm FSD}=\arg\max\mathrm{FSD}.$$
@@ -225,27 +275,44 @@ variances this is $1-e^{-z^2/4}$, which is monotone in $z^2$.
 
 $$\big|\sqrt{\mathrm{FSD}(e,d)}-\mathrm{He}(q^{\rm par},q^{*})\big|\le\mathrm{He}(q^{\rm np},q^{*}).$$
 
-Now assume (A): the model-free predictive is consistent on $(e,d)$, meaning
-$\mathrm{He}(q^{\rm np}_n,q^{*})\to0$ in probability as the data grow. Then
-$\mathrm{FSD}\to\mathrm{He}^2(q^{\rm par},q^{*})$. This limit is the discrepancy between
+Both predictives are fitted to the same $n$ events, so both depend on the data; write
+$q^{\rm par}_n$ and $q^{\rm np}_n$. Now assume (A): the model-free predictive is
+consistent on $(e,d)$, meaning $\mathrm{He}(q^{\rm np}_n,q^{*})\to0$ in probability as
+the data grow. He takes values in $[0,1]$, and $|x^2-y^2|\le2|x-y|$ there, so
+
+$$\big|\mathrm{FSD}_n-\mathrm{He}^2(q^{\rm par}_n,q^{*})\big|\to0\quad\text{in probability}.$$
+
+The target $\mathrm{He}^2(q^{\rm par}_n,q^{*})$ is the discrepancy between
 the best entertained model and the truth on that design, which is the oracle's
 "telling diagnostic" criterion of SPEC §4.2 with He² as the divergence. Unlike
 Proposition 1(c), the limit depends on $h^{*}$. Hold $H_e$, $w$ and $q^{\rm par}$ fixed
 and change only the truth: the limiting FSD changes.
 
-*When does (A) hold?* Let $\mathcal L$ be the class of stationary, stable (spectral
-radius $<1$) linear Hawkes processes on the channels Wiener–Hopf uses: arrivals, and
-arrivals weighted by the mark. If $h^{*}\in\mathcal L$ and the law of $S$ under $e$ is
-continuous in the kernels, then:
+*When does (A) hold?* (A) is an assumption, and the citation covers less than the
+implementation needs.
 
-- the Wiener–Hopf estimates are consistent for the kernels (Bacry & Muzy 2016), and
-- $q^{\rm np}\to q^{*}$ by continuity.
+- **What Bacry & Muzy (2016) covers.** They prove consistency for *unmarked*, stationary,
+  stable (spectral radius $<1$) linear Hawkes processes. Their proof needs the bin width
+  $\to0$ and the support $\to\infty$.
+- **What the implementation uses.** A fixed grid $G$. On it, the estimator converges to
+  the Galerkin projection of the Wiener–Hopf system onto piecewise-constant kernels on
+  $G$, not to the true kernels.
+- **What the citation does not cover.** The two-channel marked case: arrivals, and
+  mark-weighted arrivals at the *same* times.
 
-A truth with excitation affine in the mark under the identity link lies in
-$\mathcal L$. S11's truth `Excite(ExpK, Mark(size), all)` is of that form, provided the
-intensity stays positive without clipping. For v1's diagnostic, this predicts
-$\mathrm{FSD}\to0.79$ against a fitted Hawkes model, where EIG gave 0.0035. The script's
-Hellinger table uses the recorded moments.
+So (A) is stated for the class $\mathcal L$ of truths that are stable linear marked
+Hawkes processes with iid marks, under a grid refined with $n$. Whether the
+two-channel estimator is consistent there is an open premise for the P1 Wiener–Hopf
+instrument tests, not a cited theorem. On the fixed grid that is actually used, read
+Proposition 4 with $q^{\rm np}$'s limit $q^{\rm lin}$ in place of $q^{*}$, which is
+Proposition 5. Grid projection and truncation then become part of the
+$\mathrm{He}(q^{\rm lin},q^{*})$ slack.
+
+**S11's truth.** `Excite(ExpK, Mark(size), all)` has excitation affine in the mark
+under the identity link. It lies in $\mathcal L$, provided the intensity stays positive
+without clipping. If (A) holds, the v1 numbers predict
+$\mathrm{FSD}\to0.79$ for v1's diagnostic against a fitted Hawkes model, where EIG gave
+0.0035. The script's Hellinger table uses the recorded moments.
 
 *Finite samples.* When the parametric model is right,
 $\mathrm{FSD}\approx\mathrm{He}^2(q^{\rm par},q^{\rm np})$ is pure Wiener–Hopf estimation
@@ -254,12 +321,18 @@ distribution when the truth is the fitted model, from a parametric bootstrap. Th
 calibration is a negative control, and it must be run beside the §6.4 positive control
 before Q6 is read.
 
-**Proposition 5 (FSD's own wall).** Let $\ell(h^{*})$ be the linear process whose
-kernels are the large-sample limit of the Wiener–Hopf estimator under $h^{*}$, and let
-$q^{\rm lin}$ be its predictive under $e$. The estimator is a functional of the
+**Proposition 5 (FSD's own wall).** Let $\ell_G(h^{*})$ be the linear process with:
+
+- kernels equal to the large-sample limit of the Wiener–Hopf estimator on the fixed
+  grid $G$ under $h^{*}$ (a Galerkin projection, truncated to $G$'s support), and
+- iid marks drawn from $h^{*}$'s stationary mark distribution, which is the mark model's
+  limit.
+
+Let $q^{\rm lin}$ be its predictive under $e$. The estimator is a functional of the
 empirical first- and second-order statistics (intensities and cross-covariance
-densities). So $\ell(h^{*})$ depends on $h^{*}$ only through its observational
-second-order structure $\Lambda(h^{*})$. Then:
+densities on $G$). The mark model sees only the marginal mark law. So $\ell_G(h^{*})$
+depends on $h^{*}$ only through $\Lambda(h^{*})$: its observational second-order
+structure, plus its marginal mark law. Then:
 
 - **(i) Second-order invariance.** $\lim\mathrm{FSD}=\mathrm{He}^2(q^{\rm par},q^{\rm lin})$
   is a functional of $(q^{\rm par},\Lambda(h^{*}))$. Two truths with equal second-order
@@ -267,21 +340,25 @@ second-order structure $\Lambda(h^{*})$. Then:
   with $\mathcal L$ in the role of $H_e$.
 - **(ii) Quantitative form.**
   $|\sqrt{\lim\mathrm{FSD}}-\mathrm{He}(q^{\rm par},q^{*})|\le\mathrm{He}(q^{\rm lin},q^{*})$.
-  FSD can under-report the model's error by up to the truth's own departure from its
-  linear shadow, and that much is attained. If the parametric fit agrees with the shadow
-  on $(e,d)$, so that $q^{\rm par}=q^{\rm lin}$, then $\mathrm{FSD}\to0$ however large
-  $\mathrm{He}(q^{\rm par},q^{*})$ is.
+  FSD can under-report the model's error by at most the truth's own departure from its
+  linear shadow $\ell_G(h^{*})$. That departure includes grid projection and
+  truncation. The bound is attained when $q^{\rm par}=q^{\rm lin}$ on $(e,d)$: then
+  $\mathrm{FSD}\to0$ however large $\mathrm{He}(q^{\rm par},q^{*})$ is.
 
 *Proof.* Use the triangle inequality as in Proposition 4, with $q^{\rm lin}$ in place
 of the limit of $q^{\rm np}$. $\square$
 
-The truths this bites are the ones SPEC §2.3 names:
+The truths this bites fall into two groups. The first group is the one SPEC §2.3 names:
 
 - `Gate(·, Above(·))` and other thresholds,
 - strongly curved exp or softplus links,
 - interventional designs $e$, such as forced marks or deleted events. On these, a
   nonlinear truth's response departs from linear extrapolation even when its
   observational second-order structure is reproduced exactly.
+
+The second group comes from the mark model: **history-dependent marks**. Examples are
+sizes that depend on recent activity, or mark autocorrelation. The iid mark model
+removes them by construction.
 
 That set is where structure proposal can beat both EIG and FSD, and where Q6 must
 measure FSD's miss rate.
@@ -299,13 +376,17 @@ vocabulary. Each criterion is blind to whatever its reference set cannot express
 
 - Over any entertained set, EIG depends only on the entertained predictives and weights.
   It is at most $\varepsilon H(w)$, and this bound is attained.
-- An invariant diagnostic has near-zero EIG however strongly the truth moves it. This
-  holds for adaptive and lookahead policies too.
-- v1's diagnostic is invariant across the closed set: exactly in mean and variance (up
-  to the law of the event count), and asymptotically in law.
-- FSD's large-sample limit sees the truth wherever the model-free estimate is
-  consistent.
-- FSD's blind spot is exactly the truth's departure from its second-order linear shadow.
+- An invariant diagnostic has near-zero EIG however strongly the truth moves it.
+- Adaptive and lookahead policies stay truth-independent. Their bound,
+  $T\sup_t\varepsilon_t\log K$, is over *conditional* predictives, and a design that is
+  marginally invariant need not be conditionally invariant.
+- v1's diagnostic is invariant across the closed set:
+  - exactly in mean and variance, up to the law of the event count;
+  - for any fixed binning, asymptotically in TV, under Hoeffding's condition.
+- FSD's large-sample limit tracks the truth wherever the model-free estimate is
+  consistent. That consistency is assumption (A).
+- FSD under-reports by at most the truth's departure from its fixed-grid, iid-mark
+  linear shadow, and that much is attained when $q^{\rm par}=q^{\rm lin}$.
 
 **Does not claim:**
 
@@ -314,8 +395,8 @@ vocabulary. Each criterion is blind to whatever its reference set cannot express
 - That the wall alone caused 0/112. Budgets and competing designs also mattered.
 - That FSD improves outcomes. That is Q6's empirical question, and it is reportable only
   after the §6.4 positive control and FSD's null calibration.
-- Any rate for $\varepsilon_N$ in Corollary 3. Only the limit is proved.
-- Consistency of Wiener–Hopf beyond the stated class $\mathcal L$.
-- That the regime_switching SD anomaly is explained. It is attributed to event count or
-  chance, unverified.
+- Any rate for $\varepsilon_N$ in Corollary 3. Only the limit is proved, and only for
+  binned $T$.
+- Consistency of two-channel marked Wiener–Hopf at all. That is assumption (A), and the
+  cited result covers only the unmarked case with a refining grid.
 - Anything about what an agent with free analysis (AG-o) can see. That is Q7.

@@ -240,3 +240,28 @@ Computed space at depth 3 with K ≤ 4:
 That is at least 1e10 times the 10×F budget, so SPEC §2.1's size requirement
 holds. The B-sparse depth-2 dictionary is about 1.03M columns for pointproc
 and 74k for QTM, and it expresses only about 1e-21 of the parameterised space.
+
+## 2026-10-01 — Diagnostic catalogue (28) and pointproc v2; power-of-two time factor
+
+The catalogue (`sciagent/diagnostics`) ports v1's 14 metrics, generalised to any
+channel, and adds 14 more: cross-mark, clustering, spectral-at-period,
+burstiness and others. SPEC §4.0's "20" was v1 folklore; v1 had 14.
+
+Time arguments are absolute times, with defaults and bounds tied to the mean
+gap. Each diagnostic declares how it transforms under t → c·t. Predictive
+checks freeze the resolved arguments on the observed log, so every replicate
+computes the same statistic.
+
+The anonymisation time factor is c = 8. A power of two makes rescaling exact,
+so binned statistics commute with it exactly, and 8 is not a recognisable
+constant.
+
+pointproc v2:
+- `size` is standardised with the mean and sd of Exp(1).
+- Seasonality uses the exp link, as in v1.
+- Truths keep v1's shapes, with baselines solved for a mean rate of exactly 1.
+- Regime switching and the Poisson mixture remain to be implemented as
+  out-of-grammar library members.
+
+Note for the sampler: `ExpOf(size)` with a ≥ 1 has an infinite mean under Exp(1)
+sizes, so stationarity must be checked, not assumed.

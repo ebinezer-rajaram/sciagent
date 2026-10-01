@@ -132,3 +132,20 @@ against the MAP (best-fitted) parametric model, as SPEC §2.4 already says.
 Before Q6 is reported, FSD needs a null calibration: a parametric bootstrap of
 FSD when the fitted model is the truth. Without it, Wiener–Hopf estimation
 noise reads as falsification.
+
+## 2026-10-01 — Wiener–Hopf: exact Galerkin system, log bins to 10 mean gaps, reported negatives
+
+Arrivals and mark-weighted arrivals share event times, so the normal equations
+carry a lag-0 singular term for every driver pair, not only the diagonal. The
+system is assembled by Galerkin projection on indicator bins, with exact
+pair sums. That makes it symmetric, valid for any bin layout, and checkable by
+brute force to 1e-11.
+
+The support is 10 mean inter-event times. A null kernel's norm has sd that
+grows with the support; 10 still covers 99% of an exponential kernel's mass at
+rate 0.5. The ridge is fixed and tiny (1e-3 of the diagonal) and only guards
+against collinear drivers, because shrinkage would bias the norms that B-np
+reads. Negative kernel values are reported, not clipped. B-np's intensity is
+floored at 1e-6 × the mean rate for scoring.
+
+Calibrated null cross-kernel norm: sd ≈ 0.067 at ~3k events.

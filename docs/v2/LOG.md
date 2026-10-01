@@ -300,3 +300,27 @@ plus `compose`. Every experiment is a fresh run from empty history.
 Sampler requirement found here: an exp-link truth with positive
 self-excitation can explode slowly. The truth sampler must reject by a bounded
 pilot simulation (a cap on events and time), not by waiting for `max_events`.
+
+## 2026-10-02 — Certified fitter: Newton plus an explicit dual, not Clarabel by default
+
+Clarabel took about 3.2 s per exp-link solve at about 89k quadrature nodes,
+against 60+ ψ points per fit. The default inner solver is now damped Newton.
+The certificate is the gap to an explicitly built dual point (Fenchel equality
+on event rows, a Newton-metric correction for dual feasibility), summed exactly.
+"The certificate is the point, not the solver."
+
+For the identity link, positivity is enforced at the nodes by cutting planes
+through CVXPY and Clarabel, only when it is violated.
+
+Certification requires a relative gap ≤ 1e-8 and a dual residual ≤ 1e-9; fits
+reach about 1e-16. A fit is certified only if every ψ point it evaluated is.
+BIC counts len(θ) plus the ψ slots.
+
+Timings, serial:
+- Hawkes on 2k events: 0.09 s.
+- PowerK + Periodic, exp link, on 2k events: 24 s.
+- The same on 9 datasets (17.7k events): 226 s, or 86 s on 12 workers.
+
+PowerK feature blocks dominate. For exp and softplus links, "branching ratio
+< 1" has no meaning, so the truth sampler needs a stationarity rule there
+(bounded pilot simulation).

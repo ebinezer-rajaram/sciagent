@@ -161,7 +161,15 @@ cannot matter, which was v1's failure.
   share of such fits is reported beside the certified share. A
   proposal can lose only because it is a worse structure, never because the
   optimiser stalled. The share of certified fits is reported. Uncertified
-  fits (solver failure) are flagged, never silently used.
+  fits (solver failure) are flagged, never silently used. *(Amended
+  2026-10-02.)* By default the inner solve is a damped Newton method. The
+  certificate is a duality gap computed from an explicitly constructed dual
+  point, with its dual residual reported; Clarabel took about 3 s per exp-link
+  solve, too slow for a ψ profile. CVXPY with Clarabel remains the
+  cutting-plane solver for the identity link's λ ≥ 0 constraints, and it is
+  available as an alternative inner solver. Softplus is certified the same
+  way, since CVXPY cannot express log∘softplus. A fit is certified only when
+  every ψ point it evaluated is certified.
 - **Canonicalisation.** A feature set is a canonical multiset of canonical
   feature trees (commutativity of ×, flattening, de-duplication), so equivalent
   proposals share one hash.

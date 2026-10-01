@@ -113,3 +113,22 @@ cost. The link enters as a 0.2-weighted discrete metric.
 
 Reference points: Hawkes↔S11 = 0.18, Hawkes↔Periodic = 0.71. The near, mid
 and far strata thresholds are set on this [0, 1] scale by the truth sampler (P2).
+
+## 2026-10-01 — Evidence wall proved; FSD fixed as squared Hellinger against the best fit
+
+`docs/v2/evidence-wall.md` proves that EIG ≤ ε·H(w) ≤ ε·log K, where ε is the
+largest pairwise TV among the entertained predictives. The bound is attained by
+an erasure channel. EIG depends on the truth only through the weights, so
+lookahead BOED hits the same wall.
+
+For the v1 statistic, `size_gap_correlation` has permutation mean 0 and
+variance exactly 1/(N−1) under any entertained hypothesis with exchangeable
+marks. The resulting EIG ≈ 0.0035 nats, against 0.38 nats had S11 been
+entertained.
+
+FSD's discrepancy is squared Hellinger: a bounded metric whose triangle
+inequality gives the "not walled" and "own wall" propositions. FSD is taken
+against the MAP (best-fitted) parametric model, as SPEC §2.4 already says.
+Before Q6 is reported, FSD needs a null calibration: a parametric bootstrap of
+FSD when the fitted model is the truth. Without it, Wiener–Hopf estimation
+noise reads as falsification.

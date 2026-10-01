@@ -94,7 +94,7 @@ import numpy as np
 from sciagent.core.errors import ExecutionError
 from sciagent.core.types import Floats
 
-__all__ = ["deviation", "dot", "mean", "total", "variance"]
+__all__ = ["deviation", "dot", "matvec", "mean", "row_totals", "total", "variance"]
 
 
 def total(values: Floats) -> float:
@@ -172,3 +172,29 @@ def dot(left: Floats, right: Floats) -> float:
             f"inner product needs matching shapes, got {left.shape} and {right.shape}"
         )
     return total(left * right)
+
+
+def row_totals(matrix: Floats) -> Floats:
+    """Return the exactly-rounded sum of each row of a 2-D array.
+
+    The replacement for ``matrix.sum(axis=1)``: one :func:`math.fsum` per row,
+    so each entry is the correctly rounded sum whatever numpy's dispatch.
+    """
+    if matrix.ndim != 2:
+        raise ExecutionError(f"row_totals needs a 2-D array, got {matrix.ndim}-D")
+    return np.fromiter(
+        (math.fsum(row) for row in matrix), dtype=np.float64, count=matrix.shape[0]
+    )
+
+
+def matvec(matrix: Floats, vector: Floats) -> Floats:
+    """Return ``matrix @ vector`` with every entry summed exactly.
+
+    The replacement for a BLAS matrix-vector product whose result is reported
+    or stored: elementwise products, then :func:`row_totals`.
+    """
+    if matrix.ndim != 2 or vector.shape != (matrix.shape[1],):
+        raise ExecutionError(
+            f"matvec needs (m, k) and (k,), got {matrix.shape} and {vector.shape}"
+        )
+    return row_totals(matrix * vector)

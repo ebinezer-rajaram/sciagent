@@ -111,6 +111,19 @@ Source   := all | sign=+ | sign=−
 `c` ranges over the environment's mark channels (`size`, `sign` in pointproc;
 `magnitude` in QTM). Under anonymisation these become `m1`, `m2` (§5).
 
+*(Amended 2026-10-01; the precise semantics are in `sciagent/glm/grammar.py`.)*
+- **Shape parameters.** Every continuous quantity is a ψ slot on a fixed grid
+  (`sciagent/glm/grids.py`): kernel shapes, the mark-function parameters (the
+  `Pow` exponent, the `ExpOf` coefficient, the `Above` threshold), and the
+  period and phase.
+- **Marks.** Marks are standardised by an environment-fixed `ChannelSpec`
+  (location and scale), so a threshold means the same thing on every dataset.
+- **Phase windows.** `PhaseWindow` carries its own period and phase ψ: it is
+  the half-cycle on which `sin(2πt/P − φ) ≥ 0`.
+- **Link.** The link is part of the submitted `Structure`, its hash and its
+  distance.
+- **Kernels.** Kernels are normalised densities.
+
 v1's mechanisms are expressible: Hawkes = {`Excite(ExpK, One, all)`};
 seasonality = {`Periodic`}; S11's truth = {`Excite(ExpK, Mark(size), all)`};
 ETAS ≈ {`Excite(PowerK, ExpOf(Mark(magnitude)), all)`}. Regime switching and
@@ -127,13 +140,25 @@ cannot matter, which was v1's failure.
 - **Exact likelihood.** `log L = Σᵢ log λ(tᵢ) − ∫₀ᵀ λ(t) dt`. Feature values
   at event times and their integrals are precomputed per (feature, ψ):
   exponential kernels by the O(n) recursion, power-law and gamma kernels by
-  direct O(n²) sums, which is fine at n ≤ 5,000.
+  direct O(n²) sums, which is fine at n ≤ 5,000. *(Amended 2026-10-01.)* The
+  compensator is linear in the per-feature integrals only under the identity
+  link, where the likelihood is exact. Under the exp and softplus links,
+  `∫ g(θ·φ(t)) dt` is computed by composite Gauss–Legendre quadrature on
+  panels split at events and gate switch points, and an a-posteriori
+  quadrature-error estimate is recorded with every fit. Those likelihoods are
+  exact up to that recorded error.
 - **Certified fitting.** For fixed ψ the negative log-likelihood is **convex in
   θ** for all three links: an affine term minus a log of an affine
   (identity), or a GLM with convex cumulant (exp, softplus). Each inner fit is
   solved by an off-the-shelf conic solver (CVXPY with Clarabel), and the
   **duality gap is recorded as an optimality certificate**. ψ is profiled
-  over its grid. So every reported fit is the global optimum on that grid. A
+  over its grid. So every reported fit is the global optimum on that grid.
+  *(Amended 2026-10-01.)* The joint ψ grid is the product of the per-slot
+  grids. When that product has at most `PSI_FULL_GRID_MAX` (512) points it is
+  searched exhaustively and the fit is globally optimal on the grid. Above
+  that, ψ is profiled coordinate-wise from the best exhaustive sub-grid. The
+  fit is then flagged "certified in θ, coordinate-optimal in ψ", and the
+  share of such fits is reported beside the certified share. A
   proposal can lose only because it is a worse structure, never because the
   optimiser stalled. The share of certified fits is reported. Uncertified
   fits (solver failure) are flagged, never silently used.

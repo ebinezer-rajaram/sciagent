@@ -60,3 +60,41 @@ The intervention compiler (`pointproc/operations.py`) sits on v1's experiment
 DSL, executor, outcome binning and `hypothesis.graph`. They stay until P2's
 intervention language replaces them. Deleting them now would have meant
 rewriting interventions before the v2 design for them exists.
+
+## 2026-10-01 — P1 grammar contract: ψ everywhere, fixed mark standardisation
+
+The grammar (`sciagent/glm/grammar.py`) carries no numbers, so every
+continuous quantity is a ψ slot profiled on a fixed grid (`glm/grids.py`). That
+includes the mark-function parameters (`Pow` exponent, `ExpOf` coefficient,
+`Above` threshold) and the `PhaseWindow` period and phase. Marks are
+standardised by an environment-fixed `ChannelSpec` (location, scale), not by
+data statistics, so a fitted threshold means the same thing on observational,
+interventional and held-out data. Kernels are normalised densities, so under
+the identity link a coefficient is a branching ratio. The link is part of the
+submitted `Structure`, because exp-vs-identity is a structural choice that the
+agent makes. Grids are in mean-rate-1 time units, the truth sampler's operating
+point.
+
+## 2026-10-01 — Compensator by quadrature for non-identity links; ψ profiling cap
+
+Spec gaps found while planning P1, defaults approved by the user and amended
+into SPEC §2.2. (1) Only the identity link has a compensator linear in
+per-feature integrals. Exp and softplus need quadrature of `g(Xθ)`, so those
+fits are certified up to a recorded quadrature-error estimate. (2) The joint ψ
+grid grows as the product of per-slot grids. It is searched exhaustively up to
+512 points; above that, ψ is profiled coordinate-wise and the fit is flagged
+"certified in θ, coordinate-optimal in ψ". The flag keeps the weaker guarantee
+visible rather than silently claiming a global optimum.
+
+## 2026-10-01 — Canonical form is depth-minimal; ψ-bearing duplicates are kept
+
+Products commute and associate, and gates distribute over products
+(`Product(Gate(a,c), b) ≡ Gate(Product(a,b), c)`). So a feature reduces to a
+multiset of atoms plus a multiset of gate conditions. The normal form deals
+the sorted gates round-robin onto the sorted atoms, then merges products
+shallowest-first. Hoisting every gate to the top would be simpler, but it can
+push a valid depth-3 feature to depth 4, out of the grammar.
+
+De-duplication drops only repeats that have no ψ slot (`Trend`). Two
+`Excite(ExpK, …)` features are not redundant, because each profiles its own
+timescale. That clarifies SPEC §2.2's "de-duplication".

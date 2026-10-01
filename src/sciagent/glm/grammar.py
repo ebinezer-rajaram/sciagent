@@ -330,14 +330,15 @@ def channels_used(feature: Feature) -> frozenset[str]:
 def validate(structure: Structure, channels: tuple[ChannelSpec, ...]) -> None:
     """Raise :class:`InvalidStructureError` unless ``structure`` is well-formed.
 
-    Checks: 1..MAX_FEATURES features, depth ≤ MAX_DEPTH, every channel exists,
+    Checks: 0..MAX_FEATURES features (zero is the null, intercept-only model),
+    depth ≤ MAX_DEPTH, every channel exists,
     each mark function / source / condition is applied to a channel kind it is
     defined for.
     """
     by_name = {spec.name: spec for spec in channels}
     n = len(structure.features)
-    if not 1 <= n <= MAX_FEATURES:
-        raise InvalidStructureError(f"{n} features; must be 1..{MAX_FEATURES}")
+    if not 0 <= n <= MAX_FEATURES:
+        raise InvalidStructureError(f"{n} features; must be 0..{MAX_FEATURES}")
     for feature in structure.features:
         d = depth(feature)
         if d > MAX_DEPTH:
@@ -376,6 +377,15 @@ def _validate(feature: Feature, by_name: dict[str, ChannelSpec]) -> None:
             ):
                 raise InvalidStructureError(
                     f"signed source needs a sign channel: {source}"
+                )
+            if (
+                isinstance(mark, Mark)
+                and source.kind is not SourceKind.ALL
+                and mark.channel == source.channel
+            ):
+                raise InvalidStructureError(
+                    f"Mark({mark.channel}) on a source filtered by {mark.channel} "
+                    f"is the constant {source.kind.value}1; use One"
                 )
         case Periodic() | Trend():
             pass

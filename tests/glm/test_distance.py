@@ -401,3 +401,27 @@ def test_feature_set_triangle_many(
     x: list[Feature], y: list[Feature], z: list[Feature]
 ) -> None:
     _check_metric(feature_set_distance, [tuple(x), tuple(y), tuple(z)], 1.0)
+
+
+def test_null_structure_distances() -> None:
+    """OSPA of two empty sets is 0; empty against k >= 1 is 1 (all unmatched)."""
+    null = Structure(())
+    assert structure_distance(null, null) == 0.0
+    assert structure_distance(null, Structure((), Link.EXP)) == pytest.approx(
+        LINK_WEIGHT
+    )
+    for other in (s(HAWKES), s(HAWKES, Periodic()), s(HAWKES, Periodic(), Trend())):
+        assert structure_distance(null, other) == pytest.approx(1 - LINK_WEIGHT)
+        assert structure_distance(other, null) == pytest.approx(1 - LINK_WEIGHT)
+    assert structure_distance(null, s(HAWKES, link=Link.EXP)) == pytest.approx(1.0)
+    assert structure_distance(Structure((), Link.SOFTPLUS), s(HAWKES)) <= D_MAX
+
+
+def test_null_structure_is_a_point_of_the_metric_space() -> None:
+    null = Structure(())
+    triple = [null, s(HAWKES), s(HAWKES, Periodic(), link=Link.EXP)]
+    for a, b, c in itertools.permutations(triple, 3):
+        assert structure_distance(a, c) <= (
+            structure_distance(a, b) + structure_distance(b, c) + TOL
+        )
+    assert structure_hash(null) != structure_hash(s(HAWKES))

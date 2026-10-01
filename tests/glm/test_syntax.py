@@ -208,3 +208,29 @@ INVALID = [
 def test_valid_syntax_but_invalid_structure_is_rejected_by_validate(text: str) -> None:
     with pytest.raises(InvalidStructureError):
         parse(text, SIZE_SIGN)
+
+
+class TestNullStructure:
+    """``null`` is the intercept-only model: no features."""
+
+    @pytest.mark.parametrize("link", list(Link))
+    def test_render_and_round_trip(self, link: Link) -> None:
+        null = Structure((), link)
+        assert render(null) == f"link={link.value}; null"
+        assert parse(render(null), SIZE_SIGN) == null
+
+    def test_link_prefix_is_optional(self) -> None:
+        assert parse("null", SIZE_SIGN) == Structure((), Link.IDENTITY)
+        assert parse("  null ", ()) == Structure((), Link.IDENTITY)
+
+    @pytest.mark.parametrize(
+        "text", ["null + Trend", "Trend + null", "null null", "link=exp;", "link=exp"]
+    )
+    def test_null_is_alone_and_a_structure_is_not_empty_text(self, text: str) -> None:
+        with pytest.raises(DslSyntaxError):
+            parse(text, SIZE_SIGN)
+
+    def test_error_position_for_a_feature_after_null(self) -> None:
+        with pytest.raises(DslSyntaxError) as info:
+            parse("link=exp; null + Trend", SIZE_SIGN)
+        assert info.value.position == len("link=exp; null ")

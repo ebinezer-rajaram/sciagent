@@ -88,6 +88,15 @@ def conds(channels: tuple[ChannelSpec, ...]) -> list[Cond]:
     return out
 
 
+def _not_constant_mark(feature: Excite) -> bool:
+    """Drop ``Mark(c)`` on a source filtered by ``c``: validate forbids it."""
+    return not (
+        isinstance(feature.mark, Mark)
+        and feature.source.kind is not SourceKind.ALL
+        and feature.mark.channel == feature.source.channel
+    )
+
+
 def atoms(channels: tuple[ChannelSpec, ...]) -> SearchStrategy[Feature]:
     """Depth-1 features: ``Excite``, ``Periodic``, ``Trend``."""
     excite = st.builds(
@@ -95,7 +104,7 @@ def atoms(channels: tuple[ChannelSpec, ...]) -> SearchStrategy[Feature]:
         st.sampled_from(list(KernelKind)),
         st.sampled_from(mark_fns(channels)),
         st.sampled_from(sources(channels)),
-    )
+    ).filter(_not_constant_mark)
     plain: SearchStrategy[Feature] = st.sampled_from([Periodic(), Trend()])
     return st.one_of(excite, plain)
 
@@ -123,13 +132,16 @@ def structures(
     channels: tuple[ChannelSpec, ...],
     max_depth: int = MAX_DEPTH,
     max_features: int = MAX_FEATURES,
+    min_features: int = 0,
 ) -> Structure:
-    """Valid structures: any link, 1..``max_features`` features.
+    """Valid structures: any link, ``min_features``..``max_features`` features.
+
+    Zero features is the null (intercept-only) model, which is valid.
 
     Each feature after the first is, half the time, a copy of an earlier one,
     so repeated features (the case de-duplication is about) are common.
     """
-    n = draw(st.integers(min_value=1, max_value=max_features))
+    n = draw(st.integers(min_value=min_features, max_value=max_features))
     chosen: list[Feature] = []
     for _ in range(n):
         reuse = draw(st.booleans())

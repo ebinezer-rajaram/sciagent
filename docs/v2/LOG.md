@@ -222,3 +222,21 @@ fitting.
 
 Forced events count as history, including for `LastMarkAbove`. Window
 boundaries are inside the excluded window.
+
+## 2026-10-01 — Null is the empty feature set; Mark(sign) on a signed source is forbidden
+
+`Structure((), link)` is the intercept-only null. It is the library's null and
+the abstention answer, so `validate` accepts 0..4 features, and the DSL spells
+it `null`.
+
+`Excite(K, Mark(s), sign=±)` is rejected. On a source filtered by `s`, the mark
+is the constant ±1, which makes it a duplicate of `Excite(K, One, sign=±)`.
+The space counter found this redundancy.
+
+Computed space at depth 3 with K ≤ 4:
+- pointproc: 367,075 canonical features and 2.3e21 structures;
+- QTM: 4,774 features and 6.5e13 structures.
+
+That is at least 1e10 times the 10×F budget, so SPEC §2.1's size requirement
+holds. The B-sparse depth-2 dictionary is about 1.03M columns for pointproc
+and 74k for QTM, and it expresses only about 1e-21 of the parameterised space.

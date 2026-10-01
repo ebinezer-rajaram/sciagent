@@ -6,7 +6,9 @@
       + Gate(Product(Periodic, Excite(PowerK, One, sign=+)), LastMarkAbove(size))
 
 A structure is an optional ``link=<identity|exp|softplus>;`` prefix (default
-``identity``) and one or more features separated by ``+``. Features are
+``identity``) and either one or more features separated by ``+`` or the keyword
+``null``, the intercept-only model with no features (``link=exp; null``).
+Features are
 ``Excite(<kernel>, <mark>, <source>)``, ``Periodic``, ``Trend``,
 ``Product(<feature>, <feature>)`` and ``Gate(<feature>, <cond>)``. A mark is
 ``One`` or ``Mark|Pow|ExpOf|Above(<channel>)``; a source is ``all`` or
@@ -166,7 +168,7 @@ def _render_feature(feature: Feature) -> str:
 
 def render(structure: Structure) -> str:
     """The DSL text of a structure, always with an explicit ``link=`` prefix."""
-    body = " + ".join(_render_feature(f) for f in structure.features)
+    body = " + ".join(_render_feature(f) for f in structure.features) or "null"
     return f"link={structure.link.value}; {body}"
 
 
@@ -242,6 +244,11 @@ class _Parser:
                 raise self._fail("a link ('identity', 'exp' or 'softplus')")
             link = _LINKS[self._advance().text]
             self._punct(";")
+        if self._tok.kind == "ident" and self._tok.text == "null":
+            self._advance()
+            if self._tok.kind != "end":
+                raise self._fail("end of input (null has no features)")
+            return Structure((), link)
         features = [self.feature()]
         while self._is_punct("+"):
             self._advance()

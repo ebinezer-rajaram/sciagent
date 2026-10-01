@@ -592,7 +592,7 @@ BOUND_FEATURES: list[tuple[Feature, dict[str, float]]] = [
     (EXP_K, {"exp_rate": 4.0}),
     (Excite(KernelKind.POWER, Mark("sign"), ALL), {"power_c": 0.05, "power_p": 1.2}),
     (
-        Excite(KernelKind.GAMMA, Mark("sign"), POS),
+        Excite(KernelKind.GAMMA, Mark("size"), POS),
         {"gamma_shape": 5.0, "gamma_mean": 1.0},
     ),
     (
@@ -611,7 +611,7 @@ BOUND_FEATURES: list[tuple[Feature, dict[str, float]]] = [
     ),
     (Gate(Periodic(), LastMarkAbove("size")), {"period": 5.0, "above_z": 0.0}),
     (
-        Product(Excite(KernelKind.EXP, Mark("sign"), NEG), Trend()),
+        Product(Excite(KernelKind.EXP, Mark("size"), NEG), Trend()),
         {"exp_rate": 8.0},
     ),
 ]

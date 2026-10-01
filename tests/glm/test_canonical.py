@@ -373,3 +373,18 @@ def test_gate_on_different_factor_of_nonequivalent_products_differs() -> None:
 
 def test_channel_names_are_part_of_the_hash() -> None:
     _distinct(_s(EXP_SIZE), _s(Excite(KernelKind.EXP, Mark("energy"), ALL)))
+
+
+def test_null_structure_is_its_own_canonical_form() -> None:
+    for link in Link:
+        null = Structure((), link)
+        assert canonicalise(null) == null
+
+
+def test_null_structure_hash_is_stable_distinct_and_link_sensitive() -> None:
+    nulls = [Structure((), link) for link in Link]
+    hashes = [structure_hash(n) for n in nulls]
+    assert hashes == [structure_hash(n) for n in nulls]
+    assert len(set(hashes)) == len(Link)
+    assert all(len(h) == 64 for h in hashes)
+    assert structure_hash(nulls[0]) != structure_hash(_s(Trend()))

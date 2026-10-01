@@ -1,4 +1,4 @@
-"""The diagnostic catalogue for the point-process slice (SPEC §4.3).
+"""The diagnostic catalogue for the point-process slice (v1 SPEC §4.3).
 
 All eight diagnostics, each a pure function of an
 :class:`~sciagent.core.types.EventLog`. Their *version identifiers* belong to
@@ -10,7 +10,7 @@ construction, so they cannot discriminate:
 :func:`inter_arrival_dispersion`, :func:`fano_factor`,
 :func:`count_autocorrelation` at the reference window.
 
-Five are the discriminators SPEC §4.2 assigns to the three-stage plan:
+Five are the discriminators v1 SPEC §4.2 assigns to the three-stage plan:
 
 * :func:`spectral_peak_prominence` and :func:`spectral_peak_frequency` find the
   fixed period of a deterministic seasonal rate.
@@ -19,7 +19,7 @@ Five are the discriminators SPEC §4.2 assigns to the three-stage plan:
 * :func:`mean_high_run_length` and :func:`run_length_geometric_deviation`
   characterise the runs of above-average windows, separating the mechanisms that
   cluster in time from those that do not. See the latter's docstring for why
-  this is weaker than SPEC §4.2's regime-sojourn discriminator, which needs
+  this is weaker than v1 SPEC §4.2's regime-sojourn discriminator, which needs
   state inference and therefore the posterior engine.
 * :func:`size_dispersion` and :func:`sign_autocorrelation` cover the
   non-arrival components, which the compound and garden-path scenarios disturb.
@@ -59,7 +59,7 @@ def inter_arrival_dispersion(log: EventLog) -> float:
     Equals 1 for a homogeneous Poisson process; above 1 means overdispersed,
     i.e. more clustered than Poisson. This is the first diagnostic any
     investigator runs and, by construction, it does not separate the four
-    mechanisms of SPEC §4.2.
+    mechanisms of v1 SPEC §4.2.
     """
     gaps = inter_arrival_times(log)
     mean = reductions.mean(gaps)
@@ -118,7 +118,7 @@ def count_autocorrelation(log: EventLog, window: float, lag: int = 1) -> float:
     Zero for a renewal process at windows above its correlation length, positive
     for genuinely temporally clustered mechanisms. This is the diagnostic that
     actually separates the Poisson mixture from the other three, in place of the
-    "flat Fano factor" of SPEC §4.2, which does not hold for a renewal process.
+    "flat Fano factor" of v1 SPEC §4.2, which does not hold for a renewal process.
     """
     counts = counts_in_windows(log, window)
     if counts.size <= lag + 1:
@@ -161,7 +161,7 @@ def spectral_peak_frequency(log: EventLog, bin_width: float = 0.25) -> float:
     For a deterministic periodic rate this is ``1/period`` up to the frequency
     resolution ``1/span``. For the other three mechanisms the location of the
     maximum is not stable across seeds, which is the point: a *reproducible*
-    peak is what distinguishes seasonality (SPEC §4.2).
+    peak is what distinguishes seasonality (v1 SPEC §4.2).
     """
     frequencies, power = power_spectrum(log, bin_width)
     return float(frequencies[int(np.argmax(power))])
@@ -245,7 +245,7 @@ def high_run_lengths(log: EventLog, window: float = 1.0) -> Floats:
 
     A "high" window is one whose count strictly exceeds the mean count. The
     resulting runs are the observable proxy for the high-rate periods of a
-    latent regime, which is what SPEC §4.2 says identifies regime switching.
+    latent regime, which is what v1 SPEC §4.2 says identifies regime switching.
     """
     counts = counts_in_windows(log, window)
     high = counts > reductions.mean(counts)
@@ -283,7 +283,7 @@ def run_length_geometric_deviation(log: EventLog, window: float = 1.0) -> float:
     windows carry no temporal correlation; well above zero for any mechanism
     that clusters in time.
 
-    This is a weaker statement than SPEC §4.2's "geometric run-length
+    This is a weaker statement than v1 SPEC §4.2's "geometric run-length
     distribution of high-rate periods", which is about the *latent regime's* own
     sojourns. Those cannot be recovered by thresholding at the mean: Poisson
     noise breaks a single long high-rate period into several short runs, so the
@@ -367,7 +367,7 @@ def sign_autocorrelation(log: EventLog, lag: int = 1) -> float:
     """Return the lag-``lag`` autocorrelation of the sign sequence.
 
     Zero for the reference iid Bernoulli signs. Included in the catalogue as a
-    negative control: no mechanism in SPEC §4.2 touches the sign component, so a
+    negative control: no mechanism in v1 SPEC §4.2 touches the sign component, so a
     non-zero value indicates either a defect elsewhere in the programme or a
     fault in the framework.
     """
@@ -404,7 +404,7 @@ def size_gap_correlation(log: EventLog) -> float:
 
     Sign convention: a large mark raises the subsequent arrival rate, which
     *shortens* the following gap, so size excitation reads **negative** here and
-    an uncoupled programme reads zero. ``docs/DECISIONS.md`` records the
+    an uncoupled programme reads zero. ``docs/v1/DECISIONS.md`` records the
     measurement -- the closed set sits within 0.001 of zero, plain Hawkes
     included, against -0.134 for the out-of-library mechanism.
 

@@ -1,6 +1,6 @@
 """Short-term aftershock incompleteness, as a declared observation process.
 
-This is the found-data counterpart of SPEC §4.5's S12 nuisance: structure the
+This is the found-data counterpart of v1 SPEC §4.5's S12 nuisance: structure the
 environment carries, that shapes every measurement, and that nothing is scored
 on. ``environments/pointproc/operations.py`` declares its censoring through a
 component family and turns it into a restriction on the event log; here the
@@ -24,7 +24,7 @@ reversed: incompleteness suppresses events after a large mark where ETAS
 triggering produces more of them. Either way, a detector reading the difference
 would be reading the catalogue's instrument response and calling it seismology.
 
-``docs/BACKLOG.md`` records the same hazard from the other end -- template
+``docs/v1/BACKLOG.md`` records the same hazard from the other end -- template
 matching also produces false detections that cluster after large marks -- and
 notes that bounding the detector's reading against an artifact model is
 downstream work. What is settled here is only that the process is *named*,
@@ -205,7 +205,7 @@ class AftershockIncompleteness:
         # removed, of which 1 sits in M[3.9,4.0) and none at or above M4.0. So
         # there is a hard discontinuity at exactly the trigger magnitude, and
         # the size-arrival confound is *bounded* here rather than removed. What
-        # bounds it properly is the artifact-model arm `docs/BACKLOG.md`'s
+        # bounds it properly is the artifact-model arm `docs/v1/BACKLOG.md`'s
         # successor entry names; this guard only keeps the battery intact.
         out[triggers] = False
         return out

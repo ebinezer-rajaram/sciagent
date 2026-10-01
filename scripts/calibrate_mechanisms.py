@@ -1,6 +1,6 @@
 """Search the grammar's parameter grid for a common operating point.
 
-SPEC §4.2 asserts that the four mechanisms "all produce overdispersed counts and
+v1 SPEC §4.2 asserts that the four mechanisms "all produce overdispersed counts and
 clustered inter-arrivals, and are indistinguishable under basic dispersion
 diagnostics". That is a claim about a *parameterisation*, not about the
 mechanisms as such: any of them can be made obvious by choosing bad parameters.
@@ -186,7 +186,7 @@ def analytic_rate(name: str, p: FrozenDict[str, float]) -> float:
 
 #: Mechanisms whose count autocorrelation must also be matched, and to what.
 #: Only regime switching carries an entry, and its target is the Hawkes value.
-#: SPEC §4.2 assigns that pair to stage 3 of the minimum plan -- intervention --
+#: v1 SPEC §4.2 assigns that pair to stage 3 of the minimum plan -- intervention --
 #: so no dispersion diagnostic may separate them; without this term the search
 #: leaves them separable at about 4 standard deviations on autocorrelation alone.
 #: The mixture and seasonality are deliberately absent: they are *supposed* to be

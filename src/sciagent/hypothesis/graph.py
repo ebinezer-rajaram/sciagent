@@ -7,7 +7,7 @@ a log bolted on, and two graphs are comparable by ``==``.
 Where the numbers come from
 ---------------------------
 
-:attr:`HypothesisNode.plausibility` is the structural-complexity prior of SPEC §0:
+:attr:`HypothesisNode.plausibility` is the structural-complexity prior of v1 SPEC §0:
 ``p(D) proportional to 2 ** -code_length(D)``, normalised over the graph. It is
 *derived*, never supplied. There is no parameter to pass it through, no setter,
 and no keyword argument anywhere in this module's public surface -- which is the
@@ -32,9 +32,9 @@ Relations
 
 Nodes carry typed, symmetric relations to each other (:class:`Relation`). Item 5
 built the graph without them because nothing then asked a question about two
-hypotheses at once. Two things now do: SPEC §7.1 makes an experiment relevant to
+hypotheses at once. Two things now do: v1 SPEC §7.1 makes an experiment relevant to
 a claim if its target hypothesis is "within 2 edges" of the claim's subject or
-stands in an ``AlternativeTo`` or ``Contradicts`` relation to it, and SPEC §4.6
+stands in an ``AlternativeTo`` or ``Contradicts`` relation to it, and v1 SPEC §4.6
 requirement 5 asks for zero graph contradictions across all runs, which is not a
 statement one can make about a graph with no edges.
 
@@ -117,7 +117,7 @@ PLAUSIBILITY_DERIVATION: tuple[str, ...] = (
 
 
 class Relation(Enum):
-    """How two hypotheses stand to each other (SPEC §7.1 clause 6).
+    """How two hypotheses stand to each other (v1 SPEC §7.1 clause 6).
 
     Exactly the two relations §7.1 names. Both are symmetric, so the graph stores
     one entry per unordered pair and :meth:`HypothesisGraph.relate` sorts the pair
@@ -131,12 +131,12 @@ class Relation(Enum):
 
     CONTRADICTS = "contradicts"
     """They cannot both be true. Supporting claims on both sides of one of these
-    is what SPEC §4.6 requirement 5 calls a graph contradiction."""
+    is what v1 SPEC §4.6 requirement 5 calls a graph contradiction."""
 
 
 @dataclass(frozen=True, slots=True)
 class HypothesisNode:
-    """One candidate explanation (SPEC §3.3).
+    """One candidate explanation (v1 SPEC §3.3).
 
     ``program_edit`` is ``None`` only before compilation. :meth:`HypothesisGraph
     .propose` requires a compiled defect, so today no such node is constructible;
@@ -295,7 +295,7 @@ class HypothesisGraph:
         """Return the number of relations on the shortest path between two nodes.
 
         ``0`` for a node and itself, ``None`` if no chain of relations connects
-        them. This is what SPEC §7.1 clause 1's "within 2 edges" is measured in.
+        them. This is what v1 SPEC §7.1 clause 1's "within 2 edges" is measured in.
         Relations are symmetric, so the search is undirected, and the frontier is
         expanded in sorted order so the answer does not depend on set iteration
         order -- it could not change the distance, but a search whose order varies

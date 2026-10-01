@@ -8,14 +8,14 @@ over ``mean_rate`` -- and this script is that design's pilot.
 
 What to read off it. The edges have to do two things and no more:
 
-* **resolve where the closed set differs.** SPEC §4.2 makes the forced arrival
+* **resolve where the closed set differs.** v1 SPEC §4.2 makes the forced arrival
   the only discriminator of Hawkes self-excitation from latent regime switching,
   so the region between the unexcited structures and the excited one is where
   every bit of resolution is worth having.
 * **lump where it does not.** An extra edge in a region no hypothesis occupies
   costs replicates and, worse, costs posterior-predictive power: the check's tail
   sums over every cell no more likely than the observed one, and each unreached
-  cell contributes the rule-of-three floor (``docs/DECISIONS.md``, item 6).
+  cell contributes the rule-of-three floor (``docs/v1/DECISIONS.md``, item 6).
 
 Usage::
 
@@ -121,7 +121,7 @@ def overlap(drawn: dict[str, Floats]) -> None:
     """Print how far apart Hawkes sits from everything else, in this statistic.
 
     The number the design exists for. If Hawkes stops separating here, stage 3
-    of SPEC §4.2's minimum discriminating plan has no experiment.
+    of v1 SPEC §4.2's minimum discriminating plan has no experiment.
     """
     print("\nAUC of hawkes against each other structure (1.0 = fully separated)")
     hawkes = drawn["hawkes"]

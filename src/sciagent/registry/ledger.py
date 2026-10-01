@@ -1,9 +1,9 @@
-"""What a campaign has already run, and what it read (SPEC §11 item 15).
+"""What a campaign has already run, and what it read (v1 SPEC §11 item 15).
 
 An experiment store answers *what did this measurement produce*. This answers
 *has this cell of the matrix been run, and what were its numbers* -- the question
 a driver has to ask before spending an hour re-deriving an answer it already
-has. SPEC §9's matrix is 56 cells at twenty seeds, longer than any session, so
+has. v1 SPEC §9's matrix is 56 cells at twenty seeds, longer than any session, so
 resuming is not a convenience: a matrix that can only be run in one sitting
 cannot be run.
 
@@ -21,11 +21,11 @@ Why this is not a second :class:`~sciagent.registry.store.ExperimentStore`
 diagnostic which cannot produce a number must fail rather than register one.
 That is right for an experiment and wrong for a score:
 
-- :attr:`~sciagent.eval.scoring.DimensionVector.d2_held_out_predictive` is
+- v1's ``DimensionVector.d2_held_out_predictive`` is
   ``-inf`` when the candidate ruled out something that happens.
 - D2 and D3 are ``nan`` on an empty held-out battery, which is the honest
   reading of "the question was never asked".
-- :attr:`~sciagent.eval.scoring.ClosedWorldScore.log_score` is ``-inf`` whenever
+- v1's ``ClosedWorldScore.log_score`` is ``-inf`` whenever
   the truth got zero mass -- B1's ordinary case, since it holds only the null.
 
 So the two stores differ in what a valid payload *is*, and sharing one class
@@ -68,9 +68,9 @@ deliberate: filtering would mean interpreting ``config``, which is the one thing
 that keeps the store domain-independent -- it holds opaque text and never asks
 what a cell is. Selecting rows by partition belongs to the report layer, which
 has to select by address anyway, since a re-addressed cell leaves both rows in
-place. That is :func:`sciagent.eval.report.summarise`, which matches a whole
-:class:`~sciagent.eval.matrix.CampaignAddress` -- partition included -- and
-refuses to report over no matching row.
+place. That was v1's ``eval.report.summarise``, which matched a whole
+``CampaignAddress`` -- partition included -- and
+refused to report over no matching row.
 """
 
 from __future__ import annotations

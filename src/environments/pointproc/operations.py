@@ -1,4 +1,4 @@
-"""What SPEC §4.4's operations mean in the point-process slice.
+"""What v1 SPEC §4.4's operations mean in the point-process slice.
 
 ``sciagent.experiments.dsl`` says an operation names a component and a value.
 This module says what doing it amounts to here: that ``arrival``'s values are
@@ -10,7 +10,7 @@ the compiler is injected rather than imported.
 Forcing an arrival, and what it is read over
 --------------------------------------------
 
-SPEC §4.2 makes the forced arrival the only thing separating Hawkes
+v1 SPEC §4.2 makes the forced arrival the only thing separating Hawkes
 self-excitation from latent regime switching. Realising it needs two decisions
 the framework cannot make:
 
@@ -61,7 +61,7 @@ burst" mean the twenty an investigator has -- see below on why the window is
 defined by time and count rather than by index, which is what lets the two
 restrictions compose in this order at all.
 
-Every diagnostic used is from SPEC §4.3's frozen catalogue. Nothing here adds one.
+Every diagnostic used is from v1 SPEC §4.3's frozen catalogue. Nothing here adds one.
 """
 
 from __future__ import annotations
@@ -116,7 +116,7 @@ __all__ = [
 #: registry does: the same ``ForceArrival`` read over a different window is a
 #: different experiment. Neither the grammar version nor the family library's
 #: covers that, and neither does
-#: :attr:`~sciagent.inference.empirical.EmpiricalTable.version`, which addresses
+#: v1's ``EmpiricalTable.version``, which addresses
 #: templates and replicates. Without a version here, changing a restriction would
 #: leave every cached row and every registered result silently describing an
 #: experiment nobody would perform again.
@@ -165,7 +165,7 @@ type Restriction = Callable[[EventLog], EventLog]
 #: Per-event covariates a ``ConditionOn`` may select on. Deliberately small: a
 #: covariate is a claim that the quantity is observable, and an investigator
 #: conditioning on something unobservable would be reading the answer off the
-#: ground truth. The latent regime of SPEC §4.2's regime-switching mechanism is
+#: ground truth. The latent regime of v1 SPEC §4.2's regime-switching mechanism is
 #: absent for exactly that reason -- conditioning on the *inferred* state is a
 #: hypothesis-dependent analysis, not an observable.
 COVARIATES: Mapping[MetricName, Covariate] = {

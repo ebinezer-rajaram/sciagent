@@ -2,7 +2,7 @@
 
 Deliberately minimal, and deliberately without policy. What a budget is *worth*
 -- how many simulation calls an experiment costs, where scenario S10's
-discriminating threshold sits -- is scenario data and arrives with SPEC §11
+discriminating threshold sits -- is scenario data and arrives with v1 SPEC §11
 item 11. What lives here is only the arithmetic, and the guarantee that spending
 is monotone.
 
@@ -59,7 +59,7 @@ class Budget:
         Raises :class:`BudgetExhaustedError` rather than clamping. A system that
         silently received less than it asked for would produce results that look
         like weak reasoning under a sufficient budget, which is precisely the
-        confound SPEC §6 exists to prevent.
+        confound v1 SPEC §6 exists to prevent.
         """
         if cost < 0.0:
             raise BudgetError(f"cannot charge a negative cost {cost}")

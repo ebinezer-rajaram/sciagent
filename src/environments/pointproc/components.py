@@ -1,10 +1,10 @@
-"""Executable semantics for the point-process families (SPEC §4.1-4.2).
+"""Executable semantics for the point-process families (v1 SPEC §4.1-4.2).
 
 Every variate is derived from ``rng.random()`` by explicit inverse-CDF or
 thinning. None of numpy's distribution methods is called. NumPy's versioning
 policy guarantees stream stability for ``RandomState`` but *not* for
 ``Generator``'s distribution methods, so calling ``Generator.exponential`` would
-make bit-exact reproducibility (SPEC §6.1 A1) hostage to a numpy upgrade.
+make bit-exact reproducibility (v1 SPEC §6.1 A1) hostage to a numpy upgrade.
 ``Generator.random`` is a direct function of the raw 64-bit PCG64 output and is
 stable, and the transforms here are visible and auditable rather than hidden in
 a C extension.
@@ -171,7 +171,7 @@ def arrival_poisson_periodic(context: DrawContext) -> float:
     An exponentiated cosine rather than ``base_rate*(1 + A*sin(.))``: the linear
     form is bounded by ``A < 1`` and cannot reach the inter-arrival dispersion
     the other three mechanisms produce, which would make seasonality trivially
-    separable and defeat the point of SPEC §4.2. The exponentiated form has the
+    separable and defeat the point of v1 SPEC §4.2. The exponentiated form has the
     same two free parameters and unbounded dispersion.
 
     ``base_rate`` is the *geometric*-mean rate; the arithmetic mean rate is
@@ -201,7 +201,7 @@ def arrival_mixture_of_poisson_2(context: DrawContext) -> float:
     Inter-arrival times are hyperexponential, so they are overdispersed while
     remaining independent: the counting process is a renewal process with no
     temporal correlation and no response to a forced arrival, which is what
-    separates this mechanism from the other three (SPEC §4.2).
+    separates this mechanism from the other three (v1 SPEC §4.2).
     """
     weight_high = context.parameter("weight_high")
     rate = (
@@ -355,7 +355,7 @@ def observation_periodic_censored(context: DrawContext) -> float:
 
     Writing a sentinel here instead was rejected: it would put a number into the
     log that every metric would have to know not to read, and a metric is a pure
-    function of a log by specification (SPEC §3.2).
+    function of a log by specification (v1 SPEC §3.2).
     """
     for name in ("period", "duty"):
         if name not in context.component.parameters:
@@ -396,7 +396,7 @@ def init_two_state_markov(parameters: Parameters, rng: np.random.Generator) -> f
 #: this one *does* move existing behaviour: the intensity is what the thinning
 #: loop compares against, so an event log drawn under 1.2.0 differs from one
 #: drawn under 1.1.0 in the last places, and every stored result computed from
-#: one is retired. That is the intended effect -- see ``docs/DECISIONS.md`` on
+#: one is retired. That is the intended effect -- see ``docs/v1/DECISIONS.md`` on
 #: the Windows/Ubuntu measurement that made these folds a defect.
 LIBRARY_VERSION = "1.2.0"
 

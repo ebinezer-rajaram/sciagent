@@ -1,6 +1,6 @@
 """Record and replay of model calls, so an LLM run is reproducible.
 
-SPEC §1's third invariant is bit-exact determinism: the same seed, config and
+v1 SPEC §1's third invariant is bit-exact determinism: the same seed, config and
 version must give byte-identical output. A model call cannot satisfy that on its
 own, and the reason is not that determinism is hard to arrange but that the
 knobs which would arrange it **do not exist**. The models this layer targets
@@ -10,7 +10,7 @@ makes two calls with one prompt return one answer.
 
 A recorded response is therefore not a cache. It is *the* reproducible artefact,
 and the model call is the process that produces it, exactly as
-:class:`~sciagent.inference.empirical.EmpiricalTable` is the artefact and
+v1's ``EmpiricalTable`` was the artefact and
 simulation is the process that produces it. The parallel is deliberate and the
 two behave the same way: content-addressed, refused when the address disagrees,
 and never silently refreshed.
@@ -85,7 +85,7 @@ The scheme moved at A36, and the corpora are orphaned on purpose
 ----------------------------------------------------------------
 
 That corpus was load-bearing because A40's re-derivation had not run yet. It has
-(``docs/BACKLOG.md`` rank 12), so the reason expired, and gate A36 moved
+(``docs/v1/BACKLOG.md`` rank 12), so the reason expired, and gate A36 moved
 :data:`ADDRESS_VERSION` to ``transcript/3`` for three changes that each alter
 what is hashed: the tool schema's ``name`` field no longer names a mechanism, the
 structural menu moved from the brief into the system block, and an address now
@@ -283,7 +283,7 @@ class Transcript:
     The request fields are stored alongside the response even though the address
     already covers them. They are what makes a transcript file reviewable by a
     human -- a directory of opaque digests mapped to payloads would be
-    reproducible and unauditable at the same time, and SPEC §8's insistence that
+    reproducible and unauditable at the same time, and v1 SPEC §8's insistence that
     prose is a rendering rather than the authority cuts both ways.
     """
 
@@ -329,7 +329,7 @@ class Transcript:
 
     Empty for an answer. Recorded rather than re-derived because
     ``Hybrid._propose_once`` reads the tag off the exception and
-    :func:`~sciagent.eval.agency.proposal_causes` bins by it, so a replay that
+    v1's ``proposal_causes`` binned by it, so a replay that
     reconstructed a *generic* refusal would reproduce the ``refused`` count while
     moving the cause histogram -- reproducing the ledger row and not the reading.
     """
@@ -339,7 +339,7 @@ class Transcript:
 
     Stored for the reason the request fields are stored: it is what makes the
     record reviewable. It is also what ``Hybrid`` carries in
-    :attr:`~sciagent.systems.hybrid.ProposalAttempt.detail`, so a replay that
+    v1's ``ProposalAttempt.detail``, so a replay that
     dropped it would answer "why did this refuse" with silence, in precisely the
     corpus somebody opened to find out.
     """
@@ -420,7 +420,7 @@ class Transcript:
 class TranscriptStore:
     """An append-only store of recorded model calls.
 
-    Append-only for the reason the registry is (SPEC §6.3 A12): a transcript
+    Append-only for the reason the registry is (v1 SPEC §6.3 A12): a transcript
     that could be overwritten is a record of what the model says *now*, and the
     whole point is a record of what it said when the result was measured. Storing
     a different :attr:`Transcript.answer` at an existing address raises rather
@@ -430,7 +430,7 @@ class TranscriptStore:
 
     Not a frozen value type, unlike most of this framework. A store accumulates
     during a recording run, exactly as
-    :class:`~sciagent.inference.empirical.EmpiricalTableEngine` accumulates
+    v1's ``EmpiricalTableEngine`` accumulated
     during an investigation and for the same reason.
     """
 
@@ -630,7 +630,7 @@ class TranscriptStore:
         tag and message alike, and not a fresh refusal wearing the same outcome.
         ``Hybrid._propose_once`` reads
         :attr:`~sciagent.core.errors.ProviderError.cause` off the exception and
-        :func:`~sciagent.eval.agency.proposal_causes` bins by it, so a generic
+        v1's ``proposal_causes`` binned by it, so a generic
         reconstruction would reproduce the ledger row -- which carries no
         proposal tier and no cause histogram -- while silently moving the agency
         reading beside it. That is not a hypothetical: it is the wrong
@@ -782,7 +782,7 @@ class TranscriptStore:
         read -- a record kind this process does not implement. The split is the
         safety property: ``save``'s guards may overwrite a corpus for the first
         reason and must refuse for the second. Same reasoning as
-        :meth:`~sciagent.inference.empirical.EmpiricalTable.load` refusing a
+        v1's ``EmpiricalTable.load`` refusing a
         table whose content address disagrees: a file that cannot be addressed
         the way this process addresses things is not this store, and reading it
         anyway would produce misses that look like the model having changed.

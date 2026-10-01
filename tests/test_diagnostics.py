@@ -1,9 +1,9 @@
-"""The diagnostic catalogue of SPEC §4.3.
+"""The diagnostic catalogue of v1 SPEC §4.3.
 
 No acceptance criterion covers these, so the names deliberately do not follow
-the ``test_aN_`` convention that ``scripts/status.py`` reads. What they check is
+the ``test_aN_`` convention that v1's ``scripts/status.py`` read. What they check is
 that each diagnostic returns its known null value on the reference programme,
-and that the five discriminators actually discriminate: SPEC §4.2 assigns each
+and that the five discriminators actually discriminate: v1 SPEC §4.2 assigns each
 to a specific mechanism, and a diagnostic that fails to separate the mechanism
 it is named for would silently make the three-stage plan impossible.
 """
@@ -98,8 +98,9 @@ class TestNullValues:
 # ==========================================================================
 
 
+@pytest.mark.slow
 class TestDiscriminators:
-    """Each discriminator separates the mechanism SPEC §4.2 assigns it to."""
+    """Each discriminator separates the mechanism v1 SPEC §4.2 assigns it to."""
 
     def test_phase_conditioning_collapses_only_seasonality(self) -> None:
         """The diagnostic that rules seasonality in or out.
@@ -181,7 +182,7 @@ class TestDiscriminators:
         assert lengths["poisson_mixture"] < 1.8, lengths
 
     def test_arrival_mechanisms_leave_marks_and_signs_alone(self) -> None:
-        """Negative control: no SPEC §4.2 mechanism touches size or sign.
+        """Negative control: no v1 SPEC §4.2 mechanism touches size or sign.
 
         A non-null value here would mean a defect leaked across components, or
         that seed derivation is not independent per component.
@@ -245,7 +246,7 @@ class TestSizeGapCorrelation:
     Every other diagnostic reads the arrival stream alone or the marks alone,
     which is what made scenario S11 invisible to Stage A: its mechanism couples
     them while perturbing neither marginal. These tests pin the property that
-    licensed adding it to SPEC §4.3 -- the whole closed set reads zero, plain
+    licensed adding it to v1 SPEC §4.3 -- the whole closed set reads zero, plain
     Hawkes included, and only size excitation reads negative.
     """
 
@@ -257,7 +258,7 @@ class TestSizeGapCorrelation:
         "mechanism", ["hawkes", "poisson_mixture", "regime_switching", "seasonality"]
     )
     def test_every_closed_set_mechanism_reads_zero(self, mechanism: str) -> None:
-        """None of SPEC §4.2's four couples the marks to the arrivals.
+        """None of v1 SPEC §4.2's four couples the marks to the arrivals.
 
         Hawkes is the one that matters. It is what covers S11 on every
         arrival-only statistic, so a statistic that could not tell the two apart
@@ -281,6 +282,7 @@ class TestSizeGapCorrelation:
             f"closed set occupies; the statistic no longer separates S11"
         )
 
+    @pytest.mark.slow
     def test_the_coupling_is_bounded(self) -> None:
         """A correlation, so the catalogue's declared [-1, 1] range holds."""
         for defect in ("hawkes", "seasonality"):

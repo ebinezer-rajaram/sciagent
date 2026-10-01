@@ -1,131 +1,131 @@
 # sciagent
 
-**Can an LLM do science when the right answer isn't in its vocabulary?**
-A benchmark for LLM research agents that measures this, and never takes the
-model's word for it.
+**Can an LLM agent discover a mechanism that isn't in its library?**
+A benchmark for LLM research agents in which the ground truth is a hidden
+structural change to an executable model of the world, and every number is
+computed by the framework, never by the agent.
 
-Most "AI scientist" evaluations grade a system against a label or a human
-rubric. sciagent grades it against **the exact structural change that was made
-to the world**. Every environment is an executable generative programme. A
-scenario applies a typed edit to it (a new causal dependency, a hidden latent
-regime, a changed distribution family), and the system under test must work
-out which edit was made by running experiments, maintaining a hypothesis graph
-and proposing executable structure. Its diagnosis is scored as a **distance in
-edit space**, and five other ways besides. Nobody writes the answer key; the
-answer is the edit.
+> **Status (October 2026): v2 is being built.** v1 ran to completion (1,120
+> preregistered investigations) and is frozen at the tag
+> [`v1.0`](https://github.com/ebinezer-rajaram/sciagent/tree/v1.0). Its results,
+> and why they led to v2, are below. The v2 design is in
+> [`docs/SPEC.md`](docs/SPEC.md).
 
-> **Research question.** Once conventional statistics has detected that the
-> current model space is inadequate, does an LLM-guided system propose useful
-> executable structure *more effectively* than retrieval, symbolic search and
-> fixed-expansion baselines?
+## Why there is a v2: an exact tie that turned out to be forced
 
-## Headline result
+v1 asked whether, once statistics has detected that a model space is
+inadequate, an LLM proposes better new structure than retrieval, symbolic search
+and fixed-expansion baselines. I ran the full preregistered matrix: seven
+systems, twelve scenarios, 1,120 investigations, with Claude as the proposer.
 
-I ran the full preregistered experiment matrix: **1,120 investigations** across
-seven systems and twelve scenarios, with Claude as the proposer.
+- **Detection worked.** On the out-of-library scenario, a posterior-predictive
+  probe flagged inadequacy on **85%** of runs, with a pooled false-positive rate
+  of **3.1%** (5/160).
+- **The preregistered contrast tied exactly.** The LLM system and retrieval
+  both scored **0.6970** on intervention-response similarity, with a paired
+  difference of **0.0000 [0.0000, 0.0000]** (n = 17).
+- **The tie was forced, and the framework could show why.** Two walls made the
+  task unwinnable for *every* system:
+  - **A vocabulary wall.** The agent's proposal menu could not express the true
+    mechanism (event *size* driving *arrival rate*). In closed form, every
+    expressible proposal sat at structural distance ≥ 1.5 from the truth, while
+    the always-available null sat at 1.0.
+  - **An evidence wall.** The one diagnostic carrying the truth's signature was
+    available in 112 of 112 LLM briefs and *observed* in none. Bayesian
+    experimental design ranks experiments by information gain over the
+    hypotheses already entertained, and none of them made that diagnostic
+    informative.
+- **The LLM changed nothing anywhere.** Re-reading the ledger, the LLM system
+  matched the no-LLM system on five of six scores in all twelve scenarios. Eight
+  scenarios were solved by the library before any proposal was made, and the
+  LLM was a one-shot proposer with no tools, choosing among five structural
+  cells.
 
-1. **Detection works.** When the truth lies outside the model library
-   (scenario S11), the posterior-predictive probe flags inadequacy on **85%**
-   of runs, with a pooled false-positive rate of **3.1%** (5/160) on the
-   in-library scenarios.
-2. **On the preregistered contrast, the LLM system and retrieval tie exactly.**
-   The hybrid LLM system (V7) and the retrieval baseline (B4) both score
-   **0.6970** on intervention-response similarity: paired difference
-   **0.0000 [0.0000, 0.0000]**, n = 17. The strict test (did any proposal land
-   closer to the truth than the library itself?) also ties, with V7 and the
-   random-structure comparator B6 both at 1.0000.
-3. **The framework then showed the tie was forced.** An exact tie is evidence in
-   itself, so I audited it against the recorded campaign and found two walls
-   that make S11's second stage **unwinnable for any system**:
-   - **A vocabulary wall.** The agent's proposal menu cannot express S11's
-     true mechanism (event *size* driving *arrival rate*). This follows in closed
-     form from the distance metric: every expressible proposal sits at
-     structural distance ≥ 1.5 from the truth, while the always-entertained null
-     sits at 1.0. The truth is reachable, at 0.571, only through the
-     environment's full grammar.
-   - **An evidence wall.** The one diagnostic carrying S11's signature
-     (`size_gap_correlation`) was *available* in all 112 recorded LLM briefs and
-     *observed* in none. Bayesian experimental design picks experiments by
-     information gain over the hypotheses currently entertained, and no
-     entertained hypothesis made that query informative.
+So v1's question was left **open, not answered "no"**. A benchmark that scored
+against labels would have reported "LLM ≈ retrieval" and stopped; scoring
+against structure is what made the cause visible. The details are in
+[`docs/v1/RESULTS.md`](docs/v1/RESULTS.md).
 
-   Within both walls the LLM behaved sensibly: its 112 proposals were coherent
-   regime-switching, Hawkes-variant and size-mixture structures, each with a
-   sound diagnostic rationale.
+## v2: open-world mechanism discovery, by agents
 
-**So the research question is open, not answered "no".** Most benchmarks would
-have reported "LLM ≈ retrieval" and stopped. This one is strict enough to show
-when an instrument *cannot* tell two systems apart, which is only possible
-because ground truth is a structure rather than a label. Each instrument flaw
-the campaign exposed is recorded with its evidence in
-[`docs/DECISIONS.md`](docs/DECISIONS.md).
+v2 fixes each cause rather than patching the instrument.
 
-## How it works
+**An open hypothesis space.** Mechanisms are point-process GLMs,
+`λ(t | history) = g(θ₀ + Σ θₖ φₖ(t))`. The agent proposes the *features* φₖ
+(excitation kernels, mark functions, gates, interactions), and the framework
+fits θ. Every fit is a convex problem solved with a **duality-gap certificate**,
+so a proposal can only lose because it is a worse structure, never because an
+optimiser got stuck.
 
-```mermaid
-flowchart LR
-    R[Reference programme<br/>arrival → size, sign → obs] -->|typed edit<br/>hidden ground truth| D[Defective programme]
-    D -->|observations,<br/>interventions| S{{System under test}}
-    S -->|proposes executable<br/>structure + prose| H[Hypothesis graph]
-    H -->|BOED picks the<br/>next experiment| D
-    H --> V[Mechanical verifier<br/>numbers set by the framework]
-    V --> SC[Six-dimension score<br/>vs. the true edit]
-```
+**A population of hidden truths.** Instead of one out-of-library scenario,
+truths are sampled from the feature grammar, held out from the agent's library,
+and stratified by how far they lie from it. Results come out as a curve over
+distance from the library.
 
-- **Ground truth is a structure, not a label.** A defect is a `frozenset` of
-  edits from a versioned `EditGrammar`, so "correct diagnosis" is a distance in
-  edit space and partial credit has a precise meaning.
-- **The prior is derived, not fitted.** `EditGrammar.code_length` is a prefix
-  code over the edit space that satisfies Kraft's inequality, fixed before any
-  scenario existed. The complexity prior `p(D) ∝ 2^(−L(D))` comes from the
-  representation, never from benchmark frequencies.
-- **Out-of-library is mechanical.** The point-process environment declares two
-  grammars; a scenario is out-of-library exactly when its true edit lies in
-  `edit_grammar() \ agent_grammar()`. No annotator decides it.
-- **The framework writes numbers; agents write structure.** No code path
-  reachable from an agent can set a plausibility, posterior, metric or score,
-  and runtime assertions enforce it.
+**Real agents, in two tiers.** Both run Claude through the Agent SDK with tools:
+run experiments in an intervention language, query diagnostics, fit, commit
+predictions, and submit.
+- The **constrained** agent's only way to evaluate a structure is a metered
+  fit, so it can be compared with symbolic search at an **equal fit budget**.
+- The **open** agent adds a Python sandbox and a lab notebook: the research
+  scientist condition. It is compared at an **equal experiment budget**.
 
-**Scored six ways, never collapsed:** D1 structural edit recovery, D2 held-out
-predictive adequacy, D3 intervention-response similarity, D4 explanatory
-coverage, D5 enabled experiment value, D6 complexity. A structurally different
-but interventionally equivalent explanation counts as a success on D3. There is
-no total and no leaderboard rank.
+**Rivals chosen to be hard to beat.**
+- symbolic search over the same grammar;
+- sparse regression (group lasso) over a large fixed feature dictionary;
+- a model-free **Wiener–Hopf** estimate of the excitation kernels;
+- retrieval;
+- Bayesian experimental design;
+- random proposals;
+- an oracle.
 
-| System | Description |
-|---|---|
-| **V7** | Hybrid: an LLM proposes and revises hypotheses, BOED selects experiments |
-| V3 / V4 | LLM with raw history vs. LLM with the hypothesis graph (ablation) |
-| V1 | BOED only, over the closed hypothesis set |
-| **B4** | Retrieval from a fixed mechanism library: the preregistered primary comparator, chosen as the one most likely to *deflate* the LLM claim |
-| B5 | Symbolic beam search over the agent grammar |
-| B1 | Posterior-predictive detector only: a floor for detection that proposes nothing |
+**Questions v2 is built to answer:**
+1. Do agents beat search at equal budget?
+2. Do they still do so with every domain-meaningful name **anonymised**?
+   This separates reasoning from recall.
+3. Does an agent that chooses its own evidence get past the evidence wall that
+   stopped Bayesian experimental design?
+4. Is falsification-seeking experiment design, a method proposed here, better
+   than information gain in the open world?
+5. On a real earthquake catalogue, does the agent arrive at magnitude-dependent
+   triggering?
+6. Does it behave like a scientist? Its committed predictions are scored for
+   calibration, falsification-seeking and revision, with no LLM judge.
+
+**v1's lesson, as a rule.** No comparison is reported unless a positive control
+has shown the instrument can separate the systems being compared.
+
+## Roadmap
+
+| Phase | What | Status |
+|---|---|---|
+| P0 | Freeze v1, delete what v2 doesn't use, rebuild the workflow minimal | done |
+| P1 | Feature grammar, exact likelihood, certified fitting, Wiener–Hopf, evidence-wall proposition | next |
+| P2 | Truth sampler, intervention language, agent harness, sandbox, anonymiser | |
+| P3 | Pilot with go/no-go criteria fixed in advance | |
+| P4 | Main campaign: Haiku / Sonnet / Opus, named vs anonymised | |
+| P5 | Real seismicity catalogue | |
+| P6 | Write-up | |
 
 ## Environments
 
-**`pointproc`** is a marked point process (`arrival → {size, sign} → obs`) into
-which four mechanisms can be edited: Hawkes self-excitation, latent regime
-switching, deterministic seasonality and an independent Poisson mixture. All
-four are calibrated to the same operating point (mean rate 1.0, inter-arrival
-dispersion 3.5), so **no single statistic separates them** and telling them
-apart takes a plan of at least three stages. Twelve scenarios sit on it,
-including **S11**, whose truth is outside the agent's vocabulary by
-construction, and **S12**, a garden path where a censoring nuisance makes the
-first two diagnostics point confidently at the wrong mechanism.
+**`pointproc`** is a simulated marked point process
+(`arrival → {size, sign} → obs`). Four mechanisms (Hawkes self-excitation,
+latent regime switching, seasonality and a Poisson mixture) are calibrated to the
+same operating point, so **no single statistic separates them**.
 
 **`qtm`** ingests a byte-pinned catalogue of **real Southern California
-seismicity** behind the same event-log interface, so the framework can run on
-found data.
+seismicity** behind the same event-log interface.
 
 ## Quickstart
 
 ```sh
 uv sync
-uv run pytest -n 4 --dist loadfile
+uv run pytest -n 4 --dist loadfile    # ~25 s
 ```
 
-Apply a defect to the reference programme, execute it, and measure it in edit
-space:
+Apply a structural edit to the reference programme, execute it, and measure it
+in edit space:
 
 ```python
 import numpy as np
@@ -161,74 +161,41 @@ Same seed, same bytes, on every run.
 
 ## Engineering
 
-Research code held to the standard of production infrastructure: a result that
-can't be reproduced to the byte can't be trusted as a result.
-
 - **Bit-exact determinism.** Same seed + config + version ⇒ byte-identical
-  output. All randomness flows through explicitly passed seeded generators, and
-  an AST-level test forbids global RNG use.
-- **Append-only, content-addressed registry.** Every result is keyed by a hash
-  of (environment version, config, data version, metric version, seed); the
-  store has no update or delete path. A resumed campaign skips recorded cells,
-  and a changed metric gets a new address instead of overwriting the old one.
-- **Replayable LLM calls.** Models are reached through one provider layer, and
-  recorded calls are registered by hash, so a campaign replays offline with no
-  network access. (The campaign ledgers and transcripts are local artefacts and
-  are not in this repository.)
-- **49 acceptance gates as the contract.** Each criterion in the
-  [spec](docs/SPEC.md) maps to a named test class (`TestA1` … `TestA49`), and
-  `scripts/status.py` derives build state from them. Over 1,000 test functions
-  in all, including property-based tests with Hypothesis.
-- **Preregistration.** Comparators, conditioning events and success criteria
-  were fixed in the spec *before* the systems they grade existed. The
-  evaluation apparatus was built and validated before any LLM code, so weak
-  agent performance can't be confounded with an immature framework.
-- **Strict typing.** `mypy --strict` clean across 161 source files, frozen
-  dataclasses for value types, no mutable global state, no I/O in `core/`.
-- **About 29k lines of source and 34k lines of tests.** The `sciagent` package
-  is domain-independent and never imports from `environments`; a test enforces
-  it.
+  output, checked across processes and hash seeds. All randomness flows through
+  explicitly passed seeded generators, and an AST-level test, run by a hook
+  after every edit, forbids global RNG use.
+- **The framework writes numbers; agents write structure.** No path an agent
+  can reach may set a score, a fitted parameter of the submitted model, or
+  held-out data.
+- **Append-only, content-addressed results.** Every result is keyed by a hash
+  of (environment version, config, data version, metric version, seed), and the
+  store has no update or delete path.
+- **Replayable LLM runs.** Recorded calls are addressed by hash, so a campaign
+  replays offline with no network.
+- **Preregistration.** Contrasts, budgets and the test-set hash are committed
+  before an agent touches the test split.
+- `mypy --strict`, `ruff`, and property-based tests with Hypothesis. The
+  `sciagent` package is domain-independent and never imports `environments`; a
+  test enforces it.
 
-Built with [Claude Code](https://claude.com/claude-code) as a pair programmer.
-The hooks and review agents in [`.claude/`](.claude) enforce the invariants
-above on every edit.
+Built with [Claude Code](https://claude.com/claude-code) as pair programmer.
 
 ## Layout
 
 ```
-src/sciagent/         domain-independent framework; never imports environments
-  core/               programmes, edits, grammar, prefix code, distance
-  registry/           append-only content-addressed store
-  hypothesis/         hypothesis graph, falsifiability and duplicate validation
-  inference/          empirical posterior engines, PPC, entropy
-  experiments/        experiment DSL, executor, BOED
-  systems/            V7 hybrid, LLM providers, V3/V4 ablation, baselines
-  verify/             mechanical claim checks: logical, numerical, statistical, causal
-  eval/               scenarios, six-dimension scoring, campaign, report
+src/sciagent/        domain-independent framework; never imports environments
+  core/              programmes, edits, grammar, prefix code, distance
+  registry/          append-only content-addressed store
+  experiments/       experiment DSL and executor (to be replaced in P2)
+  systems/llm/       LLM backends with record/replay
 src/environments/
-  pointproc/          simulated marked point process
-  qtm/                real seismicity catalogue, found-data ingestion
-scripts/              status, calibration, confounding check, matrix report
-tests/acceptance/     A1–A49, one module per subsystem
-docs/                 SPEC.md (frozen), DECISIONS.md, BACKLOG.md, SCALE-UP.md
-```
-
-- [`docs/SPEC.md`](docs/SPEC.md): the frozen design, including research
-  questions, scenarios, scoring, experiment matrix and acceptance criteria.
-- [`docs/DECISIONS.md`](docs/DECISIONS.md): every spec ambiguity, measured
-  number and abandoned approach, dated with its evidence. It is large; search
-  it rather than reading it end to end.
-- [`docs/SCALE-UP.md`](docs/SCALE-UP.md): the interface changes needed to go
-  from this 12-scenario slice to a 104-scenario benchmark.
-
-## Development
-
-```sh
-uv sync
-uv run pytest -n 4 --dist loadfile        # simulation-bound: minutes, not seconds
-uv run mypy                               # strict; configured in pyproject
-uv run ruff format . && uv run ruff check --fix .
-uv run python scripts/status.py --run     # verify gates by execution
+  pointproc/         simulated marked point process
+  qtm/               real seismicity catalogue, found-data ingestion
+tests/               fast tier by default; `-m slow` for simulation-heavy tests
+docs/SPEC.md         the v2 design
+docs/v2/LOG.md       v2 design decisions
+docs/v1/             v1's spec, results and full decision record
 ```
 
 ## Data

@@ -9,7 +9,7 @@ happens to agree.
 The three layers, and which of them lives here
 ----------------------------------------------
 
-SPEC §6.3 asks that no registered row is ever updated or deleted, and A12 checks
+v1 SPEC §6.3 asks that no registered row is ever updated or deleted, and A12 checks
 it at three independent levels. Two of the three are here:
 
 - **Connection.** :func:`authorizer` is an allowlist over sqlite actions, default

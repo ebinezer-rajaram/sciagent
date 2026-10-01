@@ -8,7 +8,6 @@
       "Bash(uv run pytest*)",
       "Bash(uv run mypy*)",
       "Bash(uv run ruff*)",
-      "Bash(uv run python scripts/status.py*)",
       "Bash(uv run python tests/acceptance/determinism_child.py*)",
       "Bash(git status*)",
       "Bash(git diff*)",
@@ -17,9 +16,7 @@
       "Bash(git check-ignore*)",
       "Bash(git rev-parse*)",
       "Bash(git worktree*)",
-      "Bash(git merge-base*)",
-      "Bash(bash .claude/hooks/suite-freshness.sh*)",
-      "Bash(pyright*)"
+      "Bash(git merge-base*)"
     ],
     "deny": [
       "Read(**/.env)",
@@ -62,24 +59,7 @@
       "PowerShell(Remove-Item*-Recurse*-Force*)"
     ]
   },
-  "statusLine": {
-    "type": "command",
-    "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/statusline.sh\""
-  },
   "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "startup|resume|clear|compact|fork",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.sh\"",
-            "timeout": 180,
-            "statusMessage": "Reading build status"
-          }
-        ]
-      }
-    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write",
@@ -89,18 +69,6 @@
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/after-edit.sh\"",
             "timeout": 90,
             "statusMessage": "Formatting and checking invariant 3"
-          }
-        ]
-      }
-    ],
-    "PreCompact": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-compact.sh\"",
-            "timeout": 30,
-            "statusMessage": "Saving state across the compaction"
           }
         ]
       }

@@ -1,4 +1,4 @@
-"""Versioned identities for the slice's diagnostics (SPEC §4.3, §6.3).
+"""Versioned identities for the slice's diagnostics (v1 SPEC §4.3, §6.3).
 
 ``diagnostics.py`` holds the computations; this module holds their *identities*.
 The split matters because the identity is what a registered result is addressed
@@ -11,7 +11,7 @@ a function of an event log and nothing else, so each is instantiated here at a
 declared operating point and named for it -- ``fano_factor_w2`` is the Fano
 factor at window 2.0, and it is a different metric from the same estimator at
 window 0.5, because it answers a different question. The reference window is the
-one the four mechanisms are calibrated at (see ``docs/DECISIONS.md``), so a
+one the four mechanisms are calibrated at (see ``docs/v1/DECISIONS.md``), so a
 result recorded against it is comparable across all of them.
 """
 
@@ -70,8 +70,8 @@ CANDIDATE_PERIOD = SEASONALITY.parameters["period"]
 #: the registry addresses an experiment over the whole catalogue, and a result
 #: recorded against a catalogue that could not see the mark-arrival coupling was
 #: produced by a system that could not run the experiment which detects S11. The
-#: two are not comparable, so the version moves. SPEC §4.3 gains an entry with
-#: it; ``docs/DECISIONS.md`` records the measurement that licensed the change.
+#: two are not comparable, so the version moves. v1 SPEC §4.3 gains an entry with
+#: it; ``docs/v1/DECISIONS.md`` records the measurement that licensed the change.
 METRIC_VERSION = "1.2.0"
 
 
@@ -155,7 +155,7 @@ def metric_registry() -> MetricRegistry:
             # -- the mark-arrival coupling ---------------------------------
             # The only cross-component statistic in the catalogue, and the one
             # that makes S11's out-of-library mechanism visible to Stage A at
-            # all. See diagnostics.size_gap_correlation and docs/DECISIONS.md.
+            # all. See diagnostics.size_gap_correlation and docs/v1/DECISIONS.md.
             _spec(
                 "size_gap_correlation",
                 diagnostics.size_gap_correlation,

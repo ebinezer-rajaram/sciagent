@@ -1,13 +1,13 @@
-"""Integration test for the experiment DSL and executor (SPEC §11 item 7).
+"""Integration test for the experiment DSL and executor (v1 SPEC §11 item 7).
 
 Item 7's gate is an integration test rather than a lettered acceptance criterion,
 so this module lives outside ``tests/acceptance/``: CLAUDE.md's ``test_aN_*``
-naming is what ``scripts/status.py`` derives gate coverage from, and a test named
+naming is what v1's ``scripts/status.py`` derived gate coverage from, and a test named
 for a gate it does not check would be counted as one.
 
 What the gate has to show is that a design travels the whole way -- compiled by
 the environment, executed against a defected programme, measured, addressed,
-registered, charged -- and that the operation SPEC §4.2 rests the slice on
+registered, charged -- and that the operation v1 SPEC §4.2 rests the slice on
 actually discriminates. :class:`TestForcedArrivalDiscriminates` is the
 substantive one: if a forced arrival did not separate Hawkes self-excitation from
 latent regime switching, backlog item 8's BOED would have nothing to select and
@@ -125,7 +125,7 @@ class TestDesignIdentity:
         Two ids here move the version *on purpose*, and both are additions rather
         than re-renderings of an existing design. Item 11's forced arrival was the
         first. ``query:size_gap_correlation`` is the second, added on 2026-08-16
-        with SPEC §4.3's amendment: it is the only design under which S11's
+        with v1 SPEC §4.3's amendment: it is the only design under which S11's
         out-of-library mechanism is distinguishable from the closed set, and the
         table has to be rebuilt to hold it.
         """
@@ -299,7 +299,7 @@ class TestExecutorRegisters:
         assert hawkes.record.digest != null.record.digest
 
     def test_collateral_is_derived_from_the_dag(self, store: ExperimentStore) -> None:
-        """SPEC §3.3: collateral is derived, never declared.
+        """v1 SPEC §3.3: collateral is derived, never declared.
 
         ``size`` reaches ``obs`` and nothing else in the reference programme, so
         ablating it licenses a total-effect claim over ``{obs}`` and no narrower
@@ -317,7 +317,7 @@ class TestExecutorRegisters:
         assert dict(result.record.key.config)["collateral"] == "obs"
 
     def test_ablation_holds_the_component_fixed(self, store: ExperimentStore) -> None:
-        """SPEC §7.2: held fixed in the executed experiment, not merely declared."""
+        """v1 SPEC §7.2: held fixed in the executed experiment, not merely declared."""
         runner = executor(store=store)
         design = ExperimentDesign(
             AblateComponent(component=SIZE, value=1.0),
@@ -354,7 +354,7 @@ class TestExecutorRegisters:
         """Refused permanently, not pending. Backlog item 8 settled it.
 
         ``CompareCandidates`` scores candidate defects against each other, which
-        is answered by :func:`sciagent.experiments.boed.compare` as *selection*.
+        was answered by v1's ``experiments.boed.compare`` as *selection*.
         It measures nothing, so there is no result to register and no budget to
         charge, and the executor path it lacks is one it will never acquire.
         """
@@ -506,7 +506,7 @@ class TestSimulatorSharesTheExecutionPath:
         """The manipulation reaches the measurement, on the engine's own path.
 
         Under Hawkes the post-burst rate is many times the run's average rate,
-        which is the whole content of SPEC §4.2's stage 3. If the simulator ever
+        which is the whole content of v1 SPEC §4.2's stage 3. If the simulator ever
         returned the unmanipulated value here, every likelihood the engine
         computed for the intervention would be the likelihood of an experiment
         nobody performed.
@@ -537,13 +537,14 @@ class TestSimulatorSharesTheExecutionPath:
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 class TestForcedArrivalDiscriminates:
-    """SPEC §4.2: a forced arrival separates Hawkes from everything else.
+    """v1 SPEC §4.2: a forced arrival separates Hawkes from everything else.
 
     This is the operation the slice rests on. Hawkes self-excitation and latent
     regime switching are calibrated to be indistinguishable under *every*
-    dispersion diagnostic -- ``docs/DECISIONS.md`` records the measurement -- so
-    if forcing does not separate them, nothing does: stage 3 of SPEC §4.2's
+    dispersion diagnostic -- ``docs/v1/DECISIONS.md`` records the measurement -- so
+    if forcing does not separate them, nothing does: stage 3 of v1 SPEC §4.2's
     minimum discriminating plan has no experiment, scenario S10's
     non-identifiability is unconditional rather than budget-bound, and item 8's
     BOED would be choosing from a space with no discriminating design in it.
@@ -580,7 +581,7 @@ class TestForcedArrivalDiscriminates:
         """The contrast that makes the forced arrival worth having.
 
         Under observation alone the two mechanisms sit on top of each other, and
-        that is the calibrated design of SPEC §4.2 rather than a weakness of the
+        that is the calibrated design of v1 SPEC §4.2 rather than a weakness of the
         diagnostic.
         """
         runner = executor()
@@ -623,7 +624,7 @@ def test_env_and_data_versions_enter_the_address(store: ExperimentStore) -> None
 def test_a_disagreeing_result_at_one_address_is_a_conflict(
     store: ExperimentStore,
 ) -> None:
-    """A framework bug, never a finding (SPEC §6.3 A15).
+    """A framework bug, never a finding (v1 SPEC §6.3 A15).
 
     The executor's address covers the design, the defect, the versions and the
     seed. If an execution at that address ever returned something else, the

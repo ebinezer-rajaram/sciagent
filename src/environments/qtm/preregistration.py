@@ -19,10 +19,10 @@ magnitude-gated triggering, in which an event's size raises the rate of the
 events that follow it. Fitted to this catalogue specifically -- Moutote et al.
 (2021), van den Ende & Ampuero (2020). Expressed in the slice's own grammar that
 is exactly one edit, ``AddDependency(size → arrival)``, which the library
-already contains as SPEC §4.5's S11 mechanism.
+already contains as v1 SPEC §4.5's S11 mechanism.
 
 That coincidence is the whole reason QTM was chosen over the alternatives in
-``docs/BACKLOG.md``: the answer seismology settled is a structure the framework
+``docs/v1/BACKLOG.md``: the answer seismology settled is a structure the framework
 can already express, so D1 has a surrogate on found data and Stage B has
 something to be right or wrong about.
 

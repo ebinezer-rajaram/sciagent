@@ -18,7 +18,7 @@ computes a new float.
 The price is expressiveness: a condition may constrain one diagnostic, by
 comparison against constants. Conditions relating two diagnostics, or involving a
 computed threshold, are not representable and are not needed by the slice --
-SPEC §3.3 gives ``Prediction`` a single ``diagnostic`` field.
+v1 SPEC §3.3 gives ``Prediction`` a single ``diagnostic`` field.
 
 Domain
 ------
@@ -38,7 +38,7 @@ _domain`` pins the behaviour so a later environment cannot inherit it silently.
 
 Placement note: this lives in ``core/`` rather than beside the hypothesis
 validator because :class:`~sciagent.core.types.Prediction` holds two of these and
-``core`` may not import from its own siblings. See ``docs/DECISIONS.md``.
+``core`` may not import from its own siblings. See ``docs/v1/DECISIONS.md``.
 """
 
 from __future__ import annotations

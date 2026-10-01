@@ -1,9 +1,9 @@
-"""The four confounded mechanisms of SPEC §4.2, as grammar edits.
+"""The four confounded mechanisms of v1 SPEC §4.2, as grammar edits.
 
 Every mechanism is a single edit on ``arrival``, of a different edit type, and
 all four are calibrated to a common operating point: mean rate 1.0,
 inter-arrival dispersion and count Fano factor matched. The calibration is the
-substance of SPEC §4.2's claim that they are "indistinguishable under basic
+substance of v1 SPEC §4.2's claim that they are "indistinguishable under basic
 dispersion diagnostics" -- if any one of them were separable by a single moment
 the whole slice would be worthless, so the numbers are measured, not assumed
 (see ``scripts/confounding_check.py``).
@@ -93,7 +93,7 @@ HAWKES: Edit = AddDependency(
 #: Latent two-state regime switching. Discriminated by the geometric run-length
 #: distribution of high-rate periods, and by conditioning on the inferred state.
 #: Calibrated: rate 1.001, cv2 3.551, F2 3.264, count autocorrelation 0.480.
-#: The autocorrelation is matched to the Hawkes value deliberately: SPEC §4.2
+#: The autocorrelation is matched to the Hawkes value deliberately: v1 SPEC §4.2
 #: assigns that pair to stage 3 of the minimum plan, so no dispersion
 #: diagnostic may separate them. Calibrating without that constraint left them
 #: separable at about four standard deviations on autocorrelation alone.
@@ -157,7 +157,7 @@ SIZE_EXCITATION: Edit = AddDependency(
 
 
 #: The size-distribution mixture of scenario S8, which pairs it with seasonality
-#: (SPEC §4.5). Calibrated only in the one respect that matters for it to be a
+#: (v1 SPEC §4.5). Calibrated only in the one respect that matters for it to be a
 #: fair test: the mean mark size is preserved at 0.9988, within 0.2% of the
 #: reference, so the defect does not announce itself through a nuisance moment.
 #: Its squared coefficient of variation is 7.45 against the reference's 1.0.
@@ -185,7 +185,7 @@ SIZE_MIXTURE: Edit = ChangeDistributionFamily(
 #: is asked to find -- S12's truth is regime switching alone -- and licensed by
 #: ``edit_grammar`` and not by ``agent_grammar`` for that reason.
 #:
-#: Calibrated by ``scripts/calibrate_censoring.py`` for the two things SPEC §4.5
+#: Calibrated by ``scripts/calibrate_censoring.py`` for the two things v1 SPEC §4.5
 #: asks of it at once. Snapped to the grid at period 6.681, duty 0.599: an
 #: observed stretch of 4.00 followed by a censored one of 2.68.
 #:
@@ -213,7 +213,7 @@ OBSERVATION_CENSORING: Edit = ChangeDistributionFamily(
 )
 
 
-#: The four mechanisms of SPEC §4.2, keyed by their scenario name. Insertion
+#: The four mechanisms of v1 SPEC §4.2, keyed by their scenario name. Insertion
 #: order is the order of the table in the specification.
 CONFOUNDED_MECHANISMS: dict[str, Edit] = {
     "hawkes": HAWKES,

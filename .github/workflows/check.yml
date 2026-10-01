@@ -1,30 +1,12 @@
-# Check-only CI: the type checker and the suite, and nothing else.
+# Check-only CI: types, lint, format and the full suite (both tiers).
 #
-# Why this exists (docs/BACKLOG.md, gate A38): every verification claim in this
-# repository was session-local. `.claude/hooks/suite-freshness.sh` exists because
-# a suite that ran 18:00-18:07 on 2026-08-15 was certified green against a tree a
-# second session had changed at 18:05:56, and that had to be caught by hand.
+# Linux CI does not conflict with Windows being the reference platform: that pin
+# governs produced numbers, and this job produces none and carries nothing off the
+# runner. That is why there is no `actions/cache` step for `.cache/`, and
+# tests/acceptance/test_repository.py enforces it.
 #
-# Why a Linux runner does not conflict with the Windows pin: the pin governs
-# produced *numbers* -- registry entries, cached tables, reported figures -- and
-# not verification. This job produces none of them and, deliberately, carries
-# nothing off the runner. There is **no `actions/cache` step**: the empirical
-# tables are written under the checkout's `.cache/`, and caching that would
-# persist Ubuntu-built rows into every later job, which is exactly the
-# cross-platform comparison the pin closes. Table acquisition costs about three
-# minutes cold, and paying it every run is the price of that guarantee.
-# `tests/acceptance/test_a38.py` enforces this rather than trusting the comment.
-#
-# `-n 4 --dist loadfile` is CLAUDE.md's measured invocation, not a taste. `-n 4`
-# is what `-n auto` resolves to on GitHub's 4-vCPU runners, and `--dist loadfile`
-# is load-bearing: without it a module's tests split across workers and each
-# re-simulates table rows its siblings already built, which is slower than
-# serial. One measured test goes from 0.00s to 118.14s under the default `load`.
-#
-# Timeout: green runs measured 21-30 minutes (2026-08-19 to 2026-08-31), so the
-# old 30-minute cap cancelled most runs at the finish line. 45 leaves headroom.
-# README-only pushes skip the job: no test reads the README. docs/ is not
-# skipped, because the acceptance tests read SPEC.md and DECISIONS.md.
+# The whole suite ran in ~30 s locally after the v2 cleanup (2026-10-01), so 10
+# minutes is generous headroom. README-only pushes skip the job.
 
 name: check
 
@@ -43,7 +25,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 

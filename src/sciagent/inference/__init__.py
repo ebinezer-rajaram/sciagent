@@ -1,8 +1,7 @@
-"""Posterior updating, predictive checking and entropy (SPEC §3.5, §6.2).
+"""Outcome spaces and the posterior-engine protocol used by the experiment DSL.
 
-Staged per SPEC F12: :class:`~sciagent.inference.empirical.EmpiricalTableEngine`
-first, a likelihood-free engine later, each independently validated against
-acceptance tests A6-A11 before any agent result depends on it.
+What remains of v1's staged engine. Kept only because the intervention compiler
+builds on it; v2's exact-likelihood fitting replaces it (docs/SPEC.md §2.2).
 """
 
 from __future__ import annotations

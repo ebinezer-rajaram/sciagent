@@ -15,13 +15,13 @@ wrapped here at the arrow, one line each in the file::
 Seventeen whitespace-separated columns. This pipeline reads five of them: the
 six date and time fields, ``EVENTID`` and ``MAGNITUDE``. Location and depth are
 not read, because the slice's programmes have no spatial component; the polygon
-sensitivity arm ``docs/BACKLOG.md`` calls for would read them, and is downstream
+sensitivity arm ``docs/v1/BACKLOG.md`` calls for would read them, and is downstream
 work.
 
 The four stages, in the order they must run
 -------------------------------------------
 
-``docs/BACKLOG.md`` names them: magnitude cut, deterministic tie rule, rescale
+``docs/v1/BACKLOG.md`` names them: magnitude cut, deterministic tie rule, rescale
 to mean gap 1.0, disjoint 512-event segments keyed by seed index. The order here
 is not the order they are listed in, and the difference matters:
 
@@ -50,7 +50,7 @@ is not the order they are listed in, and the difference matters:
 Rescaling is a parameter, and both settings cost something
 -----------------------------------------------------------
 
-``docs/BACKLOG.md`` lists the rescale before the segmentation, which reads as one
+``docs/v1/BACKLOG.md`` lists the rescale before the segmentation, which reads as one
 global scale factor. Both readings are implemented, both are addressed, and
 :data:`RESCALES` states what each one costs. The default is ``per-segment``.
 
@@ -64,7 +64,7 @@ segment has identical duration while simulated logs of the same length span
 certainty -- in a track whose entire purpose is to compare the two.
 
 That is a research decision rather than a coding one, and it is deliberately
-left open here: ``docs/BACKLOG.md``'s successor entry carries it, and gate A25
+left open here: ``docs/v1/BACKLOG.md``'s successor entry carries it, and gate A25
 requires only that the choice be declared, addressed and actually read.
 """
 
@@ -144,7 +144,7 @@ Rescale = Literal["per-segment", "global"]
 #: empirical tables were built at.
 #:
 #: Which one the found-data track should run at is a research decision and is
-#: **not settled here**; ``docs/BACKLOG.md``'s successor entry carries it. What
+#: **not settled here**; ``docs/v1/BACKLOG.md``'s successor entry carries it. What
 #: is settled is that the choice is declared, addressed, and actually read.
 RESCALES: Final[frozenset[str]] = frozenset({"per-segment", "global"})
 

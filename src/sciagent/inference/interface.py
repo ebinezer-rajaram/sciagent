@@ -1,8 +1,8 @@
-"""The posterior engine protocol and the value types it returns (SPEC §3.5).
+"""The posterior engine protocol and the value types it returns (v1 SPEC §3.5).
 
-Two implementations are planned: :class:`~sciagent.inference.empirical
-.EmpiricalTableEngine`, which is the slice's, and a likelihood-free engine later.
-SPEC F12 stages them deliberately, and §6.2 requires each to pass A6-A11 on its
+Two implementations were planned: v1's ``EmpiricalTableEngine``, which was the
+slice's, and a likelihood-free engine later.
+v1 SPEC F12 staged them deliberately, and §6.2 required each to pass A6-A11 on its
 own before any agent result depends on it. The agent never learns which is in
 use, so everything an investigation can observe about an engine is here.
 
@@ -118,7 +118,7 @@ class LikelihoodEstimate:
     replicates: int
 
     def as_tuple(self) -> tuple[float, float]:
-        """Return ``(log-likelihood, standard error)``, SPEC §3.5's return type."""
+        """Return ``(log-likelihood, standard error)``, v1 SPEC §3.5's return type."""
         return (self.log_likelihood, self.standard_error)
 
 
@@ -133,7 +133,7 @@ class Observation:
 
 @dataclass(frozen=True, slots=True)
 class ExpansionCost:
-    """What it cost to admit a hypothesis mid-investigation (SPEC §6.2 A11).
+    """What it cost to admit a hypothesis mid-investigation (v1 SPEC §6.2 A11).
 
     Reported so that the price of hypothesis-space expansion is a measured
     quantity rather than an assumption. A11 checks ``simulator_calls`` against a
@@ -148,7 +148,7 @@ class ExpansionCost:
 
 @dataclass(frozen=True, slots=True)
 class PPCResult:
-    """The verdict of a posterior predictive check (SPEC §6.2 A9).
+    """The verdict of a posterior predictive check (v1 SPEC §6.2 A9).
 
     ``inadequate`` is the Stage A detection of SPEC F6: the current hypothesis
     space does not explain what was seen. It is a conventional, non-agentic
@@ -165,7 +165,7 @@ class PPCResult:
 
 
 class PosteriorEngine(Protocol):
-    """What an investigation may ask of a posterior engine (SPEC §3.5)."""
+    """What an investigation may ask of a posterior engine (v1 SPEC §3.5)."""
 
     def log_likelihood(
         self, h: HypothesisId, e: ExperimentId, result: DiagnosticVector

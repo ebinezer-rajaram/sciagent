@@ -1,4 +1,4 @@
-"""SPEC §4.4's experiment operations, and the designs built from them.
+"""v1 SPEC §4.4's experiment operations, and the designs built from them.
 
 An :class:`ExperimentDesign` is the answer to "what shall we do next": one act
 performed on the environment, plus the finite outcome space the resulting
@@ -40,11 +40,11 @@ on the reserved-character rule above.
 ``CompareCandidates``
 ---------------------
 
-Present so that SPEC §4.4's operation set is complete, and permanently without
+Present so that v1 SPEC §4.4's operation set is complete, and permanently without
 an executor path. Every other operation is one execution yielding one
 :data:`~sciagent.inference.binning.DiagnosticVector`; this one scores candidate
 defects against each other, which is precisely what one-step-greedy BOED does.
-It is realised by :func:`sciagent.experiments.boed.compare`, as *selection*:
+It was realised by v1's ``experiments.boed.compare``, as *selection*:
 asked which of these candidates is right, BOED answers with the experiment that
 would best tell them apart, and performs none of them.
 :class:`~sciagent.experiments.executor.Executor` therefore refuses it by name,
@@ -121,7 +121,7 @@ def _check_finite(kind: str, value: float) -> float:
 
 
 # --------------------------------------------------------------------------
-# The six operations (SPEC §4.4)
+# The six operations (v1 SPEC §4.4)
 # --------------------------------------------------------------------------
 
 
@@ -158,7 +158,7 @@ class ConditionOn:
     """Measure over the events whose covariate falls in ``[low, high]``.
 
     Not an intervention: nothing about the programme changes and no causal claim
-    is licensed. It is the operation SPEC §4.2 assigns to stage 2 of the minimum
+    is licensed. It is the operation v1 SPEC §4.2 assigns to stage 2 of the minimum
     discriminating plan -- conditioning on phase removes a deterministic seasonal
     rate's overdispersion and removes nothing from the other three mechanisms.
     """
@@ -182,7 +182,7 @@ class ConditionOn:
 class ForceArrival:
     """Force a component's value at named event indices, then measure.
 
-    ``do(X = x)`` at a set of event indices. SPEC §4.2 makes this the *only*
+    ``do(X = x)`` at a set of event indices. v1 SPEC §4.2 makes this the *only*
     thing that separates Hawkes self-excitation from latent regime switching: a
     forced arrival raises the subsequent rate under self-excitation and under
     nothing else. Everything downstream of it -- stage 3 of the minimum
@@ -231,7 +231,7 @@ class ForceArrival:
 class AblateComponent:
     """Hold a component fixed for the whole run, then measure.
 
-    The controlled-direct-effect operation of SPEC §7.2: a component that was
+    The controlled-direct-effect operation of v1 SPEC §7.2: a component that was
     actually held fixed in the executed experiment, rather than one merely
     declared to have been. Realised as a clamp over every event index, so
     "held fixed" is a property of the log and is checkable from it.
@@ -249,8 +249,8 @@ class AblateComponent:
 class CompareCandidates:
     """Score candidate defects against each other.
 
-    Typed here so SPEC §4.4's operation set is complete; realised by
-    :func:`sciagent.experiments.boed.compare`. See this module's docstring for
+    Typed here so v1 SPEC §4.4's operation set is complete; realised in v1 by
+    ``experiments.boed.compare``. See this module's docstring for
     why it has no executor path.
     """
 
@@ -301,8 +301,8 @@ def defect_key(defect: Defect) -> str:
     one -- renders as ``"null"`` rather than as an empty string, so a defect
     field is never blank in a content address.
 
-    Memoised on the same argument as
-    :func:`~sciagent.inference.empirical.structure_key`, for the same reason --
+    Memoised on the same argument as v1's
+    ``inference.empirical.structure_key``, for the same reason --
     it is called once per candidate per comparison on a path that revisits the
     same handful of edit sets all run -- and sound for the same reason: the cache
     identifies a ``Defect`` by ``__eq__`` while the key is rendered by ``repr``,
@@ -357,7 +357,7 @@ def targets(operation: Operation) -> frozenset[ComponentId]:
     """Return the components an operation manipulates.
 
     Empty for the two observational operations. This is what the executor
-    derives collateral effects from (SPEC §3.3: collateral is derived from the
+    derives collateral effects from (v1 SPEC §3.3: collateral is derived from the
     programme DAG, never declared), and a compiler may widen it if an
     environment's realisation reaches further than the operation names.
     """
@@ -438,9 +438,8 @@ class ExperimentDesign:
     run lengths are two designs and two registry rows.
 
     They are **not** two :attr:`id`\\ s. Offering two such designs to one
-    investigation is refused rather than silently collapsed -- by
-    :meth:`~sciagent.inference.empirical.EmpiricalTable.build`, by
-    :func:`~sciagent.experiments.boed.rank`, and by
+    investigation is refused rather than silently collapsed -- by v1's
+    ``EmpiricalTable.build``, by v1's ``boed.rank``, and by
     :meth:`~sciagent.experiments.executor.Executor.simulator`."""
 
     _id: ExperimentTemplateId = field(init=False, repr=False, compare=False)
@@ -469,7 +468,7 @@ class ExperimentDesign:
         A ``QueryDiagnostic`` design over a single metric renders as
         ``query:<metric>``, which is the id the slice's templates have carried
         since backlog item 6 -- so introducing the DSL leaves
-        :attr:`~sciagent.inference.empirical.EmpiricalTable.version` unchanged
+        v1's ``EmpiricalTable.version`` unchanged
         and a built table still loads.
 
         **Not injective over designs**, and deliberately so: ``n_events`` is
@@ -479,8 +478,7 @@ class ExperimentDesign:
         address, retiring every stored table and every registered row to fix a
         collision no caller can reach by accident. What the id has to be is
         *unambiguous within one investigation*, and that is enforced where such a
-        set is assembled: :meth:`~sciagent.inference.empirical.EmpiricalTable
-        .build`, :func:`~sciagent.experiments.boed.rank` and
+        set is assembled: v1's ``EmpiricalTable.build``, v1's ``boed.rank`` and
         :meth:`~sciagent.experiments.executor.Executor.simulator` each refuse a
         repeated id rather than keeping whichever design came last.
         """
@@ -536,8 +534,8 @@ def is_intervention(design: ExperimentDesign) -> bool:
     seventh operation would then have to be remembered in two places and the one
     that got forgotten would fail silently -- an intervention read as an
     observation is a battery that looks well formed and answers a different
-    question. SPEC §8's D3 is the caller that matters:
-    :class:`~sciagent.eval.scenarios.Scenario` refuses a held-out battery in
-    which this is false of every member.
+    question. v1 SPEC §8's D3 is the caller that matters:
+    v1's ``Scenario`` refused a held-out battery in
+    which this was false of every member.
     """
     return bool(targets(design.operation))

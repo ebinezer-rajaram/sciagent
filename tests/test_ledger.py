@@ -1,8 +1,8 @@
 """The campaign ledger: what a matrix has already run, and what it read.
 
-SPEC §11 item 15 carries **no acceptance criterion**, so nothing here is named
-``test_aN_``. Crediting these to a gate would tell ``scripts/status.py`` that a
-criterion covers them when none does. What they check instead is stated per
+v1 SPEC §11 item 15 carries **no acceptance criterion**, so nothing here is named
+``test_aN_``. Crediting these to a gate would have told v1's ``scripts/status.py``
+that a criterion covers them when none does. What they check instead is stated per
 class: the append-only guarantees A12 asks of the experiment store, held here by
 the same :mod:`sciagent.registry.backing` machinery, plus the two things a
 ledger needs and an experiment store does not -- a non-finite reading, and an

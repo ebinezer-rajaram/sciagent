@@ -1,6 +1,6 @@
 """Typed structural edits, the edit grammar, its prefix code and its metric.
 
-SPEC §0 is binding here: the grammar is not neutral. What is expressible, what
+v1 SPEC §0 is binding here: the grammar is not neutral. What is expressible, what
 counts as one edit rather than two, and what the prefix code charges per
 construct are all author decisions that propagate into every score. They are
 written down in this module so they can be inspected, versioned and varied in
@@ -27,7 +27,7 @@ The four edit types
     values at events ``< i``. Self-loops (Hawkes) and cross-component links
     (scenario S11's ``size -> arrival``) are the same construct; only the source
     differs. Because the edge is lagged it cannot create a cycle in the
-    time-unrolled graph, which is what lets S11 coexist with SPEC §3.1's
+    time-unrolled graph, which is what lets S11 coexist with v1 SPEC §3.1's
     acyclicity requirement (see ``sciagent.core.program``).
 
 The first two are distinguished by *what changes*, not by how the code is
@@ -338,10 +338,10 @@ def _grids_of(option: Option) -> tuple[ParameterGrid, ...]:
 
 @dataclass(frozen=True, slots=True)
 class EditGrammar:
-    """The licensed edit space, its prefix code and its metric (SPEC §3.1).
+    """The licensed edit space, its prefix code and its metric (v1 SPEC §3.1).
 
     Out-of-library is defined by grammar membership and nothing else:
-    ``ground_truth_edit in edit_grammar() \\ agent_grammar()`` (SPEC §3.2).
+    ``ground_truth_edit in edit_grammar() \\ agent_grammar()`` (v1 SPEC §3.2).
 
     Note that :meth:`code_length` is *grammar-relative*: the same edit is charged
     differently under a grammar with a larger licensed space, because naming the
@@ -370,7 +370,7 @@ class EditGrammar:
 
     @property
     def targets(self) -> Mapping[type[Edit], frozenset[ComponentId]]:
-        """Return the licensed target components per edit type (SPEC §3.1).
+        """Return the licensed target components per edit type (v1 SPEC §3.1).
 
         Iteration order is :attr:`ordered_types`, which is fixed and independent
         of hashing, so walking this mapping cannot perturb anything downstream.
@@ -530,7 +530,7 @@ class EditGrammar:
         """Return the description length of ``d`` in bits.
 
         This defines the structural complexity prior ``p(D) proportional to
-        2**-L(D)`` (SPEC §0). It is frozen: it encodes a belief about parsimony
+        2**-L(D)`` (v1 SPEC §0). It is frozen: it encodes a belief about parsimony
         derived from the representation, and must never be tuned to benchmark
         prevalence.
 
@@ -549,7 +549,7 @@ class EditGrammar:
         ``L_type = log2(|allowed|)``
             Uniform over the licensed edit types. Deliberately uniform: a
             non-uniform type code would smuggle benchmark prevalence into the
-            prior, which SPEC §0 forbids.
+            prior, which v1 SPEC §0 forbids.
 
         ``L_target = log2(|targets(type)|)``
             Uniform over the components this edit type may modify. For
@@ -694,7 +694,7 @@ class EditGrammar:
         cost[n:, m:] = 0.0
 
         rows, columns = linear_sum_assignment(cost)
-        # `reductions.total`, not `.sum()`: this is SPEC §8's D1, so the value
+        # `reductions.total`, not `.sum()`: this is v1 SPEC §8's D1, so the value
         # is reported and stored. `_ground_distance` below already folds with
         # `math.fsum` for exactly this reason; the aggregate three lines up did
         # not, which is the kind of half-migration only a check can find.

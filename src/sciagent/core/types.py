@@ -1,7 +1,7 @@
 """Core value types and identifier aliases.
 
-``Prediction`` (SPEC §3.3) arrives here with backlog item 5, ``Diagnosis``
-(SPEC §3.4) with item 9, and ``Claim``, ``Estimand``, ``Intervention`` and
+``Prediction`` (v1 SPEC §3.3) arrives here with backlog item 5, ``Diagnosis``
+(v1 SPEC §3.4) with item 9, and ``Claim``, ``Estimand``, ``Intervention`` and
 ``Scope`` with item 10, which is the item whose verifier is the only thing that
 reads them.
 
@@ -42,7 +42,7 @@ Seed = NewType("Seed", int)
 Probability = NewType("Probability", float)
 
 #: The four versioned quantities a registered experiment is addressed by, plus
-#: the address itself (SPEC §6.3 A13). Each is a distinct type rather than a bare
+#: the address itself (v1 SPEC §6.3 A13). Each is a distinct type rather than a bare
 #: ``str`` so that transposing two of them in a five-field key is a type error and
 #: not a silently different content address.
 EnvVersion = NewType("EnvVersion", str)
@@ -51,31 +51,31 @@ MetricVersion = NewType("MetricVersion", str)
 MetricName = NewType("MetricName", str)
 Digest = NewType("Digest", str)
 
-#: Identifiers for the investigation record (SPEC §3.3).
+#: Identifiers for the investigation record (v1 SPEC §3.3).
 HypothesisId = NewType("HypothesisId", str)
 PredictionId = NewType("PredictionId", str)
 ExperimentId = NewType("ExperimentId", str)
 
-#: SPEC §3.3 lists ``Claim`` without an id. One is carried for the same reason
+#: v1 SPEC §3.3 lists ``Claim`` without an id. One is carried for the same reason
 #: :class:`Prediction` acquired one at item 5: a verdict has to name the claim it
-#: is about, and :mod:`sciagent.verify.contradiction` compares a claim against
+#: is about, and the v1 contradiction check compared a claim against
 #: the ones already accepted, which is not expressible over anonymous values.
 ClaimId = NewType("ClaimId", str)
 
-#: Which of SPEC §4.5's twelve slice scenarios an investigation was run on.
+#: Which of v1 SPEC §4.5's twelve slice scenarios an investigation was run on.
 ScenarioId = NewType("ScenarioId", str)
 
-#: The identity of an experiment design (SPEC §4.4), which is
+#: The identity of an experiment design (v1 SPEC §4.4), which is
 #: :attr:`sciagent.experiments.dsl.ExperimentDesign.id` -- a readable canonical
 #: rendering of the act and the diagnostics it is read over.
 #:
-#: SPEC §3.3 writes ``Prediction.under: ExperimentTemplate``, i.e. the structure
+#: v1 SPEC §3.3 writes ``Prediction.under: ExperimentTemplate``, i.e. the structure
 #: itself. Backlog item 7 kept the id instead, deliberately. A ``Prediction`` is
 #: a frozen value type that gets content-addressed, and embedding a whole design
 #: in each one enlarges what is hashed while adding nothing: the id *is* the
 #: design's canonical rendering, so naming it names the design uniquely. The
 #: divergence from the specification's literal type is recorded in
-#: ``docs/DECISIONS.md``.
+#: ``docs/v1/DECISIONS.md``.
 ExperimentTemplateId = NewType("ExperimentTemplateId", str)
 
 ComponentKind = Literal["arrival", "size", "sign", "observation"]
@@ -234,7 +234,7 @@ class EventLog:
 
 @dataclass(frozen=True, slots=True)
 class MetricRef:
-    """A metric named at a specific version (SPEC §3.3).
+    """A metric named at a specific version (v1 SPEC §3.3).
 
     Lives here rather than with :class:`~sciagent.registry.metrics.MetricRegistry`
     because :class:`Prediction` names a diagnostic and ``core`` may not import
@@ -269,13 +269,13 @@ class RejectionCode(Enum):
 
     Codes are recorded rather than raised alone, so that a refusal is a datum in
     the investigation record and not only a control-flow event. The first two
-    lines are the criterion SPEC §6.4 A16 states; the rest are neighbouring
+    lines are the criterion v1 SPEC §6.4 A16 states; the rest are neighbouring
     incoherences the same interval arithmetic decides for free, kept separate so
     that A16's own gate measures exactly what A16 claims.
     """
 
     NO_PREDICTIONS = "no_predictions"
-    """No prediction at all. SPEC §3.3 requires at least one."""
+    """No prediction at all. v1 SPEC §3.3 requires at least one."""
 
     UNSATISFIABLE_REFUTATION = "unsatisfiable_refutation"
     """No attainable diagnostic value could refute the hypothesis (A16)."""
@@ -307,7 +307,7 @@ class Prediction:
     must not overlap ``condition``; both are checked by
     :func:`sciagent.hypothesis.validator.validate_prediction`.
 
-    SPEC §3.3 lists this without an ``id``, but
+    v1 SPEC §3.3 lists this without an ``id``, but
     :attr:`~sciagent.hypothesis.graph.HypothesisNode.predictions` holds
     ``PredictionId``s, so one is carried here.
     """
@@ -322,24 +322,24 @@ class Prediction:
     authored: bool = False
     """Whether the system supplied this condition rather than the framework.
 
-    ``False`` for everything :func:`~sciagent.systems.base.table_predictions`
-    derives, which is every prediction the conventional baselines make and every
-    prediction in the recorded campaign. ``True`` only where a system passed
-    ``predictions=`` to :meth:`~sciagent.systems.base.Investigation.propose`.
+    ``False`` for every prediction the framework derives, which is every
+    prediction the conventional baselines made and every prediction in the
+    recorded v1 campaign. ``True`` only where a system supplied the predictions
+    explicitly.
 
     **Not a number, and not trusted from the caller.** The flag is a fact about
     provenance, so the second invariant is untouched; and
-    :meth:`~sciagent.systems.base.Investigation.propose` stamps it on every
-    explicitly supplied prediction rather than reading what arrived, since a
+    the framework stamps it on every explicitly supplied prediction rather than
+    reading what arrived, since a
     system able to set it would otherwise simply clear it.
 
     It exists so that a threshold a system chose for itself is *referred* rather
-    than accepted: :func:`~sciagent.verify.statistical.check` hands such a claim
+    than accepted: the v1 statistical check handed such a claim
     to a human instead of grading it, which is strictly gentler than the refusal
     the A34 criterion also permits.
 
     **Be precise about what that costs, because the obvious gentler reading is
-    false.** :meth:`~sciagent.systems.base.Investigation.propose` stamps a node's
+    false.** The framework stamps a node's
     predictions in one call and nothing adds more to a node afterwards, so every
     prediction of a node carries the same flag. A hypothesis proposed with any
     explicit prediction therefore cannot carry an *adjudicated* prediction-channel
@@ -347,16 +347,16 @@ class Prediction:
 
     **And the trade is not only a cost, which is the part a first reading of this
     missed.** ``REFER`` is not merely "not adjudicated": it is also not
-    :attr:`~sciagent.verify.verdict.Verdict.accepted`, so the claim never enters
-    the accepted population :func:`sciagent.verify.contradiction.check` reads.
-    Authoring predictions therefore *lowers* the contradiction count SPEC §12
+    accepted, so the claim never enters
+    the accepted population the v1 contradiction check read.
+    Authoring predictions therefore *lowers* the contradiction count v1 SPEC §12
     criterion 8 asks to be zero, by making the system's own earlier claims
     unadmittable — a criterion paid on a different criterion's account. It cannot
     fire today: no shipped system supplies predictions, and
     :meth:`~sciagent.hypothesis.graph.HypothesisGraph.relate` has no caller in
     ``src`` at all, so no ``CONTRADICTS`` edge exists in any recorded campaign.
     Both surfaces are agent-facing, so this is a design hole held shut by two
-    absences rather than by anything structural; ``docs/DECISIONS.md``
+    absences rather than by anything structural; ``docs/v1/DECISIONS.md``
     (2026-08-23) records it.
     """
 
@@ -368,10 +368,10 @@ class Prediction:
 
 @dataclass(frozen=True, slots=True)
 class Diagnosis:
-    """What one research system concluded about one scenario (SPEC §3.4).
+    """What one research system concluded about one scenario (v1 SPEC §3.4).
 
     A value type and nothing more: every number in it is derived by
-    :func:`sciagent.systems.base.diagnose` from a posterior engine, and no
+    the framework from a posterior engine, and no
     system constructs one directly. That is what keeps SPEC's second invariant
     true of the systems layer -- a baseline chooses *structure* (which
     hypotheses to propose, which designs to run) and the framework turns the
@@ -387,8 +387,8 @@ class Diagnosis:
     abstain_mass: Probability
     """Posterior mass not on the single leading hypothesis, ``1 - max_h p(h)``.
 
-    SPEC §3.4 names the field without defining it; this reading is recorded in
-    ``docs/DECISIONS.md``. It is how much the system declines to commit to its
+    v1 SPEC §3.4 names the field without defining it; this reading is recorded in
+    ``docs/v1/DECISIONS.md``. It is how much the system declines to commit to its
     own best answer, so §12's criterion 9 -- null and abstain mass exceeding any
     single defect's mass on S9 and S10 -- discriminates a calibrated report of
     insufficiency from a confident wrong one.
@@ -436,7 +436,7 @@ class Diagnosis:
 
 
 # --------------------------------------------------------------------------
-# Estimands (SPEC §3.3, §7.2)
+# Estimands (v1 SPEC §3.3, §7.2)
 # --------------------------------------------------------------------------
 
 
@@ -451,7 +451,7 @@ class Direction(Enum):
 class AssumptionCode(Enum):
     """A declaration the claimant makes that no experiment can establish.
 
-    Exactly the codes SPEC §7.2's licensing table reads, and no others. An
+    Exactly the codes v1 SPEC §7.2's licensing table reads, and no others. An
     assumption vocabulary is a place where unread entries accumulate and start to
     look like guarantees, so a code enters this enum when the rule that reads it
     does, and not before.
@@ -540,7 +540,7 @@ def _check_endpoints(target: ComponentId, outcome: ComponentId) -> None:
     """Raise unless an estimand's two endpoints are distinct components.
 
     Whether they are *connected* is a question about a programme and belongs to
-    :mod:`sciagent.verify.causal`. Whether they are the same component is a
+    the v1 causal verifier. Whether they are the same component is a
     question about the estimand alone, and an effect of a thing on itself is not
     one a licensing rule could either grant or refuse.
     """
@@ -571,9 +571,9 @@ def estimand_endpoints(estimand: Estimand) -> tuple[ComponentId, ComponentId]:
 class Intervention:
     """What was done, what it reached, and what is being claimed from it.
 
-    ``collateral`` is derived from the programme DAG (SPEC §3.3), never declared:
+    ``collateral`` is derived from the programme DAG (v1 SPEC §3.3), never declared:
     :attr:`~sciagent.experiments.executor.ExecutionResult.collateral` is where it
-    comes from, and :mod:`sciagent.verify.causal` compares the two rather than
+    comes from, and the v1 causal verifier compared the two rather than
     trusting this field.
     """
 
@@ -588,13 +588,13 @@ class Intervention:
 
 
 # --------------------------------------------------------------------------
-# Claims (SPEC §3.3, §8)
+# Claims (v1 SPEC §3.3, §8)
 # --------------------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
 class Scope:
-    """Where a claim asserts it holds (SPEC §7.1 clause 3).
+    """Where a claim asserts it holds (v1 SPEC §7.1 clause 3).
 
     The three axes §7.1 names -- family, parameter range, environment version --
     plus the metric and grammar versions §7.1 says relevance is computed at.
@@ -623,10 +623,10 @@ class Scope:
 class EffectEstimate:
     """A measured effect. **Framework-written** (SPEC F7).
 
-    Produced only by :func:`sciagent.verify.numerical.recompute`, from registered
-    experiment results. No system supplies one: there is no argument anywhere in
-    the framework's public surface that accepts an effect, and
-    :mod:`sciagent.verify.numerical` re-derives every field of whatever a claim
+    Produced only by the framework (v1's ``verify.numerical.recompute``), from
+    registered experiment results. No system supplies one: there is no argument
+    anywhere in the framework's public surface that accepts an effect, and
+    v1's numerical verifier re-derived every field of whatever a claim
     carries and refuses a claim whose figures are not bit-identical to it. That
     check is acceptance test A19.
 
@@ -683,7 +683,7 @@ CLAIM_MODALITIES: tuple[ClaimModality, ...] = (
 ClaimStrength = Literal["suggests", "supports", "establishes", "refutes"]
 
 #: Every strength, weakest assertion first. The order is load-bearing:
-#: :mod:`sciagent.verify.statistical` reads it to decide whether the evidence
+#: v1's statistical verifier read it to decide whether the evidence
 #: reaches the strength claimed.
 CLAIM_STRENGTHS: tuple[ClaimStrength, ...] = (
     "suggests",
@@ -694,8 +694,8 @@ CLAIM_STRENGTHS: tuple[ClaimStrength, ...] = (
 
 ClaimPartition = Literal["exploratory", "confirmatory"]
 
-#: SPEC §3.3's evidential axis, which is *not* the registry's data partition.
-#: See ``docs/DECISIONS.md``, item 4: a confirmatory claim can rest on DEV data.
+#: v1 SPEC §3.3's evidential axis, which is *not* the registry's data partition.
+#: See ``docs/v1/DECISIONS.md``, item 4: a confirmatory claim can rest on DEV data.
 CLAIM_PARTITIONS: tuple[ClaimPartition, ...] = ("exploratory", "confirmatory")
 
 SubjectKind = Literal["hypothesis", "component"]
@@ -705,12 +705,12 @@ Uniqueness = Literal["exclusive", "non_exclusive"]
 
 @dataclass(frozen=True, slots=True)
 class Claim:
-    """One typed assertion, and everything the verifier judges it on (SPEC §3.3).
+    """One typed assertion, and everything the verifier judges it on (v1 SPEC §3.3).
 
     ``prose`` is a rendering and is never scored (SPEC F8); whether it is
     faithful to the rest is R6's open question and not mechanical.
 
-    Two fields SPEC §3.3 does not list. ``subject_kind`` is needed because
+    Two fields v1 SPEC §3.3 does not list. ``subject_kind`` is needed because
     :class:`HypothesisId` and :class:`ComponentId` are both ``NewType``\\ s over
     ``str`` and therefore indistinguishable at runtime: a verifier that must look
     the subject up in either the hypothesis graph or the programme cannot tell

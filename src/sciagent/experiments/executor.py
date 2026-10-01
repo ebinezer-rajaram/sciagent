@@ -34,7 +34,7 @@ Mutability
 ----------
 
 An executor accumulates: a budget is spent, programmes and executions are
-cached. Like :class:`~sciagent.inference.empirical.EmpiricalTableEngine` it is
+cached. Like v1's ``EmpiricalTableEngine`` it is
 therefore not a value type, and for the same reason -- an investigation is a
 growing record. Everything it *returns* is frozen, and the caches are keyed on
 exactly the inputs that determine an execution, so they change how long a call
@@ -137,8 +137,8 @@ class ExecutionResult:
     record: ExperimentRecord
     manipulated: frozenset[ComponentId]
     collateral: frozenset[ComponentId]
-    """Derived from the programme DAG (SPEC §3.3), never declared. These are the
-    components an intervention reached without being aimed at, and SPEC §7.2
+    """Derived from the programme DAG (v1 SPEC §3.3), never declared. These are the
+    components an intervention reached without being aimed at, and v1 SPEC §7.2
     licenses a total-effect claim over their union but no narrower one."""
 
     budget: Budget
@@ -147,12 +147,12 @@ class ExecutionResult:
     held_fixed: frozenset[ComponentId] = frozenset()
     """Components clamped at every event index of this run.
 
-    SPEC §7.2's controlled-direct-effect row licenses a claim only if "the
+    v1 SPEC §7.2's controlled-direct-effect row licenses a claim only if "the
     held-fixed components were actually held fixed in the executed experiment",
     which is a question about what ran and not about what was declared. Read off
     the compiled clamp schedule, so a compiler that clamped a prefix and a
     compiler that clamped the whole run are distinguishable here, and a claim
-    resting on the first is refused by :mod:`sciagent.verify.causal`."""
+    resting on the first was refused by v1's causal verifier."""
 
     @property
     def experiment(self) -> ExperimentId:
@@ -181,8 +181,8 @@ class ExecutionResult:
 
         :attr:`ExperimentRecord.sequence` survives as a field of its own because
         it is the only thing anything downstream reads off the row:
-        :meth:`~sciagent.verify.relevance.EvidenceIndex.from_history` needs the
-        registry's ordering and nothing else about it.
+        v1's relevance index needed the registry's ordering and nothing else
+        about it.
 
         This is a projection and not a view. There is no private field holding
         the original, so the truth is absent from the object rather than
@@ -210,12 +210,12 @@ class ObservedExecution:
     what came back*, and none that describes what it was done *to*. See
     :meth:`ExecutionResult.observed` for which two were dropped and why.
 
-    A system is handed these by :attr:`~sciagent.systems.base.Investigation
-    .history` and by :meth:`~sciagent.systems.base.Investigation.run`.
+    A system is handed these by an investigation's ``history`` and by its
+    ``run``.
 
     Where the defect goes, precisely, because an earlier wording of this
     paragraph got it wrong and it is a claim about exactly the thing this class
-    exists for. :meth:`~sciagent.systems.base.Investigation.run` is
+    exists for. An investigation's ``run`` is
     ``self._executor.run(...).observed()``: the :class:`ExecutionResult` is a
     temporary and the investigation keeps no reference to it. What persists is
     the registry row, inside the store, whose content address is computed over
@@ -232,8 +232,8 @@ class ObservedExecution:
 
     manipulated: frozenset[ComponentId]
     collateral: frozenset[ComponentId]
-    """Derived from the programme DAG (SPEC §3.3), never declared. These are the
-    components an intervention reached without being aimed at, and SPEC §7.2
+    """Derived from the programme DAG (v1 SPEC §3.3), never declared. These are the
+    components an intervention reached without being aimed at, and v1 SPEC §7.2
     licenses a total-effect claim over their union but no narrower one."""
 
     budget: Budget
@@ -249,7 +249,7 @@ class ObservedExecution:
     Required, unlike :attr:`ExecutionResult.held_fixed`'s empty default. There is
     one construction site -- :meth:`ExecutionResult.observed` -- and a default
     here would be a plausible-looking zero standing in for a real registry
-    position, which SPEC §7.1 clause 3 orders evidence by."""
+    position, which v1 SPEC §7.1 clause 3 orders evidence by."""
 
 
 class Executor:
@@ -322,12 +322,11 @@ class Executor:
         Read-only, and safe to hand out: it is a version string, not evidence.
         Exposed so that a campaign address can be *derived* from the executor
         that will produce the evidence rather than declared alongside it --
-        see :meth:`~sciagent.eval.matrix.CampaignAddress.of`. ``env_version``
+        see v1's ``CampaignAddress.of``. ``env_version``
         and ``metric_version`` are already on :meth:`scope`; this was the one
         third of the triple with no public reader.
 
-        Not agent-reachable: :class:`~sciagent.systems.base.Investigation` does
-        not expose its executor.
+        Not agent-reachable: an investigation does not expose its executor.
         """
         return self._data_version
 
@@ -337,15 +336,15 @@ class Executor:
 
         The *environment's*, which is a superset of any grammar a system reasons
         in: it has to be, since it must license the scenario's ground truth even
-        when that truth is out of the agent's library (SPEC §4.5 S11). Read-only
+        when that truth is out of the agent's library (v1 SPEC §4.5 S11). Read-only
         and safe to hand out -- an :class:`~sciagent.core.edits.EditGrammar` is
         frozen and carries no scenario's truth -- and not reachable from a
         research system, which is handed an
-        :class:`~sciagent.systems.base.Investigation` and not an executor.
+        investigation and not an executor.
 
         Exists so that a distance to the truth can be measured at all. A distance
         under a grammar that cannot express one of its endpoints is undefined,
-        which is what :attr:`~sciagent.eval.campaign.ScenarioRun.structural_distance`
+        which is what v1's ``ScenarioRun.structural_distance``
         needs it for.
         """
         return self._grammar
@@ -356,7 +355,7 @@ class Executor:
 
         Read-only, and safe to hand out: a
         :class:`~sciagent.core.program.GenerativeProgram` is frozen, and this is
-        the *reference*, so it carries no scenario's ground truth. SPEC §7.2's
+        the *reference*, so it carries no scenario's ground truth. v1 SPEC §7.2's
         licensing rules quantify over its DAG, which is why the verifier needs it.
         """
         return self._reference
@@ -364,7 +363,7 @@ class Executor:
     def scope(self) -> Scope:
         """Return where the experiments this executor runs are gathered.
 
-        Everything SPEC §7.1 clause 3 compares, derived from what the executor
+        Everything v1 SPEC §7.1 clause 3 compares, derived from what the executor
         already holds: the environment version, the reference programme's
         families, and each component's parameters as a degenerate range, since
         one programme was run at one parameterisation and claiming a wider one
@@ -508,8 +507,7 @@ class Executor:
         share one, and indexing them by id would keep whichever came last and
         simulate every likelihood at the wrong run length -- silently, since both
         designs remain runnable. Refused here, as
-        :meth:`~sciagent.inference.empirical.EmpiricalTable.build` and
-        :func:`~sciagent.experiments.boed.rank` already refuse it.
+        v1's ``EmpiricalTable.build`` and ``boed.rank`` also refuse it.
         """
         counts = Counter(design.id for design in designs)
         repeated = sorted(str(name) for name, seen in counts.items() if seen > 1)
@@ -572,7 +570,7 @@ class Executor:
         """Return the components clamped at *every* event index of the run.
 
         A prefix clamp is an intervention on part of a realisation; a clamp over
-        the whole run is a component held fixed. SPEC §7.2 licenses a controlled
+        the whole run is a component held fixed. v1 SPEC §7.2 licenses a controlled
         direct effect only on the second, so the distinction is drawn from the
         compiled schedule rather than from the operation's name -- an environment
         whose ``AblateComponent`` reached only a prefix would be caught here and
@@ -595,7 +593,7 @@ class Executor:
     ) -> FrozenDict[str, str]:
         """Return the content-address config for one execution.
 
-        The derived sets are recorded rather than recomputed on read: SPEC §7.2's
+        The derived sets are recorded rather than recomputed on read: v1 SPEC §7.2's
         causal licensing asks what an experiment *did* manipulate and what it
         *did* hold fixed, and an audit a year later must not depend on the DAG,
         or on the environment's compiler, still being what it was.

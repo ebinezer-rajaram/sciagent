@@ -5,7 +5,7 @@ A programme is a set of :class:`Component` nodes plus two edge sets:
 ``edges``
     every dependency, instantaneous or lagged. This is the relation
     :meth:`GenerativeProgram.descendants` walks, and therefore the relation from
-    which causal collateral effects are derived (SPEC §3.3, §7.2).
+    which causal collateral effects are derived (v1 SPEC §3.3, §7.2).
 
 ``history_edges``
     the subset of ``edges`` that are *lagged*: the child at event ``i`` sees the
@@ -15,7 +15,7 @@ Acyclicity is required of ``edges - history_edges`` alone. A lagged edge
 connects distinct event indices, so it cannot close a cycle in the time-unrolled
 graph even when it opposes an instantaneous edge. This is what makes both the
 Hawkes self-loop ``arrival -> arrival`` and scenario S11's ``size -> arrival``
-expressible without contradicting SPEC §3.1's DAG requirement.
+expressible without contradicting v1 SPEC §3.1's DAG requirement.
 
 Family semantics live in a :class:`FamilyLibrary` supplied by the environment.
 ``sciagent`` therefore never imports ``environments`` and holds no mutable
@@ -103,7 +103,7 @@ def derive_generator(seed: Seed, key: str) -> np.random.Generator:
 
 @dataclass(frozen=True, slots=True)
 class Component:
-    """One node of a generative programme (SPEC §3.1).
+    """One node of a generative programme (v1 SPEC §3.1).
 
     ``family`` is a *compiled* field: edits declare structure, and the grammar's
     resolution table determines the resulting family id (see
@@ -134,7 +134,7 @@ class DrawContext:
     mutate anything else.
 
     Not ``frozen``, which is a deliberate exception to this project's rule that
-    value types are frozen -- see ``docs/DECISIONS.md``. A ``DrawContext`` is not
+    value types are frozen -- see ``docs/v1/DECISIONS.md``. A ``DrawContext`` is not
     a value type: it is constructed at exactly one site
     (:meth:`GenerativeProgram.execute`), passed to one kernel, and discarded.
     Nothing hashes it, compares it or stores it. A frozen dataclass routes every
@@ -243,7 +243,7 @@ type Edge = tuple[ComponentId, ComponentId]
 
 @dataclass(frozen=True, slots=True)
 class GenerativeProgram:
-    """A compositional executable programme (SPEC §3.1).
+    """A compositional executable programme (v1 SPEC §3.1).
 
     Guarantees, checked at construction: every edge endpoint exists; every
     history edge is also in ``edges``; the instantaneous edge set is acyclic;
@@ -332,7 +332,7 @@ class GenerativeProgram:
         it counts paths of length >= 1, so ``c`` appears in its own descendant
         set exactly when it lies on a cycle -- which, given the acyclicity
         invariant, means it has a history dependence on itself or on one of its
-        own descendants. Collateral effects (SPEC §3.3) are therefore
+        own descendants. Collateral effects (v1 SPEC §3.3) are therefore
         ``descendants(target) - {target}``.
         """
         self._require(c)
@@ -424,7 +424,7 @@ class GenerativeProgram:
 
         ``clamps`` maps a component to the event indices at which its value is
         *forced* rather than drawn: it is ``do(X = x)``, the executed form of
-        SPEC §4.4's ``ForceArrival`` and ``AblateComponent``. A clamp is an act
+        v1 SPEC §4.4's ``ForceArrival`` and ``AblateComponent``. A clamp is an act
         performed on a programme and not a part of one, which is why it is an
         argument here and not a field of :class:`GenerativeProgram`.
 

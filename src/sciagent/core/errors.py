@@ -66,7 +66,7 @@ class GrammarError(SciAgentError):
 class EditNotInGrammarError(GrammarError):
     """The edit is well-formed but lies outside this grammar's licensed space.
 
-    This is the mechanism behind the out-of-library definition in SPEC §3.2:
+    This is the mechanism behind the out-of-library definition in v1 SPEC §3.2:
     ``ground_truth_edit in edit_grammar() \\ agent_grammar()``.
     """
 
@@ -78,7 +78,7 @@ class InvalidEditError(GrammarError):
 class OffGridParameterError(GrammarError):
     """A parameter value is not a point of its declared quantisation grid.
 
-    The prefix code (SPEC §6.1 A4) is only well posed over an enumerable space,
+    The prefix code (v1 SPEC §6.1 A4) is only well posed over an enumerable space,
     so grammar-valid parameters must lie exactly on the declared grid.
     """
 
@@ -128,7 +128,7 @@ class RegistryError(SciAgentError):
 class AppendOnlyViolationError(RegistryError):
     """A statement attempted to update, delete or restructure registered rows.
 
-    The registry is append-only by specification (SPEC §6.3 A12), so this is
+    The registry is append-only by specification (v1 SPEC §6.3 A12), so this is
     raised rather than silently refused, including when the attempt reaches past
     the store's API to raw SQL.
     """
@@ -151,7 +151,7 @@ class PartitionAccessError(RegistryError):
     """Sealed partition data was requested through an unprivileged path.
 
     HOLDOUT and TEST are reachable only by presenting a
-    :class:`~sciagent.registry.partitions.SealedAccess` token (SPEC §6.3 A14).
+    :class:`~sciagent.registry.partitions.SealedAccess` token (v1 SPEC §6.3 A14).
     """
 
 
@@ -215,7 +215,7 @@ class ExperimentError(SciAgentError):
 class UnknownOperationError(ExperimentError):
     """An operation reached a compiler or an executor that cannot carry it out.
 
-    Distinct from a malformed operation. SPEC §4.4's operation set is fixed, but
+    Distinct from a malformed operation. v1 SPEC §4.4's operation set is fixed, but
     an environment need not realise all of it, and one operation
     (``CompareCandidates``) is realised by backlog item 8 rather than by the
     executor. Refusing loudly is the point: an operation that silently measured
@@ -236,7 +236,7 @@ class ConditionError(SciAgentError):
     """A condition does not denote a set of real values.
 
     Raised for a NaN endpoint, an unknown comparison operator, or a declared
-    diagnostic range that is empty. Satisfiability (SPEC §6.4 A16) is decided by
+    diagnostic range that is empty. Satisfiability (v1 SPEC §6.4 A16) is decided by
     interval arithmetic, which is only well posed on conditions that denote.
     """
 
@@ -253,7 +253,7 @@ class InferenceError(SciAgentError):
 class OutOfRangeError(InferenceError):
     """A diagnostic value fell outside the range its metric declares.
 
-    The declared range is what makes a discretisation total (SPEC §6.2 A6), so a
+    The declared range is what makes a discretisation total (v1 SPEC §6.2 A6), so a
     value outside it means either the metric's declaration is wrong or the
     estimator returned something it should have raised on. Both are framework
     faults, and neither may be absorbed by clamping the value into the nearest
@@ -306,15 +306,15 @@ class UnfalsifiableHypothesisError(HypothesisError):
     """A hypothesis carries no prediction that any outcome could refute.
 
     Either it has no predictions at all, or a prediction's ``refutation`` is
-    unsatisfiable over its diagnostic's declared range (SPEC §6.4 A16).
+    unsatisfiable over its diagnostic's declared range (v1 SPEC §6.4 A16).
     """
 
 
 class DuplicateHypothesisError(HypothesisError):
-    """A structurally identical edit set is already in the graph (SPEC §6.4 A18).
+    """A structurally identical edit set is already in the graph (v1 SPEC §6.4 A18).
 
     Raised for a duplicate of a *rejected* hypothesis too: re-proposing something
-    already refuted is how a zombie hypothesis enters a graph, and SPEC §12 asks
+    already refuted is how a zombie hypothesis enters a graph, and v1 SPEC §12 asks
     for zero of those.
     """
 
@@ -325,7 +325,7 @@ class PlausibilityWriteError(HypothesisError):
     ``plausibility`` is the structural prior, normalised from
     :meth:`~sciagent.core.edits.EditGrammar.code_length`. Nothing supplies it, so
     a disagreement means a number was planted by reaching past the constructor
-    (SPEC §6.4 A17).
+    (v1 SPEC §6.4 A17).
     """
 
 
@@ -376,12 +376,11 @@ class EngineTamperError(ResearchSystemError):
     from the same engine object the system was handed, so a poisoned state is
     compared against itself and agrees.
 
-    Raised by :func:`~sciagent.eval.campaign.run_scenario` when the engine's
-    observations disagree with the experiments the investigation ran. It is a
-    second line rather than the first --
-    :class:`~sciagent.inference.view.EngineView` withholds the recording surface
-    from a system in the first place -- and it exists because a boundary with no
-    check behind it is how the last one was believed for as long as it was.
+    Raised when the engine's observations disagree with the experiments the
+    investigation ran. It is a second line rather than the first -- the
+    recording surface is withheld from a system in the first place -- and it
+    exists because a boundary with no check behind it is how the last one was
+    believed for as long as it was.
     """
 
 
@@ -389,7 +388,7 @@ class SystemConfigurationError(ResearchSystemError):
     """A research system was built with arguments it cannot be run under.
 
     Covers a negative proposal allowance, a proposal allowance above
-    :data:`~sciagent.systems.hybrid.MAX_PROPOSALS`, a system with no SPEC §5
+    the system's maximum, a system with no v1 SPEC §5
     identifier, and a library naming a structure that does not exist. Those are
     faults in how the system was *constructed*, decided before any investigation
     begins and without reference to a model, a grammar or a draft.
@@ -425,7 +424,7 @@ def _rebuild_provider_error(
 
 
 class ProposalError(ResearchSystemError):
-    """Base for faults in the LLM proposal layer (SPEC §11 item 12)."""
+    """Base for faults in the LLM proposal layer (v1 SPEC §11 item 12)."""
 
 
 class MalformedProposalError(ProposalError):
@@ -439,7 +438,7 @@ class MalformedProposalError(ProposalError):
 
     Distinct from
     :class:`~sciagent.core.errors.EditNotInGrammarError`, which is a well-formed
-    structure outside the licensed space -- that is SPEC §3.2's out-of-library
+    structure outside the licensed space -- that is v1 SPEC §3.2's out-of-library
     condition and a finding, not a fault.
 
     Carries the fixed cause ``"undecodable"``. Fixed rather than passed, because
@@ -455,7 +454,7 @@ class MalformedProposalError(ProposalError):
 class TranscriptMissError(ProposalError):
     """A replay-only transcript store holds no response for a content address.
 
-    Bit-exact determinism (SPEC §1 invariant 3) is what makes this an error and
+    Bit-exact determinism (v1 SPEC §1 invariant 3) is what makes this an error and
     not a cache miss to be filled. A model call cannot be reproduced -- the
     sampling parameters that would pin it are rejected by the models in question
     -- so a recorded response *is* the reproducible artefact. Silently calling
@@ -529,9 +528,9 @@ class ProviderError(ProposalError):
     investigation, and recording one as though it were is what the split fixes.
 
     Every raise site states a ``cause``, and the argument is required rather than
-    defaulted. Gate A44 keeps :class:`~sciagent.eval.agency.ProposalRecord`'s
+    defaulted. Gate A44 keeps the v1 proposal record's
     five scoring fields frozen and carries the diagnostic question in a parallel
-    breakdown beside them (``docs/DECISIONS.md``, 2026-08-21, **T3**), so the tag
+    breakdown beside them (``docs/v1/DECISIONS.md``, 2026-08-21, **T3**), so the tag
     is what tells a model that declined apart from a session that died -- both of
     which are recorded as ``"refused"`` and must stay that way, since moving
     either would move ``yield_fraction``'s denominator.
@@ -539,11 +538,10 @@ class ProviderError(ProposalError):
     A default would defeat the whole of it: un-tagged raise sites would pool into
     one bin that reads as a measurement of nothing, which is the conflation this
     class was split for, one level further down.
-    :data:`sciagent.eval.agency.PROPOSAL_CAUSES` is the vocabulary and
-    :func:`~sciagent.eval.agency.proposal_causes` refuses anything outside it.
-    The tag is a plain string here rather than that tuple's member type because
-    ``core`` may not import from ``eval``, which is the same shape as ``outcome``
-    on :class:`~sciagent.systems.hybrid.ProposalAttempt`.
+    The v1 evaluation layer's ``PROPOSAL_CAUSES`` was the vocabulary and refused
+    anything outside it. The tag is a plain string here rather than that tuple's
+    member type because ``core`` may not import from ``eval``, which is the same
+    shape as ``outcome`` on the v1 ``ProposalAttempt``.
     """
 
     def __init__(self, message: str, *, cause: str) -> None:
@@ -569,11 +567,11 @@ class ProviderError(ProposalError):
 
 
 class VerificationError(SciAgentError):
-    """Base for faults in the claim verifier (SPEC §6.5).
+    """Base for faults in the claim verifier (v1 SPEC §6.5).
 
     Raised only for claims the verifier cannot *adjudicate at all* because they
     do not denote. A claim that denotes and is wrong is not an error: it gets a
-    :class:`~sciagent.verify.verdict.Verdict` recording why, because a refused
+    verdict recording why, because a refused
     claim is a datum about the system that made it and must survive into the
     record rather than escaping as an exception.
     """
@@ -593,6 +591,6 @@ class EstimandError(VerificationError):
 
     Raised for a path naming a component the programme lacks, a path whose
     consecutive pairs are not edges, and an estimand whose target equals its
-    outcome. SPEC §7.2's licensing rules quantify over paths, so an estimand that
+    outcome. v1 SPEC §7.2's licensing rules quantify over paths, so an estimand that
     does not denote one would be licensed or refused arbitrarily.
     """

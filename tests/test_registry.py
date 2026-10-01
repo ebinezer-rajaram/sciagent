@@ -3,7 +3,7 @@
 A12-A15 are the contract for the store, the content address and the partition
 boundary. `budget.py` and the duplicate-name rule in `metrics.py` have no gate,
 so they are checked here. The names deliberately do not follow the ``test_aN_``
-convention that ``scripts/status.py`` reads: crediting these to a criterion would
+convention that v1's ``scripts/status.py`` read: crediting these to a criterion would
 overstate what that criterion checks.
 """
 

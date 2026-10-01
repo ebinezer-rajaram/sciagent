@@ -18,7 +18,7 @@ ship OpenBLAS built ``DYNAMIC_ARCH``, which selects a kernel at run time from th
 same. Neither is a defect in numpy -- both are the right trade for numerical
 work generally. They are the wrong trade here, where a metric value decides
 which bin a replicate falls in, a bin decides a count, and a count decides a
-likelihood. ``docs/DECISIONS.md`` records the measurement: S12's posterior
+likelihood. ``docs/v1/DECISIONS.md`` records the measurement: S12's posterior
 predictive p-value came out 0.101100 on Windows and 0.1009 on Ubuntu from one
 commit and one seed.
 
@@ -80,7 +80,7 @@ addends. The ``np.exp`` terms the Hawkes kernels hand to :func:`total` are as
 free to move under a numpy upgrade as under a change of platform, for the
 reason given three paragraphs up, and nothing in ``(env version, config, data
 version, metric version, seed)`` names the numpy that computed them. So no
-diff of the kind described in ``docs/DECISIONS.md`` is dispensable here --
+diff of the kind described in ``docs/v1/DECISIONS.md`` is dispensable here --
 the pin retires the platform half of that question and leaves the rest
 standing.
 """

@@ -1,4 +1,4 @@
-"""The reference generative programme for the point-process slice (SPEC §4.1).
+"""The reference generative programme for the point-process slice (v1 SPEC §4.1).
 
 +-------------+-------------+------------------------+-------------+
 | Component   | Kind        | Family                 | Parameters  |
@@ -11,7 +11,7 @@
 
 Edges: ``arrival -> size``, ``arrival -> sign``, ``{size, sign} -> obs``. All
 four are instantaneous: they are read at the same event index. The reference
-programme has no history edges; every one of the four mechanisms of SPEC §4.2
+programme has no history edges; every one of the four mechanisms of v1 SPEC §4.2
 adds structure to ``arrival`` and only ``AddDependency`` adds an edge at all.
 """
 
@@ -38,7 +38,7 @@ REFERENCE_RATE = 1.0
 #: Reference mean mark size. Sets the size unit.
 REFERENCE_MEAN_SIZE = 1.0
 
-#: Reference sign probability. Symmetric by construction (SPEC §4.1).
+#: Reference sign probability. Symmetric by construction (v1 SPEC §4.1).
 REFERENCE_SIGN_PROBABILITY = 0.5
 
 

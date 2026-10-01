@@ -11,11 +11,11 @@ had been able to see them; TEST is sealed for the three campaigns of SPEC F11.
 This is the axis acceptance test A14 restricts.
 
 **Claim partition** -- ``exploratory | confirmatory``, a property of a
-:class:`Claim` under SPEC §3.3, saying what evidential weight a claim asserts for
+:class:`Claim` under v1 SPEC §3.3, saying what evidential weight a claim asserts for
 itself. It has nothing to do with which pool the data came from, and lives with
 the claim types rather than here.
 
-SPEC §10's one-line comment on this module lists members of both axes, which is
+v1 SPEC §10's one-line comment on this module lists members of both axes, which is
 what makes the conflation tempting.
 
 Enforcement
@@ -56,7 +56,7 @@ class DataPartition(Enum):
     """Development. The only partition an agent's tool surface may read."""
 
     HOLDOUT = "holdout"
-    """Framework-only. Backs calibration and coverage claims (SPEC §6.2 A8)."""
+    """Framework-only. Backs calibration and coverage claims (v1 SPEC §6.2 A8)."""
 
     TEST = "test"
     """Sealed for the three preregistered campaigns of SPEC F11."""
@@ -65,14 +65,14 @@ class DataPartition(Enum):
 #: Partitions an agent's tools may read.
 AGENT_REACHABLE: frozenset[DataPartition] = frozenset({DataPartition.DEV})
 
-#: Partitions no agent-reachable code path may touch (SPEC §6.3 A14).
+#: Partitions no agent-reachable code path may touch (v1 SPEC §6.3 A14).
 SEALED: frozenset[DataPartition] = frozenset(
     {DataPartition.HOLDOUT, DataPartition.TEST}
 )
 
 #: Modules an agent may call into, as :mod:`fnmatch` patterns over dotted names.
 #:
-#: Empty of existing modules until SPEC §11 item 12, which is the first item
+#: Empty of existing modules until v1 SPEC §11 item 12, which is the first item
 #: containing an agent. It is declared now, and non-empty, so that the declaration
 #: cannot go missing between here and there: A14 asserts both that it exists and
 #: that the analyser it feeds is capable of finding a violation.

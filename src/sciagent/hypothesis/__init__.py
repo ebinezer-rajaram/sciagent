@@ -1,4 +1,4 @@
-"""The hypothesis graph and its schema validation (SPEC §3.3, §6.4).
+"""The hypothesis graph and its schema validation (v1 SPEC §3.3, §6.4).
 
 Two things live here: the immutable graph of candidate explanations, and the
 checks that stop an unfalsifiable or duplicate hypothesis entering it. The prior

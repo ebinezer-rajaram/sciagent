@@ -1,6 +1,6 @@
 """Measure the confounding of the four mechanisms. Do not assume it.
 
-SPEC §4.2 claims the four mechanisms are "indistinguishable under basic
+v1 SPEC §4.2 claims the four mechanisms are "indistinguishable under basic
 dispersion diagnostics". If that is false the whole vertical slice is worthless,
 so this script reports the numbers rather than asserting the claim:
 
@@ -16,7 +16,7 @@ The verdict to look for: separability near zero for mean rate, inter-arrival
 dispersion and the Fano factor at the reference window, and large somewhere in
 the Fano-versus-window profile or the count autocorrelation. That is the
 designed structure -- no single diagnostic resolves the mechanisms, but a
-multi-stage plan does (SPEC §4.2).
+multi-stage plan does (v1 SPEC §4.2).
 
 Usage::
 
@@ -52,7 +52,7 @@ from sciagent.core.types import Seed
 REFERENCE_WINDOW = 2.0
 WINDOWS = (0.5, 1.0, 2.0, 5.0, 10.0, 25.0)
 
-#: The four mechanisms of SPEC §4.2, plus the undefective reference and the
+#: The four mechanisms of v1 SPEC §4.2, plus the undefective reference and the
 #: out-of-library mechanism of scenario S11.
 CASES: dict[str, Defect] = {
     "reference (null)": frozenset(),

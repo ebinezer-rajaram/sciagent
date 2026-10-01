@@ -1,58 +1,54 @@
 #!/bin/bash
-# Run the two post-edit hooks in sequence. Ordering is the whole point.
+# PostToolUse on Edit|Write: format the edited Python file, then check the
+# determinism invariant if the edit mentions randomness.
 #
-# WHY THIS WRAPPER EXISTS
-#
-# Claude Code runs every hook matching an event *in parallel*, and offers no way
-# to order them -- there is no "sequence" field, and array order in settings.json
-# means nothing. The documented remedy for a dependency between two hooks is to
-# make them one hook, which is this file.
-#
-# The dependency is real. `ruff-after-edit.sh` rewrites the edited file while
-# `guard-determinism.sh` walks the same tree by AST. The AST walk reads every
-# .py under src, scripts and tests with `path.read_text()`; a file caught
-# mid-rewrite parses as a SyntaxError, which raises *inside the test*. pytest
-# reports that as a failing test and exits 1 -- and exit 1 is precisely the
-# status guard-determinism.sh is entitled to read as a genuine violation. It
-# would then print "INVARIANT 3 VIOLATED by the edit to <file>" about an edit
-# that was fine, and the accusation would be unreproducible, because re-running
-# it against the settled file passes.
-#
-# The window is narrow -- ruff is ~100ms against the guard's 1.84s, and the
-# guard's pre-filter skips ~all edits before either runs -- which makes it worse
-# to leave, not better: a rare wrong answer about a non-negotiable invariant is
-# the kind that gets believed.
-#
-# COST OF SERIALISING
-#
-# None worth measuring. On the common path the pre-filter exits in ~40ms and the
-# total is ruff's ~100ms, exactly as before. Only an edit that actually mentions
-# randomness pays both, and that edit was going to pay 1.84s anyway.
+# The guard runs the real AST test (tests/test_invariants.py) instead of
+# grepping, so the hook and the test can never disagree. Exit 2 puts the message
+# in front of the model so a violation is fixed in the same turn.
 
 set -u
-here="$(dirname "${BASH_SOURCE[0]}")"
-
-# Stdin is a stream: whoever reads it first consumes it. Capture once, feed both.
 payload=$(cat)
 
-# Formatting first, so the guard judges the file as it will finally stand.
-# This hook always exits 0 by design -- it is a convenience, not a gate -- so
-# its status is deliberately not propagated.
-#
-# Bounded, though, and that is not decoration. Serialising puts ruff ahead of the
-# guard inside ONE timeout: while they ran as separate hooks a wedged ruff cost
-# only formatting, but in sequence it would eat the whole 90s budget and the
-# invariant-3 check would never run at all -- silently, since a killed hook
-# reports nothing. The gate must not be starved by the convenience in front of
-# it. 30s is ~300x the measured ~100ms.
-if command -v timeout >/dev/null 2>&1; then
-    printf '%s' "$payload" | timeout 30 bash "$here/ruff-after-edit.sh"
-else
-    printf '%s' "$payload" | bash "$here/ruff-after-edit.sh"
+# file_path is a flat JSON string; sed is ~10x cheaper than starting Python.
+file_path=$(printf '%s' "$payload" \
+    | sed -n 's/.*"file_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+    | head -1 | sed 's|\\\\|/|g')
+
+case "$file_path" in *.py) ;; *) exit 0 ;; esac
+[ -e "$file_path" ] || exit 0
+
+# Resolve the tree from the edited file, not from the script path: settings.json
+# names the main tree's hook even when the session is editing a worktree.
+root=$(git -C "$(dirname "$file_path")" rev-parse --show-toplevel 2>/dev/null)
+[ -n "$root" ] && [ -f "$root/pyproject.toml" ] || exit 0
+cd "$root" || exit 0
+
+# Formatting is a convenience: bounded, and never blocks.
+if command -v timeout >/dev/null 2>&1; then t="timeout 30"; else t=""; fi
+$t uv run ruff format --force-exclude "$file_path" >/dev/null 2>&1
+$t uv run ruff check --fix --force-exclude "$file_path" >/dev/null 2>&1
+
+# Only paths the invariant governs (RANDOMNESS_ROOTS in tests/test_invariants.py).
+case "$file_path" in */src/*|*/scripts/*|*/tests/*|src/*|scripts/*|tests/*) ;; *) exit 0 ;; esac
+
+# Cheap pre-filter; `default_rng` is separate because it contains no "random".
+printf '%s' "$payload" | grep -qE "random|default_rng" || exit 0
+
+output=$(uv run pytest tests/test_invariants.py -k no_unseeded_randomness -q 2>&1)
+status=$?
+[ "$status" -eq 0 ] && exit 0
+
+if [ "$status" -ne 1 ]; then
+    # 5 = no tests selected (the test was renamed); others are harness errors.
+    echo "after-edit: could not check determinism (pytest exit $status); this is the hook failing, not your edit." >&2
+    printf '%s\n' "$output" | tail -15 >&2
+    exit 2
 fi
 
-# The guard's status is the one that matters. Exit 2 puts its stderr in front of
-# the model, which is how a violation gets fixed in the same turn; exit 2 is
-# also how it reports being unable to check. Pass it through unchanged.
-printf '%s' "$payload" | bash "$here/guard-determinism.sh"
-exit $?
+{
+    echo "DETERMINISM VIOLATED by the edit to $file_path"
+    echo "All randomness must go through explicitly passed seeded generators:"
+    echo "never \`random.\`, never bare \`np.random.<dist>\`, never \`default_rng()\` without a seed."
+    printf '%s\n' "$output" | tail -25
+} >&2
+exit 2

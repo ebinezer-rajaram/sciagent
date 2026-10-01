@@ -1,7 +1,7 @@
 """Reductions that no CPU gets to reorder.
 
 No acceptance criterion covers these, so the names deliberately do not follow
-the ``test_aN_`` convention that ``scripts/status.py`` reads. What they check is
+the ``test_aN_`` convention that v1's ``scripts/status.py`` read. What they check is
 the property the module exists for -- a value determined by the multiset of
 addends alone -- rather than agreement with numpy, which is the thing it is
 allowed to differ from.

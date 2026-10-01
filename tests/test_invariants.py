@@ -44,7 +44,7 @@ def _imported_modules(tree: ast.AST) -> set[str]:
     "path", sorted(SCIAGENT.rglob("*.py")), ids=lambda p: str(p.name)
 )
 def test_sciagent_never_imports_environments(path: Path) -> None:
-    """SPEC §10, CLAUDE.md invariant 1. Do not weaken this test.
+    """v1 SPEC §10, CLAUDE.md invariant 1. Do not weaken this test.
 
     The framework is domain-independent: family semantics reach it through an
     injected ``FamilyLibrary``, never through an import.
@@ -373,7 +373,7 @@ def _order_dependent_reductions(tree: ast.AST) -> list[tuple[int, str]]:
     ``x.sum()`` is an attribute call on an *arbitrary expression* -- and when
     that expression is a subscript, as in ``cost[rows, columns].sum()``, no check
     keyed on the base being a plain name can see it; that exact line sat in
-    ``core/edits.py`` computing SPEC §8's D1 while the first version of this
+    ``core/edits.py`` computing v1 SPEC §8's D1 while the first version of this
     guard reported the tree clean. ``from numpy import mean`` makes the call a
     bare name that no attribute walk visits at all. And ``a @ b`` is a
     ``BinOp``, not a call, while reaching the same BLAS ``dot`` this bans by
@@ -445,7 +445,7 @@ def test_metric_values_use_deterministic_reductions(path: Path) -> None:
     Scoped to the whole of ``src``, not to the environments. The first version
     of this checked only ``src/environments``, on the reasoning that a fold
     outside a diagnostic is summarising for a human -- and missed
-    ``EditGrammar.distance``, which is SPEC §8's D1 and is reported and stored.
+    ``EditGrammar.distance``, which is v1 SPEC §8's D1 and is reported and stored.
     Selections are deliberately absent from
     :data:`ORDER_DEPENDENT_REDUCTIONS`: ``np.median``, ``np.max`` and
     ``np.argmax`` pick from a multiset rather than accumulating over it, so no

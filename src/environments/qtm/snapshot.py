@@ -14,7 +14,7 @@ anything -- anyone with SCEDC access gets the same bytes or a loud failure.
 
 The two files are two detection thresholds of one catalogue, not two datasets:
 ``9.5dev`` is the full 1.81M events at 9.5 times the median absolute deviation,
-``12dev`` the ~900k highest-confidence events at 12.0. ``docs/BACKLOG.md``
+``12dev`` the ~900k highest-confidence events at 12.0. ``docs/v1/BACKLOG.md``
 records the risk that makes the pair load-bearing rather than a convenience:
 template matching produces false detections that cluster after large marks,
 which is the same signature as the consensus edit. The threshold is therefore a

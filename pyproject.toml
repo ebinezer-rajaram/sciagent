@@ -35,7 +35,10 @@ packages = ["src/sciagent", "src/environments"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+addopts = "-q --strict-markers"
+markers = [
+    "slow: simulation-heavy or subprocess tests (> ~2 s); run with -m slow before merging src/ changes",
+]
 
 [tool.mypy]
 strict = true

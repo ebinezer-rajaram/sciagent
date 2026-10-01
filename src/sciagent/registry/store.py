@@ -1,4 +1,4 @@
-"""The append-only, content-addressed experiment registry (SPEC §10, §6.3).
+"""The append-only, content-addressed experiment registry (v1 SPEC §10, §6.3).
 
 An experiment is addressed by what determines it and by nothing else:
 ``(env_version, config, data_version, metric_version, seed)``. Two runs sharing
@@ -125,7 +125,7 @@ CREATE TABLE IF NOT EXISTS {_TABLE} (
 
 @dataclass(frozen=True, slots=True)
 class ExperimentKey:
-    """Everything that determines an experiment's result (SPEC §6.3 A13).
+    """Everything that determines an experiment's result (v1 SPEC §6.3 A13).
 
     ``config`` is a plain string mapping and the registry never interprets it.
     That is what keeps the store domain-independent: a defect, an intervention
@@ -420,7 +420,7 @@ class ExperimentStore:
     ) -> tuple[tuple[Any, ...], ...]:
         """Run a read-only SQL statement and return its rows.
 
-        For inspection and for the relevance queries of SPEC §7.1. Read-only is
+        For inspection and for the relevance queries of v1 SPEC §7.1. Read-only is
         enforced, not requested: the connection's authorizer admits ``INSERT``
         only while :meth:`append` is running, and refuses every other write
         action outright, so a statement reaching here can read and nothing else.

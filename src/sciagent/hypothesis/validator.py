@@ -23,7 +23,7 @@ grids differ in the fourth decimal, and a signature over rounded values would
 merge them.
 
 Detection covers rejected nodes as well as live ones. Re-proposing something
-already refuted is precisely how a zombie hypothesis enters a graph, and SPEC §12
+already refuted is precisely how a zombie hypothesis enters a graph, and v1 SPEC §12
 asks for zero of those.
 """
 

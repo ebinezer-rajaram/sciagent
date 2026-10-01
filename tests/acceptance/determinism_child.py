@@ -16,13 +16,13 @@ Two layers, and the second is the one that matters across platforms
 -------------------------------------------------------------------
 
 ``<name> <sha256>`` lines digest the **event log**. ``metrics/<name> <sha256>``
-lines digest every value the SPEC §4.3 catalogue computes *from* that log.
+lines digest every value the v1 SPEC §4.3 catalogue computes *from* that log.
 
 The second layer is here because the first cannot settle the question this file
 is nominated for. The project is pinned to Windows, so that question is not
 pressing anybody -- this child is the instrument kept against a decision to lift
 the pin, not a blocker on current work. It stays correct so that it is usable if
-that day comes. ``docs/DECISIONS.md`` records the suspected cause of the
+that day comes. ``docs/v1/DECISIONS.md`` records the suspected cause of the
 Windows/Ubuntu split it would localise:
 ``np.dot`` in ``environments/pointproc/diagnostics.py`` against an OpenBLAS built
 ``DYNAMIC_ARCH``. That call is *downstream* of the log. A log digest is identical

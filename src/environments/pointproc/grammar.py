@@ -9,7 +9,7 @@ turns on the difference, and in nothing else::
 The first is scenario S11's mechanism: ``edit_grammar`` licenses lagged
 dependencies from ``size`` to ``arrival`` and ``agent_grammar`` licenses
 self-loops only, which is what makes S11 out-of-library by the mechanical
-definition of SPEC §3.2 rather than by anyone's judgement.
+definition of v1 SPEC §3.2 rather than by anyone's judgement.
 
 The second is scenario S12's *nuisance*, an observation process that censors a
 window of every cycle. It sits on the same side of the line for a different
@@ -23,13 +23,13 @@ parameter costs exactly ``log2(GRID_SIZE)`` bits under the prefix code and the
 edit space is finite and enumerable (acceptance test A4). Ranges are wide enough
 to contain plainly implausible values as well as plausible ones: narrowing a
 range to the region where the answer lies would be exactly the kind of tuning
-SPEC §0 forbids.
+v1 SPEC §0 forbids.
 
 The code is grammar-relative, so adding the ``obs`` option lengthens every
 ``ChangeDistributionFamily`` edit under ``edit_grammar`` by the bit it now costs
 to say which of three components is meant. Nothing an agent is scored on is
 computed under this grammar -- a hypothesis graph carries ``agent_grammar`` --
-and ``docs/DECISIONS.md`` records the shift.
+and ``docs/v1/DECISIONS.md`` records the shift.
 """
 
 from __future__ import annotations
@@ -226,7 +226,7 @@ def agent_grammar() -> EditGrammar:
     The agent may hypothesise that arrivals excite themselves, but has no way to
     express that arrivals are excited by preceding mark *sizes*. Detecting that
     its hypothesis space is inadequate, and extending it, is what scenario S11
-    tests (SPEC §4.5, §4.6).
+    tests (v1 SPEC §4.5, §4.6).
     """
     return EditGrammar(
         version=AGENT_GRAMMAR_VERSION,

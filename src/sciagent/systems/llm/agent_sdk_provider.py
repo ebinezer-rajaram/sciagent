@@ -417,7 +417,7 @@ class AgentSdkProvider:
             # ``claude_agent_sdk`` raises bare ``Exception`` from seven sites in
             # ``_internal/query.py``, and one of them stopped item 15's V4/S11
             # cell with ``Exception: Claude Code returned an error result:
-            # success`` -- recorded in ``docs/DECISIONS.md`` (2026-08-18) as
+            # success`` -- recorded in ``docs/v1/DECISIONS.md`` (2026-08-18) as
             # transient on one observation, because nothing here could tell it
             # apart from one. A guard on the SDK root converts none of the seven.
             #

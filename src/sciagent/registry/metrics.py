@@ -1,9 +1,9 @@
 """The versioned metric registry.
 
 A diagnostic's *definition* is part of what determines a result, so it is part of
-the content address (SPEC §6.3 A13). Recording "Fano factor = 3.1" without
+the content address (v1 SPEC §6.3 A13). Recording "Fano factor = 3.1" without
 recording which Fano factor was meant makes the row uncitable the moment the
-estimator changes -- and estimators do change, which is why SPEC §7.1 has a
+estimator changes -- and estimators do change, which is why v1 SPEC §7.1 has a
 whole category for results that are relevant but version-mismatched.
 
 The registry is immutable and append-only in the same sense as the store:

@@ -7,8 +7,8 @@ for itself:
 
 **Bin edges.** Frozen literals, chosen once from a pilot of 300 runs per
 structure at the reference operating point, and never derived from the scenario
-under investigation. The pilot is reproducible -- ``scripts/status.py`` is not
-where it lives, the numbers in ``docs/DECISIONS.md`` are -- but the edges are
+under investigation. The pilot is reproducible -- the numbers are in
+``docs/v1/DECISIONS.md`` -- but the edges are
 inputs to every likelihood the framework computes, so they are literals here
 rather than a computation anywhere.
 
@@ -17,7 +17,7 @@ diagnostics read off the same execution are correlated, and the engine's
 likelihood factorises across experiments only because each experiment is a
 separate execution under its own seed. One diagnostic per template keeps that
 factorisation exact rather than approximately true. The first five are the
-smallest set that separates the closed set of SPEC §4.2, and the sixth is there
+smallest set that separates the closed set of v1 SPEC §4.2, and the sixth is there
 for what the closed set cannot express at all:
 
 +--------------------------------+----------------------------------------+
@@ -39,18 +39,18 @@ The sixth separates no pair *within* the closed set and is not meant to. Every
 other row above is a statistic of one component in isolation, so a mechanism
 coupling two components while perturbing neither marginal was invisible: SPEC
 §4.5's S11 is exactly that, and the posterior predictive check had 0.000 power
-against it. It joins the set with SPEC §4.3's 2026-08-16 amendment, and is the
-design SPEC §4.6's Stage A gate reads. See ``docs/DECISIONS.md``.
+against it. It joins the set with v1 SPEC §4.3's 2026-08-16 amendment, and is the
+design v1 SPEC §4.6's Stage A gate reads. See ``docs/v1/DECISIONS.md``.
 
 The first four are observational and separate every pair *except* Hawkes
 self-excitation from latent regime switching, which is correct and measured:
-``docs/DECISIONS.md`` records that pair as indistinguishable by any dispersion
-diagnostic. SPEC §4.2 leaves intervention as its only route, and the fifth design
+``docs/v1/DECISIONS.md`` records that pair as indistinguishable by any dispersion
+diagnostic. v1 SPEC §4.2 leaves intervention as its only route, and the fifth design
 is that intervention -- a burst of arrivals forced at the head of the run, read
 over the events that follow it. It joins the calibrated set at backlog item 11,
 which needs a design space containing a discriminating experiment before an
 oracle policy length over it means anything; item 9 measured what its absence
-cost, and ``docs/DECISIONS.md`` records that too.
+cost, and ``docs/v1/DECISIONS.md`` records that too.
 
 **The simulator.** The adapter that turns "apply this defect and measure this
 design" into an execution. Since backlog item 7 it is an
@@ -96,7 +96,7 @@ from sciagent.registry.budget import Budget
 from sciagent.registry.partitions import DataPartition
 from sciagent.registry.store import ExperimentStore
 
-#: SPEC §3.2 defines ``EnvVersion`` as a content hash of code plus reference
+#: v1 SPEC §3.2 defines ``EnvVersion`` as a content hash of code plus reference
 #: programme. Until the environment protocol lands, three declared versions stand
 #: in: between them they cover every construct a programme can hold
 #: (``GRAMMAR_VERSION``), every semantics it can be executed under
@@ -123,7 +123,7 @@ N_EVENTS = 512
 
 #: The burst that separates Hawkes from everything else: twenty arrivals crowded
 #: into a fifth of a time unit, read over the twenty events that follow. Every
-#: number is measured rather than chosen by taste -- ``docs/DECISIONS.md`` records
+#: number is measured rather than chosen by taste -- ``docs/v1/DECISIONS.md`` records
 #: the AUC profile that settled the observation window, and why reading a forced
 #: arrival over the whole run has no power at all.
 BURST_COUNT = 20
@@ -131,7 +131,7 @@ BURST_SPACING = 0.01
 BURST_OBSERVE = 20
 
 #: Interior bin edges per metric, in the metric's own units. Read the pilot
-#: quantiles in ``docs/DECISIONS.md`` alongside these: the edges are placed to
+#: quantiles in ``docs/v1/DECISIONS.md`` alongside these: the edges are placed to
 #: resolve the region where the closed set actually differs, and to lump the
 #: region where it does not. Extra resolution where every hypothesis agrees costs
 #: replicates and buys nothing.
@@ -214,7 +214,7 @@ _QUERY_EDGES: Mapping[str, tuple[float, ...]] = {
     # posterior predictive tail, and *raises* the smallest p-value attainable on
     # the one scenario this metric exists to detect. Two bins carry S11 -- below
     # -0.13 and [-0.13, -0.09) -- and the remaining nine resolve the region where
-    # the closed set actually lives. Quantiles are in ``docs/DECISIONS.md``.
+    # the closed set actually lives. Quantiles are in ``docs/v1/DECISIONS.md``.
     "size_gap_correlation": (
         -0.13,
         -0.09,
@@ -232,7 +232,7 @@ _QUERY_EDGES: Mapping[str, tuple[float, ...]] = {
 
 #: Interior edges of the post-burst mean rate, the fifth design's axis. Piloted
 #: by ``scripts/pilot_forced_edges.py`` at 300 replicates per structure and
-#: frozen here; the quantiles are in ``docs/DECISIONS.md``.
+#: frozen here; the quantiles are in ``docs/v1/DECISIONS.md``.
 #:
 #: Placed on the same principle as the four above. The four unexcited structures
 #: -- the null, seasonality, the mixture and regime switching -- sit between 0.5
@@ -286,12 +286,12 @@ def _design(name: str) -> ExperimentDesign:
 def forced_design() -> ExperimentDesign:
     """Return the slice's intervention: a burst of arrivals, read after it.
 
-    SPEC §4.2's stage 3, and the only design in the set that manipulates
+    v1 SPEC §4.2's stage 3, and the only design in the set that manipulates
     anything. Guarantees the burst is a prefix of the run -- the one clamp on a
     time-valued component this environment accepts, see
     :mod:`environments.pointproc.operations` -- and that the measurement is read
     over the events following it rather than over the whole run, which
-    ``docs/DECISIONS.md`` records as having no power at all.
+    ``docs/v1/DECISIONS.md`` records as having no power at all.
     """
     return ExperimentDesign(
         operation=ForceArrival(
@@ -310,29 +310,29 @@ def slice_designs() -> tuple[ExperimentDesign, ...]:
     The five observational designs first, in metric-name order, then the forced
     arrival. Four of the six separate every pair of the closed set except Hawkes
     self-excitation from latent regime switching; the forced arrival is the only
-    thing that separates *that* pair (SPEC §4.2), which is why a scenario's
+    thing that separates *that* pair (v1 SPEC §4.2), which is why a scenario's
     oracle policy length is only a meaningful number once it is here.
 
     The fifth observational design, ``size_gap_correlation``, discriminates
     nothing *within* the closed set -- every member of it is uncoupled and sits
     on zero. It is here for Stage A rather than for Stage B: it is the only
     design under which S11's out-of-library mechanism is distinguishable from
-    the closed set at all, and without it SPEC §9's preregistered contrast
+    the closed set at all, and without it v1 SPEC §9's preregistered contrast
     conditions on an event that never occurs. Expect it to be worth little
     information gain on S1-S10 and to be selected late by BOED there.
 
     Guarantees a stable set of ids and outcome spaces, and therefore a stable
-    :attr:`~sciagent.inference.empirical.EmpiricalTable.version`.
+    v1 ``EmpiricalTable.version``.
     """
     return (*(_design(name) for name in sorted(_QUERY_EDGES)), forced_design())
 
 
 #: Template ids of the slice's preregistered held-out battery. Named rather than
 #: sliced positionally, and that is not style: ``tests/test_scoring.py``'s
-#: ``HELD_OUT`` was ``slice_designs()[3:]`` until SPEC §4.3 gained
+#: ``HELD_OUT`` was ``slice_designs()[3:]`` until v1 SPEC §4.3 gained
 #: ``size_gap_correlation``, when the slice silently grew from two designs to
 #: three and a reported D3 moved with nothing in the diff to say so
-#: (``docs/DECISIONS.md``). Membership of a battery that D2 and D3 are defined
+#: (``docs/v1/DECISIONS.md``). Membership of a battery that D2 and D3 are defined
 #: over cannot be a consequence of where a design happens to sort.
 _HELD_OUT_IDS: Final = frozenset(
     {"query:size_dispersion", "query:size_gap_correlation"}
@@ -340,18 +340,18 @@ _HELD_OUT_IDS: Final = frozenset(
 
 
 def held_out_designs() -> tuple[ExperimentDesign, ...]:
-    """Return the battery SPEC §8's D2 and D3 are scored on, in design order.
+    """Return the battery v1 SPEC §8's D2 and D3 are scored on, in design order.
 
     Guarantees a fixed membership that is a subset of :func:`slice_designs` and
     contains the intervention, which is what
-    :class:`~sciagent.eval.scenarios.Scenario` requires of a declared battery and
+    v1's ``Scenario`` required of a declared battery and
     what gate A27 asks of every scenario.
 
     The two mark diagnostics and the forced arrival. ``size_gap_correlation`` is
     the sharpest available case of a candidate that got the arrival side right
     and the mark side wrong -- a Hawkes process against S11's truth exactly -- and
     excluding it would mean declining to measure the thing the battery exists to
-    test; ``docs/DECISIONS.md`` records that judgement being made against the
+    test; ``docs/v1/DECISIONS.md`` records that judgement being made against the
     incentive, since dropping it would have restored a more flattering number
     this repository had already published to itself. The forced arrival is the
     slice's only intervention, and D3 is an *intervention* battery.
@@ -379,7 +379,7 @@ def slice_templates() -> tuple[ExperimentTemplate, ...]:
 
 
 def closed_set() -> Mapping[str, Defect]:
-    """Return the slice's closed hypothesis set: the null plus SPEC §4.2's four.
+    """Return the slice's closed hypothesis set: the null plus v1 SPEC §4.2's four.
 
     The null -- the empty edit set -- is a hypothesis and not an absence of one.
     Scenario S9 asks for correct abstention when nothing is wrong, which is only

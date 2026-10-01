@@ -8,7 +8,7 @@ so both feed one framework.
 Gate A25 covers this package's three guarantees -- ingestion is deterministic
 across processes, the observation process is declared and applied, and the
 consensus edit is preregistered. The two preregistered tracks
-``docs/BACKLOG.md`` describes, the recalibration to QTM's operating point, and
+``docs/v1/BACKLOG.md`` describes, the recalibration to QTM's operating point, and
 D1-D6 on found data are downstream of it and are not built here.
 
 May import ``sciagent``; never the reverse.

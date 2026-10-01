@@ -4,7 +4,7 @@ The only module in the framework that talks to a network, and it is deliberately
 thin: it renders a request, constrains the response to a schema, and hands back
 the payload. Everything that has to be reproducible -- addressing, replay,
 decoding, grammar validation -- is
-:class:`~sciagent.systems.llm.provider.ProposalLayer`'s, which is why a recorded
+v1's ``ProposalLayer``'s, which is why a recorded
 transcript can be replayed with this module never imported.
 
 Three choices are worth stating, because each is the opposite of the usual
@@ -12,7 +12,7 @@ default and each follows from what this framework is for.
 
 **Structured output, not tool use.** The response is constrained by
 ``output_config.format`` with the schema
-:func:`~sciagent.systems.llm.encoding.tool_schema` builds. One structured object
+v1's ``encoding.tool_schema`` builds. One structured object
 is wanted, not an agentic loop, and the JSON-schema path makes the "no numbers"
 guarantee a property of the wire format: the schema contains no ``number``
 anywhere, so a conforming response cannot carry one.

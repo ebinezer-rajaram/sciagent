@@ -1,4 +1,4 @@
-"""The point-process vertical slice (SPEC §4)."""
+"""The point-process vertical slice (v1 SPEC §4)."""
 
 from __future__ import annotations
 

@@ -61,8 +61,10 @@ the multisets are equal, since ``d`` is a metric and ``c > 0``.
 **4. The link.** ``D_total = (1 - w) D(X, Y) + w · 1[link differs]`` with
 ``w = LINK_WEIGHT``. The discrete metric on links is a metric and a convex
 combination of metrics is one, so ``D_total`` is a metric in ``[0, D_MAX]``,
-``D_MAX = 1``. A changed link is worth as much as a one-leaf change in a
-single-feature structure.
+``D_MAX = 1``. For scale: in a single-feature structure of tree size s, one
+leaf relabel costs ``(1 - w) · 2 / (2s + 1)``: 0.178 for a plain ``Excite``
+(s = 4), 0.145 for an ``Excite`` with a ``Pow`` mark (s = 5), and 0.533 for a
+leaf feature such as ``Periodic`` (s = 1), against 0.2 for a changed link.
 
 **Canonical forms.** :func:`feature_distance` and :func:`structure_distance`
 canonicalise their arguments first (``canonical.py``), so they are

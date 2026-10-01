@@ -12,9 +12,9 @@ license-files = ["LICENSE"]
 dependencies = [
     "anthropic>=0.120.2",
     "clarabel>=0.11.1",
-    "claude-agent-sdk>=0.2.139",
+    "claude-agent-sdk>=0.2.139,<0.2.140",
     "cvxpy>=1.9.3",
-    "mcp>=1.29",
+    "mcp>=1.29,<2",
     "numpy>=2.1",
     "scipy>=1.14",
 ]

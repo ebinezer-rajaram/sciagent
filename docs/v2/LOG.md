@@ -98,3 +98,18 @@ push a valid depth-3 feature to depth 4, out of the grammar.
 De-duplication drops only repeats that have no ψ slot (`Trend`). Two
 `Excite(ExpK, …)` features are not redundant, because each profiles its own
 timescale. That clarifies SPEC §2.2's "de-duplication".
+
+## 2026-10-01 — Structural distance: Steinhaus-normalised TED inside OSPA
+
+The SPEC asked for a "normalised" tree edit distance tested for the metric
+axioms. Both obvious normalisations fail the triangle inequality. The
+counterexamples, found by exhaustive search over trees of up to four nodes, are
+pinned as tests. The feature cost is instead `2T/(|a|+|b|+T)` (Li & Liu 2007),
+which is a metric and lies in [0, 1].
+
+Feature sets are compared by OSPA with p = 1 and c = 1 (Schuhmacher et al.
+2008). That is a metric because the pair cost never exceeds the unmatched
+cost. The link enters as a 0.2-weighted discrete metric.
+
+Reference points: Hawkes↔S11 = 0.18, Hawkes↔Periodic = 0.71. The near, mid
+and far strata thresholds are set on this [0, 1] scale by the truth sampler (P2).

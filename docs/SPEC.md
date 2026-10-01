@@ -168,7 +168,11 @@ cannot matter, which was v1's failure.
 - **Structural distance.** An optimal matching between the two feature sets
   (Hungarian algorithm), with normalised tree edit distance (Zhang–Shasha) as
   the per-pair cost and a fixed cost for unmatched features. It is tested for
-  the metric axioms.
+  the metric axioms. *(Amended 2026-10-01.)* The per-feature cost is the
+  Steinhaus-normalised Zhang–Shasha distance `2T/(|a|+|b|+T)`. Both naive
+  normalisations (by the larger tree, or by the sum of sizes) break the
+  triangle inequality. The set level is OSPA with order 1 and cut-off 1, and a
+  link mismatch adds a convex term of weight 0.2, so distances lie in [0, 1].
 - **Goodness of fit.** The time-rescaling theorem (a KS test on rescaled
   inter-arrivals), plus predictive p-values on any diagnostic the agent names.
 

@@ -11,6 +11,8 @@ license = "Apache-2.0"
 license-files = ["LICENSE"]
 dependencies = [
     "anthropic>=0.120.2",
+    "clarabel>=0.11.1",
+    "cvxpy>=1.9.3",
     "numpy>=2.1",
     "scipy>=1.14",
 ]

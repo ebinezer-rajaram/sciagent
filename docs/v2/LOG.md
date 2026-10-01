@@ -165,3 +165,22 @@ genuine cross-check for SPEC §6.3 test 1.
 `gamma_shape` must be at least 1, because the density is unbounded at lag 0
 below that. Speed is 0.4 s for a 5k-event ExpK log and 4–7 s for power or
 gamma kernels, which the exact `fsum` folds dominate.
+
+## 2026-10-01 — Harness: hash-chained session records; replay re-executes tools
+
+An investigation is one `ClaudeSDKClient` session. It has only in-process MCP
+tools (`tools=[]`, an `allowed_tools` allowlist, `dontAsk`, no settings, skills
+or plugins). This was verified live: the manifest held exactly the lab tools,
+and a request for a shell was declined.
+
+Every assistant message and tool call goes into a sha256 hash chain, whose head
+is the run's content address. Timing and cost are kept out of the hash. Replay
+needs no SDK. It re-issues the recorded tool calls against a fresh tool layer
+and compares digests, budgets and the submission, so a perturbed tool result or
+a changed tool implementation is caught at its step.
+
+A metered call is charged only when the handler succeeds, so a malformed
+request costs the agent nothing. A tool use outside the layer voids the run
+(SPEC §9) rather than aborting it. The served-model check accepts a
+`canonicalModel` that is the pinned id with its date suffix stripped, as
+measured live for Haiku.

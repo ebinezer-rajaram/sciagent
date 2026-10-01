@@ -202,3 +202,23 @@ Known limits:
   or anonymisation leaks.
 - Isolation is at the container level on the Docker Desktop VM, not gVisor.
 - The total disk use in `work/` is unbounded.
+
+## 2026-10-01 — Likelihood: a ψ-independent quadrature rule, cacheable feature blocks
+
+The quadrature rule depends on the structure, the data and the ψ grid, never
+on the ψ values. It is composite Gauss–Legendre with 8 nodes per panel. Panels
+break at events, at grid PhaseWindow switches, and on geometric panels after
+each event, sized by the sharpest kernel on the grid. So every ψ point of a
+profile shares one rule, and the fitter caches a column block per (feature, ψₖ).
+A profile then costs Σ|gridₖ| block computations, not Π|gridₖ|.
+
+Columns under gates have closed-form integrals. Product columns are integrated
+by quadrature and flagged. The error estimate is 2·|Q_q − Q_2q|, which tracked
+the true error within a factor of about 2 in every tested case.
+
+Integer-shape gamma kernels use an exact O(n) moment recursion. PowerK remains
+O(n·m) direct sums: about 10 s at 5,000 events, which is a throughput risk for
+fitting.
+
+Forced events count as history, including for `LastMarkAbove`. Window
+boundaries are inside the excluded window.

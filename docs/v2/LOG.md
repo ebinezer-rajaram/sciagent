@@ -446,3 +446,37 @@ product and cross-part rounding.
 
 Timings: fit (c) 76 s → 26 s; (b) 2.95 s; (a) 0.08 s. The remaining cost is
 per-row `fsum` in the likelihood's `row_totals` and the Lomax blocks.
+
+## 2026-10-02 — Truth sampler (preregistration material)
+
+The prior:
+- Links: identity 0.5, exp 0.25, softplus 0.25.
+- K = 1/2/3/4 with probability 0.25/0.4/0.25/0.1.
+- Kernels: ExpK 0.5, GammaK 0.25, PowerK 0.25.
+- No Trend, because it is non-stationary.
+
+The out-of-dictionary share is exactly 0.5 by stratification; an
+out-of-dictionary truth has one depth-3 feature. ψ is on-grid, so ORACLE
+measures identifiability rather than grid resolution. `exp_coef` is limited to
+0.5 for truths, because larger values give infinite-mean marks.
+
+θ is drawn on each column's operating scale, then calibrated by a one-scalar
+secant search under common random numbers: mean rate 1 ± 3% at 5,000 time
+units. Truths must also pass:
+- an identity branching bound < 0.9, capped pilots and a rate drift within
+  1.5×;
+- simulability by construction;
+- Fano(2) in [2, 5] (the library truths measure 3.1–3.6);
+- identifiability, δ = 0.01 nats/event against all five library members,
+  certified fits only;
+- non-membership, ε = 0.1.
+
+Strata: near ≤ 0.6 < mid ≤ 0.72 < far. Wall time never rejects a candidate,
+so the population cannot depend on the machine. Test-split records live
+outside the repo, and only their sha256 is committed.
+
+The first dev split (seed 2026, n = 20) took 49 minutes on 4 workers, with
+about 6% acceptance; dispersion and simulability are the main rejections. Of
+the 20 truths, 11 are softplus: acceptance skews the realised link mix away
+from the prior. It was regenerated after the glm freeze (FIT_VERSION 4)
+because records are not byte-stable across numeric changes.

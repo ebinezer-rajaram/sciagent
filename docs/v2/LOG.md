@@ -366,3 +366,26 @@ auxiliary Haiku call. The check now accepts a served canonical id that names
 the pinned model's family; every assistant turn must still carry the exact
 pinned id. Replay of that run diverged at the first fit, because the fitter
 changed afterwards without a `FIT_VERSION` bump, which replay correctly caught.
+
+## 2026-10-02 — Scorer: gap sign, recovery threshold, battery, go/no-go precedence
+
+- **Gap.** `gap = LL_sub − LL_oracle` per event, so higher is better and the
+  ORACLE scores 0. Held-out data uses a seed stream disjoint by construction
+  from the investigation's streams (spawn-key length), and this is tested.
+- **"Recovers"** (SPEC §7.1) means exact canonical recovery, or a gap ≥ −0.005
+  nats/event. The d/(2n) cost of a correct model is ≤ 0.0025 at n = 2,000, and
+  the S11 library gap is about 0.04.
+- **"Closes the gap"** means gap-closed ≥ 0.9.
+- **The B-sym@10F control** passes when its median gap is ≥ −0.01.
+- **The ORACLE-vs-B-lib control** is applied per truth (mean paired difference
+  > SE, at least 2 seeds); failing truths are dropped.
+- **Verdict precedence:** controls fail, then too easy, then too hard, then go.
+- **Interventional similarity** is 1 − mean squared Hellinger over an
+  8-experiment battery on a horizon of 120 (burst, mark injection high and low,
+  clamp-release, silence-release, censor plus burst), with three readouts and
+  paired truth draws.
+
+Measured: S11 against itself 0.974, S11 against Hawkes 0.852, driven by
+size-injection at 0.79. The separation is modest: Hawkes count noise dominates
+short windows. Revisit the battery horizon in P3 if similarity doesn't
+discriminate on dev truths.

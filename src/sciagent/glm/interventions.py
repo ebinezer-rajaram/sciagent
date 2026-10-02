@@ -86,7 +86,15 @@ MAX_HORIZON: Final = 8000.0
 #: Largest clamp rate (native units: 50 * the nominal mean rate).
 MAX_CLAMP_RATE: Final = 50.0
 #: Cap on the expected number of clamp events, Σ rate * width (scale-free).
-MAX_CLAMP_EVENTS: Final = 20_000.0
+#: Clamp events enter history, so they count against the world's event cap
+#: (``investigation.world.MAX_EVENTS``, 15,000); with the longest horizon at
+#: the nominal rate and the forced-event cap, a valid design stays under it.
+MAX_CLAMP_EVENTS: Final = 5_000.0
+#: Largest |z| = |value - location| / scale of an injected or forced mark on a
+#: real-valued channel. A mark far outside the channel's scale makes every
+#: excitation weight, and so the thinning bound, enormous: one such run
+#: (size 1e4) took five minutes even under the world's event cap.
+MAX_MARK_Z: Final = 10.0
 #: Cap on forced events in one experiment, over all its parts.
 MAX_FORCED_EVENTS: Final = 500
 #: Cap on the parts of a :class:`Compose`.
@@ -384,6 +392,21 @@ def _check_mark(spec: ChannelSpec, value: float, what: str) -> None:
         raise InvalidInterventionError(
             f"{what}: channel {spec.name!r} takes values -1 or 1, got {value}"
         )
+    if spec.kind is not ChannelKind.SIGN:
+        z = (value - spec.location) / spec.scale
+        if not abs(z) <= MAX_MARK_Z:
+            low = spec.location - MAX_MARK_Z * spec.scale
+            high = spec.location + MAX_MARK_Z * spec.scale
+            bounds = (
+                f"(0, {high:g}]"
+                if spec.kind is ChannelKind.POSITIVE and low <= 0.0
+                else f"[{low:g}, {high:g}]"
+            )
+            raise InvalidInterventionError(
+                f"{what}: channel {spec.name!r} value {value} is more than "
+                f"{MAX_MARK_Z:g} scale units from its location; use values in "
+                f"{bounds} (at most {MAX_MARK_Z:g} scale units)"
+            )
 
 
 def validate_experiment(

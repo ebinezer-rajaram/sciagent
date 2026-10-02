@@ -552,3 +552,28 @@ predictions, and agents use a median of ~15 of 40 fits.
 
 Open contract issue: `wall_time_s` does not bound a running tool call. A real
 fix caps simulation cost inside `run_experiment`.
+
+## 2026-10-02 — Experiment cost bounded by events, not wall time
+
+PowerK and GammaK histories make simulation cost grow roughly as n². At the
+old cap of 50k events, stopped pilot experiments took 250–1,700 s inside an
+uncancellable tool call.
+
+Changes:
+- `MAX_EVENTS` 50k → 15k. The largest successful pilot experiment had 12,181
+  events.
+- `MAX_CLAMP_EVENTS` 20k → 5k, so every valid design fits under the cap at
+  nominal rate.
+- New `MAX_MARK_Z = 10` on injected and forced marks: injecting size 1e4 took
+  390 s even under the cap.
+- The stop message is unit-free and identical in both conditions.
+
+Worst case measured over 20 dev truths × 13 adversarial designs: about 130 s.
+
+Pilot consistency:
+- All 75 recorded pilot experiment designs give identical outcomes and event
+  counts under the new caps.
+- Session keys are unchanged, so resume continues the same cells.
+- About 10 old records containing stopped experiments no longer replay
+  byte-identically, because their stop text says "50000". Their outcomes
+  reproduce; this is accepted and declared.

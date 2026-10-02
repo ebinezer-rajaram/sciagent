@@ -48,11 +48,21 @@ __all__ = [
 OBSERVATIONAL: Final = "obs"
 #: Native horizon of the observational log: about 2,000 events at mean rate 1.
 OBSERVATIONAL_HORIZON: Final = 2000.0
-#: Event cap per simulated dataset; a run that exceeds it is stopped. Above
-#: the largest legitimate design: the longest horizon at mean rate 1 (8,000),
-#: the clamp cap (20,000) and the forced-event cap (500), with room for
-#: excitation on top.
-MAX_EVENTS: Final = 50_000
+#: Event cap per simulated dataset; a run that exceeds it is stopped
+#: (:class:`~sciagent.glm.simulate.ExplosionError`). It is what bounds an
+#: experiment's *work*, deterministically: a tool call cannot be cancelled,
+#: and a wall-clock limit would make outcomes machine-dependent (invariant 3).
+#: The simulator's candidate cap (50 per event) and runaway-bound guard scale
+#: with it. PowerK and GammaK columns are summed over the whole history on
+#: every thinning candidate, so cost grows as the square of the events:
+#: 15,000 events take about a minute on the reference machine for the
+#: heaviest dev truth, where 50,000 took up to half an hour in the pilot.
+#: Every valid design expects fewer at the nominal mean rate of 1 -- the
+#: longest horizon (8,000), the clamp cap (5,000) and the forced-event cap
+#: (500) together -- so only a process running well above its nominal rate
+#: is stopped. A constant, not a function of the design or the session
+#: config, so a session's address and every uncapped draw are unchanged.
+MAX_EVENTS: Final = 15_000
 
 _STREAM_OBSERVATIONAL: Final = 0
 _STREAM_EXPERIMENT: Final = 1

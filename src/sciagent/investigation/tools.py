@@ -956,7 +956,14 @@ def _driver_text(driver: str, view: AgentView) -> str:
 
 def _stop_reason(error: SimulationError) -> str:
     if isinstance(error, ExplosionError):
-        return f"the process produced more than {MAX_EVENTS} events"
+        # The event cap, the candidate cap and the runaway-bound guard all
+        # raise this; event counts are unit-free, so the text is the same in
+        # every condition.
+        return (
+            f"the process exceeded the simulation limit of {MAX_EVENTS} events "
+            "per experiment (it produced more, or its event rate grew without "
+            "bound)"
+        )
     if isinstance(error, NegativeIntensityError):
         return "the event rate became negative under this design"
     return f"the simulation could not continue ({type(error).__name__})"

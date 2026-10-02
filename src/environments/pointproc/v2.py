@@ -32,13 +32,13 @@ stationary mean rate is exactly 1 rather than v1's searched ≈0.99.
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Final, Protocol
+from typing import Final
 
 import numpy as np
 
-from sciagent.glm.data import Dataset, EventLog
+from sciagent.glm.data import EventLog
 from sciagent.glm.grammar import (
     ALL,
     ChannelKind,
@@ -53,6 +53,9 @@ from sciagent.glm.grammar import (
     Structure,
 )
 from sciagent.glm.simulate import Coefficients, PsiAssignment, simulate
+from sciagent.library.mixture import PoissonMixture2
+from sciagent.library.mmpp import MMPP2
+from sciagent.systems.v2.systems import GrammarMember, ModelMember
 
 # --------------------------------------------------------------------------
 # Channels and marks
@@ -109,65 +112,21 @@ LIBRARY: Final = (
 
 
 # --------------------------------------------------------------------------
-# Library: members outside the grammar (interface only)
+# Library: members outside the grammar
 # --------------------------------------------------------------------------
 
-
-class FittedLibraryModel(Protocol):
-    """A fitted out-of-grammar library member, as B-lib and scoring need it.
-
-    Not implemented. What the evaluation reads from a fit: the maximised
-    log-likelihood and parameter count (for BIC beside grammar fits), the
-    held-out log-likelihood on fresh data (the predictive gap, SPEC §4.3), and
-    replicate simulation, observational and under the intervention language
-    (predictive p-values, interventional similarity).
-    """
-
-    @property
-    def log_likelihood(self) -> float: ...
-
-    @property
-    def n_parameters(self) -> int: ...
-
-    def held_out_log_likelihood(self, datasets: Sequence[Dataset]) -> float: ...
-
-    def simulate(self, horizon: float, rng: np.random.Generator) -> EventLog: ...
-
-
-class LibraryModel(Protocol):
-    """An out-of-grammar library member: a named model the framework fits.
-
-    Fitting must be framework code (invariant 2), deterministic, and must accept
-    interventional datasets (forced events, excluded intervals) like the GLM
-    likelihood does. Regime switching needs a two-state MMPP likelihood (the
-    forward algorithm, exact); the Poisson mixture redraws the rate at every
-    event, so its likelihood is a product of two-component exponential-mixture
-    gap densities (EM or direct optimisation).
-    """
-
-    @property
-    def name(self) -> str: ...
-
-    def fit(self, datasets: Sequence[Dataset]) -> FittedLibraryModel: ...
-
-
-@dataclass(frozen=True)
-class OutOfGrammarMember:
-    """A placeholder naming an out-of-grammar member until it is implemented."""
-
-    name: str
-    description: str
-
-
+#: The out-of-grammar members (SPEC §2.1: fitted special cases): v1's latent
+#: regime switching as a two-state MMPP, and v1's Poisson mixture as a renewal
+#: process with two-component exponential gaps.
 OUT_OF_GRAMMAR_LIBRARY: Final = (
-    OutOfGrammarMember(
-        "regime_switching",
-        "Rate switches between two levels by a hidden two-state Markov chain.",
-    ),
-    OutOfGrammarMember(
-        "poisson_mixture",
-        "Each gap is exponential with a rate drawn afresh from two levels.",
-    ),
+    ModelMember("regime_switching", MMPP2()),
+    ModelMember("poisson_mixture", PoissonMixture2()),
+)
+
+#: Everything B-lib fits (SPEC §3: v1's four mechanisms plus the null).
+B_LIB_LIBRARY: Final[tuple[GrammarMember | ModelMember, ...]] = (
+    *(GrammarMember(m.name, m.structure) for m in LIBRARY),
+    *OUT_OF_GRAMMAR_LIBRARY,
 )
 
 

@@ -324,3 +324,19 @@ Timings, serial:
 PowerK feature blocks dominate. For exp and softplus links, "branching ratio
 < 1" has no meaning, so the truth sampler needs a stationarity rule there
 (bounded pilot simulation).
+
+## 2026-10-02 — Out-of-grammar library and B-lib/B-np/ORACLE
+
+Regime switching is an MMPP-2 with an exact forward algorithm, in which forced
+events are ignored and the chain runs hidden through excluded windows. The
+Poisson mixture is a renewal process with two-component exponential gaps. Its
+likelihood is conditional across excluded windows, so per-event comparisons on
+windowed data are slightly apples-to-oranges, but the observational held-out
+data is exact.
+
+B-lib fits all five members and submits the best by BIC. If an out-of-grammar
+member wins, the submitted structure is `None`, which scores as maximal
+distance. B-np resamples training marks for simulation.
+
+Positive control (SPEC §6.4) seen early on the S11 truth: ORACLE beats B-lib
+by 0.040–0.046 nats/event on four seeds, with B-lib always picking Hawkes.

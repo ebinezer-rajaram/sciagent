@@ -515,3 +515,10 @@ The residual risk is cross-CPU: the selected structure could flip at a
 near-tie. If you'd rather keep the guard absolute, the alternatives are a
 fixed-order cross product that makes B-sparse a ~30 min/run baseline, or
 coarsening the dictionary's ψ grid.
+
+## 2026-10-02 — Dev split regenerated under FIT_VERSION 4
+
+`data/v2/truths/dev/` (git-ignored): seed 2026, n = 20, records sha256
+`1f0fac01e8b572efb4171f26fb8fa80c2ae3f0e8dbf6c9a9c6d248b281b4969d`. It replaces
+the FIT_VERSION 1–3 split (sha `324890d8…`, kept under `dev-stale-fit3/` for
+comparison). The pilot reads this one.

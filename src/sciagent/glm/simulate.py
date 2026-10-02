@@ -878,6 +878,10 @@ class _Thinning:
         self._edges = [x for c in plan.clamps for x in (c.start, c.end)]
         self._clamp: float | None = None  # the clamp rate on the current window
         self._open_end = False  # whether the current window excludes its end
+        # A deterministic cap on thinning work (runs accept ~1.2 candidates per
+        # event); it turns a slow explosion into an error instead of a hang.
+        self._candidates = 0
+        self._max_candidates = 50 * max_events + 10_000
 
     def run(self) -> None:
         s, width = 0.0, 1.0
@@ -891,6 +895,14 @@ class _Thinning:
             while bound * (end - s) > _MAX_EXPECTED and end - s > _MIN_WINDOW:
                 end = s + 0.5 * (end - s)
                 bound = self._rate_bound(s, end)
+            if bound * (end - s) > _MAX_EXPECTED:
+                # Even the smallest window expects more than _MAX_EXPECTED
+                # candidates: the bound exceeds _MAX_EXPECTED / _MIN_WINDOW,
+                # millions of times the unit operating rate. Without this the
+                # loop thins at that rate and hangs below max_events.
+                raise ExplosionError(
+                    f"intensity bound {bound} on ({s}, {end}] is runaway"
+                )
             width = end - s
             if bound * width < _MIN_EXPECTED:
                 width *= 2.0
@@ -953,6 +965,12 @@ class _Thinning:
             return None
         t = s
         while True:
+            self._candidates += 1
+            if self._candidates > self._max_candidates:
+                raise ExplosionError(
+                    f"more than {self._max_candidates} thinning candidates by "
+                    f"t={t}: the process is (near-)explosive"
+                )
             t = t + float(self.rng.exponential(1.0 / bound))
             if t > end or (self._open_end and t >= end):
                 return None

@@ -936,3 +936,31 @@ def test_forced_mark_values_are_checked() -> None:
     plan = sim.Plan(forced=(sim.ForcedEvent(1.0, {"sign": 0.5}),))
     with pytest.raises(InvalidSimulationInputError):
         _planned(poisson(1.0), plan)
+
+
+def test_a_slowly_exploding_exp_link_truth_raises_instead_of_hanging() -> None:
+    """Positive self-excitation under the exp link has no stationary regime.
+
+    Found by three agents independently: the bound grew while windows shrank
+    to the minimum, so thinning ran at a runaway rate below ``max_events``
+    and hung for minutes. It must raise :class:`ExplosionError` promptly.
+    """
+    import time
+
+    feature = Excite(KernelKind.EXP, One(), ALL)
+    structure = Structure((feature,), Link.EXP)
+    psi: PsiAssignment = ({PsiSlot((0,), "exp_rate"): 1.0},)
+    coef = Coefficients(intercept=0.0, per_feature=((1.5,),))
+    started = time.perf_counter()
+    with pytest.raises(ExplosionError):
+        simulate(
+            structure,
+            psi,
+            coef,
+            CHANNELS,
+            marks_exp,
+            400.0,
+            np.random.default_rng(7),
+            max_events=20_000,
+        )
+    assert time.perf_counter() - started < 30.0

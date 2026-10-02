@@ -21,9 +21,12 @@ softplus problem, and the certificate below is what certifies it.
 **Solvers.** The default is a damped Newton method with an Armijo
 backtracking line search, from a fixed cold start. It is fast (a ψ point
 costs milliseconds, against seconds for Clarabel on ~10⁵ exponential cones,
-measured) and its iterations are deterministic: every fold in it is a fixed
-pairwise tree (:func:`_fold`) or a fixed sequential sum (:func:`_lin`), never
-a CPU-chosen BLAS or SIMD order. The identity link's node constraints are
+measured) and its iterations are deterministic: every fold in it is the
+fixed pairwise tree of :func:`reductions.pairwise_rows` (gradients and
+Hessians fused block by block in cache, :func:`_row_sums`) or a fixed
+sequential sum (:func:`_lin`), never a CPU-chosen BLAS or SIMD order. Those
+folds are reproducible, not exact; every number the certificate reports is
+exact (below). The identity link's node constraints are
 handled by cutting planes: the problem without them is solved first, and only
 if its optimum is negative at some candidate row are the most violated rows
 (at most 64 per round, by violation relative to the row's size) handed, as
@@ -43,8 +46,11 @@ every dual-feasible u, ``F(θ) ≥ -Σ hₖ*(uₖ)``. The natural dual point
 rows), which zeroes the residual to first order: it is the dual image of a
 Newton step. Since ``F(θ) ≥ D(u') + r'ᵀθ`` for every θ, with r' the remaining
 dual residual ``Σ u'ₖrₖ + c``, the reported gap is
-``F(θ̂) - D(u') + |r'|ᵀ|θ̂|``, folded exactly in one :func:`math.fsum`, with r'
-padded by its own fold's error bound. It bounds ``F(θ̂) - F*`` to first order
+``F(θ̂) - D(u') + |r'|ᵀ|θ̂|``, its terms summed exactly (correctly rounded,
+:class:`reductions.ExactSum`, equal to one :func:`math.fsum` bit for bit), as
+are ``F(θ̂)`` and ``D(u')`` themselves; r' is a pairwise fold, padded by that
+fold's rigorous error bound (:func:`_residual`), and the term is rounded
+upward. It bounds ``F(θ̂) - F*`` to first order
 (θ* ≈ θ̂), and the relative size of r' is reported beside it. Corrected rows: events
 (identity), nodes (exp, softplus). Softplus event rows keep ``uᵢ = e'(zᵢ)``
 so ``e*(uᵢ) = uᵢzᵢ - e(zᵢ)`` holds exactly, and no conjugate of
@@ -171,87 +177,111 @@ class Solution:
 # Deterministic folds
 # --------------------------------------------------------------------------
 
+#: Columns per pass of :func:`_lin`; the result does not depend on it.
+_LIN_BLOCK: Final = 16384
 
-def _fold(x: Floats) -> Floats:
-    """Sum along the last axis by a fixed pairwise tree.
 
-    Padded with zeros to a power of two, then halved in place: element i is
-    always added to element i + half. Every add is an elementwise, correctly
-    rounded numpy operation, so the result does not depend on the CPU.
-    Pairwise, so the rounding error grows as log₂ of the length.
-    """
-    n = x.shape[-1]
-    size = 1 << max(0, n - 1).bit_length()
-    buf = np.zeros((*x.shape[:-1], size))
-    buf[..., :n] = x
-    while size > 1:
-        half = size // 2
-        np.add(buf[..., :half], buf[..., half:size], out=buf[..., :half])
-        size = half
-    out: Floats = buf[..., 0].copy()
-    return out
+def _fold(x: Floats) -> float:
+    """``Σx`` by the fixed pairwise tree of :func:`reductions.pairwise_rows`."""
+    return float(reductions.pairwise_rows(x.reshape(1, -1))[0])
 
 
 def _lin(rows_t: Floats, theta: Floats) -> Floats:
-    """``Rθ`` from the transposed rows, summed column by column in order."""
-    out: Floats = rows_t[0] * theta[0]
-    tmp = np.empty_like(out)
-    for j in range(1, rows_t.shape[0]):
-        np.multiply(rows_t[j], theta[j], out=tmp)
-        np.add(out, tmp, out=out)
+    """``Rθ`` from the transposed rows, summed column by column in order.
+
+    Computed in cache-sized column blocks; every element is the same
+    sequence of correctly rounded multiplies and adds whatever the blocking.
+    """
+    p, m = rows_t.shape
+    out = np.empty(m)
+    tmp = np.empty(min(m, _LIN_BLOCK))
+    for a in range(0, m, _LIN_BLOCK):
+        b = min(a + _LIN_BLOCK, m)
+        o, t = out[a:b], tmp[: b - a]
+        np.multiply(rows_t[0, a:b], theta[0], out=o)
+        for j in range(1, p):
+            np.multiply(rows_t[j, a:b], theta[j], out=t)
+            np.add(o, t, out=o)
     return out
 
 
-def _gram(rows_t: Floats, d: Floats) -> Floats:
-    """``Rᵀ diag(d) R`` with every entry a :func:`_fold`."""
-    p = rows_t.shape[0]
-    out = np.zeros((p, p))
-    if rows_t.shape[1] == 0:
-        return out
-    weighted = rows_t * d
-    for j in range(p):
-        row = _fold(weighted[j:] * rows_t[j])
-        out[j, j:] = row
-        out[j:, j] = row
-    return out
+def _row_sums(
+    rows_t: Floats,
+    d: Floats | None,
+    h: Floats | None,
+    absolute: bool = False,
+    unit_first: bool = False,
+) -> tuple[Floats, Floats | None, Floats | None]:
+    """``Rᵀd``, ``Rᵀ diag(h) R`` and (if ``absolute``) ``|R|ᵀ|d|``, fused.
 
+    Every entry is :func:`reductions.pairwise_rows` of its products (row i
+    times d, ``|r_i·d|``, or ``(r_i·h)·r_j`` for i ≤ j), but the products are
+    formed block by block in cache and streamed into a
+    :class:`reductions.PairwiseAccumulator`: one pass over R, the
+    ``p(p+1)/2`` product rows never held whole, and every entry's fold order
+    fixed by the row length alone. Returns ``(g, H, a)``; g is zeros when d
+    is None, H and a are None when not asked for.
 
-def _colsums(rows_t: Floats, d: Floats) -> Floats:
-    """``Rᵀd`` by :func:`_fold`."""
-    if rows_t.shape[1] == 0:
-        return np.zeros(rows_t.shape[0])
-    return _fold(rows_t * d)
+    ``unit_first`` says row 0 of R is all ones (the intercept). When also
+    ``h is d``, the products ``(1·h)·r_j`` of H's first row equal g's
+    ``r_j·d`` bit for bit (IEEE products commute), so H[0, :] is copied
+    from g instead of being formed.
+    """
+    p, m = rows_t.shape
+    nd = p if d is not None else 0
+    na = p if d is not None and absolute else 0
+    skip = 1 if unit_first and d is not None and h is d else 0
+    iu, ju = np.triu_indices(p) if h is not None else (np.zeros(0, np.intp),) * 2
+    iu, ju = iu[iu >= skip], ju[iu >= skip]
+    k = nd + na + iu.size
+    block = reductions.PAIRWISE_BLOCK
+    width = min(block, max(m, 1))
+    acc = reductions.PairwiseAccumulator(k)
+    buf = np.empty((k, width))
+    wh = np.empty((p, width))
+    for a in range(0, m, block):
+        b = min(a + block, m)
+        c = b - a
+        r = rows_t[:, a:b]
+        out = buf[:, :c]
+        if d is not None:
+            np.multiply(r, d[a:b], out=out[:p])
+            if na:
+                np.abs(out[:p], out=out[p : 2 * p])
+        if h is not None:
+            if h is d:
+                w = out[:p]
+            else:
+                w = wh[:, :c]
+                np.multiply(r, h[a:b], out=w)
+            row = nd + na
+            for i in range(skip, p):  # rows (i, i..p-1), in triu_indices order
+                np.multiply(r[i:], w[i], out=out[row : row + p - i])
+                row += p - i
+        acc.push(out)
+    sums = acc.result()
+    g = sums[:p].copy() if d is not None else np.zeros(p)
+    absolute_sums = sums[p : 2 * p].copy() if na else None
+    hess: Floats | None = None
+    if h is not None:
+        hess = np.zeros((p, p))
+        hess[iu, ju] = sums[nd + na :]
+        hess[ju, iu] = sums[nd + na :]
+        if skip:
+            hess[0, :] = g
+            hess[:, 0] = g
+    return g, hess, absolute_sums
 
 
 def _exact_colsums(parts: list[tuple[Floats, Floats]], const: Floats) -> Floats:
-    """``const + Σ Rᵀd`` over ``(rows_t, d)`` parts, each entry one exact fsum."""
+    """``const + Σ Rᵀd`` over ``(rows_t, d)`` parts, each entry one exact sum."""
     p = const.shape[0]
     out = np.empty(p)
     for j in range(p):
-        pieces = [const[j : j + 1], *(rows_t[j] * d for rows_t, d in parts)]
-        out[j] = reductions.total(np.concatenate(pieces))
-    return out
-
-
-def _fast_colsums(parts: list[tuple[Floats, Floats]], const: Floats) -> Floats:
-    """``const + Σ Rᵀd`` by :func:`_fold`: deterministic, pairwise-accurate.
-
-    Used for the dual residual, which is judged relative to the size of its
-    terms (:func:`_abs_colsums`); the pairwise rounding, at most about
-    log₂(m)·ε of that size, is six orders below ``RESIDUAL_TOL_REL``, so an
-    exact fold would buy nothing there and cost a third of a certificate.
-    """
-    out = const.copy()
-    for rows_t, d in parts:
-        out = out + _colsums(rows_t, d)
-    return out
-
-
-def _abs_colsums(parts: list[tuple[Floats, Floats]], const: Floats) -> Floats:
-    """``|const| + Σ |R|ᵀ|d|``: the size of the residual's terms."""
-    out = np.abs(const)
-    for rows_t, d in parts:
-        out = out + _colsums(np.abs(rows_t), np.abs(d))
+        acc = reductions.ExactSum.of(const[j : j + 1])
+        for rows_t, d in parts:
+            acc = acc + reductions.ExactSum.of(rows_t[j] * d)
+        out[j] = acc.value()
     return out
 
 
@@ -318,80 +348,71 @@ def _neg_log_softplus_d2(z: Floats) -> Floats:
 
 
 @dataclass(frozen=True, eq=False)
-class _Terms:
-    """``F`` (fast fold), and first / second derivatives per row."""
+class _Point:
+    """``F`` at one θ by pairwise folds (``inf`` outside the domain), with the
+    linear predictors and the exp link's node terms the derivatives reuse."""
 
+    theta: Floats
+    zn: Floats | None
+    ze: Floats
     value: float
-    d_nodes: Floats | None
-    h_nodes: Floats | None
-    d_events: Floats | None
-    h_events: Floats | None
+    en: Floats | None
 
 
-def _value(problem: Problem, theta: Floats, zn: Floats | None, ze: Floats) -> float:
-    """``F`` by fast folds; ``inf`` outside the domain."""
+def _evaluate(problem: Problem, theta: Floats, zn: Floats | None, ze: Floats) -> _Point:
     match problem.link:
         case Link.IDENTITY:
             if ze.size and float(np.min(ze)) <= 0.0:
-                return math.inf
-            lin = float(_fold(problem.integrals * theta))
-            return lin - float(_fold(np.log(ze)))
+                return _Point(theta, zn, ze, math.inf, None)
+            lin = _fold(problem.integrals * theta)
+            return _Point(theta, zn, ze, lin - _fold(np.log(ze)), None)
         case Link.EXP:
             if zn is None:
                 raise InnerSolveError("the exp link needs node values")
             if zn.size and float(np.max(zn)) > _MAX_EXP:
-                return math.inf
-            return float(_fold(problem.weights * np.exp(zn))) - float(_fold(ze))
+                return _Point(theta, zn, ze, math.inf, None)
+            en = problem.weights * np.exp(zn)
+            return _Point(theta, zn, ze, _fold(en) - _fold(ze), en)
         case Link.SOFTPLUS:
             if zn is None:
                 raise InnerSolveError("the softplus link needs node values")
-            comp = float(_fold(problem.weights * _softplus(zn)))
-            return comp - float(_fold(_log_softplus(ze)))
+            comp = _fold(problem.weights * _softplus(zn))
+            return _Point(theta, zn, ze, comp - _fold(_log_softplus(ze)), None)
 
 
-def _terms(problem: Problem, theta: Floats, zn: Floats | None, ze: Floats) -> _Terms:
-    value = _value(problem, theta, zn, ze)
+def _derivatives(
+    problem: Problem, pt: _Point, counts: Floats, unit_first: bool
+) -> tuple[Floats, Floats, Floats]:
+    """Gradient, Hessian, and the Hessian of the rows the certificate corrects
+    (events under the identity link, nodes otherwise): its dual metric."""
     match problem.link:
         case Link.IDENTITY:
-            inv = 1.0 / ze
-            return _Terms(value, None, None, -inv, inv * inv)
+            inv = 1.0 / pt.ze
+            g, hess, _ = _row_sums(problem.events_t, -inv, inv * inv)
+            if hess is None:
+                raise InnerSolveError("Hessian rows were not formed")
+            return problem.integrals + g, hess, hess
         case Link.EXP:
-            if zn is None:
-                raise InnerSolveError("the exp link needs node values")
-            en = problem.weights * np.exp(np.minimum(zn, _MAX_EXP))
-            return _Terms(value, en, en, -np.ones_like(ze), None)
+            if pt.en is None:
+                raise InnerSolveError("the exp link needs node terms")
+            g, hess, _ = _row_sums(problem.nodes_t, pt.en, pt.en, unit_first=unit_first)
+            if hess is None:
+                raise InnerSolveError("Hessian rows were not formed")
+            return g - counts, hess, hess
         case Link.SOFTPLUS:
-            if zn is None:
+            if pt.zn is None:
                 raise InnerSolveError("the softplus link needs node values")
-            s = special.expit(zn)
+            s = special.expit(pt.zn)
             dn = problem.weights * s
-            return _Terms(
-                value,
-                dn,
-                dn * (1.0 - s),
-                _neg_log_softplus_d1(ze),
-                _neg_log_softplus_d2(ze),
+            gn, hn, _ = _row_sums(problem.nodes_t, dn, dn * (1.0 - s))
+            ge, he, _ = _row_sums(
+                problem.events_t,
+                _neg_log_softplus_d1(pt.ze),
+                _neg_log_softplus_d2(pt.ze),
             )
-
-
-def _gradient(problem: Problem, t: _Terms) -> Floats:
-    g = problem.integrals.copy() if problem.link is Link.IDENTITY else None
-    if g is None:
-        g = np.zeros(problem.p)
-    if t.d_nodes is not None:
-        g = g + _colsums(problem.nodes_t, t.d_nodes)
-    if t.d_events is not None:
-        g = g + _colsums(problem.events_t, t.d_events)
-    return g
-
-
-def _hessian(problem: Problem, t: _Terms) -> Floats:
-    h = np.zeros((problem.p, problem.p))
-    if t.h_nodes is not None:
-        h = h + _gram(problem.nodes_t, t.h_nodes)
-    if t.h_events is not None:
-        h = h + _gram(problem.events_t, t.h_events)
-    return h
+            if hn is None or he is None:
+                raise InnerSolveError("Hessian rows were not formed")
+            return gn + ge, hn + he, hn
 
 
 def right_limit_times(data: Dataset) -> Floats:
@@ -444,7 +465,7 @@ def _uses_nodes(link: Link) -> bool:
 def initial_theta(problem: Problem) -> Floats:
     """θ₀ at the homogeneous-Poisson rate, every other coefficient 0."""
     n = problem.events_t.shape[1]
-    measure = reductions.total(problem.weights) if problem.weights.size else 1.0
+    measure = _fold(problem.weights) if problem.weights.size else 1.0
     rate = max(float(n), 0.5) / max(measure, 1e-300)
     theta = np.zeros(problem.p)
     match problem.link:
@@ -464,48 +485,55 @@ def initial_theta(problem: Problem) -> Floats:
 
 @dataclass(frozen=True, eq=False)
 class _Primal:
+    """Newton's θ. When Newton stopped by its own test, ``point`` is F at θ
+    (with ``z = Rθ`` and the exp link's node terms) and ``metric`` the
+    certificate's metric there, both reused by the certificate; else None."""
+
     theta: Floats
     status: str
     iterations: int
+    metric: Floats | None
+    point: _Point | None
 
 
-def _newton(problem: Problem, max_iter: int) -> _Primal:
-    """Damped Newton from :func:`initial_theta`; ``max_iter`` counts steps."""
-    theta = initial_theta(problem)
-    nodes = _uses_nodes(problem.link)
+def _at(problem: Problem, theta: Floats) -> _Point:
+    """:func:`_evaluate` at θ, with ``z = Rθ`` formed afresh."""
+    zn = _lin(problem.nodes_t, theta) if _uses_nodes(problem.link) else None
+    return _evaluate(problem, theta, zn, _lin(problem.events_t, theta))
+
+
+def _newton(
+    problem: Problem, max_iter: int, counts: Floats, unit_first: bool
+) -> _Primal:
+    """Damped Newton from :func:`initial_theta`; ``max_iter`` counts steps.
+
+    Every trial point's linear predictors are ``Rθ`` formed afresh (as cheap
+    as updating ``z + t·Δz``), so the accepted point is exactly what the
+    certificate would compute from θ, and it reuses it.
+    """
+    pt = _at(problem, initial_theta(problem))
     for it in range(max_iter + 1):
-        zn = _lin(problem.nodes_t, theta) if nodes else None
-        ze = _lin(problem.events_t, theta)
-        terms = _terms(problem, theta, zn, ze)
-        if not math.isfinite(terms.value):
-            return _Primal(theta, "numerics", it)
-        grad = _gradient(problem, terms)
-        step = _psd_solve(_hessian(problem, terms), -grad)
+        if not math.isfinite(pt.value):
+            return _Primal(pt.theta, "numerics", it, None, None)
+        grad, hess, metric = _derivatives(problem, pt, counts, unit_first)
+        step = _psd_solve(hess, -grad)
         decrement = -reductions.dot(grad, step)
         if not math.isfinite(decrement):
-            return _Primal(theta, "numerics", it)
-        if 0.5 * decrement <= NEWTON_TOL_REL * max(1.0, abs(terms.value)):
-            return _Primal(theta, "optimal", it)
+            return _Primal(pt.theta, "numerics", it, None, None)
+        if 0.5 * decrement <= NEWTON_TOL_REL * max(1.0, abs(pt.value)):
+            return _Primal(pt.theta, "optimal", it, metric, pt)
         if it == max_iter:
             break
-        dn = _lin(problem.nodes_t, step) if nodes else None
-        de = _lin(problem.events_t, step)
         t = 1.0
         while True:
-            trial = theta + t * step
-            value = _value(
-                problem,
-                trial,
-                None if zn is None or dn is None else zn + t * dn,
-                ze + t * de,
-            )
-            if value <= terms.value - _ARMIJO * t * decrement:
+            trial = _at(problem, pt.theta + t * step)
+            if trial.value <= pt.value - _ARMIJO * t * decrement:
                 break
             t *= _BACKTRACK
             if t < _MIN_STEP:
-                return _Primal(theta, "stalled", it)
-        theta = trial
-    return _Primal(theta, "max_iter", max_iter)
+                return _Primal(pt.theta, "stalled", it, None, None)
+        pt = trial
+    return _Primal(pt.theta, "max_iter", max_iter, None, None)
 
 
 # --------------------------------------------------------------------------
@@ -657,16 +685,17 @@ def _failed(primal: float) -> _Cert:
     return _Cert(primal, -math.inf, math.inf, math.inf, False)
 
 
-def _primal_terms(problem: Problem, theta: Floats, zn: Floats, ze: Floats) -> Floats:
-    """The addends of ``F(θ)``, for one exact fold."""
+def _primal_terms(
+    problem: Problem, theta: Floats, zn: Floats, ze: Floats
+) -> tuple[Floats, Floats]:
+    """The addends of ``F(θ)``, compensator part and event part."""
     match problem.link:
         case Link.IDENTITY:
-            out: Floats = np.concatenate([problem.integrals * theta, -np.log(ze)])
+            return problem.integrals * theta, -np.log(ze)
         case Link.EXP:
-            out = np.concatenate([problem.weights * np.exp(zn), -ze])
+            return problem.weights * np.exp(zn), -ze
         case Link.SOFTPLUS:
-            out = np.concatenate([problem.weights * _softplus(zn), -_log_softplus(ze)])
-    return out
+            return problem.weights * _softplus(zn), -_log_softplus(ze)
 
 
 def _conjugate(link: Link, u: Floats, w: Floats) -> tuple[Floats, bool]:
@@ -678,11 +707,18 @@ def _conjugate(link: Link, u: Floats, w: Floats) -> tuple[Floats, bool]:
             out: Floats = -1.0 - np.log(-u)
             return out, True
         case Link.EXP:  # h = w eᶻ on nodes: h*(u) = u log(u/w) - u, u ≥ 0
-            if u.size and float(np.min(u)) < 0.0:
+            low = float(np.min(u)) if u.size else 1.0
+            if low < 0.0:
                 return u, False
+            if low > 0.0:  # the usual case: no zero to guard, in place
+                out = u / w
+                np.log(out, out=out)
+                np.subtract(out, 1.0, out=out)
+                np.multiply(out, u, out=out)
+                return out, True
             pos = u > 0.0
             safe = np.where(pos, u, 1.0)
-            out = np.where(pos, u * (np.log(safe) - np.log(w) - 1.0), 0.0)
+            out = np.where(pos, u * (np.log(safe / w) - 1.0), 0.0)
             return out, True
         case Link.SOFTPLUS:  # h = w·sp on nodes: w[rho log rho + (1-rho) log(1-rho)]
             rho = u / w
@@ -692,15 +728,68 @@ def _conjugate(link: Link, u: Floats, w: Floats) -> tuple[Floats, bool]:
             return out, True
 
 
+def _residual(
+    parts: list[tuple[Floats, Floats]], const: Floats
+) -> tuple[Floats, Floats, Floats]:
+    """The dual residual ``const + Σ Rᵀu`` over parts, the size of its terms
+    ``|const| + Σ |R|ᵀ|u|``, and a rigorous bound on the residual's rounding.
+
+    Each part's sums are one fused pass (:func:`_row_sums`); parts are then
+    added to ``const`` in order. Every term passes through one rounded
+    product, at most :func:`reductions.pairwise_depth` adds in its part's
+    tree and at most ``len(parts)`` adds after it: ``K`` roundings in all, so
+    the error is at most ``gamma_K · Σ|terms|`` (``gamma_K = K·u/(1 - K·u)``)
+    and the exact size at most ``size / (1 - gamma_K)``. ``2·K·u·size``
+    exceeds ``gamma_K/(1 - gamma_K)·size`` for every K below 10¹⁴, with room
+    for the rounding of the bound itself. (The previous bound,
+    ``(log₂ m + 2)·u·size``, left out the product's rounding and the adds
+    across parts.)
+    """
+    residual = const.copy()
+    size = np.abs(const)
+    depth = 0
+    for rows_t, d in parts:
+        g, _, a = _row_sums(rows_t, d, None, absolute=True)
+        if a is None:
+            raise InnerSolveError("absolute sums were not formed")
+        residual = residual + g
+        size = size + a
+        depth = max(depth, reductions.pairwise_depth(rows_t.shape[1]))
+    rounds = 1 + depth + len(parts)
+    bound = 2.0 * rounds * _UNIT_ROUNDOFF * size
+    return residual, size, bound
+
+
+def _relative(residual: Floats, size: Floats) -> float:
+    return float(np.max(np.abs(residual) / np.maximum(size, 1.0)))
+
+
+def _upward_dot(a: Floats, b: Floats) -> float:
+    """An upper bound on ``aᵀb`` for non-negative a, b (every rounding upward)."""
+    prods = np.nextafter(a * b, math.inf)
+    return math.nextafter(reductions.ExactSum.of(prods).value(), math.inf)
+
+
 def _certify(
     problem: Problem,
     theta: Floats,
+    counts: Floats,
     active: Ints | None = None,
     nu: Floats | None = None,
+    metric: Floats | None = None,
+    point: _Point | None = None,
 ) -> _Cert:
+    """The certificate at θ (module docstring). ``metric`` is the Hessian of
+    the corrected rows, if the caller already has it near θ; any PSD matrix
+    gives a valid certificate, since the residual left is measured. ``point``
+    is :func:`_at` of this very θ, if the caller has it."""
     link = problem.link
-    zn = _lin(problem.nodes_t, theta)
-    ze = _lin(problem.events_t, theta)
+    if point is None or point.theta is not theta:
+        point = None
+    zn = point.zn if point is not None else None
+    if zn is None:
+        zn = _lin(problem.nodes_t, theta)
+    ze = point.ze if point is not None else _lin(problem.events_t, theta)
     if link is Link.IDENTITY:
         if ze.size and float(np.min(ze)) <= 0.0:
             return _failed(math.inf)
@@ -708,30 +797,31 @@ def _certify(
             return _failed(math.inf)
     if link is Link.EXP and zn.size and float(np.max(zn)) > _MAX_EXP:
         return _failed(math.inf)
-    primal_terms = _primal_terms(problem, theta, zn, ze)
-    primal = reductions.total(primal_terms)
+    if link is Link.EXP and point is not None and point.en is not None:
+        comp, ev = point.en, -ze  # the same expressions as _primal_terms
+    else:
+        comp, ev = _primal_terms(problem, theta, zn, ze)
+    primal_sum = reductions.ExactSum.of(comp) + reductions.ExactSum.of(ev)
+    primal = primal_sum.value()
 
-    # Rows whose dual is corrected (rows_t, z, h', h''), and fixed parts.
+    # Rows whose dual is corrected (rows_t, h', h''), and fixed parts.
     fixed: list[tuple[Floats, Floats]] = []
     fixed_conj: list[Floats] = []
     match link:
         case Link.IDENTITY:
-            rows_t, z = problem.events_t, ze
-            u = -1.0 / z
-            curv = 1.0 / (z * z)
+            rows_t = problem.events_t
+            u = -1.0 / ze
+            curv = 1.0 / (ze * ze)
             const = problem.integrals
             if active is not None and nu is not None and active.size:
                 fixed.append((problem.nodes_t[:, active], -nu))  # h* = 0 there
         case Link.EXP:
-            rows_t, z = problem.nodes_t, zn
-            u = problem.weights * np.exp(zn)
-            curv = u.copy()
-            n = problem.events_t.shape[1]
-            const = -_exact_colsums(
-                [(problem.events_t, np.ones(n))], np.zeros(problem.p)
-            )
+            rows_t = problem.nodes_t
+            u = comp  # w·exp(zn), the same array the primal summed
+            curv = u
+            const = -counts
         case Link.SOFTPLUS:
-            rows_t, z = problem.nodes_t, zn
+            rows_t = problem.nodes_t
             s = special.expit(zn)
             u = problem.weights * s
             curv = u * (1.0 - s)
@@ -739,32 +829,34 @@ def _certify(
             ue = _neg_log_softplus_d1(ze)
             fixed.append((problem.events_t, ue))
             fixed_conj.append(ue * ze + _log_softplus(ze))  # e*(e'(z)), exact
-    del z
-    metric = _gram(rows_t, curv)
+    if metric is None:
+        _, metric, _ = _row_sums(rows_t, None, curv)
+        if metric is None:
+            raise InnerSolveError("the dual metric was not formed")
+    residual, size, bound = _residual([(rows_t, u), *fixed], const)
+    rel = _relative(residual, size)
     for _ in range(_DUAL_ROUNDS):
-        residual = _fast_colsums([(rows_t, u), *fixed], const)
-        size = _abs_colsums([(rows_t, u), *fixed], const)
-        rel = float(np.max(np.abs(residual) / np.maximum(size, 1.0)))
         if rel <= _RESIDUAL_FLOOR:
             break
         delta = _psd_solve(metric, residual)
         u = u - curv * _lin(rows_t, delta)
-    residual = _fast_colsums([(rows_t, u), *fixed], const)
-    size = _abs_colsums([(rows_t, u), *fixed], const)
-    rel = float(np.max(np.abs(residual) / np.maximum(size, 1.0)))
+        residual, size, bound = _residual([(rows_t, u), *fixed], const)
+        rel = _relative(residual, size)
     conj, in_domain = _conjugate(link, u, problem.weights)
     if not in_domain:
         return _Cert(primal, -math.inf, math.inf, rel, False)
-    dual_terms = -np.concatenate([conj, *fixed_conj])
-    dual = reductions.total(dual_terms)
+    conj_sum = reductions.ExactSum.of(conj)
+    for c in fixed_conj:
+        conj_sum = conj_sum + reductions.ExactSum.of(c)
+    dual = (-conj_sum).value()
     # F(θ) ≥ D(u) + rᵀθ for every θ (the Lagrangian bound), so
     # F(θ̂) - F* ≤ F(θ̂) - D(u) + |r|ᵀ|θ*|, with θ* ≈ θ̂ at a certified point.
-    # The residual itself is a pairwise fold: pad it by that fold's error bound
-    # so the term stays an upper bound.
-    length = max(rows_t.shape[1] + sum(r.shape[1] for r, _ in fixed), 2)
-    fold_error = (math.log2(length) + 2.0) * _UNIT_ROUNDOFF * size
-    slack = reductions.dot(np.abs(residual) + fold_error, np.abs(theta))
-    gap = reductions.total(np.concatenate([primal_terms, -dual_terms, [slack]]))
+    # r is a pairwise fold: pad it by that fold's error bound, and round the
+    # whole term upward, so it stays an upper bound.
+    pad = np.nextafter(np.abs(residual) + bound, math.inf)
+    slack = _upward_dot(pad, np.abs(theta))
+    gap_sum = primal_sum + conj_sum + reductions.ExactSum.of(np.array([slack]))
+    gap = gap_sum.value()
     floor = -_GAP_FLOOR_REL * max(1.0, abs(primal))
     return _Cert(primal, dual, gap, rel, rel <= RESIDUAL_TOL_REL and gap >= floor)
 
@@ -826,10 +918,18 @@ def solve(
     """Minimise ``F`` at this ψ and certify the result (module docstring)."""
     if problem.nodes_t.shape[0] != problem.events_t.shape[0] or problem.p < 1:
         raise InnerSolveError("node and event designs disagree on the columns")
+    counts = np.zeros(problem.p)
+    if problem.link is Link.EXP:  # Σᵢ xᵢ: the exp link's linear term, exactly
+        n = problem.events_t.shape[1]
+        counts = _exact_colsums([(problem.events_t, np.ones(n))], counts)
+    nodes = problem.nodes_t
+    unit_first = nodes.shape[1] > 0 and bool(np.all(nodes[0] == 1.0))
     if solver == "newton":
-        primal = _newton(problem, max_iter)
+        primal = _newton(problem, max_iter, counts, unit_first)
         if problem.link is not Link.IDENTITY:
-            cert = _certify(problem, primal.theta)
+            cert = _certify(
+                problem, primal.theta, counts, metric=primal.metric, point=primal.point
+            )
             return _solution(
                 primal.theta,
                 "newton",
@@ -844,7 +944,7 @@ def solve(
             low = float(np.min(zn)) if zn.size else 0.0
             if low >= -tol:
                 theta = _shift_feasible(problem, primal.theta)
-                cert = _certify(problem, theta)
+                cert = _certify(problem, theta, counts, metric=primal.metric)
                 return _solution(
                     theta, "newton", "optimal", primal.iterations, cert, gap_tol_rel
                 )
@@ -867,7 +967,7 @@ def solve(
         conic = _clarabel(problem, start, max_iter)
         if conic.theta is None:
             return _failure(problem, label, conic.status, conic.iterations)
-        cert = _certify(problem, conic.theta)
+        cert = _certify(problem, conic.theta, counts)
         return _solution(
             conic.theta, label, conic.status, conic.iterations, cert, gap_tol_rel
         )
@@ -875,7 +975,7 @@ def solve(
     if conic.theta is None:
         return _failure(problem, label, conic.status, offset + conic.iterations)
     theta = _shift_feasible(problem, conic.theta)
-    cert = _certify(problem, theta, active, conic.duals)
+    cert = _certify(problem, theta, counts, active, conic.duals)
     return _solution(
         theta, label, conic.status, offset + conic.iterations, cert, gap_tol_rel
     )

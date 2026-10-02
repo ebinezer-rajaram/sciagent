@@ -433,3 +433,16 @@ separately.
 The planted hint keeps each truth feature's root production with defaulted
 children. On a plain-Excite truth that hint is Hawkes and gives no
 separation; this is a known weakness of the §6.4 wording.
+
+## 2026-10-02 — Inner solve on a fixed blocked pairwise tree; ExactSum for reported numbers (FIT_VERSION 4)
+
+Newton's gradient and Hessian folds use one fixed pairwise tree built from
+elementwise numpy adds (`reductions.pairwise_rows`). That makes them
+deterministic without BLAS.
+
+F, D and the gap use `ExactSum`, which is bit-identical to `math.fsum` and
+three times faster. The certificate's residual bound was corrected to include
+product and cross-part rounding.
+
+Timings: fit (c) 76 s → 26 s; (b) 2.95 s; (a) 0.08 s. The remaining cost is
+per-row `fsum` in the likelihood's `row_totals` and the Lomax blocks.

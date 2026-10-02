@@ -134,7 +134,8 @@ from sciagent.glm.simulate import Coefficients
 PSI_FULL_GRID_MAX: Final = 512
 #: Part of every fit's content address; bump on any change to fitted numbers.
 #: /3: Lomax (PowerK) history sums by a sum of exponentials (features.py).
-FIT_VERSION: Final = "sciagent.glm.fit/3"
+#: /4: inner-solve folds by the blocked pairwise tree; exact sums by ExactSum.
+FIT_VERSION: Final = "sciagent.glm.fit/4"
 #: Default certificate tolerance: ``gap ≤ 1e-8 · max(1, |log L|)``. At the
 #: operating point (|log L| ≈ 10³-10⁴) that is ≤ 10⁻⁴ nats, four orders below
 #: the half-log-N ≈ 4 nats a BIC parameter costs, and well above the rounding

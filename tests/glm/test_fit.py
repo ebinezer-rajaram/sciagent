@@ -20,12 +20,15 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
+from fractions import Fraction
 from functools import cache
 
 import numpy as np
 import pytest
 from scipy import optimize, stats
 
+from sciagent.core.reductions import pairwise_rows
+from sciagent.glm import fit_solve
 from sciagent.glm.data import Dataset, EventLog, Floats
 from sciagent.glm.features import Design, design, evaluate_columns
 from sciagent.glm.fit import (
@@ -41,6 +44,7 @@ from sciagent.glm.fit import (
     to_coefficients,
 )
 from sciagent.glm.fit_bounds import intensity_floor
+from sciagent.glm.fit_solve import Problem, solve
 from sciagent.glm.grammar import (
     ALL,
     Above,
@@ -711,3 +715,117 @@ def test_recovers_power_and_gamma_kernels(
     assert abs(eta - 0.5) < 0.08
     assert abs(mu - 0.5) < 0.1
     assert result.ks_pvalue > 0.01
+
+
+# --------------------------------------------------------------------------
+# The inner solve's folds and certificate (fit_solve)
+# --------------------------------------------------------------------------
+
+
+def _synthetic_problem(link: Link, seed: int, m: int = 3 * 4096 + 77) -> Problem:
+    """An intercept and three bounded columns on m nodes over [0, 400], with
+    events at a random subset of the nodes."""
+    rng = np.random.default_rng(seed)
+    t = np.sort(rng.uniform(0.0, 400.0, m))
+    cols = np.stack(
+        [np.ones(m), np.sin(t / 7.0), np.cos(t / 11.0), np.exp(-((t % 25.0) / 5.0))]
+    )
+    weights = np.full(m, 400.0 / m)
+    events = np.sort(rng.choice(m, 300, replace=False))
+    events_t = np.ascontiguousarray(cols[:, events])
+    integrals = np.array(
+        [math.fsum((cols[j] * weights).tolist()) for j in range(cols.shape[0])]
+    )
+    return Problem(link, np.ascontiguousarray(cols), weights, events_t, integrals)
+
+
+def _sequential_lin(rows_t: Floats, theta: Floats) -> Floats:
+    out: Floats = rows_t[0] * theta[0]
+    for j in range(1, rows_t.shape[0]):
+        out = out + rows_t[j] * theta[j]
+    return out
+
+
+def test_inner_folds_are_the_fixed_pairwise_tree() -> None:
+    """Fused, blocked sums are exactly ``pairwise_rows`` of the products, and
+    the intercept shortcut changes no bit."""
+    prob = _synthetic_problem(Link.EXP, 11)
+    r = prob.nodes_t
+    rng = np.random.default_rng(12)
+    p, m = r.shape
+    d = rng.uniform(0.0, 3.0, size=(m,))
+    h = rng.uniform(0.0, 3.0, size=(m,))
+    theta = rng.standard_normal(size=(p,))
+    assert np.array_equal(fit_solve._lin(r, theta), _sequential_lin(r, theta))
+    g, hess, a = fit_solve._row_sums(r, d, h, absolute=True)
+    assert hess is not None and a is not None
+    assert np.array_equal(g, pairwise_rows(r * d))
+    assert np.array_equal(a, pairwise_rows(np.abs(r * d)))
+    for i in range(r.shape[0]):
+        for j in range(i, r.shape[0]):
+            want = pairwise_rows(((r[i] * h) * r[j])[None, :])[0]
+            assert hess[i, j] == hess[j, i] == want
+    g1, h1, _ = fit_solve._row_sums(r, d, d)
+    g2, h2, _ = fit_solve._row_sums(r, d, d, unit_first=True)
+    assert h1 is not None and h2 is not None
+    assert np.array_equal(g1, g2)
+    assert h1.tobytes() == h2.tobytes()
+
+
+def test_residual_bound_covers_its_rounding() -> None:
+    """The padded residual bounds the exact ``const + Σ Rᵀu`` (products and
+    sums unrounded), on terms built to cancel."""
+    rng = np.random.default_rng(5)
+    m = 2 * 4096 + 3
+    rows = np.stack([np.ones(m), rng.standard_normal(m) * 1e3])
+    u = rng.standard_normal(m) * np.exp(rng.standard_normal(m) * 6.0)
+    extra_rows = rng.standard_normal((2, 50))
+    extra_u = rng.standard_normal(50)
+    const = np.array([-math.fsum(u.tolist()), 7.5])
+    parts = [(rows, u), (extra_rows, extra_u)]
+    residual, size, bound = fit_solve._residual(parts, const)
+    for j in range(2):
+        exact = Fraction(const[j])
+        for rr, uu in parts:
+            exact += sum(
+                (Fraction(x) * Fraction(y) for x, y in zip(rr[j], uu, strict=True)),
+                Fraction(0),
+            )
+        assert abs(Fraction(residual[j]) - exact) <= Fraction(bound[j])
+        assert bound[j] < 1e-12 * size[j]
+
+
+@pytest.mark.parametrize("link", [Link.EXP, Link.SOFTPLUS])
+def test_inner_solution_is_deterministic_and_exactly_reported(link: Link) -> None:
+    """Same θ bit for bit run to run and whatever the arrays' memory layout;
+    the reported F is the exactly rounded sum of its terms at θ; and the
+    certificate Newton's reused point and metric give is the one computed
+    afresh."""
+    prob = _synthetic_problem(link, 3)
+    a = solve(prob, solver="newton", max_iter=100, gap_tol_rel=1e-8)
+    b = solve(prob, solver="newton", max_iter=100, gap_tol_rel=1e-8)
+    fortran = Problem(
+        link,
+        np.asfortranarray(prob.nodes_t),
+        prob.weights.copy(),
+        np.asfortranarray(prob.events_t),
+        prob.integrals.copy(),
+    )
+    c = solve(fortran, solver="newton", max_iter=100, gap_tol_rel=1e-8)
+    assert a.certified and a.status == "optimal"
+    assert a == b == c
+    theta = np.array(a.theta)
+    zn = _sequential_lin(prob.nodes_t, theta)
+    ze = _sequential_lin(prob.events_t, theta)
+    if link is Link.EXP:
+        terms = [*(prob.weights * np.exp(zn)).tolist(), *(-ze).tolist()]
+    else:
+        sp = np.logaddexp(0.0, zn)
+        terms = [*(prob.weights * sp).tolist(), *(-np.log(np.logaddexp(0.0, ze)))]
+    assert a.primal == math.fsum(terms)
+    counts = np.zeros(prob.p)
+    if link is Link.EXP:
+        counts = np.array([math.fsum(row.tolist()) for row in prob.events_t])
+    fresh = fit_solve._certify(prob, theta, counts)
+    assert (fresh.primal, fresh.dual, fresh.gap) == (a.primal, a.dual, a.gap)
+    assert 0.0 <= a.gap_rel <= 1e-12

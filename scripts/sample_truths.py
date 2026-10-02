@@ -18,6 +18,7 @@ its manifest (a P4 preregistration step, SPEC §6.1).
 from __future__ import annotations
 
 import argparse
+import io
 import os
 import statistics
 import sys
@@ -85,6 +86,9 @@ def summarise(result: SplitResult) -> str:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    # The summary prints ψ; a Windows console defaults to cp1252.
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--split", required=True, choices=("dev", "test"))
     parser.add_argument("--n", type=int, required=True)

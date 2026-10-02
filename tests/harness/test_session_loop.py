@@ -9,6 +9,7 @@ enforcement, outcome classification -- is the code a live run executes.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import threading
 from collections.abc import Mapping
 from typing import Any
@@ -246,3 +247,24 @@ def test_the_undated_pricing_id_of_the_pinned_snapshot_is_accepted() -> None:
     other = ScriptedDriver(SCRIPT, canonical_model="claude-sonnet-4-5")
     with pytest.raises(ServedModelError):
         run_investigation(_config(), toy_layer(11), driver=other)
+
+
+def test_a_family_canonical_id_is_accepted_for_the_pinned_model() -> None:
+    """Measured live: ``claude-sonnet-5-5`` reports ``canonicalModel``
+    ``claude-sonnet-5``. Every assistant turn still carries the pinned id."""
+    config = dataclasses.replace(_config(), model="claude-sonnet-5-5")
+    driver = ScriptedDriver(
+        SCRIPT, served_model="claude-sonnet-5-5", canonical_model="claude-sonnet-5"
+    )
+    result = run_investigation(config, toy_layer(11), driver=driver)
+    assert result.served_models == ("claude-sonnet-5",)
+    wrong_family = ScriptedDriver(
+        SCRIPT, served_model="claude-sonnet-5-5", canonical_model="claude-opus-5"
+    )
+    with pytest.raises(ServedModelError):
+        run_investigation(config, toy_layer(11), driver=wrong_family)
+    wrong_turns = ScriptedDriver(
+        SCRIPT, served_model="claude-sonnet-5", canonical_model="claude-sonnet-5"
+    )
+    with pytest.raises(ServedModelError):
+        run_investigation(config, toy_layer(11), driver=wrong_turns)

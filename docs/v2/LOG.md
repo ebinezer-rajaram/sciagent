@@ -340,3 +340,29 @@ distance. B-np resamples training marks for simulation.
 
 Positive control (SPEC §6.4) seen early on the S11 truth: ORACLE beats B-lib
 by 0.040–0.046 nats/event on four seeds, with B-lib always picking Hawkes.
+
+## 2026-10-02 — Tool layer and investigation runner; served-model check accepts family ids
+
+- **Charging.** Fits are charged for distinct canonical fits only, the same
+  rule as the search baselines, so C1 compares like with like.
+- **The fit configuration is pinned framework-side** (`FIT_CONFIG`) and its
+  key is recorded, so an agent cannot loosen certification (audit N4).
+- **Anonymised numbers.**
+  - Diagnostics and kernels run on the agent-view (rescaled) data; they are
+    covariant.
+  - Fits run natively, and θ, ψ, log L and BIC are converted by exact time
+    powers. Softplus θ is not covariant, so it is shown unconverted, which is
+    a known limit.
+  - "Named" differs from "anonymised" only in names and time units. Neither
+    condition tells a domain story.
+- **Failures.** A stopped simulation still consumes the experiment. A sandbox
+  infrastructure fault, or python code probing out of bounds, voids the run.
+
+First live AG-o run (Sonnet, S11 truth, named, E=3, F=8): it submitted the true
+structure `Excite(ExpK, Mark(size), all)` in 16 turns and 57 s. It used no
+experiments or python. It aborted on the served-model check, because Sonnet
+5.5 reports `canonicalModel` `claude-sonnet-5` and Claude Code adds an
+auxiliary Haiku call. The check now accepts a served canonical id that names
+the pinned model's family; every assistant turn must still carry the exact
+pinned id. Replay of that run diverged at the first fit, because the fitter
+changed afterwards without a `FIT_VERSION` bump, which replay correctly caught.

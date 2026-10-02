@@ -558,8 +558,18 @@ class _Session:
                 f"part of this session was served by {foreign!r}, not first-party",
                 record=self.record,
             )
+        # The per-message check above is the strong one: every assistant turn
+        # carried exactly the pinned id. Here it is enough that some served
+        # canonical id names the pinned model's family. Measured live:
+        # ``claude-sonnet-5-5`` reports ``canonicalModel`` ``claude-sonnet-5``,
+        # and Claude Code adds a small auxiliary Haiku call that produces no
+        # assistant turn; both are recorded in ``served_models``.
         served = _served_models(self.result)
-        if pinned not in served and _undated(pinned) not in served:
+        undated = _undated(pinned)
+        if not any(
+            canonical in (pinned, undated) or undated.startswith(canonical + "-")
+            for canonical in served
+        ):
             raise ServedModelError(
                 f"the session was served by {served!r}, not by {pinned!r}",
                 record=self.record,

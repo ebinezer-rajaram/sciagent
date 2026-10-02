@@ -120,8 +120,14 @@ class Outcome(Enum):
 
 
 def recovers(row: ScoreRow) -> bool:
-    """Exact canonical recovery, or a gap within the recovery tolerance."""
-    return row.exact or row.gap >= -RECOVERY_TOLERANCE
+    """Exact canonical recovery (SPEC §7.1 "recovers").
+
+    A held-out-gap tolerance was tried first (gap ≥ -RECOVERY_TOLERANCE) and
+    dropped: B-rand reached it after 2-5 fits of *wrong* structures, because
+    0.005 nats/event is within noise at ~2,000 held-out events, so the
+    too-easy branch would fire on noise. The gap is reported separately.
+    """
+    return row.exact
 
 
 def closes(row: ScoreRow) -> bool:

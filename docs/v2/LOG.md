@@ -412,3 +412,24 @@ Speed-up:
 
 Fit (c), 9 datasets with 17.7k events: 256 s → 76 s. The solver's `fsum`
 folds now dominate.
+
+## 2026-10-02 — Search baselines; "recovers" means exact canonical recovery
+
+B-sym is a (μ+λ) tree genetic program. It uses tournament selection, BIC
+fitness, AST mutations and feature-set crossover, and is seeded with the
+library. Its hyperparameters are untuned and must be tuned on dev and frozen
+before test (SPEC §9).
+
+Budget accounting is the same as the agent's: distinct canonical structures,
+and a failed fit still costs one. On the S11 truth, B-sym recovered the exact
+structure in 6–14 fits; B-lib picked Hawkes.
+
+Measured: B-rand reaches a held-out gap under 0.005 nats/event after 2–5 fits
+of wrong structures, because that is within noise at 2,000 held-out events. So
+SPEC §7.1 "recovers" is exact canonical recovery only, and the reach criterion
+for the planted-hint control is exact recovery too. The gap is reported
+separately.
+
+The planted hint keeps each truth feature's root production with defaulted
+children. On a plain-Excite truth that hint is Hawkes and gives no
+separation; this is a known weakness of the §6.4 wording.

@@ -19,7 +19,6 @@ from sciagent.scoring.gonogo import (
     CLOSE_FRACTION,
     ORACLE,
     PLANTED,
-    RECOVERY_TOLERANCE,
     Outcome,
     ScoreRow,
     bsym_approaches_oracle,
@@ -102,7 +101,8 @@ GOOD = {B_RAND: -0.04, B_SPARSE: -0.03, B_SYM_10F: -0.002, PLANTED: -0.004}
 
 def test_recovers_and_closes_definitions() -> None:
     assert recovers(_row("t", 0, B_RAND, -0.2, -0.3, exact=True))
-    assert recovers(_row("t", 0, B_RAND, -RECOVERY_TOLERANCE, -0.3))
+    # A near-zero gap without the exact structure is not recovery.
+    assert not recovers(_row("t", 0, B_RAND, 0.0, -0.3))
     assert not recovers(_row("t", 0, B_RAND, -0.0051, -0.3))
     assert closes(_row("t", 0, B_RAND, -0.1 * (1 - CLOSE_FRACTION), -0.1))
     assert not closes(_row("t", 0, B_RAND, -0.02, -0.1))
@@ -128,10 +128,16 @@ def test_too_easy_by_b_lib_recovery() -> None:
 
 
 def test_too_easy_by_b_rand_recovery() -> None:
-    gaps = {**GOOD, B_RAND: -0.002, PLANTED: 0.0}
-    v = go_no_go(_table(gaps), rng=np.random.default_rng(0))
+    v = go_no_go(_table(GOOD, exact=frozenset({B_RAND})), rng=np.random.default_rng(0))
     assert v.outcome is Outcome.TOO_EASY
     assert v.recovery_share[B_RAND] == 1.0
+
+
+def test_a_near_zero_gap_alone_is_not_too_easy() -> None:
+    """Wrong structures reach small gaps on noise; only exact recovery counts."""
+    gaps = {**GOOD, B_RAND: -0.002, PLANTED: 0.0}
+    v = go_no_go(_table(gaps), rng=np.random.default_rng(0))
+    assert v.recovery_share[B_RAND] == 0.0
 
 
 def test_too_easy_by_b_sparse_on_out_of_dictionary_truths() -> None:

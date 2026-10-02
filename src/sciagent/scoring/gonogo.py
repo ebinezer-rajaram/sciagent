@@ -8,17 +8,10 @@ B-sym run is its own system, :data:`B_SYM_10F`.
 **Definitions** (preregistered here; LOG.md records why).
 
 - A system **recovers** a truth on a seed (:func:`recovers`) when its
-  structure is exactly the truth's (canonical hash) *or* its held-out gap is
-  within :data:`RECOVERY_TOLERANCE` = 0.005 nats/event of the ORACLE's
-  (``gap ≥ -0.005``). The second clause credits a predictively equivalent
-  answer, which is what "recovers" must mean for out-of-grammar library
-  members and interventionally equivalent structures. 0.005 is above the
-  ORACLE's own finite-sample deficit: a correctly specified fit with d
-  parameters loses about ``d / (2n)`` nats per event held out against the
-  truth (the AIC argument), ≤ 0.0025 for d ≤ 10 at n = 2,000, so twice that
-  separates "as good as the true structure" from noise. It is also an order
-  of magnitude below the one library-vs-ORACLE gap measured so far (S11:
-  0.040-0.046, LOG 2026-10-02).
+  structure is exactly the truth's (canonical hash). A gap clause
+  (``gap ≥ -RECOVERY_TOLERANCE``) was preregistered first and withdrawn on
+  measurement: wrong structures reach it on noise (LOG.md 2026-10-02).
+  :data:`RECOVERY_TOLERANCE` is kept for reporting only.
 - A system **closes the gap** (:func:`closes`) when its gap closed,
   ``(LL_sub - LL_lib) / (LL_oracle - LL_lib)``, is at least
   :data:`CLOSE_FRACTION` = 0.9. A relative criterion, so a truth far from the

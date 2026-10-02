@@ -422,6 +422,28 @@ def _order_dependent_reductions(tree: ast.AST) -> list[tuple[int, str]]:
 #: disagrees with itself.
 REDUCTION_ROOTS = (SOURCE, ROOT / "scripts")
 
+#: Modules allowed to fold in a CPU-chosen order, each with its reason. Kept
+#: to a minimum and reviewed by a human (docs/v2/LOG.md, 2026-10-02).
+#: B-sparse's lasso path computes ~1M group gradients per KKT check from one
+#: BLAS cross product; a fixed-order fold measured ~8 h per path against
+#: ~1 min. The path only *steers a search*: every reported or stored number
+#: (log-likelihoods, θ, scores) comes from the certified, fixed-order
+#: ``glm.fit`` of the selected structure. Run-to-run byte identity on the
+#: reference platform with BLAS pinned to one thread is tested in
+#: ``tests/systems_v2/test_sparse.py``; across CPUs the *selected structure*
+#: can flip at a near-tie, which is why this list exists rather than silence.
+REDUCTION_EXEMPT: dict[str, str] = {
+    "src/sciagent/systems/v2/sparse.py": "B-sparse path (search heuristic)",
+    "src/sciagent/systems/v2/sparse_dictionary.py": "B-sparse path (search heuristic)",
+    "src/sciagent/systems/v2/sparse_solver.py": "B-sparse path (search heuristic)",
+}
+
+
+def test_reduction_exemptions_name_existing_files() -> None:
+    """An exemption for a deleted or renamed module must not linger."""
+    missing = [rel for rel in REDUCTION_EXEMPT if not (ROOT / rel).is_file()]
+    assert not missing, f"stale REDUCTION_EXEMPT entries: {missing}"
+
 
 @pytest.mark.parametrize(
     "path",
@@ -451,6 +473,8 @@ def test_metric_values_use_deterministic_reductions(path: Path) -> None:
     ``np.argmax`` pick from a multiset rather than accumulating over it, so no
     kernel can reorder them into a different answer.
     """
+    if path.relative_to(ROOT).as_posix() in REDUCTION_EXEMPT:
+        return
     offenders = _order_dependent_reductions(_parse(path))
     assert not offenders, (
         f"{path}: {[f'{name} at line {line}' for line, name in offenders]} fold "

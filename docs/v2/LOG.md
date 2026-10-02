@@ -480,3 +480,38 @@ about 6% acceptance; dispersion and simulability are the main rejections. Of
 the 20 truths, 11 are softplus: acceptance skews the realised link mix away
 from the prior. It was regenerated after the glm freeze (FIT_VERSION 4)
 because records are not byte-stable across numeric changes.
+
+## 2026-10-02 — B-sparse; a scoped exemption from the fixed-order-fold guard (REVIEW)
+
+B-sparse runs a softplus group lasso over the full depth-≤2 dictionary
+(995,841 groups for pointproc). All group gradients come from one cross
+product, so the KKT check over the whole dictionary is exact. The solver is
+proximal Newton with an active-set Newton inner loop. The path is selected by
+scoring the relaxed, certified refit of each path point on a 75/25 time split,
+and the submitted link is the best of three by validation. The result is
+capped to 4 features by group norm, and a flag records when the cap applied.
+
+Measured: 155 s per run and 1.7 GB peak. It recovers the S11 truth, a depth-2
+gate truth (including ψ), and the null on Poisson data. It does not recover
+`Product(Excite, Periodic)`: it selects the one-column alias
+`Gate(Excite, PhaseWindow)`, which pays less group penalty and which
+validation cannot distinguish. So "B-sparse succeeds wherever the truth is in
+the dictionary" (SPEC §4.1) holds predictively but not structurally for
+product truths with periodic factors. Read §7.1's B-sparse criterion with
+that in mind.
+
+**The decision for review.** The AST guard
+`test_metric_values_use_deterministic_reductions` gets a three-module,
+reasoned exemption (`REDUCTION_EXEMPT` in tests/test_invariants.py). A
+fixed-order fold measured about 8 h per path, against about 1 min with BLAS.
+
+Why this is acceptable:
+- The BLAS path only steers a search.
+- Every reported number comes from the certified fixed-order `glm.fit`.
+- Run-to-run byte identity on the reference platform, with BLAS pinned to one
+  thread, is tested.
+
+The residual risk is cross-CPU: the selected structure could flip at a
+near-tie. If you'd rather keep the guard absolute, the alternatives are a
+fixed-order cross product that makes B-sparse a ~30 min/run baseline, or
+coarsening the dictionary's ψ grid.

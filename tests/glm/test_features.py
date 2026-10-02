@@ -24,6 +24,9 @@ from sciagent.core.errors import OffGridParameterError, SciAgentError
 from sciagent.glm.data import Dataset, EventLog
 from sciagent.glm.features import (
     DEFAULT_QUADRATURE,
+    LOMAX_NEAR_U,
+    LOMAX_REL_TOL,
+    BlockCache,
     FeatureDataError,
     FeatureNumericsError,
     PsiAssignmentError,
@@ -34,6 +37,8 @@ from sciagent.glm.features import (
     feature_block,
     kernel_cdf,
     kernel_pdf,
+    lomax_exponential_sum,
+    lomax_v_max,
     quadrature_rule,
 )
 from sciagent.glm.grammar import (
@@ -794,19 +799,211 @@ def test_observational_dataset_equals_the_bare_log() -> None:
 
 @pytest.mark.parametrize("kind", [KernelKind.POWER, KernelKind.GAMMA])
 def test_single_event_column_is_exactly_the_kernel(kind: KernelKind) -> None:
-    """The fast paths reproduce ``kernel_pdf`` / ``kernel_cdf`` bit for bit."""
+    """The exact paths reproduce ``kernel_pdf`` / ``kernel_cdf`` bit for bit.
+
+    The default Lomax path is bitwise only in its near field (lags below
+    ``LOMAX_NEAR_U · c``, summed directly); beyond it, it is the sum of
+    exponentials, within ``LOMAX_REL_TOL``.
+    """
     log = EventLog.create([1.0], {}, 50.0)
     feature = Excite(kind, One(), ALL)
     psi = {PsiSlot((0,), name): grid(name)[0] for name in KERNEL_PSI[kind]}
     params = {s.name: v for s, v in psi.items()}
     t = np.array([0.5, 1.0, 1.001, 1.3, 4.0, 49.0])
-    got = evaluate_columns(Structure((feature,)), (psi,), log, (), t)[:, 1]
     want = kernel_pdf(kind, params, t - 1.0)
+    structure = Structure((feature,))
+    exact = evaluate_columns(structure, (psi,), log, (), t, exact=True)[:, 1]
+    fast = evaluate_columns(structure, (psi,), log, (), t)[:, 1]
+    cdf_end = float(kernel_cdf(kind, params, np.array([49.0]))[0])
     if kind is KernelKind.POWER:
-        assert got.tobytes() == want.tobytes()
+        assert exact.tobytes() == want.tobytes()
+        near = (t - 1.0) < LOMAX_NEAR_U * params["power_c"]
+        assert fast[near].tobytes() == want[near].tobytes()
+        np.testing.assert_allclose(fast, want, rtol=LOMAX_REL_TOL, atol=0.0)
+        d = design(structure, (psi,), log, (), exact=True)
+        assert d.integrals[1] == pytest.approx(cdf_end, rel=1e-14)
     else:  # the moment recursion is algebraically, not bitwise, equal
-        np.testing.assert_allclose(got, want, rtol=1e-13, atol=1e-300)
-    d = design(Structure((feature,)), (psi,), log, ())
-    assert d.integrals[1] == pytest.approx(
-        float(kernel_cdf(kind, params, np.array([49.0]))[0]), rel=1e-14
+        np.testing.assert_allclose(fast, want, rtol=1e-13, atol=1e-300)
+        assert exact.tobytes() == fast.tobytes()
+    d = design(structure, (psi,), log, ())
+    assert d.integrals[1] == pytest.approx(cdf_end, rel=1e-12)
+
+
+# --------------------------------------------------------------------------
+# Lomax by a sum of exponentials (instrument: error bound, then agreement)
+# --------------------------------------------------------------------------
+
+#: Every exponent the Lomax sums are built for: ``p`` (density) and ``p - 1``
+#: (the CDF's tail ``(1 + u)^{-(p-1)}``), over the whole grid.
+LOMAX_QS: list[float] = sorted({*grid("power_p"), *(p - 1.0 for p in grid("power_p"))})
+
+
+@pytest.mark.parametrize("q", LOMAX_QS)
+def test_lomax_exponential_sum_meets_its_bound_on_a_dense_grid(q: float) -> None:
+    """``|Σₖ aₖ e^{-sₖu} (1+u)^q - 1| ≤ LOMAX_REL_TOL`` on ``[NEAR_U, v_max - 1]``.
+
+    For every grid exponent and every range bucket ``v_max = 2^6 … 2^26``
+    (lags up to 2²⁶·c, beyond any campaign horizon), on a log-spaced grid of
+    400 points per unit of ``log v``. The error of a trapezoid rule in
+    ``log s`` oscillates with period ≈ the step (0.28) in ``log v``, so this
+    samples every oscillation more than 100 times. The sum is folded in the
+    order the implementation folds it; every term is positive.
+    """
+    assert lomax_v_max(0.05, 1.0) == 2.0**6
+    assert lomax_v_max(1.0, 1000.0) == 2.0**10
+    worst = 0.0
+    for exponent in range(6, 27):
+        v_max = 2.0**exponent
+        s, a = lomax_exponential_sum(q, v_max)
+        assert np.all(s > 0.0) and np.all(a > 0.0)
+        assert not s.flags.writeable and not a.flags.writeable
+        lo, hi = math.log1p(LOMAX_NEAR_U), math.log(v_max)
+        u = np.expm1(np.linspace(lo, hi, int(400 * (hi - lo)) + 2))
+        approx = np.zeros(u.size)
+        for sk, ak in zip(s.tolist(), a.tolist(), strict=True):
+            approx += ak * np.exp(-sk * u)
+        rel = np.abs(approx * np.exp(q * np.log1p(u)) - 1.0)
+        worst = max(worst, float(np.max(rel)))
+    assert worst <= LOMAX_REL_TOL, worst
+
+
+def _clustered_log(seed: int, n: int) -> EventLog:
+    """Bursts of near-coincident events between long gaps (near field busy)."""
+    rng = np.random.default_rng(seed)
+    gaps = rng.exponential(1.0, size=n)
+    gaps[rng.random(n) < 0.4] *= 1e-3
+    times = np.cumsum(gaps)
+    return EventLog.create(
+        times,
+        {
+            "size": rng.lognormal(0.0, 0.5, size=n),
+            "sign": rng.choice([-1.0, 1.0], size=n),
+            "mag": 3.0 + rng.normal(0.0, 1.0, size=n),
+        },
+        float(times[-1]) + 3.0,
     )
+
+
+def _max_rel(fast: np.ndarray, exact: np.ndarray, scale: np.ndarray) -> float:
+    return float(np.max(np.abs(fast - exact) / scale))
+
+
+@pytest.mark.parametrize("c", grid("power_c"))
+@pytest.mark.parametrize("p", grid("power_p"))
+def test_fast_lomax_matches_the_exact_direct_sums(c: float, p: float) -> None:
+    """Every grid ψ: columns and integrals within 1e-9 of the direct sums.
+
+    Non-negative marks: relative error of every value. A signed mark
+    (``Mark(sign)``): error relative to ``Σ|wⱼ| K``, which is the ``One``
+    column. A gated feature exercises the CDF at every event.
+    """
+    log = _clustered_log(int(100 * c + 10 * p), 300)
+    kernel = {PsiSlot((0,), "power_c"): c, PsiSlot((0,), "power_p"): p}
+    features: tuple[Feature, ...] = (
+        Excite(KernelKind.POWER, Mark("size"), ALL),
+        Excite(KernelKind.POWER, One(), ALL),
+        Excite(KernelKind.POWER, Mark("sign"), ALL),
+        Gate(Excite(KernelKind.POWER, One(), ALL), LastMarkAbove("mag")),
+    )
+    gate_psi = {PsiSlot((0, 0), s.name): v for s, v in kernel.items()}
+    gate_psi[PsiSlot((1,), "above_z")] = 0.0
+    psi = (kernel, kernel, kernel, gate_psi)
+    structure = Structure(features)
+    fast = design(structure, psi, log, CHANNELS)
+    exact = design(structure, psi, log, CHANNELS, exact=True)
+    assert fast.nodes.tobytes() == exact.nodes.tobytes()
+    for name in ("at_events", "at_nodes"):
+        f, e = getattr(fast, name), getattr(exact, name)
+        positive = e[:, [1, 2]]
+        tiny = np.finfo(np.float64).tiny
+        rel = _max_rel(f[:, [1, 2]], positive, np.maximum(positive, tiny))
+        assert rel <= 1e-9, (name, rel)
+        signed = _max_rel(f[:, 3], e[:, 3], np.maximum(e[:, 2], tiny))
+        assert signed <= 1e-9, (name, signed)
+        on = e[:, 4] > 0.0
+        assert _max_rel(f[on, 4], e[on, 4], e[on, 4]) <= 1e-9, name
+        assert np.all(f[~on, 4] == 0.0)
+    rel_int = np.abs(fast.integrals - exact.integrals) / np.abs(exact.integrals)
+    assert float(np.max(rel_int)) <= 1e-9, rel_int
+
+
+def test_fast_lomax_is_byte_identical_across_calls_and_batches() -> None:
+    """A value depends on (data, ψ, t) only, never on the other query times."""
+    log = _clustered_log(5, 200)
+    feature = Excite(KernelKind.POWER, Mark("size"), ALL)
+    psi = psi_for(feature, SHARP)
+    structure = Structure((feature,))
+    t = np.linspace(0.0, log.horizon, 997)
+    whole = evaluate_columns(structure, (psi,), log, CHANNELS, t)
+    again = evaluate_columns(structure, (psi,), log, CHANNELS, t)
+    halves = np.concatenate(
+        [
+            evaluate_columns(structure, (psi,), log, CHANNELS, t[::-1][:400]),
+            evaluate_columns(structure, (psi,), log, CHANNELS, t[::-1][400:]),
+        ]
+    )[::-1]
+    assert whole.tobytes() == again.tobytes()
+    assert whole.tobytes() == halves.tobytes()
+
+
+# --------------------------------------------------------------------------
+# Sub-tree caching: a profile costs Σ over leaves, not Π
+# --------------------------------------------------------------------------
+
+
+def _grid_psi(feature: Feature) -> list[dict[PsiSlot, float]]:
+    combos: list[dict[PsiSlot, float]] = [{}]
+    for slot in psi_slots(feature):
+        combos = [{**c, slot: v} for c in combos for v in grid(slot.name)]
+    return combos
+
+
+def test_block_cache_computes_each_leaf_once_and_matches_feature_block() -> None:
+    log = small_log(seed=3, n=30, horizon=25.0)
+    power = Excite(KernelKind.POWER, One(), ALL)
+    features: tuple[Feature, ...] = (
+        Product(power, Periodic()),
+        Gate(power, PhaseWindow()),
+    )
+    structure = Structure(features)
+    nodes, weights = quadrature_rule(structure, log)
+    cache = BlockCache(log, CHANNELS, nodes, weights)
+    product_points = _grid_psi(features[0])
+    assert len(product_points) == 12 * 5
+    for psi in product_points:
+        block = cache.block(features[0], psi)
+        want = feature_block(features[0], psi, log, CHANNELS, nodes, weights)
+        for name in ("at_events", "at_nodes", "integrals"):
+            assert getattr(block, name).tobytes() == getattr(want, name).tobytes()
+        assert block.exact is want.exact is False
+    # 12 kernel ψ + 5 periods, not 60 products.
+    assert cache.n_leaf_evaluations == 12 + 5
+    gate_points = _grid_psi(features[1])[::7]
+    for psi in gate_points:
+        block = cache.block(features[1], psi)
+        want = feature_block(features[1], psi, log, CHANNELS, nodes, weights)
+        for name in ("at_events", "at_nodes", "integrals"):
+            assert getattr(block, name).tobytes() == getattr(want, name).tobytes()
+    # The gated kernel is the same leaf subtree at the same ψ: no new leaves.
+    assert cache.n_leaf_evaluations == 12 + 5
+
+
+def test_block_cache_rejects_bad_psi_and_reports_numerics() -> None:
+    log = EventLog.create(
+        [1.0, 2.0], {"size": [1.0, 1.0], "sign": [1.0, 1.0], "mag": [3.0, 400.0]}, 5.0
+    )
+    feature = Product(Excite(KernelKind.EXP, ExpOf("mag"), ALL), Trend())
+    structure = Structure((feature,))
+    nodes, weights = quadrature_rule(structure, log)
+    cache = BlockCache(log, CHANNELS, nodes, weights)
+    psi = psi_for(feature)
+    psi[PsiSlot((0, 1), "exp_coef")] = 2.5
+    with pytest.raises(FeatureNumericsError):
+        cache.block(feature, psi)
+    with pytest.raises(FeatureNumericsError):  # remembered, not recomputed
+        cache.block(feature, psi)
+    assert cache.n_leaf_evaluations == 2
+    bad = dict(psi)
+    bad[PsiSlot((0, 0), "exp_rate")] = 1.7
+    with pytest.raises(OffGridParameterError):
+        cache.block(feature, bad)

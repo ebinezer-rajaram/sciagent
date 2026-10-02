@@ -20,10 +20,30 @@ integrated with the rule; :attr:`Design.integral_exact` says which is which.
 
 Sums over history: the exponential kernel by the O(n) recursion; the gamma
 kernel, for integer shapes (every grid value), by an O(n) recursion on the
-moments ``Σ wⱼ (t - tⱼ)ˡ e^{-r(t - tⱼ)}``; the Lomax kernel (and gamma off the
-integer shapes) by direct O(n·m) sums, folded event by event with O(m)
-memory. Every fold runs in a fixed order, so output is byte-identical for
-identical input.
+moments ``Σ wⱼ (t - tⱼ)ˡ e^{-r(t - tⱼ)}``; gamma off the integer shapes by
+direct O(n·m) sums, folded event by event with O(m) memory.
+
+The Lomax kernel is ``(1 + u)^{-q}`` in ``u = lag / c`` (q = p for the density,
+p - 1 for the CDF's tail). Events within ``LOMAX_NEAR_U · c`` of the query
+(the near field) are summed directly, exactly as ``kernel_pdf``/``kernel_cdf``.
+Older events (``u ≥ LOMAX_NEAR_U``) go through a sum of K ≈ 40-95
+exponentials, ``(1 + u)^{-q} ≈ Σₖ aₖ e^{-sₖu}``, each by the O(n) recursion:
+O(K·(n + m)) instead of O(n·m). The sum is a trapezoid rule for the Laplace
+representation ``(1+u)^{-q} = Γ(q)⁻¹ ∫ s^{q-1} e^{-s(1+u)} ds`` in a variable
+that decays doubly exponentially at both ends (:func:`lomax_exponential_sum`).
+Every weight is positive, so with non-negative marks the relative error of a
+far-field sum is at most the kernel's, ``LOMAX_REL_TOL`` = 1e-11 on
+``[LOMAX_NEAR_U, v_max - 1]`` (verified on a dense grid for every grid
+exponent and range bucket, in the tests), plus the recursion's rounding;
+with signed marks the bound is relative to ``Σ |wⱼ| K``. The CDF is
+``Σ wⱼ - Σ wⱼ (1+u)^{-(p-1)}`` over the far field, and since ``u ≥ 1`` there
+its relative error is at most ``LOMAX_REL_TOL · 2^{-0.2} / (1 - 2^{-0.2})``
+< 7e-11. ``exact=True`` (on every public entry point) uses the direct O(n·m)
+sums instead, for tests and audits.
+
+Every fold runs in a fixed order, and a value at time t depends on the data,
+ψ and t alone (never on the other query times), so output is byte-identical
+for identical input.
 
 The quadrature rule is built so that the integrand is smooth on every panel.
 Panels break at every event (where history sums jump and ``LastMarkAbove``
@@ -52,6 +72,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from functools import cache
 from itertools import accumulate
 from typing import Final
 
@@ -322,6 +343,7 @@ def check_psi(
 class _Ctx:
     log: EventLog
     channels: Mapping[str, ChannelSpec]
+    exact: bool = False
 
     def raw(self, channel: str) -> Floats:
         marks = self.log.marks.get(channel)
@@ -347,10 +369,11 @@ def _prepare(
     log: EventLog,
     channels: tuple[ChannelSpec, ...],
     allow_off_grid: bool,
+    exact: bool = False,
 ) -> tuple[_Ctx, tuple[dict[PsiSlot, float], ...]]:
     validate(structure, channels)
     clean = check_psi(structure, psi, allow_off_grid=allow_off_grid)
-    return _Ctx(log, {c.name: c for c in channels}), clean
+    return _Ctx(log, {c.name: c for c in channels}, exact), clean
 
 
 # --------------------------------------------------------------------------
@@ -568,6 +591,155 @@ def _lomax_into(c: float, p: float, *, cdf: bool) -> Callable[[Floats], None]:
     return cdf_ if cdf else pdf
 
 
+#: Lags below ``LOMAX_NEAR_U · c`` are summed directly (the near field).
+LOMAX_NEAR_U: Final = 1.0
+#: Relative error of :func:`lomax_exponential_sum` on its range (verified).
+LOMAX_REL_TOL: Final = 1e-11
+#: Construction of the sum (see :func:`lomax_exponential_sum`): trapezoid
+#: step, bend width, how far below ``log(1/v_max)`` the bend starts, and the
+#: decay (in e-folds) at which each tail is cut. Chosen by a scan so that the
+#: worst grid case is 5.4e-12 (q = 3), half of ``LOMAX_REL_TOL``.
+_ES_STEP: Final = 0.28
+_ES_BEND: Final = 1.0
+_ES_MARGIN: Final = 0.5
+_ES_CUT: Final = 32.0
+#: Smallest range bucket: ``v_max ≥ 2^6``.
+_ES_MIN_EXPONENT: Final = 6
+
+
+def lomax_v_max(c: float, span: float) -> float:
+    """The range bucket for lags up to ``span``: the least power of two
+    ``≥ max(2⁶, 1 + span / c)``. One sum serves every horizon in a bucket."""
+    mantissa, exponent = math.frexp(1.0 + span / c)
+    if mantissa == 0.5:
+        exponent -= 1
+    return math.ldexp(1.0, max(_ES_MIN_EXPONENT, exponent))
+
+
+@cache
+def lomax_exponential_sum(q: float, v_max: float) -> tuple[Floats, Floats]:
+    """Rates ``s`` and weights ``a`` (all positive, read-only) with
+    ``(1 + u)^{-q} ≈ Σₖ aₖ e^{-sₖ u}`` for ``u ∈ [LOMAX_NEAR_U, v_max - 1]``.
+
+    With ``v = 1 + u``, ``v^{-q} = Γ(q)⁻¹ ∫ e^{qy - v eʸ} dy`` (``s = eʸ``).
+    Substitute ``y = x - b e^{-(x - x₀)/b}``, ``x₀ = -log v_max - margin``:
+    for ``x ≫ x₀`` it is the identity, so the integrand's peak at
+    ``eʸ ≈ q/v`` is resolved alike for every v in range, and as ``x → -∞`` the
+    integrand decays doubly exponentially (the plain ``eʸ`` substitution
+    decays only like ``e^{qy}``, which for q = 0.2 would need ~500 terms). The
+    trapezoid rule in x with step h converges geometrically for such
+    integrands; both tails are cut ``_ES_CUT`` e-folds out. Then
+    ``aₖ = h y'(xₖ) e^{q yₖ - sₖ} / Γ(q)`` with ``sₖ = e^{yₖ}``.
+
+    The bound ``LOMAX_REL_TOL`` is verified, not derived: the tests evaluate
+    the sum for every grid exponent and every bucket up to 2²⁶ on a grid of
+    400 points per unit of ``log v`` (> 100 per oscillation of the error).
+    Deterministic: closed-form numpy on fixed inputs.
+    """
+    if not (q > 0.0 and v_max >= 2.0**_ES_MIN_EXPONENT):
+        raise PsiAssignmentError(f"no Lomax sum for q={q}, v_max={v_max}")
+    h, b = _ES_STEP, _ES_BEND
+    x0 = -math.log(v_max) - _ES_MARGIN
+    left = x0 - b * math.log(max(1.0, _ES_CUT / (q * b)))
+    right = math.log(_ES_CUT / (1.0 + LOMAX_NEAR_U))
+    x = h * np.arange(math.floor(left / h), math.ceil(right / h) + 1, dtype=np.float64)
+    bend = np.exp(-(x - x0) / b)
+    y = x - b * bend
+    rates = np.exp(y)
+    weights = h * (1.0 + bend) * np.exp(q * y - rates - math.lgamma(q))
+    rates.setflags(write=False)
+    weights.setflags(write=False)
+    return rates, weights
+
+
+def _exp_states(rates: Floats, amps: Floats, times: Floats, w: Floats) -> Floats:
+    """``S[k, i] = Σ_{j ≤ i} aₖ wⱼ e^{-rₖ(tᵢ - tⱼ)}``, shape ``(K, n)``.
+
+    Folded in event order, all K rates at once (elementwise per step). Gaps
+    between consecutive events are exact (Sterbenz), so the only error is
+    the rounding of each step's exp, multiply and add.
+    """
+    n = times.size
+    decay = np.exp(-np.multiply.outer(np.diff(times), rates))
+    inflow = np.multiply.outer(w, amps)
+    out = np.empty((n, rates.size))
+    out[0] = inflow[0]
+    for i in range(1, n):
+        np.multiply(out[i - 1], decay[i - 1], out=out[i])
+        np.add(out[i], inflow[i], out=out[i])
+    return np.ascontiguousarray(out.T)
+
+
+def _lomax_history(
+    c: float,
+    p: float,
+    times: Floats,
+    w: Floats,
+    t: Floats,
+    *,
+    cdf: bool,
+    span: float,
+) -> Floats:
+    """Lomax history sums: exact near field plus exponential-sum far field.
+
+    Event j is in the far field of query t iff ``tⱼ ≤ fl(t - LOMAX_NEAR_U·c)``
+    (and ``tⱼ < t``); the rest of the events before t are the near field.
+    ``span`` bounds every far-field lag (it sets the range bucket). For each
+    query: the far field (``Σₖ S[k, i] e^{-rₖ(t - tᵢ)}``, i the last far
+    event, k ascending), then the near-field terms added in event order.
+    """
+    out = np.zeros(t.size)
+    if times.size == 0 or t.size == 0:
+        return out
+    order = np.argsort(t, kind="stable")
+    ts = t[order]
+    before = np.searchsorted(times, ts, side="left")
+    far = np.minimum(
+        np.searchsorted(times, ts - LOMAX_NEAR_U * c, side="right"), before
+    )
+    acc = np.zeros(ts.size)
+    has = far > 0
+    if np.any(has):
+        rates_u, amps = lomax_exponential_sum(
+            p - 1.0 if cdf else p, lomax_v_max(c, span)
+        )
+        rates = rates_u / c
+        state = _exp_states(rates, amps, times, w)
+        last = far[has] - 1
+        lag = ts[has] - times[last]
+        tail = np.zeros(last.size)
+        term = np.empty(last.size)
+        decay = np.empty(last.size)
+        for k in range(rates.size):
+            np.take(state[k], last, out=term)
+            np.multiply(lag, -rates[k], out=decay)
+            np.exp(decay, out=decay)
+            np.multiply(term, decay, out=term)
+            np.add(tail, term, out=tail)
+        if cdf:
+            mass = np.array([0.0, *accumulate(float(x) for x in w)])
+            acc[has] = mass[far[has]] - tail
+        else:
+            acc[has] = ((p - 1.0) / c) * tail
+    # Near field: query i's near events are far[i] … before[i] - 1. Step d
+    # adds event far[i] + d to every query that has one, so each query adds
+    # its near events in event order; the work is the number of pairs.
+    fn = _lomax_into(c, p, cdf=cdf)
+    count = before - far
+    active = np.flatnonzero(count > 0)
+    depth = 0
+    while active.size:
+        j = far[active] + depth
+        buf = ts[active] - times[j]
+        fn(buf)
+        np.multiply(buf, w[j], out=buf)
+        acc[active] += buf
+        depth += 1
+        active = active[count[active] > depth]
+    out[order] = acc
+    return out
+
+
 def _history(
     kernel: KernelKind,
     params: Mapping[str, float],
@@ -576,17 +748,23 @@ def _history(
     t: Floats,
     *,
     cdf: bool,
+    exact: bool = False,
+    span: float = 0.0,
 ) -> Floats:
     """``Σ_{tⱼ < t} wⱼ K(t - tⱼ)`` (or the CDF ``K̄``) at each t.
 
     Exponential: O(n) recursion. Gamma with integer shape (every grid value):
-    O(n) moment recursion. Lomax, and gamma off the integer shapes: direct.
+    O(n) moment recursion. Lomax: near field direct, far field by a sum of
+    exponentials (``span`` ≥ every lag), or all direct if ``exact``. Gamma
+    off the integer shapes: direct.
     """
     if kernel is KernelKind.EXP:
         return _exp_history(params["exp_rate"], times, w, t, cdf=cdf)
     if kernel is KernelKind.POWER:
-        fn = _lomax_into(params["power_c"], params["power_p"], cdf=cdf)
-        return _direct_history(fn, times, w, t)
+        c, p = params["power_c"], params["power_p"]
+        if exact:
+            return _direct_history(_lomax_into(c, p, cdf=cdf), times, w, t)
+        return _lomax_history(c, p, times, w, t, cdf=cdf, span=span)
     shape = params["gamma_shape"]
     if shape == round(shape) and 1 <= shape <= _MAX_RECURSIVE_SHAPE:
         return _gamma_history(params, times, w, t, cdf=cdf)
@@ -611,7 +789,13 @@ def _excite(
     w = _mark_values(feature.mark, _local(psi, (*path, 1)), ctx)[mask]
     times = ctx.log.times[mask]
     kparams = _local(psi, (*path, 0))
-    return _history(feature.kernel, kparams, times, w, t, cdf=cdf)[:, None]
+    # Lags never exceed this (event times are ≥ 0); it depends on t only
+    # when a query lies beyond the horizon (``evaluate_columns``).
+    span = max(ctx.log.horizon, float(np.max(t))) if t.size else ctx.log.horizon
+    out = _history(
+        feature.kernel, kparams, times, w, t, cdf=cdf, exact=ctx.exact, span=span
+    )
+    return out[:, None]
 
 
 # --------------------------------------------------------------------------
@@ -691,14 +875,14 @@ def _intersect(
 # --------------------------------------------------------------------------
 
 
-def _values(
+def _leaf_values(
     feature: Feature,
     psi: Mapping[PsiSlot, float],
     path: tuple[int, ...],
     ctx: _Ctx,
     t: Floats,
 ) -> Floats:
-    """``(len(t), n_columns(feature))`` column values at ``t`` (left limits)."""
+    """``(len(t), n_columns(leaf))`` values of a leaf at ``t`` (left limits)."""
     match feature:
         case Excite():
             return _excite(feature, psi, path, ctx, t, cdf=False)
@@ -708,17 +892,56 @@ def _values(
         case Trend():
             out: Floats = (t / ctx.log.horizon)[:, None]
             return out
+        case Product() | Gate():
+            raise AssertionError("not a leaf")
+
+
+#: ``leaf(feature, path)``: a leaf's columns at the query times in hand.
+type _LeafFn = Callable[[Feature, tuple[int, ...]], Floats]
+
+
+def _combine(
+    feature: Feature,
+    psi: Mapping[PsiSlot, float],
+    path: tuple[int, ...],
+    ctx: _Ctx,
+    t: Floats,
+    leaf: _LeafFn,
+) -> Floats:
+    """``(len(t), n_columns(feature))`` from its leaves' columns.
+
+    Products and gates are elementwise, so a feature's values are a fixed
+    function of its leaves' values, whether they were computed now or cached.
+    """
+    match feature:
+        case Excite() | Periodic() | Trend():
+            return leaf(feature, path)
         case Product(left=left, right=right):
-            a = _values(left, psi, (*path, 0), ctx, t)
-            b = _values(right, psi, (*path, 1), ctx, t)
+            a = _combine(left, psi, (*path, 0), ctx, t, leaf)
+            b = _combine(right, psi, (*path, 1), ctx, t, leaf)
             width = a.shape[1] * b.shape[1]
-            out = (a[:, :, None] * b[:, None, :]).reshape(t.size, width)
+            out: Floats = (a[:, :, None] * b[:, None, :]).reshape(t.size, width)
             return out
         case Gate(feature=inner, cond=cond):
-            cols = _values(inner, psi, (*path, 0), ctx, t)
+            cols = _combine(inner, psi, (*path, 0), ctx, t, leaf)
             on = _cond_at(cond, _local(psi, (*path, 1)), ctx, t)
             out = np.where(on[:, None], cols, 0.0)
             return out
+
+
+def _values(
+    feature: Feature,
+    psi: Mapping[PsiSlot, float],
+    path: tuple[int, ...],
+    ctx: _Ctx,
+    t: Floats,
+) -> Floats:
+    """``(len(t), n_columns(feature))`` column values at ``t`` (left limits)."""
+
+    def leaf(node: Feature, at: tuple[int, ...]) -> Floats:
+        return _leaf_values(node, psi, at, ctx, t)
+
+    return _combine(feature, psi, path, ctx, t, leaf)
 
 
 def _gate_chain(
@@ -798,17 +1021,20 @@ def _antiderivative(
     ncol = n_columns(leaf)
     if a.size == 0:
         return np.zeros((t.size, ncol))
-    ca = _leaf_antiderivative(leaf, psi, leaf_path, ctx, a)
-    cb = _leaf_antiderivative(leaf, psi, leaf_path, ctx, b)
-    before = _running_rows(cb - ca)
     i = np.searchsorted(a, t, side="left")  # intervals starting strictly before t
-    out = np.zeros((t.size, ncol))
     has = i > 0
     last = i[has] - 1
     upto = np.minimum(b[last], t[has])
-    out[has] = (
-        before[last] + _leaf_antiderivative(leaf, psi, leaf_path, ctx, upto) - ca[last]
+    # One evaluation for all three sets of times (a value depends on its own
+    # time only, so this is byte-identical to three calls, at a third of the
+    # history recursions).
+    every = _leaf_antiderivative(
+        leaf, psi, leaf_path, ctx, np.concatenate([a, b, upto])
     )
+    ca, cb, at_upto = every[: a.size], every[a.size : 2 * a.size], every[2 * a.size :]
+    before = _running_rows(cb - ca)
+    out = np.zeros((t.size, ncol))
+    out[has] = before[last] + at_upto - ca[last]
     return out
 
 
@@ -1006,13 +1232,21 @@ def _excluded_cumulative(
 
     ``F(t) - Σₖ [F(min(bₖ, t)) - F(min(aₖ, t))]``, each entry folded exactly.
     """
-    base = anti(t)
     if ex_a.size == 0:
-        return base
-    terms = [base]
+        return anti(t)
+    # One call for every clipped copy of t (values depend on their own time
+    # only, so this equals 1 + 2K calls byte for byte).
+    queries = [t]
     for a, b in zip(ex_a.tolist(), ex_b.tolist(), strict=True):
-        terms.append(anti(np.minimum(a, t)))
-        terms.append(-anti(np.minimum(b, t)))
+        queries.append(np.minimum(a, t))
+        queries.append(np.minimum(b, t))
+    every = anti(np.concatenate(queries))
+    parts = np.split(every, len(queries))
+    terms = [parts[0]]
+    for k in range(ex_a.size):
+        terms.append(parts[1 + 2 * k])
+        terms.append(-parts[2 + 2 * k])
+    base = parts[0]
     stacked = np.stack(terms, axis=2)  # (len(t), w, 1 + 2K)
     rows, width = base.shape
     flat = reductions.row_totals(stacked.reshape(rows * width, -1))
@@ -1064,14 +1298,15 @@ def evaluate_columns(
     t: npt.ArrayLike,
     *,
     allow_off_grid: bool = False,
+    exact: bool = False,
 ) -> Floats:
     """``(len(t), p)`` design columns at times ``t`` (any order).
 
     Each row uses every event of the log strictly before its time (forced
-    events included). Column 0 is the intercept.
+    events included). Column 0 is the intercept. ``exact``: direct Lomax sums.
     """
     log = _unpack(data).log
-    ctx, clean = _prepare(structure, psi, log, channels, allow_off_grid)
+    ctx, clean = _prepare(structure, psi, log, channels, allow_off_grid, exact)
     return _matrix(structure, clean, ctx, _as_times(t, None))
 
 
@@ -1083,14 +1318,16 @@ def cumulative_columns(
     t: npt.ArrayLike,
     *,
     allow_off_grid: bool = False,
+    exact: bool = False,
 ) -> Floats | None:
     """``(len(t), p)`` closed-form integrals of every column over ``[0, t]``
     minus the excluded windows (t in [0, T]).
 
     None if any feature has no closed form (one under a ``Product``).
+    ``exact``: direct Lomax sums.
     """
     u = _unpack(data)
-    ctx, clean = _prepare(structure, psi, u.log, channels, allow_off_grid)
+    ctx, clean = _prepare(structure, psi, u.log, channels, allow_off_grid, exact)
     tt = _as_times(t, u.log.horizon)
 
     def intercept(x: Floats) -> Floats:
@@ -1158,6 +1395,217 @@ class FeatureBlock:
     exact: bool
 
 
+@dataclass(frozen=True, eq=False)
+class LeafColumns:
+    """One leaf's (``Excite``, ``Periodic``, ``Trend``) columns at one leaf ψ,
+    on one data set and rule: the unit :class:`BlockCache` memoises."""
+
+    at_events: Floats  # (counted events, n_columns(leaf))
+    at_nodes: Floats  # (m, n_columns(leaf))
+
+
+#: A leaf subtree and its ψ, slots re-rooted at the leaf, in ``psi_slots`` order.
+type LeafKey = tuple[Feature, tuple[tuple[PsiSlot, float], ...]]
+
+
+def _leaves(
+    feature: Feature, path: tuple[int, ...] = ()
+) -> list[tuple[Feature, tuple[int, ...]]]:
+    """The leaves of a feature tree with their paths, in pre-order."""
+    match feature:
+        case Product(left=left, right=right):
+            return [*_leaves(left, (*path, 0)), *_leaves(right, (*path, 1))]
+        case Gate(feature=inner):
+            return _leaves(inner, (*path, 0))
+        case Excite() | Periodic() | Trend():
+            return [(feature, path)]
+
+
+def _leaf_psi(
+    psi: Mapping[PsiSlot, float], path: tuple[int, ...]
+) -> dict[PsiSlot, float]:
+    """The ψ of the leaf at ``path``, re-rooted at it. A leaf has no feature
+    children, so every slot under its path is its own."""
+    n = len(path)
+    return {
+        PsiSlot(s.path[n:], s.name): v for s, v in psi.items() if s.path[:n] == path
+    }
+
+
+def _leaf_key(leaf: Feature, psi: Mapping[PsiSlot, float]) -> LeafKey:
+    return leaf, tuple((s, psi[s]) for s in psi_slots(leaf))
+
+
+def leaf_columns(
+    leaf: Feature,
+    psi: Mapping[PsiSlot, float],
+    data: Data,
+    channels: tuple[ChannelSpec, ...],
+    nodes: Floats,
+    *,
+    exact: bool = False,
+    allow_off_grid: bool = False,
+) -> LeafColumns:
+    """A leaf's columns at the counted events and at ``nodes``.
+
+    ``psi`` is the leaf's own (rooted at the leaf, as for a one-leaf feature).
+    Events and nodes are evaluated in one pass, which shares the history
+    recursion; every value depends on its own time only, so this equals two
+    separate evaluations byte for byte. Raises :class:`FeatureNumericsError`
+    if a value is not finite. Process-safe (a module-level function of
+    picklable arguments).
+    """
+    if isinstance(leaf, Product | Gate):
+        raise GrammarError(f"not a leaf: {leaf}")
+    u = _unpack(data)
+    ctx, clean = _prepare(
+        Structure((leaf,)), (psi,), u.log, channels, allow_off_grid, exact
+    )
+    events = u.log.times[u.rows]
+    t = np.concatenate([events, np.asarray(nodes, dtype=np.float64)])
+    values = _leaf_values(leaf, clean[0], (), ctx, t)
+    if not np.all(np.isfinite(values)):
+        raise FeatureNumericsError(f"a value of {leaf} is not finite")
+    at_events = np.array(values[: events.size])
+    at_nodes = np.array(values[events.size :])
+    _frozen(at_events, at_nodes)
+    return LeafColumns(at_events, at_nodes)
+
+
+class BlockCache:
+    """Feature blocks for one data set and rule, built from memoised leaves.
+
+    Leaf columns are cached per (leaf subtree, leaf ψ): products and gates are
+    elementwise in their leaves (:func:`_combine`), so a block is a cheap,
+    fixed function of cached leaves, and a profile over a ``Product`` or
+    ``Gate`` costs one evaluation per leaf ψ (Σ over leaves), not one per
+    combined ψ (Π). Equal leaves at different paths, or in different
+    features, share entries. A leaf whose values are not finite is cached as
+    such, and every block that needs it raises :class:`FeatureNumericsError`.
+
+    Blocks equal :func:`feature_block`'s byte for byte (it is this class).
+    :meth:`missing_leaves` and :meth:`put` let a caller compute leaves
+    elsewhere (e.g. in worker processes, with :func:`leaf_columns`).
+    """
+
+    def __init__(
+        self,
+        data: Data,
+        channels: tuple[ChannelSpec, ...],
+        nodes: Floats,
+        weights: Floats,
+        *,
+        exact: bool = False,
+        allow_off_grid: bool = False,
+    ) -> None:
+        self._data = data
+        self._unpacked = _unpack(data)
+        self._channels = channels
+        self._nodes = np.array(nodes, dtype=np.float64)
+        self._weights = np.array(weights, dtype=np.float64)
+        _frozen(self._nodes, self._weights)
+        self._exact = exact
+        self._allow_off_grid = allow_off_grid
+        self._leaves: dict[LeafKey, LeafColumns | None] = {}
+
+    @property
+    def n_leaf_evaluations(self) -> int:
+        """How many leaf (subtree, ψ) entries have been computed or put."""
+        return len(self._leaves)
+
+    def missing_leaves(
+        self, feature: Feature, psi: Mapping[PsiSlot, float]
+    ) -> list[tuple[LeafKey, Feature, dict[PsiSlot, float]]]:
+        """``(key, leaf, leaf ψ)`` for each leaf of ``feature`` at ψ not yet
+        cached, in pre-order, without repeats."""
+        out: list[tuple[LeafKey, Feature, dict[PsiSlot, float]]] = []
+        seen: set[LeafKey] = set()
+        for leaf, path in _leaves(feature):
+            local = _leaf_psi(psi, path)
+            key = _leaf_key(leaf, local)
+            if key in self._leaves or key in seen:
+                continue
+            seen.add(key)
+            out.append((key, leaf, local))
+        return out
+
+    def put(self, key: LeafKey, columns: LeafColumns | None) -> None:
+        """Cache a leaf computed elsewhere (None: its values are not finite)."""
+        if columns is not None:
+            n, m = self._unpacked.rows.size, self._nodes.size
+            if columns.at_events.shape[0] != n or columns.at_nodes.shape[0] != m:
+                raise FeatureDataError("leaf columns do not match the data or rule")
+            _frozen(columns.at_events, columns.at_nodes)
+        self._leaves[key] = columns
+
+    def compute(
+        self, leaf: Feature, psi: Mapping[PsiSlot, float]
+    ) -> LeafColumns | None:
+        """:func:`leaf_columns` on this cache's data and rule; None if not finite."""
+        try:
+            return leaf_columns(
+                leaf,
+                psi,
+                self._data,
+                self._channels,
+                self._nodes,
+                exact=self._exact,
+                allow_off_grid=self._allow_off_grid,
+            )
+        except FeatureNumericsError:
+            return None
+
+    def block(self, feature: Feature, psi: Mapping[PsiSlot, float]) -> FeatureBlock:
+        """The block of ``feature`` at ψ (validated like :func:`feature_block`)."""
+        u = self._unpacked
+        ctx, clean = _prepare(
+            Structure((feature,)),
+            (psi,),
+            u.log,
+            self._channels,
+            self._allow_off_grid,
+            self._exact,
+        )
+        slots = clean[0]
+        for key, leaf, local in self.missing_leaves(feature, slots):
+            self.put(key, self.compute(leaf, local))
+
+        def lookup(at_events: bool) -> _LeafFn:
+            def leaf(node: Feature, path: tuple[int, ...]) -> Floats:
+                columns = self._leaves[_leaf_key(node, _leaf_psi(slots, path))]
+                if columns is None:
+                    raise FeatureNumericsError(f"a value of {node} is not finite")
+                return columns.at_events if at_events else columns.at_nodes
+
+            return leaf
+
+        events = u.log.times[u.rows]
+        at_events = _combine(feature, slots, (), ctx, events, lookup(True))
+        at_nodes = _combine(feature, slots, (), ctx, self._nodes, lookup(False))
+        if not (np.all(np.isfinite(at_events)) and np.all(np.isfinite(at_nodes))):
+            raise FeatureNumericsError(f"a value of {feature} is not finite")
+        exact = has_closed_form(feature)
+        if exact:
+
+            def anti(x: Floats) -> Floats:
+                block = _antiderivative(feature, slots, ctx, x)
+                if block is None:
+                    raise AssertionError("closed form checked above")
+                return block
+
+            end = np.array([u.log.horizon])
+            integrals = _excluded_cumulative(anti, end, u.ex_a, u.ex_b)[0]
+        else:
+            width = at_nodes.shape[1]
+            integrals = np.array(
+                [reductions.total(self._weights * at_nodes[:, c]) for c in range(width)]
+            )
+        if not np.all(np.isfinite(integrals)):
+            raise FeatureNumericsError(f"an integral of {feature} is not finite")
+        _frozen(at_events, at_nodes, integrals)
+        return FeatureBlock(at_events, at_nodes, integrals, exact)
+
+
 def feature_block(
     feature: Feature,
     psi: Mapping[PsiSlot, float],
@@ -1167,34 +1615,17 @@ def feature_block(
     weights: Floats,
     *,
     allow_off_grid: bool = False,
+    exact: bool = False,
 ) -> FeatureBlock:
-    """The block of ``feature`` at ψ, on the rule ``(nodes, weights)``."""
-    u = _unpack(data)
-    single = Structure((feature,))
-    ctx, clean = _prepare(single, (psi,), u.log, channels, allow_off_grid)
-    slots = clean[0]
-    at_events = _feature_values(feature, slots, ctx, u.log.times[u.rows])
-    at_nodes = _feature_values(feature, slots, ctx, nodes)
-    exact = has_closed_form(feature)
-    if exact:
+    """The block of ``feature`` at ψ, on the rule ``(nodes, weights)``.
 
-        def anti(x: Floats) -> Floats:
-            block = _antiderivative(feature, slots, ctx, x)
-            if block is None:
-                raise AssertionError("closed form checked above")
-            return block
-
-        end = np.array([u.log.horizon])
-        integrals = _excluded_cumulative(anti, end, u.ex_a, u.ex_b)[0]
-    else:
-        width = at_nodes.shape[1]
-        integrals = np.array(
-            [reductions.total(weights * at_nodes[:, c]) for c in range(width)]
-        )
-    if not np.all(np.isfinite(integrals)):
-        raise FeatureNumericsError(f"an integral of {feature} is not finite")
-    _frozen(at_events, at_nodes, integrals)
-    return FeatureBlock(at_events, at_nodes, integrals, exact)
+    One-shot; a profile over ψ should keep a :class:`BlockCache` instead.
+    ``exact``: direct Lomax sums.
+    """
+    cache = BlockCache(
+        data, channels, nodes, weights, exact=exact, allow_off_grid=allow_off_grid
+    )
+    return cache.block(feature, psi)
 
 
 def assemble(
@@ -1258,26 +1689,23 @@ def design(
     *,
     quadrature: QuadratureSpec = DEFAULT_QUADRATURE,
     allow_off_grid: bool = False,
+    exact: bool = False,
 ) -> Design:
     """Precompute everything the likelihood and the fitter need for one ψ.
 
     ``data`` is a bare :class:`EventLog` (observational) or a
     :class:`Dataset` (forced events are history only; excluded windows leave
-    both the event sum and the compensator).
+    both the event sum and the compensator). ``exact``: direct Lomax sums
+    (the audit path) instead of the sum of exponentials.
     """
     u = _unpack(data)
-    _, clean = _prepare(structure, psi, u.log, channels, allow_off_grid)
+    _, clean = _prepare(structure, psi, u.log, channels, allow_off_grid, exact)
     nodes, weights = _rule(structure, clean, u, quadrature, np.empty(0))
+    cache = BlockCache(
+        data, channels, nodes, weights, exact=exact, allow_off_grid=allow_off_grid
+    )
     blocks = tuple(
-        feature_block(
-            feature,
-            slots,
-            data,
-            channels,
-            nodes,
-            weights,
-            allow_off_grid=allow_off_grid,
-        )
+        cache.block(feature, slots)
         for feature, slots in zip(structure.features, clean, strict=True)
     )
     return assemble(structure, blocks, data, nodes, weights)

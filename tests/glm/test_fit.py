@@ -40,8 +40,10 @@ from sciagent.glm.fit import (
     predictive_pvalues,
     to_coefficients,
 )
+from sciagent.glm.fit_bounds import intensity_floor
 from sciagent.glm.grammar import (
     ALL,
+    Above,
     ChannelKind,
     ChannelSpec,
     Excite,
@@ -61,7 +63,13 @@ from sciagent.glm.grammar import (
     psi_slots,
 )
 from sciagent.glm.likelihood import compensator, log_likelihood
-from sciagent.glm.simulate import Coefficients, PsiAssignment, intensity, simulate
+from sciagent.glm.simulate import (
+    Coefficients,
+    NegativeIntensityError,
+    PsiAssignment,
+    intensity,
+    simulate,
+)
 
 CHANNELS: tuple[ChannelSpec, ...] = (
     ChannelSpec("size", ChannelKind.POSITIVE, location=1.0, scale=1.0),
@@ -116,6 +124,17 @@ def exp_link_log(horizon: float = 400.0, seed: int = 2) -> EventLog:
     return draw((EXP_K, Periodic()), values, coef, Link.EXP, horizon, seed)
 
 
+@cache
+def inhibitory_log(horizon: float = 1500.0, seed: int = 7) -> EventLog:
+    """``λ = exp(0.8 - 3·φ_ExpK(β=4))``: strong self-inhibition.
+
+    Fitted under the identity link, the coefficient on φ is negative and λ is
+    smallest just after each event, where no quadrature node lies.
+    """
+    coef = Coefficients(0.8, ((-3.0,),))
+    return draw((EXP_K,), ({"exp_rate": 4.0},), coef, Link.EXP, horizon, seed)
+
+
 def observational(log: EventLog) -> tuple[Dataset, ...]:
     return (Dataset.observational(log),)
 
@@ -128,6 +147,9 @@ def checked(result: FitResult, config: FitConfig | None = None) -> FitResult:
         assert result.solver_status in ("optimal", "optimal_inaccurate")
         assert result.n_uncertified_points == 0
         assert math.isfinite(result.log_likelihood)
+        # The gap includes |r|ᵀ|θ|, so it is an upper bound: never negative
+        # beyond the rounding of its exact fold.
+        assert result.duality_gap >= -1e-12 * max(1.0, abs(result.primal_objective))
     return result
 
 
@@ -574,3 +596,118 @@ def test_power_kernel_exp_link_parallel_blocks_are_identical() -> None:
     parallel = fit(structure, observational(log), CHANNELS, config=FitConfig(workers=3))
     assert serial == parallel
     assert serial.certified
+
+
+# --------------------------------------------------------------------------
+# Identity-link positivity and simulability (audit B1, S3)
+# --------------------------------------------------------------------------
+
+
+def test_identity_positivity_holds_off_the_nodes() -> None:
+    """λ ≥ 0 at event right limits and on a fine grid, not only at nodes; and
+    every ψ point certifies (a Clarabel failure at one point used to make the
+    whole fit uncertified)."""
+    log = inhibitory_log()
+    result = checked(fit(HAWKES, observational(log), CHANNELS))
+    assert result.certified
+    assert result.n_uncertified_points == 0
+    theta = np.array(result.theta)
+    assert theta[1] < 0.0  # inhibition
+    t = np.concatenate(
+        [
+            np.nextafter(log.times, np.inf),
+            log.times + 1e-9,
+            log.times + 1e-6,
+            np.linspace(0.0, log.horizon, 200_001),
+        ]
+    )
+    t = t[t <= log.horizon]
+    lam = evaluate_columns(result.structure, result.psi, log, CHANNELS, t) @ theta
+    assert float(np.min(lam)) >= -1e-12
+    # Non-negative on this history, but not on every history: flagged, and
+    # the simulator indeed meets a negative intensity on a fresh one.
+    assert not result.simulable
+    psi, coef = to_coefficients(result)
+    with pytest.raises(NegativeIntensityError):
+        simulate(
+            result.structure,
+            psi,
+            coef,
+            CHANNELS,
+            marks,
+            log.horizon,
+            np.random.default_rng(0),
+        )
+
+
+def test_excitatory_and_non_identity_fits_are_simulable() -> None:
+    assert checked(fit(HAWKES, observational(hawkes_log()), CHANNELS)).simulable
+    inhibit_exp = Structure((EXP_K,), Link.EXP)
+    assert checked(
+        fit(inhibit_exp, observational(inhibitory_log()), CHANNELS)
+    ).simulable
+
+
+def test_intensity_floor() -> None:
+    channels = (
+        ChannelSpec("size", ChannelKind.POSITIVE, location=1.0, scale=1.0),
+        ChannelSpec("mag", ChannelKind.REAL, location=0.0, scale=1.0),
+    )
+    identity = Link.IDENTITY
+    hawkes = Structure((EXP_K,), identity)
+    assert intensity_floor(hawkes, (0.5, 0.3), channels) == 0.5
+    assert intensity_floor(hawkes, (0.5, -0.3), channels) == -math.inf
+    periodic = Structure((Periodic(),), identity)
+    assert intensity_floor(periodic, (1.0, 0.3, 0.4), channels) == pytest.approx(0.5)
+    gated = Structure((Gate(Periodic(), PhaseWindow()),), identity)
+    assert intensity_floor(gated, (1.0, 0.3, 0.4), channels) == pytest.approx(0.5)
+    real_mark = Structure((Excite(KernelKind.EXP, Mark("mag"), ALL),), identity)
+    assert intensity_floor(real_mark, (2.0, 0.1), channels) == -math.inf
+    above = Structure((Excite(KernelKind.EXP, Above("size"), ALL), Trend()), identity)
+    assert intensity_floor(above, (0.2, 0.4, -0.1), channels) == pytest.approx(0.1)
+    # Periodic by Trend: columns in [-1, 1] times [0, 1] = [-1, 1], independently.
+    product = Structure((Product(Periodic(), Trend()),), identity)
+    assert intensity_floor(product, (1.0, 0.2, -0.3), channels) == pytest.approx(0.5)
+
+
+# --------------------------------------------------------------------------
+# Power and gamma kernels (audit N1)
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.slow
+def test_power_kernel_matches_independent_optimiser() -> None:
+    data = observational(hawkes_log())
+    result = checked(fit(Structure((POWER_K,), Link.IDENTITY), data, CHANNELS))
+    assert result.certified
+    value, theta = independent_minimum(result, data)
+    certified_value = -result.log_likelihood
+    scale = max(1.0, abs(certified_value))
+    assert value >= certified_value - result.duality_gap - 1e-9 * scale
+    assert abs(value - certified_value) <= 1e-7 * scale
+    np.testing.assert_allclose(theta, result.theta, rtol=1e-4, atol=1e-4)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    ("feature", "values"),
+    [
+        (POWER_K, {"power_c": 0.2, "power_p": 2.0}),
+        (Excite(KernelKind.GAMMA, One(), ALL), {"gamma_shape": 5.0, "gamma_mean": 2.0}),
+    ],
+)
+def test_recovers_power_and_gamma_kernels(
+    feature: Feature, values: Mapping[str, float]
+) -> None:
+    """μ = 0.5, η = 0.5 at about 6,000 events: ψ exactly, θ within ~4 SE."""
+    coef = Coefficients(0.5, ((0.5,),))
+    log = draw((feature,), (values,), coef, Link.IDENTITY, 6000.0, 37)
+    assert 4500 < log.n < 8000
+    structure = Structure((feature,), Link.IDENTITY)
+    result = checked(fit(structure, observational(log), CHANNELS))
+    assert result.certified
+    assert result.psi[0] == psi_of(feature, values)
+    mu, eta = result.theta
+    assert abs(eta - 0.5) < 0.08
+    assert abs(mu - 0.5) < 0.1
+    assert result.ks_pvalue > 0.01

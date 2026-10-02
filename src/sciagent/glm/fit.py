@@ -39,10 +39,14 @@ lexicographically lowest index tuple.
 Every ψ point is solved from the same cold start, so a point's θ does not
 depend on the search path, and both searches return byte-identical results
 whenever they choose the same ψ. The quadrature rule does not depend on ψ, so
-each ``feature_block`` is computed once per (dataset, feature, ψ of that
-feature) and reused (LOG.md 2026-10-01). Blocks can be computed in worker
-processes (``workers``); each block is the same deterministic computation
-wherever it runs, and results are placed by key, so the output is unchanged.
+each leaf of a feature tree (``Excite``, ``Periodic``, ``Trend``) is evaluated
+once per (dataset, leaf subtree, leaf ψ) in a
+:class:`~sciagent.glm.features.BlockCache`, and a feature block is combined
+from cached leaves (products and gates are elementwise): a profile costs Σ
+over leaves, not Π over a feature's slots (LOG.md 2026-10-01).
+Leaves can be computed in worker processes (``workers``); each is the same
+deterministic computation wherever it runs, and results are placed by key,
+so the output is unchanged.
 
 **Certification.** ``certified`` is True iff the inner solve at the chosen ψ
 is certified *and* every evaluated ψ point was: a point that failed to solve
@@ -91,17 +95,27 @@ from sciagent.glm.canonical import structure_hash
 from sciagent.glm.data import Dataset, EventLog, Floats
 from sciagent.glm.features import (
     DEFAULT_QUADRATURE,
+    BlockCache,
     Design,
     FeatureBlock,
     FeatureNumericsError,
+    LeafColumns,
+    LeafKey,
     PsiAssignment,
     QuadratureSpec,
     assemble,
     design,
-    feature_block,
+    leaf_columns,
     quadrature_rule,
 )
-from sciagent.glm.fit_solve import Problem, Solution, solve
+from sciagent.glm.fit_bounds import simulable
+from sciagent.glm.fit_solve import (
+    Problem,
+    Solution,
+    right_limit_rows,
+    solve,
+    with_constraint_rows,
+)
 from sciagent.glm.grammar import (
     ChannelSpec,
     Feature,
@@ -119,7 +133,8 @@ from sciagent.glm.simulate import Coefficients
 #: Largest product ψ grid searched exhaustively (SPEC §2.2).
 PSI_FULL_GRID_MAX: Final = 512
 #: Part of every fit's content address; bump on any change to fitted numbers.
-FIT_VERSION: Final = "sciagent.glm.fit/1"
+#: /3: Lomax (PowerK) history sums by a sum of exponentials (features.py).
+FIT_VERSION: Final = "sciagent.glm.fit/3"
 #: Default certificate tolerance: ``gap ≤ 1e-8 · max(1, |log L|)``. At the
 #: operating point (|log L| ≈ 10³-10⁴) that is ≤ 10⁻⁴ nats, four orders below
 #: the half-log-N ≈ 4 nats a BIC parameter costs, and well above the rounding
@@ -130,6 +145,9 @@ type PsiSearch = Literal["exhaustive", "coordinate"]
 type InnerSolver = Literal["newton", "clarabel"]
 type _Point = tuple[int, ...]
 type _BlockKey = tuple[int, int, tuple[int, ...]]
+type _LeafJob = tuple[
+    Feature, dict[PsiSlot, float], Dataset, tuple[ChannelSpec, ...], Floats
+]
 
 
 class FitError(SciAgentError):
@@ -197,9 +215,13 @@ class FitResult:
     the form :func:`~sciagent.glm.features.design` and
     :func:`~sciagent.glm.simulate.simulate` take. ``theta`` follows
     ``theta_labels`` (the design's column labels). ``duality_gap`` is
-    ``F(θ) - D(u)`` for ``F = -log L`` (as the certificate computed it) and
-    ``duality_gap_rel`` the same over ``max(1, |F|)``; ``dual_residual`` is the
-    relative infeasibility of the dual point.
+    ``F(θ) - D(u) + |r|ᵀ|θ|`` for ``F = -log L`` (as the certificate computed
+    it) and dual residual r, an upper bound on ``F(θ) - F*`` to first order;
+    ``duality_gap_rel`` is the same over ``max(1, |F|)`` and ``dual_residual``
+    the relative size of r. Under the identity link λ ≥ 0 is enforced at every
+    quadrature node and every event's right limit of the fitted data;
+    ``simulable`` says whether λ ≥ 0 under *every* history
+    (:mod:`sciagent.glm.fit_bounds`), which an inhibitory fit may not be.
     """
 
     structure: Structure
@@ -230,6 +252,7 @@ class FitResult:
     quadrature_error: float
     ks_statistic: float
     ks_pvalue: float
+    simulable: bool
     wall_time: float = field(compare=False)
 
     def require_certified(self) -> FitResult:
@@ -343,17 +366,16 @@ class _Rule:
     weights: Floats
 
 
-def _block_job(
-    feature: Feature,
+def _leaf_job(
+    leaf: Feature,
     psi: dict[PsiSlot, float],
     data: Dataset,
     channels: tuple[ChannelSpec, ...],
     nodes: Floats,
-    weights: Floats,
-) -> FeatureBlock | None:
-    """One feature block, or None if its values are not finite (worker-safe)."""
+) -> LeafColumns | None:
+    """One leaf's columns, or None if its values are not finite (worker-safe)."""
     try:
-        return feature_block(feature, psi, data, channels, nodes, weights)
+        return leaf_columns(leaf, psi, data, channels, nodes)
     except FeatureNumericsError:
         return None
 
@@ -379,6 +401,10 @@ class _Profile:
             _Rule(*quadrature_rule(structure, d, quadrature=config.quadrature))
             for d in datasets
         )
+        self.caches = tuple(
+            BlockCache(d, channels, r.nodes, r.weights)
+            for d, r in zip(datasets, self.rules, strict=True)
+        )
         self.blocks: dict[_BlockKey, FeatureBlock | None] = {}
         self.solutions: dict[_Point, Solution | None] = {}
 
@@ -393,23 +419,33 @@ class _Profile:
         missing = sorted(
             {key for p in points for key in self._keys(p)} - set(self.blocks)
         )
-        jobs = [
-            (
-                self.structure.features[k],
-                self.slots.feature_psi(k, fkey),
-                self.datasets[d],
-                self.channels,
-                self.rules[d].nodes,
-                self.rules[d].weights,
-            )
-            for d, k, fkey in missing
-        ]
+        # Every leaf the missing blocks need that no cache holds, each once, in
+        # a fixed order (sorted block keys, then each tree's pre-order).
+        leaf_keys: list[tuple[int, LeafKey]] = []
+        jobs: list[_LeafJob] = []
+        for d, k, fkey in missing:
+            feature = self.structure.features[k]
+            psi = self.slots.feature_psi(k, fkey)
+            for key, leaf, local in self.caches[d].missing_leaves(feature, psi):
+                if (d, key) in leaf_keys:
+                    continue
+                leaf_keys.append((d, key))
+                jobs.append(
+                    (leaf, local, self.datasets[d], self.channels, self.rules[d].nodes)
+                )
         if self.pool is not None and len(jobs) > 1:
-            results = list(self.pool.map(_block_job, *zip(*jobs, strict=True)))
+            results = list(self.pool.map(_leaf_job, *zip(*jobs, strict=True)))
         else:
-            results = [_block_job(*job) for job in jobs]
-        for key, block in zip(missing, results, strict=True):
-            self.blocks[key] = block
+            results = [_leaf_job(*job) for job in jobs]
+        for (d, key), columns in zip(leaf_keys, results, strict=True):
+            self.caches[d].put(key, columns)
+        for d, k, fkey in missing:
+            feature = self.structure.features[k]
+            try:
+                block = self.caches[d].block(feature, self.slots.feature_psi(k, fkey))
+            except FeatureNumericsError:
+                block = None
+            self.blocks[(d, k, fkey)] = block
 
     def designs(self, point: _Point) -> list[Design] | None:
         designs = []
@@ -434,8 +470,17 @@ class _Profile:
             if designs is None:
                 self.solutions[point] = None
                 continue
+            problem = _stack(designs, self.structure.link)
+            if self.structure.link is Link.IDENTITY:
+                # λ ≥ 0 also at every event's right limit (fit_solve).
+                psi = self.slots.assignment(point)
+                limits = [
+                    right_limit_rows(self.structure, psi, d, self.channels)
+                    for d in self.datasets
+                ]
+                problem = with_constraint_rows(problem, np.concatenate(limits, axis=1))
             self.solutions[point] = solve(
-                _stack(designs, self.structure.link),
+                problem,
                 solver=self.config.inner_solver,
                 max_iter=self.config.max_iter,
                 gap_tol_rel=self.config.gap_tol_rel,
@@ -658,6 +703,7 @@ def fit(
         quadrature_error=quad,
         ks_statistic=ks_stat,
         ks_pvalue=ks_p,
+        simulable=simulable(structure, sol.theta, channels),
         wall_time=time.perf_counter() - start,
     )
 

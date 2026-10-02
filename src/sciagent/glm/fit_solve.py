@@ -5,8 +5,11 @@ over the stacked design of every dataset, with ``A`` the quadrature-node rows,
 ``w`` their weights, ``X`` the counted-event rows and ``c`` the exact column
 integrals, it is
 
-- identity: ``F(θ) = cᵀθ - Σᵢ log(xᵢθ)`` subject to ``Aθ ≥ 0`` (λ ≥ 0 at every
-  node, not only at events);
+- identity: ``F(θ) = cᵀθ - Σᵢ log(xᵢθ)`` subject to ``Aθ ≥ 0``: λ ≥ 0 at
+  every node and at every event's right limit ``tᵢ⁺`` (:func:`right_limit_rows`,
+  appended to A by :func:`with_constraint_rows`), not only at events. A
+  negative coefficient on a decreasing kernel puts λ's minimum at ``tᵢ⁺``,
+  which no interior Gauss-Legendre node reaches;
 - exp: ``F(θ) = Σ_q w_q exp(a_qθ) - Σᵢ xᵢθ``;
 - softplus: ``F(θ) = Σ_q w_q softplus(a_qθ) - Σᵢ log softplus(xᵢθ)``.
 
@@ -22,11 +25,13 @@ measured) and its iterations are deterministic: every fold in it is a fixed
 pairwise tree (:func:`_fold`) or a fixed sequential sum (:func:`_lin`), never
 a CPU-chosen BLAS or SIMD order. The identity link's node constraints are
 handled by cutting planes: the problem without them is solved first, and only
-if its optimum is negative at some node are the violated nodes handed, as
-linear constraints, to CVXPY with Clarabel, adding violators until none
-remain. A relaxation's optimum that is feasible for the full problem is
-optimal for it. ``solver="clarabel"`` solves the identity and exp problems
-with Clarabel throughout, as a cross-check.
+if its optimum is negative at some candidate row are the most violated rows
+(at most 64 per round, by violation relative to the row's size) handed, as
+linear constraints scaled to unit ∞-norm, to CVXPY with Clarabel, adding
+rows until none is violated. Handing tens of thousands of unscaled, nearly
+parallel rows at once made Clarabel fail. A relaxation's optimum that is
+feasible for the full problem is optimal for it. ``solver="clarabel"`` solves
+the identity and exp problems with Clarabel throughout, as a cross-check.
 
 **Certificate.** Whichever solver produced θ, the gap is computed here from
 an explicit dual point, never taken from a solver's report. Write
@@ -36,9 +41,11 @@ every dual-feasible u, ``F(θ) ≥ -Σ hₖ*(uₖ)``. The natural dual point
 ``uₖ = hₖ'(rₖθ)`` misses feasibility by ``∇F(θ)``; it is corrected by
 ``u' = u - hₖ''·(rₖδ)`` with ``Mδ = ∇F`` (M the Hessian of the corrected
 rows), which zeroes the residual to first order: it is the dual image of a
-Newton step. The reported gap is ``F(θ) - (-Σ h*(u'))``, folded exactly in one
-:func:`math.fsum`, with the remaining dual residual ``‖Σ u'ₖrₖ + c‖∞`` reported
-beside it (relative to the size of its terms). Corrected rows: events
+Newton step. Since ``F(θ) ≥ D(u') + r'ᵀθ`` for every θ, with r' the remaining
+dual residual ``Σ u'ₖrₖ + c``, the reported gap is
+``F(θ̂) - D(u') + |r'|ᵀ|θ̂|``, folded exactly in one :func:`math.fsum`, with r'
+padded by its own fold's error bound. It bounds ``F(θ̂) - F*`` to first order
+(θ* ≈ θ̂), and the relative size of r' is reported beside it. Corrected rows: events
 (identity), nodes (exp, softplus). Softplus event rows keep ``uᵢ = e'(zᵢ)``
 so ``e*(uᵢ) = uᵢzᵢ - e(zᵢ)`` holds exactly, and no conjugate of
 ``-log softplus`` (which has no closed form) is ever needed. For the
@@ -49,7 +56,9 @@ A solution is certified iff the solver stopped by its own convergence test
 (Newton's decrement test; Clarabel ``optimal`` or ``optimal_inaccurate``,
 see :data:`ACCEPTED_STATUS`), θ is primal feasible (every node, under the
 identity link), the dual point is in the conjugates' domain, the relative
-residual is at most ``RESIDUAL_TOL_REL`` and ``gap ≤ gap_tol_rel · max(1, |F|)``.
+residual is at most ``RESIDUAL_TOL_REL`` and
+``-1e-12 · max(1, |F|) ≤ gap ≤ gap_tol_rel · max(1, |F|)``: a gap below the
+floor cannot be rounding, so it means the certificate itself is wrong.
 """
 
 from __future__ import annotations
@@ -70,8 +79,9 @@ from scipy import special
 
 from sciagent.core import reductions
 from sciagent.core.errors import SciAgentError
-from sciagent.glm.data import Floats
-from sciagent.glm.grammar import Link
+from sciagent.glm.data import Dataset, Floats
+from sciagent.glm.features import PsiAssignment, evaluate_columns
+from sciagent.glm.grammar import ChannelSpec, Link, Structure
 
 type Ints = npt.NDArray[np.intp]
 
@@ -94,14 +104,22 @@ _MAX_EXP: Final = 700.0
 _LOG_SP_SERIES: Final = -30.0
 _HESS_SERIES: Final = -15.0
 #: Cutting-plane rounds for the identity link's node constraints.
-_MAX_CUT_ROUNDS: Final = 30
+_MAX_CUT_ROUNDS: Final = 60
+#: Most violated rows added per cutting-plane round.
+_MAX_NEW_CUTS: Final = 64
 #: A node is a violator when λ < -_FEAS_TOL · max(1, θ₀).
 _FEAS_TOL: Final = 1e-9
 #: ... and a violation up to this (same scale) is absorbed by shifting θ₀.
 _ABSORB: Final = 1e-7
 #: Clarabel's own tolerances, tightened so its θ can pass the certificate.
 _CLARABEL_TOL: Final = 1e-10
-_DUAL_ROUNDS: Final = 3
+_DUAL_ROUNDS: Final = 4
+#: The dual correction stops once the relative residual is at rounding level.
+_RESIDUAL_FLOOR: Final = 1e-15
+_UNIT_ROUNDOFF: Final = 2.0**-53
+#: A gap below -this · max(1, |F|) cannot be rounding of the exact fold of
+#: primal and dual terms, so the certificate is wrong and the point fails.
+_GAP_FLOOR_REL: Final = 1e-12
 #: Solver outcomes whose θ is handed to the certificate. Clarabel reports
 #: ``optimal_inaccurate`` when it stops short of the tightened tolerances above
 #: but within its reduced ones; the explicit gap below, not the solver's own
@@ -376,6 +394,49 @@ def _hessian(problem: Problem, t: _Terms) -> Floats:
     return h
 
 
+def right_limit_times(data: Dataset) -> Floats:
+    """``tᵢ⁺`` (the next float after every event, forced ones included) that lie
+    in ``[0, T]`` and outside the excluded windows.
+
+    Under the identity link a negative coefficient on a decreasing kernel
+    makes λ smallest just *after* an event, where the event's own jump has
+    landed; Gauss-Legendre nodes are interior to panels and miss that point.
+    """
+    t = np.nextafter(data.log.times, np.inf)
+    keep = t <= data.log.horizon
+    for a, b in data.excluded:
+        keep &= ~((t >= a) & (t <= b))
+    out: Floats = t[keep]
+    return out
+
+
+def right_limit_rows(
+    structure: Structure,
+    psi: PsiAssignment,
+    data: Dataset,
+    channels: tuple[ChannelSpec, ...],
+) -> Floats:
+    """The design rows at :func:`right_limit_times`, transposed: (p, L)."""
+    rows = evaluate_columns(structure, psi, data, channels, right_limit_times(data))
+    return np.ascontiguousarray(rows.T)
+
+
+def with_constraint_rows(problem: Problem, rows_t: Floats) -> Problem:
+    """The identity problem with ``rows_t`` added to its λ ≥ 0 candidates.
+
+    Under the identity link the node rows are read only as constraints (the
+    compensator uses the exact ``integrals``), so extra rows join them.
+    """
+    if problem.link is not Link.IDENTITY:
+        raise InnerSolveError("only the identity link has positivity constraints")
+    if rows_t.shape[0] != problem.p:
+        raise InnerSolveError("constraint rows disagree with the design columns")
+    nodes_t = np.ascontiguousarray(np.concatenate([problem.nodes_t, rows_t], axis=1))
+    return Problem(
+        problem.link, nodes_t, problem.weights, problem.events_t, problem.integrals
+    )
+
+
 def _uses_nodes(link: Link) -> bool:
     return link is not Link.IDENTITY
 
@@ -473,6 +534,7 @@ def _clarabel(problem: Problem, active: Ints, max_iter: int) -> _Conic:
     th = cp.Variable(problem.p)
     n = problem.events_t.shape[1]
     constraints: list[cp.Constraint] = []
+    row_scale = np.ones(0)
     match problem.link:
         case Link.IDENTITY:
             log_terms = cp_log(_affine(problem.events_t, th))
@@ -480,7 +542,10 @@ def _clarabel(problem: Problem, active: Ints, max_iter: int) -> _Conic:
                 multiply(np.ones(n), log_terms)
             )
             if active.size:
-                constraints.append(_affine(problem.nodes_t[:, active], th) >= 0)
+                rows = problem.nodes_t[:, active]
+                row_scale = np.max(np.abs(rows), axis=0)
+                row_scale = np.where(row_scale > 0.0, row_scale, 1.0)
+                constraints.append(_affine(rows / row_scale, th) >= 0)
         case Link.EXP:
             exp_terms = cp_exp(_affine(problem.nodes_t, th))
             counts = _exact_colsums(
@@ -514,7 +579,9 @@ def _clarabel(problem: Problem, active: Ints, max_iter: int) -> _Conic:
     duals = None
     if constraints:
         raw = constraints[0].dual_value
+        # Multipliers of the scaled rows, mapped back to the unscaled ones.
         duals = np.maximum(np.asarray(raw, dtype=np.float64).reshape(-1), 0.0)
+        duals = duals / row_scale
     return _Conic(np.asarray(value, dtype=np.float64), duals, status, iterations)
 
 
@@ -526,6 +593,23 @@ def _shift_feasible(problem: Problem, theta: Floats) -> Floats:
         if low >= 0.0:
             return out
         out[0] += max(-2.0 * low, 1e-300)
+    return out
+
+
+def _worst(problem: Problem, z: Floats, candidates: Ints) -> Ints:
+    """At most ``_MAX_NEW_CUTS`` of ``candidates``: the most violated relative
+    to their row's size, ties to the lower index.
+
+    Handing every violator to Clarabel at once (tens of thousands of nearly
+    parallel rows) made it fail with a solver error; the few most violated
+    rows carry the binding constraints, and later rounds add any others.
+    """
+    if candidates.size <= _MAX_NEW_CUTS:
+        return candidates
+    size = np.max(np.abs(problem.nodes_t[:, candidates]), axis=0)
+    rel = z[candidates] / np.where(size > 0.0, size, 1.0)
+    order = np.lexsort((candidates, rel))
+    out: Ints = np.sort(candidates[order[:_MAX_NEW_CUTS]])
     return out
 
 
@@ -551,7 +635,7 @@ def _cutting_planes(
         # Clarabel's feasibility tolerance node by node.
         if violators.size == 0 or worst <= _ABSORB * tol / _FEAS_TOL:
             return _Conic(sol.theta, sol.duals, status, iterations), active
-        active = np.union1d(active, violators).astype(np.intp)
+        active = np.union1d(active, _worst(problem, zn, violators)).astype(np.intp)
     return _Conic(None, None, "cut_rounds", iterations), active
 
 
@@ -661,7 +745,7 @@ def _certify(
         residual = _fast_colsums([(rows_t, u), *fixed], const)
         size = _abs_colsums([(rows_t, u), *fixed], const)
         rel = float(np.max(np.abs(residual) / np.maximum(size, 1.0)))
-        if rel <= 0.01 * RESIDUAL_TOL_REL:
+        if rel <= _RESIDUAL_FLOOR:
             break
         delta = _psd_solve(metric, residual)
         u = u - curv * _lin(rows_t, delta)
@@ -673,8 +757,16 @@ def _certify(
         return _Cert(primal, -math.inf, math.inf, rel, False)
     dual_terms = -np.concatenate([conj, *fixed_conj])
     dual = reductions.total(dual_terms)
-    gap = reductions.total(np.concatenate([primal_terms, -dual_terms]))
-    return _Cert(primal, dual, gap, rel, rel <= RESIDUAL_TOL_REL)
+    # F(θ) ≥ D(u) + rᵀθ for every θ (the Lagrangian bound), so
+    # F(θ̂) - F* ≤ F(θ̂) - D(u) + |r|ᵀ|θ*|, with θ* ≈ θ̂ at a certified point.
+    # The residual itself is a pairwise fold: pad it by that fold's error bound
+    # so the term stays an upper bound.
+    length = max(rows_t.shape[1] + sum(r.shape[1] for r, _ in fixed), 2)
+    fold_error = (math.log2(length) + 2.0) * _UNIT_ROUNDOFF * size
+    slack = reductions.dot(np.abs(residual) + fold_error, np.abs(theta))
+    gap = reductions.total(np.concatenate([primal_terms, -dual_terms, [slack]]))
+    floor = -_GAP_FLOOR_REL * max(1.0, abs(primal))
+    return _Cert(primal, dual, gap, rel, rel <= RESIDUAL_TOL_REL and gap >= floor)
 
 
 # --------------------------------------------------------------------------
@@ -756,9 +848,10 @@ def solve(
                 return _solution(
                     theta, "newton", "optimal", primal.iterations, cert, gap_tol_rel
                 )
-            start = np.flatnonzero(zn < -tol).astype(np.intp)
+            start = _worst(problem, zn, np.flatnonzero(zn < -tol).astype(np.intp))
         else:
-            start = np.arange(0, problem.nodes_t.shape[1], 8, dtype=np.intp)
+            m = problem.nodes_t.shape[1]
+            start = np.unique(np.linspace(0, m - 1, min(m, 512)).astype(np.intp))
         offset = primal.iterations
         label = "newton+clarabel"
     elif solver == "clarabel":

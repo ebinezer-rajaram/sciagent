@@ -389,3 +389,26 @@ Measured: S11 against itself 0.974, S11 against Hawkes 0.852, driven by
 size-injection at 0.79. The separation is modest: Hawkes count noise dominates
 short windows. Revisit the battery horizon in P3 if similarity doesn't
 discriminate on dev truths.
+
+## 2026-10-02 — Audit fixes to the fitter; PowerK by sum of exponentials (FIT_VERSION 3)
+
+Audit fixes:
+- **Identity-link positivity** is enforced at quadrature nodes and at every
+  event's right limit `tᵢ⁺`, the binding point for inhibition (audit B1).
+- **`simulable` is a recorded flag, not a constraint.** It is a lower bound on
+  λ over every history, computed by interval arithmetic. Inhibition can be the
+  maximum-likelihood structure, so forbidding it would bias structure
+  comparisons. Truths must be simulable; fits need not be.
+- **The reported gap** is `F − D + |r|ᵀ|θ|`, a valid suboptimality bound, with
+  a −1e-12 floor (S2).
+- **Clarabel cutting planes** use unit-row scaling and at most 64 cuts per
+  round (S3).
+
+Speed-up:
+- **PowerK histories** use the exact near field for lags below c and a
+  verified sum of exponentials beyond it, at ≤ 1e-11 relative (measured worst
+  5e-12). The exact path is kept as `exact=True`.
+- **Leaf-level caching** means a profile costs Σ over leaves, not Π.
+
+Fit (c), 9 datasets with 17.7k events: 256 s → 76 s. The solver's `fsum`
+folds now dominate.

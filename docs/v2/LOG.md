@@ -522,3 +522,33 @@ coarsening the dictionary's ψ grid.
 `1f0fac01e8b572efb4171f26fb8fa80c2ae3f0e8dbf6c9a9c6d248b281b4969d`. It replaces
 the FIT_VERSION 1–3 split (sha `324890d8…`, kept under `dev-stale-fit3/` for
 comparison). The pilot reads this one.
+
+## 2026-10-02 — Pilot driver design; pilot paused at about 30% LLM coverage
+
+- **LLM units are two cells.** The session cell has no metric version, so a
+  scorer change never reruns a model; the score is a separate cell.
+- **Same data for everyone.** Non-LLM systems see the observational log only.
+  LLM submissions and every charged fit are refitted on that same log, so all
+  systems are compared on identical data. The LLM efficiency curve is best by
+  BIC so far.
+- **The B-sym@10F control** runs on seed 1 of dev-000..009 only, which is
+  declared in PILOT.md.
+- **Failures.** A failed unit neither recovers nor closes. `-inf` scores are
+  stored but excluded from means.
+- **Isolation.** Live sessions run in separate processes, killed at wall time
+  + 600 s (`hard_timeout`, void), because a tool thread running a long
+  simulation can't be cancelled.
+- **The pool reuses workers.** `max_tasks_per_child=1` hangs on Python 3.12
+  (gh-115634).
+
+Paused at the user's request on 2026-10-02:
+- Non-LLM units: 7/60 per system, seed 1 only.
+- B-sym@10F: 5/10.
+- LLM sessions: named 26 + 25, anon 11 + 12.
+
+No failures, no void runs, no rate limits. No §7.1 verdict yet. Interim
+signals: about half the sessions run no experiment, almost none commit
+predictions, and agents use a median of ~15 of 40 fits.
+
+Open contract issue: `wall_time_s` does not bound a running tool call. A real
+fix caps simulation cost inside `run_experiment`.

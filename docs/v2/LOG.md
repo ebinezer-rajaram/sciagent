@@ -577,3 +577,34 @@ Pilot consistency:
 - About 10 old records containing stopped experiments no longer replay
   byte-identically, because their stop text says "50000". Their outcomes
   reproduce; this is accepted and declared.
+
+## 2026-10-03 — Pilot complete; GO provisional on a fitter defect; decisions taken
+
+The pilot finished (every unit scored) with a GO, but the audit
+(`docs/v2/PILOT-AUDIT.md`) found that the coordinate ψ search above the
+512-point cap stalls in local optima. ORACLE was therefore not an upper bound
+on 22 of 60 units, so the GO is provisional until a fixed fitter (fit/5) has
+been rerun. The user approved `docs/v2/P4-PROPOSAL.md` §5 decisions 1-17 as
+recommended. In short:
+- rescore the fit/4 sessions rather than rerun them;
+- keep the dev split;
+- apply §7.1 literally;
+- void only on an executed foreign tool;
+- use a rank-based control 2;
+- enforce belief entries;
+- run the prompt anchoring check;
+- leave the rival tool off;
+- add `rescaled` on Sonnet only;
+- descope C5 to P4b;
+- add controls 4-6;
+- use a 40 × 2 test design;
+- run the Sonnet-only budget sweep;
+- add Δ12 but not Δ13.
+
+The user delegated the six NIGHT-2026-10-01 decisions; 1-5 stand as taken and
+6 (a longer battery horizon) is declined, as in P4 decision 17. Before the
+rerun, the instruments must pass:
+- an independent defect hunt with property checks on real data;
+- a mini-pilot gate whose criteria are fixed in advance.
+
+The fit/4 code is tagged `p3-fit4` so the pilot records stay replayable.

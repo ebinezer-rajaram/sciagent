@@ -6,6 +6,7 @@ import pytest
 
 from sciagent.harness.ledger import Evaluation, Prediction
 from sciagent.scoring.behaviour import (
+    REVISION_K,
     Belief,
     ExperimentRun,
     StoppingRun,
@@ -69,8 +70,8 @@ def test_calibration_of_nothing_is_undefined() -> None:
 # --------------------------------------------------------------------------
 
 BELIEFS = (
-    Belief(0, "A", "B"),
-    Belief(5, "B", "A"),
+    Belief(0, "A", ("B",)),
+    Belief(5, "B", ("A",)),
 )
 RUNS = (ExperimentRun(0, 1), ExperimentRun(1, 3), ExperimentRun(2, 6))
 
@@ -138,7 +139,11 @@ def test_falsified_non_favoured_hypothesis_is_not_counted() -> None:
 
 
 def test_zombie_hypothesis_returns_after_displacement() -> None:
-    beliefs = (Belief(0, "A", "B"), Belief(4, "B", "A"), Belief(9, "A", "B"))
+    beliefs = (
+        Belief(0, "A", ("B",)),
+        Belief(4, "B", ("A",)),
+        Belief(9, "A", ("B",)),
+    )
     records: list[Record] = [
         (_p(0, "A", 0, 1), _e(0, 3.0, False)),
         (_p(0, "A", 0, 1, stat="burstiness"), _e(1, 3.0, False)),
@@ -184,3 +189,83 @@ def test_stopping_validates_lengths() -> None:
         StoppingRun(2, 8, (-0.1, -0.1))
     with pytest.raises(ScoringError):
         StoppingRun(9, 8, tuple([-0.1] * 10))
+
+
+# --------------------------------------------------------------------------
+# Beliefs with rivals (P4 Δ4)
+# --------------------------------------------------------------------------
+
+
+def test_runner_up_is_the_first_rival() -> None:
+    b = Belief(0, "A", ("C", "B"), confidence=0.6)
+    assert b.runner_up == "C"
+    assert b.rivals == ("C", "B")
+    assert b.confidence == 0.6
+    assert Belief(0, "A").runner_up is None
+    assert Belief(0, "A").rivals == ()
+
+
+@pytest.mark.parametrize(
+    ("favoured", "rivals", "confidence"),
+    [
+        ("A", ("A",), None),  # the favoured cannot be its own rival
+        ("A", ("B", "B"), None),  # rivals are distinct
+        ("A", "B", None),  # a bare string is not a tuple of rivals
+        ("A", ("B",), 0.0),  # confidence is in (0, 1)
+        ("A", ("B",), 1.0),
+        ("A", ("B",), float("nan")),
+    ],
+)
+def test_belief_rejects_malformed_entries(
+    favoured: str, rivals: tuple[str, ...], confidence: float | None
+) -> None:
+    with pytest.raises(ScoringError):
+        Belief(0, favoured, rivals, confidence=confidence)
+
+
+def test_belief_rejects_a_negative_turn() -> None:
+    with pytest.raises(ScoringError):
+        Belief(-1, "A")
+
+
+def test_falsification_uses_the_runner_up_not_later_rivals() -> None:
+    # A and C are disjoint, but C is the second rival: SPEC §4.4 names the
+    # runner-up, so this experiment is confirmation-only.
+    records: list[Record] = [(_p(0, "A", 0, 1), None), (_p(0, "C", 2, 3), None)]
+    beliefs = (Belief(0, "A", ("B", "C")),)
+    f = falsification_seeking(records, RUNS[:1], beliefs)
+    assert f.refuting == 0 and f.confirmation_only == 1
+    assert f.per_experiment[0].runner_up == "B"
+
+
+def test_revision_defaults_to_one_turn() -> None:
+    # Under the P4 clock a belief after experiment j has turn j + 1, so k = 1
+    # asks whether the very next belief moved off the falsified hypothesis.
+    assert REVISION_K == 1
+    runs = (ExperimentRun(0, 0), ExperimentRun(1, 1))
+    beliefs = (Belief(0, "A", ("B",)), Belief(1, "A", ("B",)), Belief(2, "B", ("A",)))
+    records: list[Record] = [(_p(0, "A", 0, 1), _e(0, 3.0, False))]
+    assert revision(records, runs, beliefs).k == 1
+    assert revision(records, runs, beliefs).revised == 0
+    assert revision(records, runs, beliefs, k=2).revised == 1
+
+
+def test_measures_are_deterministic() -> None:
+    records: list[Record] = [
+        (_p(0, "B", 0, 1), _e(0, 3.0, False)),
+        (_p(0, "A", 2, 3, level=0.8), _e(1, 2.5, True)),
+        (_p(1, "A", 0, 1), _e(2, 3.0, False)),
+    ]
+    runs = (ExperimentRun(0, 0), ExperimentRun(1, 1))
+    beliefs = (Belief(0, "B", ("A",)), Belief(1, "A", ("B",)), Belief(2, "B", ("A",)))
+    first = (
+        calibration(records),
+        falsification_seeking(records, runs, beliefs),
+        revision(records, runs, beliefs),
+    )
+    second = (
+        calibration(list(reversed(records))),
+        falsification_seeking(list(reversed(records)), runs, beliefs),
+        revision(list(reversed(records)), runs, beliefs),
+    )
+    assert repr(first) == repr(second)

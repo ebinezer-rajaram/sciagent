@@ -71,6 +71,17 @@ stream: draws are, in time order, a candidate gap, an acceptance uniform, and
 on acceptance (or at a forced time) the sampler's marks. With an empty plan the
 loop is exactly :func:`simulate`'s.
 
+**The event cap.** ``max_events`` bounds a run's work. By default
+(``on_cap="raise"``) an event beyond it raises :class:`ExplosionError`. With
+``on_cap="truncate"`` the run instead stops as soon as the ``max_events``-th
+event (generated or forced) enters history, keeps that event, and records its
+time τ in :attr:`PlannedRun.truncated_at`; the log keeps the planned horizon.
+It stops at the N-th event whether or not an (N+1)-th would follow, so τ is a
+stopping time and the likelihood of what was observed is
+``Σ_{i≤N} log λ(tᵢ) - ∫₀^τ λ``; the draws up to τ are exactly those of the
+same run under a larger cap. The candidate cap and the runaway-bound guards
+still raise under either setting.
+
 ψ values need not lie on the grids in ``grids.py`` (a truth may be off-grid);
 they must be assigned for every slot, finite and inside the parameter's domain.
 """
@@ -82,7 +93,7 @@ from bisect import bisect_right
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from itertools import pairwise
-from typing import Final, Protocol
+from typing import Final, Literal, Protocol
 
 import numpy as np
 import numpy.typing as npt
@@ -216,13 +227,24 @@ class Plan:
     overrides: tuple[MarkOverride, ...] = ()
 
 
+#: What a run does when it reaches ``max_events`` (see the module docstring).
+type OnCap = Literal["raise", "truncate"]
+_ON_CAP: Final = ("raise", "truncate")
+
+
 @dataclass(frozen=True, eq=False)
 class PlannedRun:
-    """Every event of a planned run, with which were forced and which clamped."""
+    """Every event of a planned run, with which were forced and which clamped.
+
+    ``truncated_at`` is the time τ of the ``max_events``-th event when the run
+    was stopped there (``on_cap="truncate"``), else None. ``log.horizon`` is
+    the planned horizon either way.
+    """
 
     log: EventLog
     forced: npt.NDArray[np.bool_]
     clamped: npt.NDArray[np.bool_]
+    truncated_at: float | None = None
 
 
 # --------------------------------------------------------------------------
@@ -865,6 +887,7 @@ class _Thinning:
         rng: np.random.Generator,
         max_events: int,
         plan: Plan,
+        on_cap: OnCap,
     ) -> None:
         self.ev = evaluator
         self.marks = marks
@@ -872,6 +895,9 @@ class _Thinning:
         self.rng = rng
         self.max_events = max_events
         self.plan = plan
+        self.on_cap = on_cap
+        #: Time of the max_events-th event once a truncating run stopped there.
+        self.truncated_at: float | None = None
         self.forced: list[bool] = []
         self.clamped: list[bool] = []
         self._next_forced = 0
@@ -887,7 +913,7 @@ class _Thinning:
         s, width = 0.0, 1.0
         while True:
             self._insert_forced(s)
-            if s >= self.horizon:
+            if s >= self.horizon or self.truncated_at is not None:
                 return
             self._clamp = self._clamp_at(s)
             end = self._window_end(s, width)
@@ -908,6 +934,8 @@ class _Thinning:
                 width *= 2.0
             self._open_end = end == self._forced_time()
             accepted = self._thin(s, end, bound)
+            if self.truncated_at is not None:
+                return
             s = end if accepted is None else accepted
 
     def _forced_time(self) -> float:
@@ -917,8 +945,11 @@ class _Thinning:
         return math.inf
 
     def _insert_forced(self, s: float) -> None:
-        """Insert every forced event scheduled at or before ``s`` (only at ``s``)."""
-        while self._forced_time() <= s:
+        """Insert every forced event scheduled at or before ``s`` (only at ``s``).
+
+        Stops early when a truncating run reaches its cap.
+        """
+        while self.truncated_at is None and self._forced_time() <= s:
             event = self.plan.forced[self._next_forced]
             marks = dict(self.marks(self.rng))
             marks.update(event.marks)
@@ -1002,6 +1033,8 @@ class _Thinning:
         self.ev.history.append(t, marks)
         self.forced.append(forced)
         self.clamped.append(clamped)
+        if self.on_cap == "truncate" and self.ev.history.n == self.max_events:
+            self.truncated_at = t
 
 
 # --------------------------------------------------------------------------
@@ -1143,10 +1176,14 @@ def simulate_planned(
     plan: Plan,
     *,
     max_events: int = 100_000,
+    on_cap: OnCap = "raise",
 ) -> PlannedRun:
     """:func:`simulate` under a :class:`Plan`; every event, with how it arose.
 
-    ``max_events`` counts forced events too. Raises as :func:`simulate`, and
+    ``max_events`` counts forced events too. ``on_cap`` is what reaching it
+    does (the module docstring's "The event cap"): ``"raise"`` an
+    :class:`ExplosionError` on the event after it, or ``"truncate"`` the run
+    at it (then ``max_events`` must be ≥ 1). Raises as :func:`simulate`, and
     :class:`InvalidSimulationInputError` for a malformed plan (a mark value is
     checked when its event enters history).
     """
@@ -1154,15 +1191,25 @@ def simulate_planned(
         raise InvalidSimulationInputError(f"horizon must be positive, got {horizon}")
     if max_events < 0:
         raise InvalidSimulationInputError(f"max_events must be ≥ 0, got {max_events}")
+    if on_cap not in _ON_CAP:
+        raise InvalidSimulationInputError(
+            f"on_cap must be one of {list(_ON_CAP)}, got {on_cap!r}"
+        )
+    if on_cap == "truncate" and max_events < 1:
+        raise InvalidSimulationInputError(
+            f"max_events must be ≥ 1 to truncate at it, got {max_events}"
+        )
     ev = _evaluator(structure, psi, coef, channels, None, horizon, recursive=True)
     _check_plan(plan, horizon, channels)
-    thinning = _Thinning(ev, marks, horizon, rng, max_events, plan)
+    thinning = _Thinning(ev, marks, horizon, rng, max_events, plan, on_cap)
     thinning.run()
     forced = np.array(thinning.forced, dtype=np.bool_)
     clamped = np.array(thinning.clamped, dtype=np.bool_)
     forced.setflags(write=False)
     clamped.setflags(write=False)
-    return PlannedRun(ev.history.to_log(horizon), forced, clamped)
+    return PlannedRun(
+        ev.history.to_log(horizon), forced, clamped, thinning.truncated_at
+    )
 
 
 def _single(

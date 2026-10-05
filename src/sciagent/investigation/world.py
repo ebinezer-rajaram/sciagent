@@ -30,7 +30,12 @@ import numpy as np
 from sciagent.core.errors import SciAgentError
 from sciagent.glm.data import Dataset
 from sciagent.glm.grammar import ChannelSpec, Structure
-from sciagent.glm.interventions import Compose, Experiment, run_experiment
+from sciagent.glm.interventions import (
+    Compose,
+    Experiment,
+    run_experiment,
+    run_experiment_truncating,
+)
 from sciagent.glm.simulate import Coefficients, MarkSampler, PsiAssignment
 
 __all__ = [
@@ -49,7 +54,8 @@ OBSERVATIONAL: Final = "obs"
 #: Native horizon of the observational log: about 2,000 events at mean rate 1.
 OBSERVATIONAL_HORIZON: Final = 2000.0
 #: Event cap per simulated dataset; a run that exceeds it is stopped
-#: (:class:`~sciagent.glm.simulate.ExplosionError`). It is what bounds an
+#: (:class:`~sciagent.glm.simulate.ExplosionError`), or, in a world built with
+#: ``truncate=True``, truncated at its cap-th event. It is what bounds an
 #: experiment's *work*, deterministically: a tool call cannot be cancelled,
 #: and a wall-clock limit would make outcomes machine-dependent (invariant 3).
 #: The simulator's candidate cap (50 per event) and runaway-bound guard scale
@@ -116,31 +122,70 @@ def _generator(seed: int, stream: int, index: int) -> np.random.Generator:
 
 
 class World:
-    """The truth, its seeded draws, and the datasets drawn so far."""
+    """The truth, its seeded draws, and the datasets drawn so far.
 
-    __slots__ = ("_datasets", "_experiments_run", "_seed", "_truth")
+    ``truncate`` (P4 Δ2) sets what an experiment that reaches
+    :data:`MAX_EVENTS` does. Off (the default), the run is stopped: an
+    :class:`~sciagent.glm.simulate.ExplosionError` propagates from
+    :meth:`run`. On, it is truncated at the cap's event, at time τ
+    (:func:`~sciagent.glm.interventions.run_experiment_truncating`), its
+    dataset is kept, and :meth:`truncated_at` reports τ. Below the cap the two
+    give byte-identical data. The observational log is never truncated: a
+    truth whose free log reaches the cap is a calibration fault, which stays
+    loud. Only the stop on reaching the cap changes; the candidate cap and the
+    runaway guards stop a run either way.
+    """
 
-    def __init__(self, truth: Truth, seed: int) -> None:
+    __slots__ = (
+        "_datasets",
+        "_experiments_run",
+        "_seed",
+        "_truncate",
+        "_truncated_at",
+        "_truth",
+    )
+
+    def __init__(self, truth: Truth, seed: int, *, truncate: bool = False) -> None:
         if isinstance(seed, bool) or not 0 <= seed < 2**63:
             raise WorldError(f"seed must be an integer in [0, 2**63), got {seed!r}")
         self._truth = truth
         self._seed = seed
+        self._truncate = truncate
         self._experiments_run = 0
         self._datasets: dict[str, Dataset] = {}
-        observational = self._simulate(
+        self._truncated_at: dict[str, float] = {}
+        observational, _ = self._simulate(
             Experiment(Compose(()), OBSERVATIONAL_HORIZON),
             _generator(seed, _STREAM_OBSERVATIONAL, 0),
             OBSERVATIONAL,
+            truncate=False,
         )
         self._datasets[OBSERVATIONAL] = observational
 
     # -- the only code that touches the truth ---------------------------------
 
     def _simulate(
-        self, experiment: Experiment, rng: np.random.Generator, label: str
-    ) -> Dataset:
+        self,
+        experiment: Experiment,
+        rng: np.random.Generator,
+        label: str,
+        *,
+        truncate: bool,
+    ) -> tuple[Dataset, float | None]:
         truth = self._truth
-        return run_experiment(
+        if truncate:
+            return run_experiment_truncating(
+                truth.structure,
+                truth.psi,
+                truth.coef,
+                truth.channels,
+                truth.mark_sampler,
+                experiment,
+                rng,
+                max_events=MAX_EVENTS,
+                label=label,
+            )
+        data = run_experiment(
             truth.structure,
             truth.psi,
             truth.coef,
@@ -151,6 +196,7 @@ class World:
             max_events=MAX_EVENTS,
             label=label,
         )
+        return data, None
 
     # -- public surface: data, channels, counts ---------------------------------
 
@@ -174,14 +220,29 @@ class World:
 
         The index is consumed before the draw, so a run stopped by the
         simulator (a :class:`~sciagent.glm.simulate.SimulationError`, e.g.
-        more than :data:`MAX_EVENTS` events) still uses up its index and
-        leaves no dataset; the error propagates to the caller.
+        more than :data:`MAX_EVENTS` events when the world does not truncate)
+        still uses up its index and leaves no dataset; the error propagates to
+        the caller. A truncated run leaves its dataset (see the class).
         """
         index = self._experiments_run
         self._experiments_run += 1
         label = experiment_id(index)
-        data = self._simulate(
-            experiment, _generator(self._seed, _STREAM_EXPERIMENT, index), label
+        data, tau = self._simulate(
+            experiment,
+            _generator(self._seed, _STREAM_EXPERIMENT, index),
+            label,
+            truncate=self._truncate,
         )
         self._datasets[label] = data
+        if tau is not None:
+            self._truncated_at[label] = tau
         return index, data
+
+    def truncated_at(self, data_id: str) -> float | None:
+        """τ (native time) where dataset ``data_id`` was truncated, else None.
+
+        Raises :class:`WorldError` for an id with no dataset.
+        """
+        if data_id not in self._datasets:
+            raise WorldError(f"no dataset {data_id!r}")
+        return self._truncated_at.get(data_id)

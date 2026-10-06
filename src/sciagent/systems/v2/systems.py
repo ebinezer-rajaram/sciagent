@@ -20,9 +20,13 @@ one place truth enters a system, and is visible at the call site.
   (exactly one, unintervened) and submits no structure. It uses no fits.
 - **ORACLE** fits the true structure; one fit (by its budget). Given the
   truth's ψ and coefficients, it also θ-refits at the truth's ψ point and keeps
-  that fit when its training log L is strictly higher than the search's, so
-  ORACLE never loses to its own truth on training data because the ψ search
-  stalled (PILOT-AUDIT §1). Its ``details`` record ``oracle_psi_source``
+  that fit when it is certified and its training log L is strictly higher than
+  the search's, so ORACLE never loses to its own truth on training data because
+  the ψ search stalled (PILOT-AUDIT §1). A higher but uncertified refit is not
+  kept (SPEC §2.2): the search fit stays, ``oracle_psi_source`` stays
+  ``"search"``, ``oracle_underfit`` is computed as always against the true
+  parameters, and ``oracle_truth_psi_certified`` is recorded as False (present
+  only in that case). Its ``details`` record ``oracle_psi_source``
   (``"search"`` or ``"truth"``), ``oracle_underfit`` (the kept fit's training
   log L is below the true parameters' by more than ``1e-9·|log L|``), the
   training log Ls, and ``oracle_truth_psi_on_grid``: a truth whose ψ is off
@@ -312,7 +316,13 @@ class Oracle:
                 )
                 details["oracle_truth_psi_ll"] = at_truth.log_likelihood
                 if at_truth.log_likelihood > search_ll:
-                    result, source = at_truth, "truth"
+                    if at_truth.certified:
+                        result, source = at_truth, "truth"
+                    else:
+                        # Never silently used (SPEC §2.2). Recorded only here,
+                        # where it decided the outcome, so every other cell's
+                        # detail bytes are unchanged.
+                        details["oracle_truth_psi_certified"] = False
             details["oracle_psi_source"] = source
             # Off the grids no fit can reach the true parameters, so the flag
             # (a search failure) is only defined on them.

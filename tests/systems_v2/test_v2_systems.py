@@ -8,14 +8,16 @@ with the margin printed in the assertion message.
 
 from __future__ import annotations
 
+import dataclasses
 import math
+from typing import Any
 
 import numpy as np
 import pytest
 
 from environments.pointproc import v2
 from sciagent.glm.data import Dataset
-from sciagent.glm.fit import FitConfig, fit, parameter_log_likelihood
+from sciagent.glm.fit import FitConfig, FitResult, fit, parameter_log_likelihood
 from sciagent.glm.grammar import (
     ALL,
     ChannelKind,
@@ -33,6 +35,7 @@ from sciagent.glm.grammar import (
 from sciagent.glm.simulate import Coefficients, PsiAssignment, simulate
 from sciagent.library.mixture import PoissonMixture2
 from sciagent.library.mmpp import MMPP2, MMPP2Params, simulate_mmpp2
+from sciagent.systems.v2 import systems as systems_module
 from sciagent.systems.v2.models import GLMModel, LibraryFittedModel, WienerHopfModel
 from sciagent.systems.v2.systems import (
     BLib,
@@ -251,12 +254,51 @@ def test_oracle_keeps_the_truth_psi_point_when_the_search_misses_it() -> None:
         _WINDOWS, data.observational, _SIZE, config=_WEAK, psi=_windows_psi()
     )
     assert searched.log_likelihood < at_truth.log_likelihood - 1.0
+    assert at_truth.certified
     result = _oracle(_WEAK).run(data)
     assert isinstance(result.model, GLMModel)
     assert result.model.fit == at_truth
     assert result.details["oracle_psi_source"] == "truth"
     assert result.details["oracle_underfit"] is False
+    # Recorded only when it decided the outcome (a better, uncertified refit).
+    assert "oracle_truth_psi_certified" not in result.details
     assert result.trajectory[0].best_criterion == at_truth.bic
+
+
+def test_oracle_never_keeps_an_uncertified_truth_psi_refit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Defect hunt (latent): a truth-ψ refit with a higher training log L but
+    no certificate must not replace the search fit (SPEC §2.2: uncertified
+    fits are flagged, never silently used). The refit is the one of the test
+    above, marked uncertified."""
+    data = _windows_data()
+    searched = fit(_WINDOWS, data.observational, _SIZE, config=_WEAK)
+    real_fit = fit
+
+    def refit_uncertified(*args: Any, **kwargs: Any) -> FitResult:
+        result = real_fit(*args, **kwargs)
+        if kwargs.get("psi") is not None:
+            return dataclasses.replace(result, certified=False)
+        return result
+
+    monkeypatch.setattr(systems_module, "fit", refit_uncertified)
+    result = _oracle(_WEAK).run(data)
+    assert isinstance(result.model, GLMModel)
+    assert result.model.fit == searched
+    assert result.trajectory[0].best_criterion == searched.bic
+    details = result.details
+    truth_psi_ll = details["oracle_truth_psi_ll"]
+    assert isinstance(truth_psi_ll, float)
+    assert truth_psi_ll > searched.log_likelihood + 1.0
+    assert details["oracle_truth_psi_certified"] is False
+    assert details["oracle_psi_source"] == "search"
+    # The flag compares the kept fit with the true parameters, as always.
+    true_ll = details["oracle_true_params_ll"]
+    assert isinstance(true_ll, float)
+    assert details["oracle_underfit"] is oracle_underfit(
+        searched.log_likelihood, true_ll
+    )
 
 
 def test_oracle_keeps_its_search_when_it_reaches_the_truth_psi() -> None:
@@ -267,6 +309,7 @@ def test_oracle_keeps_its_search_when_it_reaches_the_truth_psi() -> None:
     assert result.model.fit == searched
     assert result.details["oracle_psi_source"] == "search"
     assert result.details["oracle_underfit"] is False
+    assert "oracle_truth_psi_certified" not in result.details
     true_ll = math.fsum(
         parameter_log_likelihood(
             _WINDOWS, _windows_psi(), _WINDOWS_COEF, data.observational, _SIZE

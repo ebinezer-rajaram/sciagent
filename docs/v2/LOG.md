@@ -833,3 +833,23 @@ derived. Examples:
 - `METRIC_VERSION`, which covers 3 of about 13 battery constants.
 
 These rely on manual version bumps.
+
+## 2026-10-06 — ORACLE keeps a truth-ψ refit only if certified
+
+**The defect.** Defect hunt A found that ORACLE kept its truth-ψ θ-refit
+whenever the refit's training log L was strictly higher than the search fit's,
+without checking the certificate. An uncertified fit could therefore become
+ORACLE's submission. The defect is latent: it never fired on the 20 dev truths
+at seed 1.
+
+**The fix.** ORACLE now keeps the refit only when it is certified and strictly
+better. When the refit is better but uncertified:
+
+- the search fit stays;
+- `oracle_psi_source` stays "search";
+- `oracle_underfit` is computed as before, so control 1 shows the shortfall
+  instead of hiding it;
+- `oracle_truth_psi_certified: false` is written only in that case, so every
+  other cell's bytes are unchanged.
+
+**Verification.** The keys and config text are unchanged.

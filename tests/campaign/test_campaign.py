@@ -241,9 +241,22 @@ SCRIPT = (
     ),
     Step(
         calls=(
+            # P4 Δ4: a belief is required before submit.
+            (
+                "belief",
+                {
+                    "favoured": "Excite(ExpK, Mark(size), all)",
+                    "rivals": ["Excite(ExpK, One, all)"],
+                    "confidence": 0.7,
+                },
+            ),
             (
                 "submit",
-                {"structure": "Excite(ExpK, Mark(size), all)", "report": "done"},
+                {
+                    "structure": "Excite(ExpK, Mark(size), all)",
+                    "report": "done",
+                    "stop_reason": "confident",
+                },
             ),
         )
     ),

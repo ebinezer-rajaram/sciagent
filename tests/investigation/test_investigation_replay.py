@@ -14,7 +14,9 @@ from typing import Any
 
 import pytest
 from investigation_support import (
+    BELIEF,
     POINTPROC,
+    STOP,
     clean_environment,
     plain_run,
     scripted_run,
@@ -37,7 +39,7 @@ PREDICT_E1: dict[str, Any] = {
 
 CONSTRAINED = (
     Step(text="look", calls=(("diagnostic", {"name": "mean_rate", "data_id": "obs"}),)),
-    Step(calls=(("run_experiment", plain_run(300.0)),)),
+    Step(calls=(BELIEF, ("run_experiment", plain_run(300.0)))),
     Step(
         calls=(
             (
@@ -53,6 +55,7 @@ CONSTRAINED = (
     Step(calls=(("predict", PREDICT_E1),)),
     Step(
         calls=(
+            BELIEF,
             (
                 "run_experiment",
                 {
@@ -69,9 +72,14 @@ CONSTRAINED = (
     ),
     Step(
         calls=(
+            BELIEF,
             (
                 "submit",
-                {"structure": "Excite(ExpK, Mark(size), all)", "report": "done"},
+                {
+                    "structure": "Excite(ExpK, Mark(size), all)",
+                    "report": "done",
+                    **STOP,
+                },
             ),
         )
     ),
@@ -93,7 +101,7 @@ print(json.load(open("/work/state.json")))
 """
 
 OPEN = (
-    Step(calls=(("run_experiment", plain_run(300.0)),)),
+    Step(calls=(BELIEF, ("run_experiment", plain_run(300.0)))),
     Step(calls=(("python", {"code": READ_DATA}),)),
     Step(calls=(("python", {"code": READ_STATE}),)),
     Step(
@@ -109,12 +117,17 @@ OPEN = (
         )
     ),
     Step(calls=(("predict", PREDICT_E1),)),
-    Step(calls=(("run_experiment", plain_run(300.0)),)),
+    Step(calls=(BELIEF, ("run_experiment", plain_run(300.0)))),
     Step(
         calls=(
+            BELIEF,
             (
                 "submit",
-                {"structure": "Excite(ExpK, Mark(size), all)", "report": "done"},
+                {
+                    "structure": "Excite(ExpK, Mark(size), all)",
+                    "report": "done",
+                    **STOP,
+                },
             ),
         )
     ),
@@ -160,7 +173,7 @@ def test_constrained_run_replays_and_detects_a_perturbed_fit(
 
     record = SessionRecord.load(first.record_path)
     report = replay_investigation(record, POINTPROC)
-    assert report.steps == 7
+    assert report.steps == 10  # 7 calls and 3 beliefs
     assert report.budgets_used == {"experiments": 2, "fits": 2, "submit": 1}
     native = submitted_structure(record, POINTPROC.resolve("hawkes").channels)
     assert native == first.submission

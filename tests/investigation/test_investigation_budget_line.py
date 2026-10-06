@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from investigation_support import lab, plain_run
+from investigation_support import BELIEF_ARGS, STOP, lab, plain_run
 
 from sciagent.investigation.prompts import Arm, system_prompt
 from sciagent.investigation.view import Condition
@@ -36,15 +36,20 @@ def test_every_result_ends_with_the_budget_line(condition: Condition) -> None:
         ("diagnostic", {"name": rate, "data_id": "obs"}, False, 1, 1),
         ("diagnostic", {"name": rate, "data_id": "e7"}, True, 1, 1),
         ("nonparam_kernels", {"data_id": "obs"}, False, 1, 1),
+        ("run_experiment", plain_run(100.0 * c), True, 1, 1),  # no belief
+        ("belief", BELIEF_ARGS, False, 1, 1),
+        ("belief", {**BELIEF_ARGS, "confidence": 2.0}, True, 1, 1),
         ("run_experiment", {"intervention": {"type": "nope"}}, True, 1, 1),
         ("run_experiment", plain_run(100.0 * c), False, 0, 1),
+        ("belief", BELIEF_ARGS, False, 0, 1),
         ("run_experiment", plain_run(100.0 * c), True, 0, 1),
         ("fit", {"structure": "null", "data_ids": ["obs"]}, False, 0, 0),
         ("fit", {"structure": "null", "data_ids": ["obs"]}, True, 0, 0),
         ("fit", {"structure": "Excite(", "data_ids": ["obs"]}, True, 0, 0),
         ("fit", {"structure": "null"}, True, 0, 0),
         ("no_such_tool", {}, True, 0, 0),
-        ("submit", {"structure": "null", "report": "r"}, False, 0, 0),
+        ("submit", {"structure": "null", "report": "r"}, True, 0, 0),
+        ("submit", {"structure": "null", "report": "r", **STOP}, False, 0, 0),
         ("diagnostic", {"name": rate, "data_id": "obs"}, True, 0, 0),
     ]
     for name, args, is_error, e_left, f_left in calls:

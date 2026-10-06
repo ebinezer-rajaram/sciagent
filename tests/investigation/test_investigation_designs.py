@@ -21,7 +21,15 @@ from pathlib import Path
 from typing import Any, Final
 
 import pytest
-from investigation_support import POINTPROC, clean_environment, lab, scripted_run
+from investigation_support import (
+    BELIEF,
+    POINTPROC,
+    STOP,
+    believing,
+    clean_environment,
+    lab,
+    scripted_run,
+)
 
 from sciagent.glm.designs import DESIGN_SCHEMA
 from sciagent.harness.errors import ReplayDivergenceError
@@ -120,7 +128,7 @@ def test_a_generator_and_its_arrays_give_byte_identical_results(
         the_lab = lab("AG-c", condition)
         c = the_lab.view.time(1.0)
         args = _to_agent(design, c, condition)
-        layer = the_lab.layer()
+        layer = believing(the_lab)
         out = layer.call("run_experiment", args)
         assert not out.is_error, out.text
         assert layer.meter(BUDGET_EXPERIMENTS).used == 1
@@ -154,7 +162,7 @@ def _to_agent(design: dict[str, Any], c: float, condition: str) -> dict[str, Any
 
 
 def test_a_pattern_that_does_not_tile_is_refused_uncharged() -> None:
-    layer = lab("AG-c").layer()
+    layer = believing(lab("AG-c"))
     bad = copy.deepcopy(GENERATOR)
     bad["intervention"]["marks"] = {"size": {"repeat": [1.0, 2.0, 3.0]}}
     out = layer.call("run_experiment", bad)
@@ -167,7 +175,7 @@ def test_a_pattern_that_does_not_tile_is_refused_uncharged() -> None:
 
 
 def test_the_constrained_arm_cannot_read_a_file() -> None:
-    layer = lab("AG-c").layer()
+    layer = believing(lab("AG-c"))
     out = layer.call("run_experiment", _from("/work/x.json"))
     assert out.is_error
     assert "only with the python sandbox" in out.text, out.text
@@ -180,7 +188,7 @@ def test_a_work_file_runs_the_design_it_holds_and_records_its_digest(
     payload = json.dumps(FILE_INTERVENTION).encode()
     from_file = _sandbox_lab(tmp_path / "a")
     _write(from_file, "designs/x.json", payload)
-    layer = from_file.layer()
+    layer = believing(from_file)
     out = layer.call("run_experiment", _from("/work/designs/x.json"))
     assert not out.is_error, out.text
     assert layer.meter(BUDGET_EXPERIMENTS).used == 1
@@ -192,7 +200,7 @@ def test_a_work_file_runs_the_design_it_holds_and_records_its_digest(
     }
     # The same experiment as the inline design: only the file's provenance
     # is added to the record.
-    inline = _sandbox_lab(tmp_path / "b").layer().call("run_experiment", GENERATOR)
+    inline = believing(_sandbox_lab(tmp_path / "b")).call("run_experiment", GENERATOR)
     assert inline.record is not None
     assert out.text == inline.text
     assert {k: v for k, v in out.record.items() if k != "design_file"} == dict(
@@ -208,7 +216,7 @@ def test_a_changed_file_changes_the_digest(tmp_path: Path) -> None:
         design["marks"]["sign"] = {"constant": sign}
         the_lab = _sandbox_lab(tmp_path / str(k))
         _write(the_lab, "x.json", json.dumps(design).encode())
-        out = the_lab.layer().call("run_experiment", _from("/work/x.json"))
+        out = believing(the_lab).call("run_experiment", _from("/work/x.json"))
         assert not out.is_error, out.text
         digests.append(out.digest)
     assert digests[0] != digests[1]
@@ -233,7 +241,7 @@ def test_a_path_outside_work_or_not_a_file_is_refused(
     the_lab = _sandbox_lab(tmp_path)
     assert the_lab.sandbox is not None
     (the_lab.sandbox.work_dir / "folder").mkdir()
-    layer = the_lab.layer()
+    layer = believing(the_lab)
     out = layer.call("run_experiment", _from(path))
     assert out.is_error
     assert message in out.text, out.text
@@ -254,7 +262,7 @@ def test_a_link_in_the_path_is_refused(tmp_path: Path) -> None:
         _winapi.CreateJunction(str(outside), str(link))
     else:
         os.symlink(outside, link)
-    layer = the_lab.layer()
+    layer = believing(the_lab)
     out = layer.call("run_experiment", _from("/work/link/x.json"))
     assert out.is_error
     assert "a link" in out.text, out.text
@@ -275,7 +283,7 @@ def test_an_oversized_or_malformed_file_is_refused(tmp_path: Path) -> None:
         "nested.json",
         b'{"type": "compose", "parts": [{"from": "/work/x.json"}]}',
     )
-    layer = the_lab.layer()
+    layer = believing(the_lab)
     cases = {
         "/work/big.json": f"larger than {MAX_DESIGN_FILE_BYTES} bytes",
         "/work/bad.json": "is not valid JSON",
@@ -293,7 +301,7 @@ def test_an_oversized_or_malformed_file_is_refused(tmp_path: Path) -> None:
 def test_from_is_only_the_whole_intervention(tmp_path: Path) -> None:
     the_lab = _sandbox_lab(tmp_path)
     _write(the_lab, "x.json", json.dumps(FILE_INTERVENTION).encode())
-    layer = the_lab.layer()
+    layer = believing(the_lab)
     out = layer.call(
         "run_experiment",
         {"intervention": {"from": "/work/x.json", "type": "compose"}},
@@ -332,8 +340,8 @@ def test_an_open_run_with_a_work_file_replays(
     clean_environment(monkeypatch)
     script = (
         Step(calls=(("python", {"code": _WRITE_DESIGN}),)),
-        Step(calls=(("run_experiment", _from("/work/x.json")),)),
-        Step(calls=(("submit", {"structure": "null", "report": "r"}),)),
+        Step(calls=(BELIEF, ("run_experiment", _from("/work/x.json")))),
+        Step(calls=(BELIEF, ("submit", {"structure": "null", "report": "r", **STOP}))),
     )
     outcome = scripted_run(
         script, tmp_path / "out", arm="AG-o", sandbox_root=tmp_path / "sbx"

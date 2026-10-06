@@ -8,7 +8,7 @@ import json
 from typing import Any
 
 import pytest
-from investigation_support import lab, plain_run
+from investigation_support import believing, lab, plain_run
 
 from sciagent.diagnostics import catalogue
 from sciagent.harness.ledger import Prediction
@@ -40,6 +40,7 @@ def test_the_agent_cannot_supply_an_observed_value() -> None:
         "hypothesis",
         "interval",
         "level",
+        "note",
     }
     assert schema["input_schema"]["additionalProperties"] is False
     smuggled = layer.call("predict", _predict(0, 0.0, 2.0, value=1.0))
@@ -50,7 +51,7 @@ def test_the_agent_cannot_supply_an_observed_value() -> None:
 @pytest.mark.parametrize("condition", ["named", "anon"])
 def test_framework_evaluates_on_the_experiments_data(condition: Condition) -> None:
     the_lab = lab("AG-c", condition)
-    layer = the_lab.layer()
+    layer = believing(the_lab)
     view = the_lab.view
     rate = view.diagnostic("mean_rate")
     wide = layer.call("predict", {**_predict(0, 0.0, 100.0), "diagnostic": rate})
@@ -73,7 +74,7 @@ def test_framework_evaluates_on_the_experiments_data(condition: Condition) -> No
 
 
 def test_a_prediction_after_its_experiment_ran_is_refused() -> None:
-    layer = lab("AG-c").layer()
+    layer = believing(lab("AG-c"))
     assert not layer.call("run_experiment", plain_run(200.0)).is_error
     late = layer.call("predict", _predict(0, 0.0, 2.0))
     assert late.is_error
@@ -102,7 +103,7 @@ def test_a_bad_prediction_is_refused_with_a_reason() -> None:
 def test_unevaluable_prediction_is_recorded_not_raised() -> None:
     """A statistic undefined on the experiment's data is recorded as such."""
     the_lab = lab("AG-c")
-    layer = the_lab.layer()
+    layer = believing(the_lab)
     huge_window = {
         **_predict(0, 0.0, 10.0),
         "diagnostic": "fano_factor",

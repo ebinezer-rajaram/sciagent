@@ -15,6 +15,7 @@ import pytest
 from environments.pointproc import v2
 from sciagent.harness.live import MODELS
 from sciagent.harness.scripted import ScriptedDriver, Step
+from sciagent.harness.tools import ToolLayer
 from sciagent.investigation import (
     EnvironmentSpec,
     InvestigationOutcome,
@@ -24,7 +25,7 @@ from sciagent.investigation import (
     build_lab,
     run,
 )
-from sciagent.investigation.prompts import Arm
+from sciagent.investigation.prompts import Arm, PromptVariant
 from sciagent.investigation.view import Condition
 
 #: The anonymised channel names SPEC §5 fixes for pointproc.
@@ -33,6 +34,19 @@ ANON_CHANNELS: Final = {"size": "m1", "sign": "m2"}
 POINTPROC_FORBIDDEN: Final = ("size", "sign", "arrival")
 MODEL: Final = MODELS["haiku"]
 SEED: Final = 20261002
+
+#: A belief with no channel names (so it parses in both conditions): what a
+#: test states before an experiment or a submit when the belief is not its
+#: subject (P4 Δ4 makes one compulsory there).
+BELIEF_ARGS: Final = {
+    "favoured": "null",
+    "rivals": ["link=exp; Trend"],
+    "confidence": 0.5,
+}
+#: The belief as a scripted call, for :class:`Step` scripts.
+BELIEF: Final = ("belief", BELIEF_ARGS)
+#: A valid stop reason, merged into a test's ``submit`` arguments.
+STOP: Final = {"stop_reason": "confident"}
 
 
 def resolve(truth_id: str) -> TruthSpec:
@@ -60,11 +74,32 @@ def lab(
     seed: int = SEED,
     sandbox_root: Path | None = None,
     image: str | None = None,
+    prompt_variant: PromptVariant = "v1",
 ) -> Lab:
     spec = InvestigationSpec(
-        POINTPROC.name, truth, arm, condition, seed, experiments, fits
+        POINTPROC.name,
+        truth,
+        arm,
+        condition,
+        seed,
+        experiments,
+        fits,
+        prompt_variant=prompt_variant,
     )
     return build_lab(spec, POINTPROC, sandbox_root=sandbox_root, image=image)
+
+
+def believe(layer: ToolLayer) -> None:
+    """State :data:`BELIEF_ARGS` (free), so the next experiment or submit runs."""
+    out = layer.call(*BELIEF)
+    assert not out.is_error, out.text
+
+
+def believing(the_lab: Lab) -> ToolLayer:
+    """``the_lab``'s layer with :data:`BELIEF_ARGS` already stated."""
+    layer = the_lab.layer()
+    believe(layer)
+    return layer
 
 
 def scripted_run(
@@ -77,6 +112,7 @@ def scripted_run(
     experiments: int = 3,
     fits: int = 4,
     sandbox_root: Path | None = None,
+    prompt_variant: str = "v1",
 ) -> InvestigationOutcome:
     return run(
         POINTPROC,
@@ -92,6 +128,7 @@ def scripted_run(
         wall_time_s=600.0,
         driver=ScriptedDriver(script),
         sandbox_root=sandbox_root,
+        prompt_variant=prompt_variant,
     )
 
 

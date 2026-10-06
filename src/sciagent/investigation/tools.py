@@ -55,6 +55,23 @@ sandbox calls that wrote it, so the digest checks the file.
 Budget line (P4 Δ12). Every result -- success, error, or the layer's own
 refusal -- ends with one line giving the experiments and fits left
 (:func:`budget_line`), appended by the layer after charging.
+
+Beliefs (P4 Δ4, SPEC §4.4). ``belief(favoured, rivals, confidence)`` is free
+and records the agent's favoured structure, one to :data:`MAX_RIVALS` rivals
+(distinct from it and from each other after canonicalisation) and a
+confidence in (0, 1). Its record is ``{"belief": i, "favoured", "rivals",
+"confidence", "experiments_run": k}`` with every structure as canonical native
+DSL text, the input of :func:`~sciagent.investigation.timeline.timeline`. A
+belief is *fresh* when no experiment has run since it was recorded;
+``run_experiment`` and ``submit`` are refused, uncharged, without a fresh one.
+The gate is checked before anything else in those handlers, so a refused call
+reads no design, seals no ledger entry and draws nothing. ``submit`` also
+records a ``stop_reason`` (:data:`~sciagent.investigation.prompts.STOP_REASONS`)
+and an optional ``note``. ``predict``'s ``hypothesis`` is a structure only,
+recorded as canonical native text; free commentary goes in ``note``, which is
+recorded and never shown back. Every hypothesis label in the record is
+``render(canonicalise(parse(text)))`` in native names, so one structure has one
+label whatever the spelling or the naming condition.
 """
 
 from __future__ import annotations
@@ -73,7 +90,7 @@ from typing import Any, Final
 
 import numpy as np
 
-from sciagent.core.errors import SciAgentError
+from sciagent.core.errors import GrammarError, SciAgentError
 from sciagent.diagnostics import catalogue
 from sciagent.glm.canonical import canonicalise, structure_hash
 from sciagent.glm.data import Dataset
@@ -95,8 +112,12 @@ from sciagent.harness.record import canonical_json as record_json
 from sciagent.harness.tools import BudgetMeter, ToolLayer, ToolOutput, ToolSpec
 from sciagent.investigation.prompts import (
     MAX_DESIGN_FILE_BYTES,
+    STOP_REASONS,
     WORK_PREFIX,
     Arm,
+    PromptError,
+    PromptVariant,
+    as_variant,
     budget_line,
     num,
 )
@@ -122,6 +143,8 @@ __all__ = [
     "ENDOGENOUS_COLUMN",
     "FIT_CONFIG",
     "MAX_DESIGN_FILE_BYTES",
+    "MAX_NOTE",
+    "MAX_RIVALS",
     "SUMMARY_DIAGNOSTICS",
     "Lab",
     "LabError",
@@ -150,6 +173,10 @@ SUMMARY_DIAGNOSTICS: Final = (
 )
 _MAX_NOTEBOOK_APPEND: Final = 20_000
 _MAX_CODE: Final = 50_000
+#: Most rivals one belief may name (P4 Δ4).
+MAX_RIVALS: Final = 3
+#: Longest free ``note`` on ``predict`` or ``submit``, in characters.
+MAX_NOTE: Final = 1_000
 _DATA_ID: Final = re.compile(r"^(obs|e(0|[1-9][0-9]*))$")
 #: A design file's path as the agent writes it: under /work, plain segments.
 _WORK_PATH: Final = re.compile(r"^/work(/[A-Za-z0-9_.-]+)+$")
@@ -225,6 +252,10 @@ class _State:
     submitted: Structure | None = None
     report: str | None = None
     infrastructure_faults: list[str] = field(default_factory=list)
+    #: Beliefs recorded so far (the next belief's index).
+    beliefs: int = 0
+    #: ``World.experiments_run`` when the latest belief was recorded.
+    belief_at: int | None = None
 
 
 class Lab:
@@ -240,6 +271,7 @@ class Lab:
         fits: int,
         sandbox: Sandbox | None = None,
         fit_workers: int = 1,
+        prompt_variant: str = "v1",
     ) -> None:
         if arm not in ("AG-c", "AG-o"):
             raise LabError(f"arm must be 'AG-c' or 'AG-o', got {arm!r}")
@@ -247,12 +279,19 @@ class Lab:
             raise LabError("AG-o needs a sandbox and AG-c must not have one")
         if experiments < 0 or fits < 0:
             raise LabError("budgets must be non-negative")
+        try:
+            variant = as_variant(prompt_variant)
+        except PromptError as error:
+            raise LabError(str(error)) from None
         self.world = world
         self.view = view
         self.arm: Arm = arm
         self.experiments = experiments
         self.fits = fits
         self.sandbox = sandbox
+        #: The system prompt's variant (P4 Δ6). The tools do not depend on it;
+        #: it is kept here so everything the agent is shown renders from the lab.
+        self.prompt_variant: PromptVariant = variant
         # Pinned framework-side (invariant 2): no agent argument reaches the
         # fit configuration, so certification cannot be loosened by a request.
         self.fit_config = replace(FIT_CONFIG, workers=fit_workers)
@@ -348,6 +387,7 @@ class Lab:
     # -- run_experiment -------------------------------------------------------
 
     def run_experiment(self, args: Mapping[str, Any]) -> ToolOutput:
+        self._require_belief("an experiment")
         args, source = self._design_args(args)
         native = self.view.experiment_native(args)
         index = self.world.experiments_run
@@ -723,7 +763,12 @@ class Lab:
         catalogue.resolve_args(
             name, given, observational, self.view.channels, check_bounds=False
         )
-        hypothesis = self.view.parse(str(args["hypothesis"]))
+        hypothesis = self._structure(
+            args["hypothesis"],
+            "hypothesis",
+            hint="give the structure only and put any commentary in `note`",
+        )
+        note = _note(args.get("note"))
         interval = args["interval"]
         if not isinstance(interval, list | tuple) or len(interval) != 2:
             raise LabError("interval must be [low, high]")
@@ -737,7 +782,93 @@ class Lab:
             level=level,
             hypothesis=_native_text(hypothesis),
         )
-        return self.ledger.commit_tool(prediction)
+        out = self.ledger.commit_tool(prediction)
+        if out.is_error or out.record is None:
+            return out
+        return ToolOutput(
+            out.text,
+            record={
+                **out.record,
+                "hypothesis": prediction.hypothesis,
+                "note": note,
+            },
+        )
+
+    # -- belief (P4 Δ4) -----------------------------------------------------------
+
+    def belief(self, args: Mapping[str, Any]) -> ToolOutput:
+        favoured = canonicalise(self._structure(args["favoured"], "favoured"))
+        given = args["rivals"]
+        if not isinstance(given, list) or not 1 <= len(given) <= MAX_RIVALS:
+            raise LabError(
+                f"rivals must be a list of 1 to {MAX_RIVALS} structures, got {given!r}"
+            )
+        rivals = [
+            canonicalise(self._structure(r, f"rival {k}"))
+            for k, r in enumerate(given, start=1)
+        ]
+        label = _native_text(favoured)
+        labels = [_native_text(r) for r in rivals]
+        for k, rival in enumerate(labels, start=1):
+            if rival == label:
+                raise LabError(
+                    f"rival {k} is the favoured structure written another way; "
+                    "each rival must differ from the favoured structure"
+                )
+            if rival in labels[: k - 1]:
+                raise LabError(
+                    f"rival {k} repeats rival {labels.index(rival) + 1} (the same "
+                    "structure written another way); rivals must be distinct"
+                )
+        confidence = _confidence(args["confidence"])
+        index = self.state.beliefs
+        run = self.world.experiments_run
+        self.state.beliefs += 1
+        self.state.belief_at = run
+        view = self.view
+        lines = [
+            f"belief {index} recorded (after {run} of {self.experiments} experiments).",
+            f"favoured: {view.render(favoured)}",
+            *(f"rival {k}: {view.render(r)}" for k, r in enumerate(rivals, start=1)),
+            f"confidence: {num(confidence)}",
+        ]
+        return ToolOutput(
+            "\n".join(lines),
+            record={
+                "belief": index,
+                "favoured": label,
+                "rivals": labels,
+                "confidence": confidence,
+                "experiments_run": run,
+            },
+        )
+
+    def _require_belief(self, action: str) -> None:
+        """Refuse ``action`` unless a belief was recorded since the last experiment."""
+        if self.state.belief_at == self.world.experiments_run:
+            return
+        when = (
+            "no belief has been recorded yet"
+            if self.state.belief_at is None
+            else "an experiment has run since your last belief"
+        )
+        raise LabError(
+            f"record your current belief with `belief` before {action}: {when}. "
+            "Nothing was run and nothing was charged."
+        )
+
+    def _structure(self, text: object, what: str, *, hint: str = "") -> Structure:
+        """Agent DSL ``text`` as a native structure; errors name ``what``."""
+        tail = f"; {hint}" if hint else ""
+        if not isinstance(text, str):
+            raise LabError(
+                f"{what} must be a structure in the modelling language, got "
+                f"{text!r}{tail}"
+            )
+        try:
+            return self.view.parse(text)
+        except (GrammarError, ViewError) as error:
+            raise LabError(f"{what} is not a structure: {error}{tail}") from None
 
     # -- notebook and python (AG-o) ---------------------------------------------
 
@@ -784,6 +915,13 @@ class Lab:
     # -- submit -----------------------------------------------------------------
 
     def submit(self, args: Mapping[str, Any]) -> ToolOutput:
+        self._require_belief("submitting")
+        reason = args["stop_reason"]
+        if not isinstance(reason, str) or reason not in STOP_REASONS:
+            raise LabError(
+                f"stop_reason must be one of {', '.join(STOP_REASONS)}; got {reason!r}"
+            )
+        note = _note(args.get("note"))
         structure = self.view.parse(str(args["structure"]))
         report = str(args["report"])
         self.state.submitted = structure
@@ -793,6 +931,8 @@ class Lab:
             record={
                 "structure": _native_text(structure),
                 "structure_hash": structure_hash(structure),
+                "stop_reason": reason,
+                "note": note,
             },
         )
 
@@ -814,7 +954,8 @@ class Lab:
                 "{constant}, {alternate} or {repeat}. A run that reaches the "
                 f"limit of {MAX_EVENTS} events is truncated there and kept. "
                 "Returns a summary and the new dataset's id, and evaluates any "
-                "predictions committed for this experiment.",
+                "predictions committed for this experiment. Refused, uncharged, "
+                "unless you have recorded a `belief` since the last experiment.",
                 experiment_schema,
                 self.run_experiment,
                 budget=BUDGET_EXPERIMENTS,
@@ -893,7 +1034,9 @@ class Lab:
                             "defaults (resolved on the experiment's data).",
                         },
                         "hypothesis": _string(
-                            "The structure this prediction follows from."
+                            "The structure this prediction follows from: "
+                            "modelling-language text only (commentary goes in "
+                            "`note`)."
                         ),
                         "interval": {
                             "type": "array",
@@ -908,10 +1051,45 @@ class Lab:
                             "exclusiveMaximum": 1,
                             "description": "Probability the interval holds the value.",
                         },
+                        "note": _string(
+                            f"Optional free text (at most {MAX_NOTE} characters), "
+                            "e.g. why you expect this. Recorded, not shown back."
+                        ),
                     },
                     ["experiment", "diagnostic", "hypothesis", "interval", "level"],
                 ),
                 self.predict,
+            ),
+            ToolSpec(
+                "belief",
+                "Record your current belief: the structure you favour, 1 to "
+                f"{MAX_RIVALS} rival structures you have not ruled out (the first "
+                "is your runner-up), and your confidence, a probability strictly "
+                "between 0 and 1, that the favoured structure is the true "
+                "mechanism. All must be different structures. Free. Needed "
+                "before every experiment (after the previous one) and before "
+                "`submit`.",
+                _schema(
+                    {
+                        "favoured": _string("The structure you currently favour."),
+                        "rivals": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "minItems": 1,
+                            "maxItems": MAX_RIVALS,
+                            "description": "Rival structures, runner-up first.",
+                        },
+                        "confidence": {
+                            "type": "number",
+                            "exclusiveMinimum": 0,
+                            "exclusiveMaximum": 1,
+                            "description": "Probability that the favoured "
+                            "structure is the true mechanism.",
+                        },
+                    },
+                    ["favoured", "rivals", "confidence"],
+                ),
+                self.belief,
             ),
         ]
         if self.arm == "AG-o":
@@ -934,16 +1112,26 @@ class Lab:
         specs.append(
             ToolSpec(
                 "submit",
-                "Submit your final structure and a short report. Once; ends the "
-                "investigation.",
+                "Submit your final structure and a short report, with why you are "
+                "stopping. Once; ends the investigation. Refused, uncharged, "
+                "unless you have recorded a `belief` since the last experiment.",
                 _schema(
                     {
                         "structure": _string(
                             "The structure in the modelling language."
                         ),
                         "report": _string("A short report of what you found and why."),
+                        "stop_reason": {
+                            "type": "string",
+                            "enum": list(STOP_REASONS),
+                            "description": "Why you are stopping now.",
+                        },
+                        "note": _string(
+                            f"Optional free text (at most {MAX_NOTE} characters) "
+                            "on the stopping decision. Recorded, not shown back."
+                        ),
                     },
-                    ["structure", "report"],
+                    ["structure", "report", "stop_reason"],
                 ),
                 self.submit,
                 budget=BUDGET_SUBMIT,
@@ -1068,7 +1256,28 @@ def _finite(value: object, what: str) -> float:
 
 
 def _native_text(structure: Structure) -> str:
-    return render(structure)
+    """The record's label of a structure: its canonical form, in native names."""
+    return render(canonicalise(structure))
+
+
+def _confidence(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise LabError(f"confidence must be a number in (0, 1), got {value!r}")
+    c = float(value)
+    if not (math.isfinite(c) and 0.0 < c < 1.0):
+        raise LabError(f"confidence must be strictly between 0 and 1, got {value!r}")
+    return c
+
+
+def _note(value: object) -> str | None:
+    """An optional free ``note``: recorded, never shown back."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise LabError(f"note must be text, got {value!r}")
+    if len(value) > MAX_NOTE:
+        raise LabError(f"note must be at most {MAX_NOTE} characters")
+    return value
 
 
 def _args_text(args: Mapping[str, object]) -> str:

@@ -13,12 +13,24 @@ conditions differ by more than names, and Q2 asks what the *names* are worth
 (a domain prior carried by meaningful identifiers); a narrative would be a
 second, stronger manipulation mixed into the same contrast. The anonymised
 prompts are checked for forbidden terms by ``tests/investigation``.
+
+Variants (P4 Δ6). :data:`PROMPT_VARIANTS` are ``v1`` and ``link-neutral``. They
+differ in two places only: the grammar's examples (:func:`examples`; v1 starts
+at the identity link and stays at depth 2 or less, link-neutral rotates the
+identity, exp and softplus links and adds one depth-3 example) and the scoring
+paragraph (:func:`_scoring`; link-neutral states it as held-out prediction and
+structural distance, without v1's "a simpler structure beats a larger one").
+
+Beliefs (P4 Δ4). The prompt asks for a ``belief`` before every experiment and
+before ``submit`` (the tools enforce it), for at least one prediction under a
+rival per experiment, and for a ``stop_reason`` at ``submit``.
 """
 
 from __future__ import annotations
 
 from typing import Final, Literal
 
+from sciagent.core.errors import SciAgentError
 from sciagent.glm.grammar import MAX_DEPTH, MAX_FEATURES, ChannelKind, ChannelSpec
 from sciagent.glm.grids import PSI_GRIDS
 from sciagent.glm.interventions import (
@@ -32,14 +44,44 @@ from sciagent.investigation.world import MAX_EVENTS
 
 __all__ = [
     "MAX_DESIGN_FILE_BYTES",
+    "PROMPT_VARIANTS",
+    "STOP_REASONS",
     "WORK_PREFIX",
     "Arm",
+    "PromptError",
+    "PromptVariant",
+    "as_variant",
     "budget_line",
+    "examples",
     "opening_prompt",
     "system_prompt",
 ]
 
 type Arm = Literal["AG-c", "AG-o"]
+#: The system prompt's variants (P4 Δ6): ``v1``, the text the pilot used plus
+#: the P4 additions, and ``link-neutral`` (see :func:`examples` and
+#: :func:`_scoring`). Everything else is the same text in both.
+type PromptVariant = Literal["v1", "link-neutral"]
+PROMPT_VARIANTS: Final[tuple[PromptVariant, ...]] = ("v1", "link-neutral")
+#: Why the agent submits (P4 Δ4); ``submit`` takes exactly one of these.
+STOP_REASONS: Final = ("confident", "budget", "evidence_unlikely_to_change", "other")
+
+
+class PromptError(SciAgentError):
+    """A prompt cannot be rendered as asked (an unknown variant)."""
+
+
+def as_variant(value: object) -> PromptVariant:
+    """``value`` as a :data:`PromptVariant`; :class:`PromptError` otherwise."""
+    if value == "v1":
+        return "v1"
+    if value == "link-neutral":
+        return "link-neutral"
+    raise PromptError(
+        f"unknown prompt variant {value!r}; the variants are "
+        f"{', '.join(PROMPT_VARIANTS)}"
+    )
+
 
 #: The sandbox's writable directory, as the agent's code sees it.
 WORK_PREFIX: Final = "/work/"
@@ -105,9 +147,70 @@ def _example_channel(channels: tuple[ChannelSpec, ...]) -> str:
     return channels[0].name if channels else "c"
 
 
-def _grammar(view: AgentView) -> str:
+#: An example longer than this (with its indent) is wrapped at its top-level
+#: `` + ``, one feature per line.
+_EXAMPLE_WIDTH: Final = 76
+
+
+def examples(view: AgentView, variant: str = "v1") -> tuple[str, ...]:
+    """The grammar's example structures for ``variant``, in ``view``'s names.
+
+    One line each, unwrapped. Every example parses in its view, and the
+    link-neutral variant has exactly one at depth :data:`MAX_DEPTH`.
+    """
     s = _sign_channel(view.channels)
     c = _example_channel(view.channels)
+    two = (
+        f"Excite(PowerK, Mark({c}), all) "
+        f"+ Gate(Excite(ExpK, One, {s}=+), LastMarkAbove({c}))"
+    )
+    if as_variant(variant) == "v1":
+        return (
+            "link=identity; Excite(ExpK, One, all)",
+            "link=exp; Periodic + Trend",
+            f"link=identity; {two}",
+        )
+    return (
+        "link=exp; Excite(ExpK, One, all)",
+        "link=softplus; Periodic + Trend",
+        f"link=identity; {two}",
+        f"link=softplus; Gate(Product(Periodic, Excite(ExpK, One, all)), "
+        f"LastMarkAbove({c}))",
+    )
+
+
+def _example_lines(text: str) -> list[str]:
+    line = f"    {text}"
+    if len(line) <= _EXAMPLE_WIDTH:
+        return [line]
+    head, _, body = text.partition("; ")
+    first, *rest = body.split(" + ")
+    indent = " " * (4 + len(head) + 2)
+    return [f"    {head}; {first}", *(f"{indent}+ {f}" for f in rest)]
+
+
+def _example_block(view: AgentView, variant: str) -> str:
+    return "\n".join(
+        line for text in examples(view, variant) for line in _example_lines(text)
+    )
+
+
+def _scoring(variant: str) -> str:
+    """The paragraph that says how the submission is scored."""
+    if as_variant(variant) == "v1":
+        return """\
+You are scored after you submit, on fresh data you never see: how well your
+submitted structure, fitted by the framework, predicts that data, and how close
+it is to the true mechanism. A simpler structure that is right beats a larger
+one that merely fits."""
+    return """\
+You are scored after you submit on held-out prediction and structural
+distance: how well your submitted structure, fitted by the framework, predicts
+fresh data you never see, and how close its structure is to the true mechanism."""
+
+
+def _grammar(view: AgentView, variant: str) -> str:
+    s = _sign_channel(view.channels)
     return f"""\
 ## The model class
 
@@ -151,10 +254,7 @@ coefficient is the expected number of events each source event triggers per
 unit of MarkFn. Nesting depth (counting Excite, Periodic, Trend, Product and
 Gate) is at most {MAX_DEPTH}. Examples:
 
-    link=identity; Excite(ExpK, One, all)
-    link=exp; Periodic + Trend
-    link=identity; Excite(PowerK, Mark({c}), all)
-                   + Gate(Excite(ExpK, One, {s}=+), LastMarkAbove({c}))
+{_example_block(view, variant)}
 
 Shape-parameter grids (time-valued ones in the units of your data):
 {_grid_lines(view)}
@@ -197,10 +297,12 @@ def _tools(view: AgentView, arm: Arm, experiments: int, fits: int) -> str:
   of a structure, jointly over the datasets you name. Budget: {fits} fits;
   only a successful fit of a structure not already fitted on the same data is
   charged (a repeat returns the earlier result for free).
-- `predict(experiment, diagnostic, args, hypothesis, interval, level)`: commit a
-  prediction for an experiment that has not run yet. Free.
-{open_tools}- `submit(structure, report)`: your final answer. Once; it ends the
-  investigation.
+- `predict(experiment, diagnostic, args, hypothesis, interval, level, note)`:
+  commit a prediction for an experiment that has not run yet. Free.
+- `belief(favoured, rivals, confidence)`: record what you currently believe.
+  Free, and required before every experiment and before `submit`.
+{open_tools}- `submit(structure, report, stop_reason, note)`: your final answer.
+  Once; it ends the investigation.
 
 Every tool result ends with what is left of your budget, as a line such as
 `{budget_line(experiments, experiments, fits, fits)}`.
@@ -234,7 +336,9 @@ The rule is expanded to lists before the experiment runs.
 {from_file}"""
 
 
-def system_prompt(view: AgentView, arm: Arm, *, experiments: int, fits: int) -> str:
+def system_prompt(
+    view: AgentView, arm: Arm, *, experiments: int, fits: int, variant: str = "v1"
+) -> str:
     """The system prompt for ``arm`` in ``view``'s condition."""
     max_horizon = num(view.time(MAX_HORIZON))
     max_rate = num(view.rate(MAX_CLAMP_RATE))
@@ -251,12 +355,9 @@ of future events, and whether the rate also varies with time on its own. You
 express the mechanism as a structure in the modelling language below. The
 framework fits it; you never supply numbers.
 
-You are scored after you submit, on fresh data you never see: how well your
-submitted structure, fitted by the framework, predicts that data, and how close
-it is to the true mechanism. A simpler structure that is right beats a larger
-one that merely fits.
+{_scoring(variant)}
 
-{_grammar(view)}
+{_grammar(view, variant)}
 {_tools(view, arm, experiments, fits)}
 ## Experiments
 
@@ -292,8 +393,29 @@ about it with `predict`: a catalogue diagnostic with its arguments, the
 hypothesis (a structure) the prediction follows from, a central interval and
 its probability level. The framework computes the diagnostic on the
 experiment's data when it runs and reports whether the value fell inside.
-A prediction for an experiment that has already run is refused. Predictions
-that could refute your favoured hypothesis are the valuable ones.
+A prediction for an experiment that has already run is refused. The
+hypothesis is a structure only; put any commentary in the optional `note`,
+which is recorded but not shown back. Predictions that could refute your
+favoured hypothesis are the valuable ones. For every experiment, commit
+at least one prediction under a rival from your current belief as well as
+under your favoured structure, for the same diagnostic, so that the
+experiment can tell them apart when their intervals do not overlap.
+
+## Beliefs
+
+Record what you currently believe with `belief`: the structure you favour, one
+to three rival structures you have not ruled out (the first is your
+runner-up), and your confidence, a probability strictly between 0 and 1, that
+the favoured structure is the true mechanism. They must be different
+structures. A belief is required before every experiment: `run_experiment`
+is refused, without charge, until you have recorded one since the last
+experiment, and so is `submit`. Record a new belief whenever yours changes.
+Beliefs are a record of your reasoning; they are not your answer.
+
+When you submit, give a `stop_reason`: `confident` (you are confident in the
+structure), `budget` (the budget is used up or too small to go on),
+`evidence_unlikely_to_change` (more experiments or fits are unlikely to change
+your answer) or `other`; and, if you like, a `note` on the decision.
 
 Work step by step: look at the data, form competing hypotheses, test them with
 diagnostics, fits and experiments, revise, and submit when further evidence is

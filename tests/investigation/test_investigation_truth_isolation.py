@@ -19,7 +19,9 @@ from typing import Any
 
 import pytest
 from investigation_support import (
+    BELIEF,
     POINTPROC,
+    STOP,
     clean_environment,
     lab,
     plain_run,
@@ -139,7 +141,7 @@ def _probing_script(condition_channel: str) -> list[Step]:
                 ),
             )
         ),
-        Step(calls=(("run_experiment", plain_run(400.0)),)),
+        Step(calls=(BELIEF, ("run_experiment", plain_run(400.0)))),
         Step(
             calls=(
                 ("fit", {"structure": "Excite(ExpK, One, all)", "data_ids": ["obs"]}),
@@ -148,11 +150,13 @@ def _probing_script(condition_channel: str) -> list[Step]:
         ),
         Step(
             calls=(
+                BELIEF,
                 (
                     "submit",
                     {
                         "structure": f"Excite(GammaK, Above({condition_channel}), all)",
                         "report": "probe",
+                        **STOP,
                     },
                 ),
             )
@@ -169,7 +173,7 @@ def test_no_tool_output_shows_the_truth(
     assert outcome.outcome == "submitted"
     record = SessionRecord.load(outcome.record_path)
     calls = record.of_kind("tool_call")
-    assert len(calls) == 7
+    assert len(calls) == 9
     assert not any(c.body["is_error"] for c in calls), [
         c.body["text"] for c in calls if c.body["is_error"]
     ]
@@ -217,7 +221,7 @@ def test_anonymised_run_outputs_do_not_leak(
     predict: dict[str, Any] = dict(script[2].calls[0][1])
     predict["diagnostic"] = rate
     script[2] = Step(calls=(("predict", predict),))
-    script[3] = Step(calls=(("run_experiment", plain_run(8 * 400.0)),))
+    script[3] = Step(calls=(BELIEF, ("run_experiment", plain_run(8 * 400.0))))
     outcome = scripted_run(script, tmp_path, condition="anon")
     assert outcome.outcome == "submitted"
     record = SessionRecord.load(outcome.record_path)

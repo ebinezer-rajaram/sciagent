@@ -27,7 +27,11 @@ from typing import Any, Final
 import numpy as np
 import pytest
 from investigation_support import (
+    BELIEF,
     POINTPROC,
+    STOP,
+    believe,
+    believing,
     clean_environment,
     lab,
     plain_run,
@@ -112,7 +116,7 @@ def test_a_capped_experiment_is_truncated_charged_and_deterministic() -> None:
     outputs = []
     for _ in range(2):
         the_lab = lab("AG-c", experiments=2)
-        layer = the_lab.layer()
+        layer = believing(the_lab)
         out = layer.call("run_experiment", EXPLOSIVE)
         assert not out.is_error, out.text
         assert layer.meter(BUDGET_EXPERIMENTS).used == 1
@@ -127,6 +131,7 @@ def test_a_capped_experiment_is_truncated_charged_and_deterministic() -> None:
         rate = layer.call("diagnostic", {"name": "mean_rate", "data_id": "e0"})
         assert not rate.is_error, rate.text
         assert f"mean_rate on e0 = {num(MAX_EVENTS / tau)}" in rate.text
+        believe(layer)
         nxt = layer.call("run_experiment", plain_run(100.0))
         assert "experiment e1 done" in nxt.text, nxt.text
     first, second = outputs
@@ -162,7 +167,7 @@ def test_a_run_stopped_by_the_runaway_guard_is_charged_and_gives_no_data(
     texts = []
     for condition in ("named", "anon"):
         the_lab = lab("AG-c", condition, experiments=2)
-        layer = the_lab.layer()
+        layer = believing(the_lab)
         horizon = 100.0 * the_lab.view.time(1.0)
         out = layer.call("run_experiment", plain_run(horizon))
         assert not out.is_error
@@ -191,7 +196,7 @@ def test_a_mark_far_outside_the_channel_scale_is_refused_uncharged(
 ) -> None:
     # Injected size 1e4 on dev-005/dev-009 made the thinning bound so loose
     # that one capped run took five minutes; |z| > MAX_MARK_Z is refused.
-    layer = lab("AG-c", experiments=1).layer()
+    layer = believing(lab("AG-c", experiments=1))
     out = layer.call("run_experiment", {"intervention": intervention, "horizon": 50.0})
     assert out.is_error
     assert f"at most {MAX_MARK_Z:g} scale units" in out.text, out.text
@@ -208,8 +213,8 @@ def test_the_truncation_text_differs_between_conditions_only_in_units() -> None:
     anon = lab("AG-c", "anon")
     c = anon.view.time(1.0)
     assert c != 1.0, "the anonymised condition must rescale time here"
-    out_named = named.layer().call("run_experiment", EXPLOSIVE)
-    out_anon = anon.layer().call("run_experiment", _anon_explosive(c))
+    out_named = believing(named).call("run_experiment", EXPLOSIVE)
+    out_anon = believing(anon).call("run_experiment", _anon_explosive(c))
     assert out_named.record is not None and out_anon.record is not None
     # The same native experiment: the same draw, the same native record.
     assert out_anon.record == out_named.record
@@ -263,7 +268,7 @@ def test_a_hidden_tau_is_never_shown(condition: Condition) -> None:
     the_lab = lab("AG-c", condition, experiments=2)
     c = the_lab.view.time(1.0)
     args = CENSORED_TAIL if condition == "named" else _scaled(CENSORED_TAIL, c)
-    layer = the_lab.layer()
+    layer = believing(the_lab)
     out = layer.call("run_experiment", args)
     assert not out.is_error, out.text
     assert out.record is not None
@@ -306,9 +311,11 @@ def _scaled(design: dict[str, Any], c: float) -> dict[str, Any]:
 def test_anonymised_truncation_texts_do_not_leak() -> None:
     the_lab = lab("AG-c", "anon", experiments=3)
     c = the_lab.view.time(1.0)
-    layer = the_lab.layer()
+    layer = believing(the_lab)
+    truncated = layer.call("run_experiment", _anon_explosive(c)).text
+    believe(layer)
     outputs = {
-        "truncated": layer.call("run_experiment", _anon_explosive(c)).text,
+        "truncated": truncated,
         "censored": layer.call("run_experiment", _scaled(CENSORED_TAIL, c)).text,
         "kernels": layer.call("nonparam_kernels", {"data_id": "e1"}).text,
     }
@@ -339,7 +346,7 @@ def test_predictions_and_sandbox_files_see_the_clipped_dataset(
 ) -> None:
     the_lab = lab("AG-o", sandbox_root=tmp_path, image="sciagent-sandbox:unused")
     assert the_lab.sandbox is not None
-    layer = the_lab.layer()
+    layer = believing(the_lab)
     committed = layer.call(
         "predict",
         {
@@ -370,7 +377,7 @@ def test_a_run_cut_inside_a_window_from_time_zero_has_nothing_to_analyse() -> No
     # at 0, so nothing is shown before the cut. The experiment is still
     # charged and kept (it can be fitted); analysis is refused in words.
     the_lab = lab("AG-c", experiments=2)
-    layer = the_lab.layer()
+    layer = believing(the_lab)
     committed = layer.call(
         "predict",
         {
@@ -407,13 +414,18 @@ def test_a_capped_experiment_replays(
 ) -> None:
     clean_environment(monkeypatch)
     script = (
-        Step(calls=(("run_experiment", EXPLOSIVE),)),
+        Step(calls=(BELIEF, ("run_experiment", EXPLOSIVE))),
         Step(calls=(("diagnostic", {"name": "mean_rate", "data_id": "e0"}),)),
         Step(
             calls=(
+                BELIEF,
                 (
                     "submit",
-                    {"structure": "Excite(ExpK, Mark(size), all)", "report": "done"},
+                    {
+                        "structure": "Excite(ExpK, Mark(size), all)",
+                        "report": "done",
+                        **STOP,
+                    },
                 ),
             )
         ),

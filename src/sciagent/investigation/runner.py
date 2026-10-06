@@ -49,7 +49,14 @@ from sciagent.harness.live import AgentConfig, SessionDriver, run_investigation
 from sciagent.harness.record import SessionRecord
 from sciagent.harness.replay import LayerFactory, ReplayReport, replay
 from sciagent.harness.tools import ToolLayer
-from sciagent.investigation.prompts import Arm, opening_prompt, system_prompt
+from sciagent.investigation.prompts import (
+    Arm,
+    PromptError,
+    PromptVariant,
+    as_variant,
+    opening_prompt,
+    system_prompt,
+)
 from sciagent.investigation.tools import FIT_CONFIG, Lab, LabError, PredictionOutcome
 from sciagent.investigation.view import Condition, make_view
 from sciagent.investigation.world import OBSERVATIONAL, Truth, World
@@ -117,6 +124,8 @@ class InvestigationSpec:
     fits: int = 40
     sandbox_wall_seconds: float = 60.0
     sandbox_memory_mb: int = 2048
+    #: The system prompt's variant (P4 Δ6); a record without it is ``v1``.
+    prompt_variant: PromptVariant = "v1"
 
     def as_json(self) -> dict[str, Any]:
         return {
@@ -130,6 +139,7 @@ class InvestigationSpec:
             "sandbox_wall_seconds": self.sandbox_wall_seconds,
             "sandbox_memory_mb": self.sandbox_memory_mb,
             "fit_config": FIT_CONFIG.key(),
+            "prompt_variant": self.prompt_variant,
         }
 
     @staticmethod
@@ -143,6 +153,10 @@ class InvestigationSpec:
                 f"the record was made with fit configuration "
                 f"{data.get('fit_config')!r}, this code pins {FIT_CONFIG.key()!r}"
             )
+        try:
+            variant = as_variant(data.get("prompt_variant", "v1"))
+        except PromptError as error:
+            raise LabError(f"bad prompt variant in record: {error}") from None
         return InvestigationSpec(
             environment=str(data["environment"]),
             truth_id=str(data["truth_id"]),
@@ -153,6 +167,7 @@ class InvestigationSpec:
             fits=int(data["fits"]),
             sandbox_wall_seconds=float(data["sandbox_wall_seconds"]),
             sandbox_memory_mb=int(data["sandbox_memory_mb"]),
+            prompt_variant=variant,
         )
 
 
@@ -235,6 +250,7 @@ def build_lab(
         fits=spec.fits,
         sandbox=sandbox,
         fit_workers=fit_workers,
+        prompt_variant=spec.prompt_variant,
     )
 
 
@@ -255,7 +271,11 @@ def layer_factory(
 def _prompts(lab: Lab) -> tuple[str, str]:
     observational = lab.world.datasets[OBSERVATIONAL]
     system = system_prompt(
-        lab.view, lab.arm, experiments=lab.experiments, fits=lab.fits
+        lab.view,
+        lab.arm,
+        experiments=lab.experiments,
+        fits=lab.fits,
+        variant=lab.prompt_variant,
     )
     opening = opening_prompt(lab.view, observational.log.n, observational.log.horizon)
     return system, opening
@@ -323,13 +343,18 @@ def run(
     sandbox_root: Path | None = None,
     keep_sandbox: bool = False,
     fit_workers: int = 1,
+    prompt_variant: str = "v1",
 ) -> InvestigationOutcome:
     """Run one investigation, save its record under ``out_dir``, and return it.
 
     A run aborted by the harness (hermeticity, served model, session failure,
     a tool bug) saves its partial record as ``aborted-<head>.json`` and
-    re-raises.
+    re-raises. ``prompt_variant`` picks the system prompt's variant (P4 Δ6).
     """
+    try:
+        variant = as_variant(prompt_variant)
+    except PromptError as error:
+        raise LabError(str(error)) from None
     spec = InvestigationSpec(
         environment=env.name,
         truth_id=truth_id,
@@ -338,6 +363,7 @@ def run(
         seed=seed,
         experiments=experiments,
         fits=fits,
+        prompt_variant=variant,
     )
     lab = build_lab(spec, env, sandbox_root=sandbox_root, fit_workers=fit_workers)
     system, opening = _prompts(lab)

@@ -28,10 +28,34 @@ from sciagent.glm.interventions import (
     MAX_HORIZON,
 )
 from sciagent.investigation.view import PSI_TIME_POWER, AgentView
+from sciagent.investigation.world import MAX_EVENTS
 
-__all__ = ["Arm", "opening_prompt", "system_prompt"]
+__all__ = [
+    "MAX_DESIGN_FILE_BYTES",
+    "WORK_PREFIX",
+    "Arm",
+    "budget_line",
+    "opening_prompt",
+    "system_prompt",
+]
 
 type Arm = Literal["AG-c", "AG-o"]
+
+#: The sandbox's writable directory, as the agent's code sees it.
+WORK_PREFIX: Final = "/work/"
+#: Largest design file ``run_experiment`` reads from ``/work`` (P4 Δ3).
+MAX_DESIGN_FILE_BYTES: Final = 1_000_000
+
+
+def budget_line(
+    experiments_left: int, experiments: int, fits_left: int, fits: int
+) -> str:
+    """The line every tool result ends with (P4 Δ12); counts are unit-free."""
+    return (
+        f"budget left: {experiments_left} of {experiments} experiments, "
+        f"{fits_left} of {fits} fits"
+    )
+
 
 _KIND_TEXT: Final[dict[ChannelKind, str]] = {
     ChannelKind.POSITIVE: "positive real",
@@ -177,7 +201,37 @@ def _tools(view: AgentView, arm: Arm, experiments: int, fits: int) -> str:
   prediction for an experiment that has not run yet. Free.
 {open_tools}- `submit(structure, report)`: your final answer. Once; it ends the
   investigation.
+
+Every tool result ends with what is left of your budget, as a line such as
+`{budget_line(experiments, experiments, fits, fits)}`.
 """
+
+
+def _files_too(arm: Arm) -> str:
+    return ", and so do the files in `/data`" if arm == "AG-o" else ""
+
+
+def _designs(view: AgentView, arm: Arm) -> str:
+    """Design generators (P4 Δ3), with an example in the agent's time units."""
+    start, step, n = view.time(10.0), view.time(5.0), 40
+    last = start + (n - 1) * step
+    from_file = ""
+    if arm == "AG-o":
+        from_file = f"""
+Instead of writing the intervention inline you can write it as JSON to a file
+under `{WORK_PREFIX}` with `python` and pass
+`{{"intervention": {{"from": "{WORK_PREFIX}design.json"}}, "horizon": ...}}`
+(a regular file of at most {MAX_DESIGN_FILE_BYTES} bytes; generators allowed).
+"""
+    return f"""\
+Forced times can be given as a rule instead of a list:
+`"times": {{"start": {num(start)}, "step": {num(step)}, "n": {n}}}` is the {n} times
+{num(start)}, {num(start + step)}, ..., {num(last)} (start + k*step for k = 0 to n-1).
+A channel's forced marks are a list with one value per time, or a pattern:
+`{{"constant": v}}`, `{{"alternate": [a, b]}}` (a, b, a, b, ...) or
+`{{"repeat": [v1, v2, ...]}}` (the block repeated; its length must divide n).
+The rule is expanded to lists before the experiment runs.
+{from_file}"""
 
 
 def system_prompt(view: AgentView, arm: Arm, *, experiments: int, fits: int) -> str:
@@ -222,6 +276,14 @@ An experiment is an intervention on a fresh run of the process. Windows are
   `{{"type": "compose", "parts": []}}` is a plain run with no intervention.
 The horizon is at most {max_horizon}. Interventions that create the contrast
 your current hypotheses disagree about are the most informative.
+
+{_designs(view, arm)}
+Every experiment has a limit of {MAX_EVENTS} events, counting forced and
+unobserved ones. A run that reaches the limit is truncated there: it counts as
+an experiment and its dataset is kept, but the result reports the time t up to
+which it was observed, and nothing after t is. Diagnostics, kernel estimates
+and predictions use [0, t]{_files_too(arm)};
+fits account for the truncation themselves.
 
 ## Predictions
 

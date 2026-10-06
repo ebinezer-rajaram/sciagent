@@ -209,7 +209,8 @@ def build_lab(
             f"not {env.name!r}"
         )
     truth = env.resolve(spec.truth_id)
-    world = World(truth, spec.seed)
+    # P4 Δ2: an experiment that reaches the event cap is truncated and kept.
+    world = World(truth, spec.seed, truncate=True)
     view = make_view(spec.condition, world.channels, env.anon_channels)
     sandbox = None
     if spec.arm == "AG-o":

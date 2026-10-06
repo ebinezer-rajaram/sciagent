@@ -131,3 +131,47 @@ def test_handlers_reach_state_only_through_the_layer() -> None:
         "schemas",
         "submission",
     }
+
+
+def test_a_footer_is_appended_to_every_output_after_charging() -> None:
+    """P4 Δ12: the layer can append a line built from the budgets after the call.
+
+    It goes on every output -- success, handler error, refusal by the layer --
+    and the logged output is the one returned, so replay digests what the
+    agent read.
+    """
+    seen: list[dict[str, int]] = []
+
+    def footer(meters: Mapping[str, BudgetMeter]) -> str:
+        seen.append({name: m.remaining for name, m in meters.items()})
+        return f"left: {meters['E'].remaining}"
+
+    handler = Counting()
+    failing = Counting(error=True)
+    layer = ToolLayer(
+        [
+            ToolSpec("probe", "p", EMPTY, handler, budget="E"),
+            ToolSpec("bad", "b", EMPTY, failing, budget="E"),
+        ],
+        {"E": 1},
+        footer=footer,
+    )
+    outputs = [
+        layer.call("bad", {}),
+        layer.call("probe", {}),
+        layer.call("probe", {}),
+        layer.call("nonexistent", {}),
+    ]
+    assert outputs[0].text == "call 1\nleft: 1"
+    assert outputs[1].text == "call 1\nleft: 0"
+    assert outputs[2].text.endswith("\nleft: 0")
+    assert "budget exhausted" in outputs[2].text
+    assert outputs[3].text.endswith("\nleft: 0")
+    assert [o.is_error for o in outputs] == [True, False, True, True]
+    assert [c.output for c in layer.calls] == outputs
+    assert seen == [{"E": 1}, {"E": 0}, {"E": 0}, {"E": 0}]
+
+
+def test_without_a_footer_outputs_are_unchanged() -> None:
+    layer = ToolLayer([ToolSpec("probe", "p", EMPTY, Counting(), budget="E")], {"E": 1})
+    assert layer.call("probe", {}).text == "call 1"

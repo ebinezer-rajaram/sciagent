@@ -31,15 +31,44 @@ ledger for its index *before* it draws, runs, then evaluates every committed
 prediction for that index by computing the named diagnostic on the agent-view
 dataset. The agent never supplies an observed value: :class:`Prediction`
 has no field for one, and ``predict``'s schema has none either.
+
+Truncation (P4 Δ2). The world truncates an experiment that reaches
+:data:`~sciagent.investigation.world.MAX_EVENTS` at its cap's event, at τ,
+instead of stopping it. The run is charged and its dataset is kept; the
+record carries ``truncated_at`` (native τ) and ``analysis_horizon``. Agent-side
+analysis -- diagnostics, kernels, the sandbox files, prediction evaluation --
+reads the dataset clipped to ``[0, shown]``
+(:func:`~sciagent.investigation.view.clip_to_analysis`), where ``shown`` is τ
+unless an excluded window holds τ, in which case it is that window's start, so
+the time of an unseen event is never shown. Fits read the native dataset,
+whose likelihood already leaves out the tail after τ. The runaway guards
+still stop a run; that path is unchanged.
+
+Designs (P4 Δ3). ``run_experiment`` reads a design: the experiment JSON with
+generators (:data:`~sciagent.glm.designs.DESIGN_SCHEMA`), expanded to arrays
+before validation, so the record holds arrays only. AG-o may instead name a
+JSON file it wrote in ``/work`` (``{"intervention": {"from": "/work/x.json"}}``):
+a regular file, reached through no link, at most
+:data:`MAX_DESIGN_FILE_BYTES`, whose sha256 is recorded. Replay re-runs the
+sandbox calls that wrote it, so the digest checks the file.
+
+Budget line (P4 Δ12). Every result -- success, error, or the layer's own
+refusal -- ends with one line giving the experiments and fits left
+(:func:`budget_line`), appended by the layer after charging.
 """
 
 from __future__ import annotations
 
+import copy
+import hashlib
 import json
 import math
+import os
 import re
+import stat
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Any, Final
 
 import numpy as np
@@ -48,11 +77,11 @@ from sciagent.core.errors import SciAgentError
 from sciagent.diagnostics import catalogue
 from sciagent.glm.canonical import canonicalise, structure_hash
 from sciagent.glm.data import Dataset
+from sciagent.glm.designs import DESIGN_SCHEMA
 from sciagent.glm.fit import FitConfig, FitResult, fit, fit_cache_key
 from sciagent.glm.grammar import ChannelKind, Structure, n_columns, psi_slots
 from sciagent.glm.interventions import (
     DEFAULT_HORIZON,
-    EXPERIMENT_SCHEMA,
     canonical_json,
 )
 from sciagent.glm.simulate import (
@@ -63,9 +92,20 @@ from sciagent.glm.simulate import (
 from sciagent.glm.syntax import render
 from sciagent.harness.ledger import Prediction, PredictionLedger
 from sciagent.harness.record import canonical_json as record_json
-from sciagent.harness.tools import ToolLayer, ToolOutput, ToolSpec
-from sciagent.investigation.prompts import Arm, num
-from sciagent.investigation.view import AgentView
+from sciagent.harness.tools import BudgetMeter, ToolLayer, ToolOutput, ToolSpec
+from sciagent.investigation.prompts import (
+    MAX_DESIGN_FILE_BYTES,
+    WORK_PREFIX,
+    Arm,
+    budget_line,
+    num,
+)
+from sciagent.investigation.view import (
+    AgentView,
+    ViewError,
+    clip_to_analysis,
+    shown_truncation,
+)
 from sciagent.investigation.world import (
     MAX_EVENTS,
     OBSERVATIONAL,
@@ -81,10 +121,12 @@ __all__ = [
     "BUDGET_SUBMIT",
     "ENDOGENOUS_COLUMN",
     "FIT_CONFIG",
+    "MAX_DESIGN_FILE_BYTES",
     "SUMMARY_DIAGNOSTICS",
     "Lab",
     "LabError",
     "PredictionOutcome",
+    "budget_line",
 ]
 
 #: The one fit configuration every ``fit`` call uses (``workers`` aside, which
@@ -109,6 +151,12 @@ SUMMARY_DIAGNOSTICS: Final = (
 _MAX_NOTEBOOK_APPEND: Final = 20_000
 _MAX_CODE: Final = 50_000
 _DATA_ID: Final = re.compile(r"^(obs|e(0|[1-9][0-9]*))$")
+#: A design file's path as the agent writes it: under /work, plain segments.
+_WORK_PATH: Final = re.compile(r"^/work(/[A-Za-z0-9_.-]+)+$")
+#: The key that names a design file in place of an inline intervention.
+FROM_KEY: Final = "from"
+#: ``st_file_attributes`` bit of a Windows reparse point (junction, link).
+_FILE_ATTRIBUTE_REPARSE_POINT: Final = 0x400
 
 
 class LabError(SciAgentError):
@@ -238,8 +286,11 @@ class Lab:
     # -- data helpers -------------------------------------------------------------
 
     def _agent_data(self, data_id: str) -> Dataset:
+        """The dataset the agent analyses: clipped to ``[0, shown]`` if truncated."""
         native = self._native_data(data_id)
-        return self.view.dataset(native)
+        return self.view.dataset(
+            clip_to_analysis(native, self.world.truncated_at(data_id))
+        )
 
     def _native_data(self, data_id: object) -> Dataset:
         if not isinstance(data_id, str):
@@ -297,12 +348,14 @@ class Lab:
     # -- run_experiment -------------------------------------------------------
 
     def run_experiment(self, args: Mapping[str, Any]) -> ToolOutput:
+        args, source = self._design_args(args)
         native = self.view.experiment_native(args)
         index = self.world.experiments_run
         if index != self.ledger.next_experiment:
             raise LabError("internal: ledger and world disagree on the next index")
         self.ledger.seal(index)
         design = canonical_json(native.intervention)
+        provenance = {} if source is None else {"design_file": source}
         try:
             index, _ = self.world.run(native)
         except SimulationError as error:
@@ -319,37 +372,115 @@ class Lab:
                     "design": design,
                     "horizon": native.horizon,
                     "stopped": True,
+                    **provenance,
                 },
             )
         data_id = experiment_id(index)
-        if self.sandbox is not None:
+        dataset = self.world.datasets[data_id]
+        tau = self.world.truncated_at(data_id)
+        empty = False
+        if tau is not None:
+            try:
+                clip_to_analysis(dataset, tau)
+            except ViewError:
+                empty = True  # cut at time 0: nothing to analyse
+        if self.sandbox is not None and not empty:
             self._publish(data_id)
-        values = self._evaluate(index, data_id)
+        values = self._evaluate(index, data_id, empty=empty)
         used = self.world.experiments_run
         text = [
             f"experiment {data_id} done ({used} of {self.experiments} experiments "
-            f"used).",
-            self._summary(data_id),
+            f"used)."
         ]
+        record: dict[str, Any] = {
+            "experiment": index,
+            "design": design,
+            "horizon": native.horizon,
+            "n_events": dataset.log.n,
+        }
+        if tau is not None:
+            end = shown_truncation(dataset, tau)
+            text.append(self._truncation_text(end, native.horizon))
+            record["truncated_at"] = tau
+            record["analysis_horizon"] = end
+        text.append(
+            f"dataset `{data_id}`: nothing was observed before the cut, so there "
+            "is nothing to analyse; it can still be fitted."
+            if empty
+            else self._summary(data_id)
+        )
         if values:
             text.append("committed predictions for this experiment:")
             text.extend(_outcome_line(o, self.view) for o in values)
-        return ToolOutput(
-            "\n".join(text),
-            record={
-                "experiment": index,
-                "design": design,
-                "horizon": native.horizon,
-                "n_events": self.world.datasets[data_id].log.n,
-                "predictions": [o.as_json() for o in values],
-            },
+        record["predictions"] = [o.as_json() for o in values]
+        record.update(provenance)
+        return ToolOutput("\n".join(text), record=record)
+
+    def _truncation_text(self, end: float, horizon: float) -> str:
+        shown = num(self.view.time(end))
+        return (
+            f"truncated: the run reached the limit of {MAX_EVENTS} events and was "
+            f"cut short; this dataset covers [0, {shown}] of the planned horizon "
+            f"{num(self.view.time(horizon))}, and nothing after {shown} was "
+            "observed."
         )
 
-    def _evaluate(self, index: int, data_id: str) -> list[PredictionOutcome]:
-        log = self._agent_data(data_id).log
+    def _design_args(
+        self, args: Mapping[str, Any]
+    ) -> tuple[Mapping[str, Any], dict[str, Any] | None]:
+        """Resolve ``{"intervention": {"from": path}}`` (AG-o) to the file's JSON.
+
+        Returns the arguments with the intervention inlined, and the file's
+        provenance for the record (None for an inline design).
+        """
+        intervention = args.get("intervention")
+        if not isinstance(intervention, Mapping) or FROM_KEY not in intervention:
+            return args, None
+        if self.sandbox is None:
+            raise LabError(
+                "a design can be read from a file only with the python sandbox; "
+                "give the intervention inline"
+            )
+        if len(intervention) != 1:
+            raise LabError(
+                f"an intervention read from a file has exactly one key, "
+                f"{FROM_KEY!r}; got keys {sorted(map(str, intervention))}"
+            )
+        path = intervention[FROM_KEY]
+        if not isinstance(path, str):
+            raise LabError(f"{FROM_KEY!r} must be a path string, got {path!r}")
+        payload = _read_work_file(self.sandbox.work_dir, path)
+        try:
+            loaded = json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError, RecursionError):
+            raise LabError(f"design file {path} is not valid JSON") from None
+        if (
+            not isinstance(loaded, dict)
+            or "type" not in loaded
+            or "intervention" in loaded
+        ):
+            raise LabError(
+                f"design file {path} must hold one intervention object (with a "
+                "'type' key), not an experiment; give the horizon as an argument"
+            )
+        inlined = {**args, "intervention": loaded}
+        source = {
+            "path": path,
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "bytes": len(payload),
+        }
+        return inlined, source
+
+    def _evaluate(
+        self, index: int, data_id: str, *, empty: bool = False
+    ) -> list[PredictionOutcome]:
+        log = None if empty else self._agent_data(data_id).log
         errors: dict[int, str] = {}
 
         def statistic(prediction: Prediction) -> float:
+            if log is None:
+                errors[id(prediction)] = "nothing was observed before the cut"
+                return math.nan
             spec = json.loads(prediction.statistic)
             try:
                 return catalogue.compute(
@@ -669,9 +800,7 @@ class Lab:
 
     def specs(self) -> list[ToolSpec]:
         view = self.view
-        experiment_schema = {
-            k: v for k, v in EXPERIMENT_SCHEMA.items() if k not in ("$schema", "title")
-        }
+        experiment_schema = self._design_schema()
         data_id = _string("A dataset id: `obs`, or `e0`, `e1`, ... for experiments.")
         diagnostic_names = [agent for agent, _ in view.diagnostics()]
         specs = [
@@ -680,10 +809,12 @@ class Lab:
                 "Run one new experiment: a fresh realisation of the process from "
                 "empty history on [0, horizon] under an intervention (see the "
                 f"system prompt). Costs one of the {self.experiments} experiments. "
-                f"Default horizon {num(view.time(DEFAULT_HORIZON))}. Returns a "
-                "summary and the new dataset's id, and evaluates any predictions "
-                "committed "
-                "for this experiment.",
+                f"Default horizon {num(view.time(DEFAULT_HORIZON))}. Forced times "
+                "may be a generator {start, step, n} and marks a pattern "
+                "{constant}, {alternate} or {repeat}. A run that reaches the "
+                f"limit of {MAX_EVENTS} events is truncated there and kept. "
+                "Returns a summary and the new dataset's id, and evaluates any "
+                "predictions committed for this experiment.",
                 experiment_schema,
                 self.run_experiment,
                 budget=BUDGET_EXPERIMENTS,
@@ -821,6 +952,42 @@ class Lab:
         )
         return specs
 
+    def _design_schema(self) -> dict[str, Any]:
+        """``run_experiment``'s input schema: the design schema, plus for AG-o
+        the ``{"from": "/work/..."}`` alternative for the intervention.
+
+        It carries no time-valued constant, so it is the same in both
+        conditions (times are in the agent's units by construction).
+        """
+        schema: dict[str, Any] = {
+            k: copy.deepcopy(v)
+            for k, v in DESIGN_SCHEMA.items()
+            if k not in ("$schema", "title")
+        }
+        if self.sandbox is not None:
+            properties: dict[str, Any] = schema["properties"]
+            properties["intervention"] = {
+                "oneOf": [
+                    properties["intervention"],
+                    {
+                        "type": "object",
+                        "properties": {
+                            FROM_KEY: {
+                                "type": "string",
+                                "pattern": _WORK_PATH.pattern,
+                                "description": "A JSON file you wrote under "
+                                f"{WORK_PREFIX} holding one intervention "
+                                "(generators allowed); at most "
+                                f"{MAX_DESIGN_FILE_BYTES} bytes.",
+                            }
+                        },
+                        "required": [FROM_KEY],
+                        "additionalProperties": False,
+                    },
+                ]
+            }
+        return schema
+
     def budgets(self) -> dict[str, int]:
         return {
             BUDGET_EXPERIMENTS: self.experiments,
@@ -828,8 +995,15 @@ class Lab:
             BUDGET_SUBMIT: 1,
         }
 
+    def _footer(self, meters: Mapping[str, BudgetMeter]) -> str:
+        experiments = meters[BUDGET_EXPERIMENTS]
+        fits = meters[BUDGET_FITS]
+        return budget_line(
+            experiments.remaining, experiments.limit, fits.remaining, fits.limit
+        )
+
     def layer(self) -> ToolLayer:
-        return ToolLayer(self.specs(), self.budgets())
+        return ToolLayer(self.specs(), self.budgets(), footer=self._footer)
 
 
 # --------------------------------------------------------------------------
@@ -954,15 +1128,57 @@ def _driver_text(driver: str, view: AgentView) -> str:
     )
 
 
+def _read_work_file(work_dir: Path, path: str) -> bytes:
+    """The bytes of the agent's design file ``path`` (``/work/...``), checked.
+
+    Refused (:class:`LabError`): a path not of the form ``/work/<segments>``
+    (no ``.``/``..`` segments, no backslashes), a missing file, any link or
+    Windows reparse point on the way (every component is ``lstat``-ed, none is
+    followed), anything but a regular file, and a file over
+    :data:`MAX_DESIGN_FILE_BYTES`. The size is checked again on the bytes read.
+    """
+    segments = path.split("/")[2:]
+    if not _WORK_PATH.match(path) or any(s in (".", "..") for s in segments):
+        raise LabError(
+            f"a design file must be under {WORK_PREFIX} (a path such as "
+            f"{WORK_PREFIX}design.json, without '.' or '..' parts), got {path!r}"
+        )
+    current = work_dir
+    for k, segment in enumerate(segments):
+        current = current / segment
+        try:
+            info = os.lstat(current)
+        except FileNotFoundError:
+            raise LabError(f"no file {path}") from None
+        attributes = getattr(info, "st_file_attributes", 0)
+        if stat.S_ISLNK(info.st_mode) or attributes & _FILE_ATTRIBUTE_REPARSE_POINT:
+            raise LabError(f"design file {path} is reached through a link; refused")
+        last = k == len(segments) - 1
+        if not last and not stat.S_ISDIR(info.st_mode):
+            raise LabError(f"no file {path}")
+        if last and not stat.S_ISREG(info.st_mode):
+            raise LabError(f"design file {path} is not a regular file")
+        if last and info.st_size > MAX_DESIGN_FILE_BYTES:
+            raise LabError(
+                f"design file {path} is larger than {MAX_DESIGN_FILE_BYTES} bytes"
+            )
+    with current.open("rb") as handle:
+        payload = handle.read(MAX_DESIGN_FILE_BYTES + 1)
+    if len(payload) > MAX_DESIGN_FILE_BYTES:
+        raise LabError(
+            f"design file {path} is larger than {MAX_DESIGN_FILE_BYTES} bytes"
+        )
+    return payload
+
+
 def _stop_reason(error: SimulationError) -> str:
     if isinstance(error, ExplosionError):
-        # The event cap, the candidate cap and the runaway-bound guard all
-        # raise this; event counts are unit-free, so the text is the same in
-        # every condition.
+        # Reaching the event cap truncates the run (P4 Δ2); what still raises
+        # is the candidate cap and the runaway-bound guard. Event counts are
+        # unit-free, so the text is the same in every condition.
         return (
-            f"the process exceeded the simulation limit of {MAX_EVENTS} events "
-            "per experiment (it produced more, or its event rate grew without "
-            "bound)"
+            "the process's event rate grew without bound, so the simulation "
+            f"was stopped before it reached the limit of {MAX_EVENTS} events"
         )
     if isinstance(error, NegativeIntensityError):
         return "the event rate became negative under this design"

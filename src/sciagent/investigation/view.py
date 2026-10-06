@@ -53,7 +53,8 @@ from sciagent.anonymise import (
 from sciagent.core.errors import SciAgentError
 from sciagent.diagnostics import catalogue
 from sciagent.glm import syntax
-from sciagent.glm.data import Dataset
+from sciagent.glm.data import Dataset, EventLog
+from sciagent.glm.designs import expand
 from sciagent.glm.grammar import (
     ChannelSpec,
     Excite,
@@ -84,8 +85,10 @@ __all__ = [
     "AgentView",
     "Condition",
     "ViewError",
+    "clip_to_analysis",
     "excite_count",
     "make_view",
+    "shown_truncation",
 ]
 
 type Condition = Literal["named", "anon"]
@@ -214,13 +217,16 @@ class AgentView:
         return text[len(prefix) :].strip() if text.startswith(prefix) else text
 
     def experiment_native(self, args: Mapping[str, object]) -> Experiment:
-        """Agent experiment JSON -> the native experiment the simulator runs.
+        """Agent design JSON -> the native experiment the simulator runs.
 
-        Validated in the agent's units (caps and messages in its units), then
+        Generators and mark patterns are expanded first (P4 Δ3,
+        :func:`~sciagent.glm.designs.expand`), in the agent's units, so
+        everything after sees explicit arrays only. The experiment is then
+        validated in the agent's units (caps and messages in its units),
         rescaled by ``1/c`` (exact) and its channel names mapped back.
         """
         agent = experiment_from_json(
-            dict(args), default_horizon=self.time(DEFAULT_HORIZON)
+            expand(dict(args)), default_horizon=self.time(DEFAULT_HORIZON)
         )
         validate_experiment(agent, self.channels, time_factor=self.factor)
         native = rescale_experiment(agent, 1.0 / self.factor)
@@ -263,6 +269,54 @@ class AgentView:
                 out.append(value * c**power)
             position += width
         return tuple(out), True
+
+
+def shown_truncation(dataset: Dataset, tau: float) -> float:
+    """The native time at which a truncated dataset's analysis ends (P4 Δ2).
+
+    τ, the time of the cap's event, unless an excluded window holds it
+    (closed, as excluded windows are for events): then τ may be the time of an
+    event the agent never saw -- censored, say -- and showing it would reveal
+    that event. The start of that window is used instead: it is the start of
+    the merged excluded tail (the tail ``[nextafter(τ), H]`` merges with any
+    window holding τ), which the agent already sees among the dataset's
+    unobserved windows. Native and agent units commute with it,
+    because the time factor is a power of two.
+    """
+    for start, end in dataset.excluded:
+        if start <= tau <= end:
+            return start
+    return tau
+
+
+def clip_to_analysis(dataset: Dataset, tau: float | None) -> Dataset:
+    """The native dataset the agent analyses: ``[0, shown_truncation]`` (P4 Δ2).
+
+    The identity when the dataset was not truncated (``tau`` None). Otherwise
+    the events at or before the shown end, with that end as the horizon and
+    the excluded windows cut there (the tail, which starts after it, drops
+    out). Diagnostics, Wiener-Hopf kernels, the sandbox files and prediction
+    evaluation read this; fits read the native dataset, whose likelihood
+    already leaves the tail out. A run cut at time 0 leaves nothing to
+    analyse (:class:`ViewError`).
+    """
+    if tau is None:
+        return dataset
+    end = shown_truncation(dataset, tau)
+    if end <= 0.0:
+        raise ViewError(
+            f"dataset {dataset.label} was cut short at time 0 and holds nothing "
+            "to analyse"
+        )
+    log = dataset.log
+    keep = log.times <= end
+    clipped = EventLog.create(
+        log.times[keep],
+        {name: values[keep] for name, values in log.marks.items()},
+        end,
+    )
+    windows = tuple((a, min(b, end)) for a, b in dataset.excluded if a < end)
+    return Dataset.create(clipped, dataset.endogenous[keep], windows, dataset.label)
 
 
 def _intercept(value: float, link: Link, c: float) -> float:

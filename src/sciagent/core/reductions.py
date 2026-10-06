@@ -123,6 +123,13 @@ def total(values: Floats) -> float:
     library -- a fault reported by neither this module's name nor its error
     type. Ravel deliberately at the call site instead, so that flattening is a
     decision somebody made rather than one this function made quietly.
+
+    Overflow is where this departs from :func:`math.fsum`, which raises
+    ``OverflowError`` whenever a *partial* sum overflows -- depending on the
+    order it meets its addends, and even when the total is a finite double.
+    Here a finite total is always returned, correctly rounded, and a total
+    beyond the largest double raises
+    :class:`~sciagent.core.errors.ExecutionError`. See :func:`_fsum`.
     """
     if values.ndim != 1:
         raise ExecutionError(
@@ -130,7 +137,7 @@ def total(values: Floats) -> float:
             f"dimensions with shape {values.shape}; ravel at the call site if "
             f"flattening is what you mean"
         )
-    return math.fsum(values.tolist())
+    return _fsum(values.tolist())
 
 
 def mean(values: Floats) -> float:
@@ -193,12 +200,15 @@ def row_totals(matrix: Floats) -> Floats:
     """Return the exactly-rounded sum of each row of a 2-D array.
 
     The replacement for ``matrix.sum(axis=1)``: one :func:`math.fsum` per row,
-    so each entry is the correctly rounded sum whatever numpy's dispatch.
+    so each entry is the correctly rounded sum whatever numpy's dispatch. A
+    row whose partial sums overflow is handled as in :func:`total`.
     """
     if matrix.ndim != 2:
         raise ExecutionError(f"row_totals needs a 2-D array, got {matrix.ndim}-D")
     return np.fromiter(
-        (math.fsum(row) for row in matrix), dtype=np.float64, count=matrix.shape[0]
+        (_fsum(row) for row in matrix.tolist()),
+        dtype=np.float64,
+        count=matrix.shape[0],
     )
 
 
@@ -485,17 +495,27 @@ class ExactSum:
         beyond the largest double raises
         :class:`~sciagent.core.errors.ExecutionError`.
         """
-        addends = [*self._terms().tolist(), *self.extra]
-        try:
-            return math.fsum(addends)
-        except OverflowError:
-            # fsum answers correctly whenever it answers, so this path is only
-            # ever reached where it did not, and every other result is fsum's.
-            return _overflow_fallback(addends)
+        return _fsum([*self._terms().tolist(), *self.extra])
 
 
 #: The grid every finite double lies on: an integer multiple of 2⁻¹⁰⁷⁴.
 _GRID_BITS: Final = 1074
+
+
+def _fsum(addends: list[float]) -> float:
+    """:func:`math.fsum`, except where a partial sum overflows.
+
+    ``fsum`` answers correctly whenever it answers, so its result is returned
+    untouched whenever there is one: every value that never reaches the
+    fallback is bit for bit what it was. Only its ``OverflowError`` is taken
+    to :func:`_overflow_fallback`, which returns the correctly rounded total
+    when that is finite and raises
+    :class:`~sciagent.core.errors.ExecutionError` when it is not.
+    """
+    try:
+        return math.fsum(addends)
+    except OverflowError:
+        return _overflow_fallback(addends)
 
 
 def _overflow_fallback(addends: list[float]) -> float:

@@ -10,13 +10,36 @@ allowed to differ from.
 from __future__ import annotations
 
 import math
+from fractions import Fraction
 from itertools import permutations
 
 import numpy as np
 import pytest
 
 from sciagent.core.errors import ExecutionError
-from sciagent.core.reductions import deviation, dot, mean, total, variance
+from sciagent.core.reductions import (
+    deviation,
+    dot,
+    matvec,
+    mean,
+    row_totals,
+    total,
+    variance,
+)
+
+MAX = 1.7976931348623157e308
+TINY = 2.0**-1074
+
+
+def _exact(values: list[float]) -> float | None:
+    """The correctly rounded sum by rational arithmetic, or ``None`` when it
+    lies beyond the largest double. Not ``math.fsum``: that gives up when a
+    partial sum overflows, which is the case under test."""
+    exact = sum((Fraction(v) for v in values), Fraction(0))
+    try:
+        return float(exact)
+    except OverflowError:
+        return None
 
 
 def _catastrophic() -> np.ndarray:
@@ -118,3 +141,96 @@ class TestUndefinedInputRaises:
         values = np.linspace(0.5, 12.5, 64)
         assert deviation(values) == pytest.approx(float(np.std(values, ddof=1)))
         assert deviation(values) == math.sqrt(variance(values))
+
+
+class TestPartialSumsMayOverflow:
+    """``math.fsum`` raises ``OverflowError`` when a *partial* sum overflows,
+    depending on the order it meets its addends, even when the total is a
+    finite double. A sum whose value depends on order is what the module
+    exists to rule out, so these return the correctly rounded total, and a
+    total that really is beyond the largest double is a typed error."""
+
+    FINITE_TOTALS = (
+        [MAX, MAX, -MAX],
+        [MAX, MAX, -MAX, -MAX, 1.0],
+        [MAX, MAX, -MAX, -MAX],
+        [MAX, MAX, -MAX, 2.0**969],  # under half an ulp of MAX: rounds down
+        [-MAX, -MAX, MAX, 1e300, -1e-300],
+        [
+            1.0484168695292626e307,
+            7.339271331761592e302,
+            8.988465674311582e307,
+            -MAX,
+        ],
+    )
+    OVERFLOWING_TOTALS = (
+        [MAX, MAX],
+        [-MAX, -MAX, 1.0],
+        [MAX, 2.0**970],  # half an ulp of MAX, ties to even: rounds up, out
+    )
+
+    @pytest.mark.parametrize("x", FINITE_TOTALS)
+    def test_total_is_the_exact_sum(self, x: list[float]) -> None:
+        with pytest.raises(OverflowError):
+            math.fsum(x)  # the premise: fsum itself cannot answer these
+        expected = _exact(x)
+        assert expected is not None
+        got = total(np.array(x))
+        assert got == expected
+        assert math.copysign(1.0, got) == math.copysign(1.0, expected)
+
+    @pytest.mark.parametrize("x", FINITE_TOTALS)
+    def test_order_still_cannot_matter(self, x: list[float]) -> None:
+        sums = {total(np.array(order)) for order in permutations(x)}
+        assert sums == {_exact(x)}
+
+    def test_subnormal_bits_survive_huge_cancelling_addends(self) -> None:
+        x = [MAX, MAX, TINY, -MAX, 3 * TINY, -MAX, -TINY, 2.0**-1060]
+        assert total(np.array(x)) == 3 * TINY + 2.0**-1060 == _exact(x)
+
+    @pytest.mark.parametrize("x", OVERFLOWING_TOTALS)
+    def test_an_overflowing_total_is_a_typed_error(self, x: list[float]) -> None:
+        assert _exact(x) is None
+        with pytest.raises(ExecutionError, match="overflow"):
+            total(np.array(x))
+
+    def test_non_finite_follows_fsum(self) -> None:
+        assert total(np.array([MAX, MAX, math.inf])) == math.inf
+        assert math.isnan(total(np.array([MAX, MAX, math.nan])))
+        with pytest.raises(ValueError, match="inf"):
+            total(np.array([MAX, MAX, math.inf, -math.inf]))
+
+    def test_mean_inherits_it(self) -> None:
+        assert mean(np.array([MAX, MAX, -MAX])) == MAX / 3
+
+    def test_row_totals_is_exact_row_by_row(self) -> None:
+        rows = [list(x) + [0.0] * (6 - len(x)) for x in self.FINITE_TOTALS]
+        rows.append([1e16, 1.0, -1e16, 1.0, 2.0**-1074, -3.5])  # no overflow
+        got = row_totals(np.array(rows))
+        assert got.tolist() == [_exact(r) for r in rows]
+        assert got[-1] == math.fsum(rows[-1])
+
+    def test_row_totals_refuses_an_overflowing_row(self) -> None:
+        m = np.array([[1.0, 2.0], [MAX, MAX]])
+        with pytest.raises(ExecutionError, match="overflow"):
+            row_totals(m)
+
+    def test_matvec_inherits_it(self) -> None:
+        m = np.array([[MAX, MAX, -MAX], [1.0, 2.0, 3.0]])
+        got = matvec(m, np.ones(3))
+        assert got.tolist() == [MAX, 6.0]
+
+
+class TestUnchangedWhereFsumAnswers:
+    """The fallback must not move one bit of any result fsum already gave."""
+
+    @pytest.mark.parametrize("seed", range(4))
+    def test_wide_values_match_fsum_bit_for_bit(self, seed: int) -> None:
+        rng = np.random.default_rng(seed)
+        n = 5000
+        x: np.ndarray = rng.choice([-1.0, 1.0], n) * np.ldexp(
+            rng.uniform(1.0, 2.0, n), rng.integers(-1074, 1020, n)
+        )
+        assert total(x) == math.fsum(x.tolist())
+        m = x.reshape(50, 100)
+        assert row_totals(m).tolist() == [math.fsum(r) for r in m.tolist()]

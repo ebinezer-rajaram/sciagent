@@ -33,7 +33,8 @@ B-sym run is its own system, :data:`B_SYM_10F`.
   flags (:func:`oracle_underfit_check`): an ORACLE fit whose training
   log-likelihood is below the true parameters' is not an upper bound, so
   nothing referenced to it can be read. A flag that was never recorded (a cell
-  from before fit/5) is not "zero flags": the check fails and says so.
+  from before fit/5, or a failed ORACLE unit) is not "zero flags": the check
+  fails and says so.
 - :func:`planted_beats_rand` (Δ10, rank rule): per retained truth, the
   difference ``d_t`` of the planted-hint agent's and B-rand's per-truth mean
   gaps (a seed at ``-inf`` makes its truth's mean ``-inf``: it ranks lowest;
@@ -271,8 +272,8 @@ def underfit_reason(check: UnderfitCheck) -> list[str]:
     if check.unrecorded:
         out.append(
             f"ORACLE oracle_underfit not recorded on {len(check.unrecorded)} of "
-            f"{check.checked} unit(s) (cells from before fit/5): zero flags "
-            f"cannot be shown"
+            f"{check.checked} unit(s) (cells from before fit/5, or failed ORACLE "
+            f"units): zero flags cannot be shown"
         )
     if check.checked == 0:
         out.append("no ORACLE unit to check for oracle_underfit")

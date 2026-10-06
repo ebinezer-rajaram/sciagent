@@ -521,3 +521,39 @@ def test_the_oracle_cell_records_its_underfit_check() -> None:
     assert result.ok, result.detail
     assert result.detail["oracle_underfit"] is False
     assert result.detail["oracle_psi_source"] in ("search", "truth")
+
+
+# --------------------------------------------------------------------------
+# The fit configuration of LLM sessions; defect hunt B F3
+# --------------------------------------------------------------------------
+
+
+def test_an_llm_campaign_refuses_a_fit_config_its_agents_do_not_use() -> None:
+    """Agents' fits always use ``investigation.tools.FIT_CONFIG``; the session
+    key records ``config.fit_config.key()``. A different key would mislabel
+    every session, so the config refuses it while it has LLM arms."""
+    from sciagent.campaign.plan import PILOT_ARMS, CampaignConfig, CampaignError
+    from sciagent.glm.fit import FitConfig
+    from sciagent.investigation.tools import FIT_CONFIG
+
+    other = dataclasses.replace(FIT_CONFIG, max_iter=FIT_CONFIG.max_iter + 1)
+    with pytest.raises(CampaignError, match="fit_config"):
+        CampaignConfig(fit_config=other)
+    with pytest.raises(CampaignError, match="fit_config"):
+        tiny_config(fit_config=other)
+    # Baselines only: the fit configuration is theirs to choose.
+    assert CampaignConfig(fit_config=other, llm_arms=()).fit_config == other
+    # Not in the key (wall time / memory only): accepted.
+    cache = dataclasses.replace(FIT_CONFIG, block_cache_bytes=1)
+    assert CampaignConfig(fit_config=cache).fit_config.key() == FIT_CONFIG.key()
+    # scripts/pilot.py's config at its default arguments.
+    pilot = CampaignConfig(
+        seeds=(1, 2, 3),
+        control_seeds=(1,),
+        baselines=BASELINES,
+        llm_arms=PILOT_ARMS,
+        max_turns=100,
+        control_truths=None,
+    )
+    assert pilot.fit_config == FitConfig()
+    assert pilot.fit_config.key() == FIT_CONFIG.key()

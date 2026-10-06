@@ -51,6 +51,7 @@ from sciagent.glm.syntax import render
 from sciagent.harness.live import HARNESS_VERSION
 from sciagent.investigation.prompts import Arm
 from sciagent.investigation.runner import EnvironmentSpec
+from sciagent.investigation.tools import FIT_CONFIG as AGENT_FIT_CONFIG
 from sciagent.investigation.view import Condition
 from sciagent.investigation.world import OBSERVATIONAL_HORIZON, TruthSpec
 from sciagent.nonparam.wiener_hopf import DEFAULT as WIENER_HOPF_DEFAULT
@@ -203,6 +204,16 @@ class CampaignConfig:
             raise CampaignError("budgets must be positive")
         if self.sparse.workers != 1 or self.fit_config.workers != 1:
             raise CampaignError("units run single-threaded: workers must be 1")
+        # Agents' fits always use the lab's FIT_CONFIG (the runner takes no
+        # fit configuration), but a session's address records this config's
+        # key: any other key would mislabel every session.
+        if self.llm_arms and self.fit_config.key() != AGENT_FIT_CONFIG.key():
+            raise CampaignError(
+                "fit_config differs from investigation.tools.FIT_CONFIG, which "
+                "every agent fit uses: an LLM session would be addressed under a "
+                "fit configuration it did not run. Use the default fit_config, "
+                "or no llm_arms"
+            )
 
     def llm_systems(self) -> tuple[str, ...]:
         return tuple(a.system(self.llm_letter) for a in self.llm_arms)

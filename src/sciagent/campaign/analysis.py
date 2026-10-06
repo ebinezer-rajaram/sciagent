@@ -24,6 +24,16 @@ gap closed undefined (so it never closes), and it is excluded from means (and
 counted in ``nonfinite``). In the §6.4 controls it ranks lowest (control 2 and
 3, by rank; Δ10); control 1 reads finite gaps only.
 
+A *reference* at ``-inf`` on a (truth, seed) leaves undefined whatever is
+measured from it there. B-lib at ``-inf``: every gap closed on that seed is
+undefined (None); B-lib's own gap is ``-inf``, which control 1 does not read
+(preregistered: a ``-inf`` seed carries no SE), so the truth is checked on its
+other seeds. ORACLE at ``-inf``: every gap, gap closed and curve gap on that
+seed is undefined (None), since nothing can be referenced to it; and the
+ORACLE is then not an upper bound for the truth, so the truth fails control 1
+(margin ``-inf``) and is dropped (:func:`verdict`), whatever its other seeds
+show.
+
 **Gap closed within noise** (P4-PROPOSAL T4). The denominator
 ``LL(ORACLE) - LL(B-lib)`` of one (truth, seed) can be tiny, and the ratio is
 then noise (audit §1: 37.32 on a denominator of 0.0029). The rule, in
@@ -329,11 +339,16 @@ def derive(rows: Sequence[Row]) -> list[Row]:
         gap = None
         closed = None
         curve: tuple[tuple[int, float], ...] = ()
-        if oracle is not None and r.per_event is not None:
-            gap = r.per_event - oracle
-            if lib is not None and math.isfinite(r.per_event):
-                closed = gap_closed(r.per_event, lib, oracle)
-        if oracle is not None:
+        # A -inf reference leaves what is measured from it undefined (docstring).
+        if oracle is not None and math.isfinite(oracle):
+            if r.per_event is not None:
+                gap = r.per_event - oracle
+                if (
+                    lib is not None
+                    and math.isfinite(lib)
+                    and math.isfinite(r.per_event)
+                ):
+                    closed = gap_closed(r.per_event, lib, oracle)
             curve = tuple((k, v - oracle) for k, v in r.curve)
         d = denominator.get((r.truth, r.seed))
         tol = noise.get(r.truth)
@@ -509,13 +524,32 @@ def score_rows(
 
 
 def underfit_check(rows: Sequence[Row]) -> gonogo.UnderfitCheck:
-    """Control 1's underfit half over every scored ORACLE unit of ``rows``."""
+    """Control 1's underfit half over every ORACLE unit of ``rows``.
+
+    A failed unit has no fit, hence no flag: it counts as unrecorded (a
+    missing flag is not "zero flags"), never as skipped.
+    """
     return gonogo.oracle_underfit_check(
         [
-            (r.truth, r.seed, r.oracle_underfit)
+            (r.truth, r.seed, r.oracle_underfit if r.ok else None)
             for r in rows
-            if r.system == ORACLE and not r.llm and r.ok
+            if r.system == ORACLE and not r.llm
         ]
+    )
+
+
+def oracle_not_finite(rows: Sequence[Row]) -> list[str]:
+    """Truths on which a non-LLM ORACLE unit scored a non-finite held-out
+    log-likelihood (module docstring): sorted."""
+    return sorted(
+        {
+            r.truth
+            for r in rows
+            if r.system == ORACLE
+            and not r.llm
+            and r.per_event is not None
+            and not math.isfinite(r.per_event)
+        }
     )
 
 
@@ -539,6 +573,21 @@ def verdict(
     ]
     pair_rows = [r for r in srows if r.truth in truths_with_pairs]
     checks = gonogo.oracle_beats_lib(pair_rows) if pair_rows else ()
+    # An ORACLE at -inf on any seed is not an upper bound: margin -inf, SE
+    # undefined, the truth fails control 1 (module docstring).
+    no_bound = [t for t in oracle_not_finite(rows) if t in table.truths]
+    if no_bound:
+        checks = tuple(
+            sorted(
+                [c for c in checks if c.truth not in no_bound]
+                + [gonogo.OracleCheck(t, -math.inf, math.nan, False) for t in no_bound],
+                key=lambda c: c.truth,
+            )
+        )
+        reasons.append(
+            f"ORACLE scores -inf per event on held-out data (not an upper "
+            f"bound) for {no_bound}"
+        )
     kept = tuple(c.truth for c in checks if c.passed)
     dropped = tuple(c.truth for c in checks if not c.passed)
     checked = {c.truth for c in checks}

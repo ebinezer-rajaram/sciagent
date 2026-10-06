@@ -21,11 +21,19 @@ from sciagent.campaign.driver import Campaign, DriverSettings
 from sciagent.campaign.execute import ScoreJob, UnitResult
 from sciagent.campaign.plan import LLMArm, Unit, score_key, session_key
 from sciagent.campaign.store import ResultStore
-from sciagent.campaign.voids import ForeignResult, classify, session_void
+from sciagent.campaign.voids import (
+    ForeignResult,
+    classify,
+    denial_text,
+    session_void,
+)
 from sciagent.harness.scripted import ScriptedDriver, Step
 from sciagent.systems.llm.agent_sdk_provider import CONTAMINATING_VARIABLES
 
 DONE = {"status": 1.0, "void": 1.0, "submitted": 1.0}
+#: The denial of the 9 pilot sessions' bare ``python`` call, verbatim from
+#: their records (the Claude Code CLI's text for a name it does not have).
+PILOT_DENIAL = "<tool_use_error>Error: No such tool available: python</tool_use_error>"
 
 
 def _detail(*reasons: str, **extra: Any) -> dict[str, Any]:
@@ -36,7 +44,10 @@ def test_a_denied_unknown_tool_name_is_counted_not_void() -> None:
     v = classify(
         DONE,
         _detail("foreign tool: python", "foreign tool: python"),
-        (ForeignResult("python", True), ForeignResult("python", True)),
+        (
+            ForeignResult("python", True, PILOT_DENIAL),
+            ForeignResult("python", True, PILOT_DENIAL),
+        ),
     )
     assert not v.void and v.unknown_tool_attempts == 2
     assert v.stored_void and v.reclassified and v.reasons == ()
@@ -46,10 +57,32 @@ def test_an_executed_foreign_tool_is_void() -> None:
     v = classify(
         DONE,
         _detail("foreign tool: Bash", "foreign tool: python"),
-        (ForeignResult("Bash", False), ForeignResult("python", True)),
+        (
+            ForeignResult("Bash", False, "a.txt"),
+            ForeignResult("python", True, PILOT_DENIAL),
+        ),
     )
     assert v.void and v.unknown_tool_attempts == 1
     assert v.reasons == ("foreign tool executed: Bash",)
+
+
+def test_only_the_cli_denial_text_counts_as_a_denial() -> None:
+    """An error result is a denial only with the CLI's "No such tool" text for
+    that very name; any other error (a tool that ran and failed, a permission
+    message, a denial naming another tool) is counted as executed: void."""
+    assert denial_text("python") == PILOT_DENIAL
+    for text in (
+        "Traceback (most recent call last): ZeroDivisionError",
+        "<tool_use_error>Error: No such tool available: Bash</tool_use_error>",
+        "",
+    ):
+        v = classify(
+            DONE,
+            _detail("foreign tool: python"),
+            (ForeignResult("python", True, text),),
+        )
+        assert v.void and v.reasons == ("foreign tool executed: python",), text
+        assert v.unknown_tool_attempts == 0
 
 
 def test_a_foreign_use_without_a_recorded_denial_is_void() -> None:

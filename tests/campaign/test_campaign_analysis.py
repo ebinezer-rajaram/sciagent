@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import numpy as np
@@ -263,3 +264,105 @@ def test_an_oracle_cell_without_the_underfit_key_reads_as_unrecorded() -> None:
     )
     new = row_from_cell("a", 1, "ORACLE", False, cell)
     assert new.oracle_underfit is False and new.oracle_psi_source == "truth"
+
+
+# --------------------------------------------------------------------------
+# A reference (ORACLE or B-lib) at -inf on a (truth, seed); defect hunt B F1
+# --------------------------------------------------------------------------
+
+
+def _with(base: Table, changes: dict[tuple[str, int, str], float]) -> Table:
+    from dataclasses import replace
+
+    rows = derive(
+        [
+            replace(r, per_event=changes[(r.truth, r.seed, r.system)])
+            if (r.truth, r.seed, r.system) in changes
+            else r
+            for r in base.rows
+        ]
+    )
+    return replace(base, rows=tuple(rows))
+
+
+def test_a_minus_infinite_blib_seed_leaves_gap_closed_undefined() -> None:
+    """``derive`` used to raise ScoringError (heldout.gap_closed refuses a
+    non-finite reference). Gap closed against a -inf B-lib is undefined."""
+    rows = derive(
+        [
+            row("a", s, sys_, v)
+            for s, lib in ((1, -0.75), (2, -0.76), (3, float("-inf")))
+            for sys_, v in (("ORACLE", -0.70), ("B-lib", lib), ("X", -0.72))
+        ]
+    )
+    by = {(r.seed, r.system): r for r in rows}
+    assert by[(3, "B-lib")].gap == float("-inf")
+    assert by[(3, "X")].gap_closed is None
+    assert by[(3, "X")].gap is not None and abs(by[(3, "X")].gap + 0.02) < 1e-12
+    assert by[(1, "X")].gap_closed is not None and not by[(1, "X")].closed_flagged
+
+
+def test_control_1_reads_a_minus_infinite_blib_seed_as_no_evidence() -> None:
+    """Preregistered (gonogo docstring): control 1 reads finite gaps only. A
+    truth keeps its check on its other seeds; with fewer than 2 finite pairs
+    it is not checkable (inconclusive), never kept on the infinite seed."""
+    one = _with(_table(0.0), {("hawkes", 3, "B-lib"): float("-inf")})
+    v = verdict(one, np.random.default_rng(0), resamples=200)
+    assert v.outcome == "go", v.reasons
+    assert "hawkes" in v.kept
+    two = _with(
+        _table(0.0),
+        {("hawkes", s, "B-lib"): float("-inf") for s in (2, 3)},
+    )
+    v = verdict(two, np.random.default_rng(0), resamples=200)
+    assert "hawkes" not in v.kept and "hawkes" not in v.dropped
+    assert any("hawkes" in m for m in v.inconclusive)
+
+
+def test_a_minus_infinite_oracle_seed_leaves_every_gap_there_undefined() -> None:
+    """Nothing is measured from a -inf reference: no gap (it was nan for the
+    ORACLE and +inf for every other system), no gap closed, no curve gap."""
+    rows = derive(
+        [
+            row("a", s, sys_, v, curve=((1, -0.8),))
+            for s, ora in ((1, -0.70), (2, -0.71), (3, float("-inf")))
+            for sys_, v in (("ORACLE", ora), ("B-lib", -0.75), ("X", -0.72))
+        ]
+    )
+    for r in rows:
+        if r.seed == 3:
+            assert r.gap is None and r.gap_closed is None and r.curve_gaps == ()
+        else:
+            assert r.gap is not None and math.isfinite(r.gap)
+
+
+def test_control_1_drops_a_truth_whose_oracle_is_minus_infinite() -> None:
+    """An ORACLE that gives a held-out event zero intensity is not an upper
+    bound: its truth fails control 1 (margin -inf) and is dropped, even when
+    its other seeds alone would pass."""
+    t = _with(_table(0.0), {("hawkes", 3, "ORACLE"): float("-inf")})
+    v = verdict(t, np.random.default_rng(0), resamples=200)
+    assert "hawkes" in v.dropped and "hawkes" not in v.kept
+    (c,) = [c for c in v.oracle_checks if c.truth == "hawkes"]
+    assert not c.passed and c.margin == float("-inf")
+    assert any("-inf" in m and "hawkes" in m for m in v.reasons)
+    # Not checkable on finite pairs alone (one finite seed left): still dropped.
+    t = _with(_table(0.0), {("hawkes", s, "ORACLE"): float("-inf") for s in (2, 3)})
+    v = verdict(t, np.random.default_rng(0), resamples=200)
+    assert "hawkes" in v.dropped
+
+
+# --------------------------------------------------------------------------
+# Control 1's underfit half and failed ORACLE units; defect hunt B F2
+# --------------------------------------------------------------------------
+
+
+def test_a_failed_oracle_unit_counts_as_unrecorded() -> None:
+    """A failed ORACLE unit has no flag: zero flags cannot be shown for it."""
+    from sciagent.campaign.analysis import underfit_check
+
+    u = underfit_check(
+        [row("a", 1, "ORACLE", -0.7), row("a", 2, "ORACLE", None, ok=False)]
+    )
+    assert not u.passed
+    assert u.checked == 2 and u.unrecorded == (("a", 2),) and u.flagged == ()

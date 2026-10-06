@@ -9,9 +9,12 @@ already holds (no stored cell is edited):
 
 A completed session (``status = 1``) is **void** if and only if one of:
 
-- a foreign tool **executed**: the record holds a non-error
-  ``foreign_tool_result`` for that name;
-- a foreign tool use has **no recorded denial**: fewer error results for the
+- a foreign tool **executed**: the record holds a ``foreign_tool_result`` for
+  that name that is not a denial. A denial is an error result whose text is
+  exactly the CLI's refusal of a name it does not have
+  (:func:`denial_text`); any other result, error or not, may have run
+  something, so it counts as executed;
+- a foreign tool use has **no recorded denial**: fewer denials for the
   name than uses of it (nothing shows it did not run, so it is not excused);
 - **server tool use**: a ``server:`` reason, or a non-zero count in the
   result's ``usage.server_tool_use``;
@@ -19,10 +22,10 @@ A completed session (``status = 1``) is **void** if and only if one of:
 - a sandbox **infrastructure** fault, or any reason this module does not know
   (kept void: the policy only excuses what it can show was harmless).
 
-A foreign use whose every call was denied with an error result is counted in
-``unknown_tool_attempts`` and does not void the run. A session that did not
-complete (``status != 1``: aborted, hard timeout) keeps its stored void flag;
-it has nothing to score either way.
+A foreign use whose every call was denied (an error result with the denial
+text) is counted in ``unknown_tool_attempts`` and does not void the run. A
+session that did not complete (``status != 1``: aborted, hard timeout) keeps
+its stored void flag; it has nothing to score either way.
 
 The record is read only when a stored foreign-tool reason needs it, and it is
 fully hash-verified when read (:meth:`~sciagent.harness.record.SessionRecord.load`).
@@ -47,10 +50,25 @@ INFRASTRUCTURE: Final = "infrastructure: "
 
 @dataclass(frozen=True)
 class ForeignResult:
-    """One ``foreign_tool_result`` entry of a record: the name and the flag."""
+    """One ``foreign_tool_result`` entry of a record: name, flag and text."""
 
     name: str
     is_error: bool
+    text: str
+
+    @property
+    def denied(self) -> bool:
+        """The CLI refused the name (module docstring); nothing ran."""
+        return self.is_error and self.text == denial_text(self.name)
+
+
+def denial_text(name: str) -> str:
+    """The Claude Code CLI's result for a tool name it does not have.
+
+    Verbatim from the pilot's records (all 9 bare ``python`` calls), and the
+    text :class:`~sciagent.harness.scripted.ScriptedDriver` emulates.
+    """
+    return f"<tool_use_error>Error: No such tool available: {name}</tool_use_error>"
 
 
 @dataclass(frozen=True)
@@ -99,8 +117,8 @@ def classify(
     attempts = 0
     for name in sorted(uses):
         mine = [r for r in foreign_results if r.name == name]
-        denied = sum(r.is_error for r in mine)
-        if any(not r.is_error for r in mine):
+        denied = sum(r.denied for r in mine)
+        if any(not r.denied for r in mine):
             reasons.append(f"foreign tool executed: {name}")
         elif denied < uses[name]:
             reasons.append(f"foreign tool without a recorded denial: {name}")
@@ -116,7 +134,11 @@ def classify(
 def foreign_results(record: SessionRecord) -> tuple[ForeignResult, ...]:
     """Every ``foreign_tool_result`` entry of ``record``, in record order."""
     return tuple(
-        ForeignResult(str(e.body.get("name")), bool(e.body.get("is_error")))
+        ForeignResult(
+            str(e.body.get("name")),
+            bool(e.body.get("is_error")),
+            str(e.body.get("text") or ""),
+        )
         for e in record.of_kind("foreign_tool_result")
     )
 

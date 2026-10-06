@@ -14,6 +14,7 @@ imported by the tool layer or by ``policies.py``.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 from sciagent.scoring.battery import Simulator
@@ -38,6 +39,21 @@ class TruthFSDPolicy:
     replicates: int = REPLICATES
     max_events: int = POLICY_MAX_EVENTS
     name: str = "truthFSD"
+
+    @property
+    def config(self) -> str:
+        """Canonical JSON of the configuration (not the truth, not the seed)."""
+        return json.dumps(
+            {
+                "policy": self.name,
+                "replicates": self.replicates,
+                "max_events": self.max_events,
+                "reference": "truth",
+                "parametric": "top" if self.comparator is None else "comparator",
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
 
     def choose(self, context: DecisionContext, decision: int) -> Choice:
         table = fsd_table(

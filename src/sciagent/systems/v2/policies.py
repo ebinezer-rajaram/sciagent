@@ -56,11 +56,47 @@ information between hypothesis and outcome (evidence-wall note, eq. 0), with
 
     KL(p_k ‖ p_w) = u_k log(u_k / U) + (1 - u_k) E_{N_k}[-log Σ_j w_j e^{c_j(y)}],
 
-``U = Σ_j w_j u_j`` and ``c_j = log((1-u_j) N_j(y) / ((1-u_k) N_k(y)))``. The
-expectation is taken by Gauss-Hermite quadrature with :data:`GH_NODES` nodes,
-deterministic. A component identical to ``p_k`` contributes ``c_j = 0``
-exactly, so identical predictives give EIG = 0 exactly. Each KL is clamped
-at 0 from below (quadrature can only err by rounding there).
+``U = Σ_j w_j u_j`` and ``c_j = log((1-u_j) N_j(y) / ((1-u_k) N_k(y)))``.
+
+*Quadrature.* The expectation is a composite Gauss-Legendre rule
+(:data:`GL_NODES` nodes per panel) on ``y = μ_k + s_k x``, ``x ∈ [-12, 12]``
+(the standard normal's mass outside is 3.6e-33). Panels break every
+:data:`PANEL_STEP` standard deviations (sd) of ``p_k`` itself and, for every
+narrower component ``j``, every :data:`PANEL_STEP` standard deviations of
+``p_j`` within ``±12 s_j`` of ``μ_j``. A narrower component puts a spike of
+width ``s_j`` into ``log p_w``; Gauss-Hermite on ``p_k`` steps over it (WP5's
+256-node rule gave 0.5009 against 0.6408 at variance ratio 1e4, shift 10 sd),
+and these panels resolve it. The rule is deterministic. A component identical
+to ``p_k`` contributes ``c_j = 0`` exactly, so identical predictives give
+EIG = 0 exactly. Each KL is clamped at 0 from below.
+
+*Tie floor* (:data:`EIG_TIE_TOL`). Against an independent dense-grid reference
+(trapezoid, 2·10⁶ points per component), the rule's largest absolute error over
+306 two- and three-component cases (variance ratios 10⁻⁴ to 10⁴, shifts 0 to 10
+sd, atoms 0 to 0.4, w₁ 0.5 to 0.999, both orders) is
+:data:`EIG_QUADRATURE_ERROR` = 2.2e-16, one ulp at 1: the rule is exact to
+rounding there. (WP5's Gauss-Hermite rule erred by up to 0.14 on the same
+grid.) The tolerance takes a factor of 100 over that, for regimes the grid does
+not cover and for the rounding of the sums at EIG's scale (up to log K),
+rounded up to a power of ten: ``EIG_TIE_TOL`` = 1e-13 nats. EIG values closer
+than that to the table's maximum cannot be ordered by the computation, so they
+are exact ties and go to menu order (:func:`choose`). When the BIC weights are
+so concentrated that ε·H(w), which bounds every EIG (the evidence wall itself),
+is below the floor, every cell ties and the pick is the menu-first cell, not
+quadrature noise; dev-008 at n ≈ 2000 has H(w) ≈ 1e-111. A posterior only
+nearly as concentrated (dev-013: H(w) ≈ 3e-13) can leave cells above the floor,
+and its pick then follows EIG values that are computed correctly but are
+negligible: that is a statement about the weights, not about the numerics, and
+:class:`Weighting` is the lever for it. The decision reports ``H(w)`` and the
+maximum EIG (:class:`EIGSummary`) so the analysis can count degenerate
+decisions.
+
+*Weights* (:class:`Weighting`). ``"bic"`` (the default, SPEC §2.4's
+posterior weights by the BIC approximation): ``w ∝ exp(-ΔBIC/2)``.
+``"tempered"`` with temperature T: ``w ∝ exp(-ΔBIC/(2T))``; T = 1 is ``"bic"``
+bit for bit, and T → ∞ tends to uniform. The EIG policy applies its own
+strategy to the entertained set, and the strategy is part of its
+:attr:`EIGPolicy.config`.
 
 **FSD** (:func:`fsd_table`). ``FSD(e, d) = He²(q_par, q_np)``
 (``battery.hellinger2`` on the two replicate samples): ``q_par`` is the
@@ -77,20 +113,30 @@ the top fit. Even with no estimation error, two R-samples of one law give
 **Random.** Uniform over the ``(e, d)`` cells, with replacement, one draw
 from ``policy_seed(seed, decision, RANDOM_INDEX, 0)``.
 
-**Choice** (:func:`choose`). The argmax over the table, ties to menu order
-(designs first, then diagnostics).
+**Choice** (:func:`choose`). The first cell in menu order (designs first, then
+diagnostics) within ``tolerance`` of the table's maximum: 0 for FSD and the
+truth-aware control, :data:`EIG_TIE_TOL` for EIG. FSD needs no floor: He² is
+closed-form in the replicate moments (``battery.hellinger2``), so no
+numerical method stands between the samples and the value; cell-to-cell
+differences are Monte Carlo signal, and exact ties (He² saturated at 1 on a
+design where one side always stops) already go to menu order.
+
+**Config.** Each policy's :attr:`config` is canonical JSON (sorted keys) of
+everything that changes its choices except the seed, for the run key.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import itertools
+import json
 import math
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Final, Protocol
+from typing import Final, Literal, Protocol
 
 import numpy as np
-from numpy.polynomial.hermite import hermgauss
+from numpy.polynomial.legendre import leggauss
 
 from sciagent.core import reductions
 from sciagent.core.errors import SciAgentError
@@ -125,8 +171,20 @@ ENTERTAINED_MAX: Final = 4
 #: Event cap of a policy simulation; past it the run is undefined. It is the
 #: world's experiment cap (``investigation/world.py`` MAX_EVENTS).
 POLICY_MAX_EVENTS: Final = 15_000
-#: Gauss-Hermite nodes of the EIG quadrature.
-GH_NODES: Final = 256
+#: Gauss-Legendre nodes per panel, and the panel width in standard deviations,
+#: of the EIG quadrature (module docstring).
+GL_NODES: Final = 8
+PANEL_STEP: Final = 0.5
+#: Half-width of the integration range, in standard deviations of ``p_k``.
+_RANGE: Final = 12.0
+#: Identifies the quadrature in a policy's config.
+EIG_QUADRATURE: Final = f"composite-gauss-legendre/{GL_NODES}/{PANEL_STEP}/{_RANGE}"
+#: Largest |EIG - dense reference| measured over the module docstring's grid
+#: (2026-10-06; one ulp at 1, i.e. rounding).
+EIG_QUADRATURE_ERROR: Final = 2.220446049250313e-16
+#: EIG values within this of the maximum are ties: 100 x the measured error,
+#: rounded up to a power of ten (module docstring).
+EIG_TIE_TOL: Final = 1e-13
 #: Reserved model indices ``k`` of :func:`~sciagent.scoring.seeds.policy_seed`.
 REFERENCE_INDEX: Final = 2**32 - 1
 RANDOM_INDEX: Final = 2**32 - 2
@@ -135,10 +193,13 @@ PARAMETRIC_INDEX: Final = 2**32 - 4
 #: Relative variance floor of a predictive (as ``battery.hellinger2``).
 _FLOOR: Final = 1e-9
 
-_X, _H = hermgauss(GH_NODES)
-#: Nodes and weights for E_{N(0,1)}: y = μ + sqrt(2 v) x, weight h / sqrt(π).
-_NODES: Final = np.asarray(_X, dtype=np.float64)
-_WEIGHTS: Final = np.asarray(_H, dtype=np.float64) / math.sqrt(math.pi)
+_GL_X, _GL_W = leggauss(GL_NODES)
+#: Gauss-Legendre nodes and weights on [-1, 1].
+_GL_NODES: Final = np.asarray(_GL_X, dtype=np.float64)
+_GL_WEIGHTS: Final = np.asarray(_GL_W, dtype=np.float64)
+#: Breakpoints of one component's own panels, in its standard deviations.
+_STEPS: Final = np.arange(-_RANGE, _RANGE + PANEL_STEP / 2.0, PANEL_STEP)
+_LOG_SQRT_2PI: Final = 0.5 * math.log(2.0 * math.pi)
 
 type Table = tuple[tuple[float, ...], ...]
 type Values = tuple[tuple[float | None, ...], ...]
@@ -265,16 +326,59 @@ def diagnostic_value(
 # --------------------------------------------------------------------------
 
 
-def bic_weights(bics: Sequence[float]) -> tuple[float, ...]:
-    """``w_k ∝ exp(-BIC_k / 2)``, shifted by the smallest BIC."""
+def bic_weights(
+    bics: Sequence[float], *, temperature: float = 1.0
+) -> tuple[float, ...]:
+    """``w_k ∝ exp(-(BIC_k - min BIC) / (2 T))``; T = 1 is the BIC posterior."""
     if not bics:
         raise PolicyError("no BICs to weigh")
     if not all(math.isfinite(b) for b in bics):
         raise PolicyError(f"BICs must be finite, got {tuple(bics)}")
+    if not (math.isfinite(temperature) and temperature > 0.0):
+        raise PolicyError(f"temperature must be finite and > 0, got {temperature}")
     low = min(bics)
-    raw = [math.exp(-(b - low) / 2.0) for b in bics]
+    raw = [math.exp(-(b - low) / (2.0 * temperature)) for b in bics]
     total = math.fsum(raw)
     return tuple(x / total for x in raw)
+
+
+type WeightKind = Literal["bic", "tempered"]
+
+
+@dataclass(frozen=True)
+class Weighting:
+    """How BICs become weights (module docstring): ``"bic"`` or ``"tempered"``."""
+
+    kind: WeightKind = "bic"
+    temperature: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.kind not in ("bic", "tempered"):
+            raise PolicyError(f"unknown weighting {self.kind!r}")
+        t = self.temperature
+        if isinstance(t, bool) or not isinstance(t, int | float):
+            raise PolicyError(f"temperature must be a number, got {t!r}")
+        if not (math.isfinite(t) and t > 0.0):
+            raise PolicyError(f"temperature must be finite and > 0, got {t}")
+        if self.kind == "bic" and t != 1.0:
+            raise PolicyError("the bic weighting has temperature 1; use tempered")
+        object.__setattr__(self, "temperature", float(t))
+
+    def weights(self, bics: Sequence[float]) -> tuple[float, ...]:
+        return bic_weights(bics, temperature=self.temperature)
+
+    @property
+    def config(self) -> dict[str, object]:
+        return {"kind": self.kind, "temperature": self.temperature}
+
+
+#: The default: the BIC approximation to the posterior weights (SPEC §2.4).
+BIC_WEIGHTS: Final = Weighting()
+
+
+def tempered(temperature: float) -> Weighting:
+    """``w ∝ exp(-ΔBIC / (2 T))``."""
+    return Weighting("tempered", temperature)
 
 
 @dataclass(frozen=True)
@@ -302,15 +406,22 @@ class EntertainedSet:
 
     @staticmethod
     def of(
-        hypotheses: Sequence[Hypothesis], skipped: Sequence[str] = ()
+        hypotheses: Sequence[Hypothesis],
+        skipped: Sequence[str] = (),
+        *,
+        weighting: Weighting = BIC_WEIGHTS,
     ) -> EntertainedSet:
         if not hypotheses:
             raise PolicyError("the entertained set is empty")
         return EntertainedSet(
             tuple(hypotheses),
-            bic_weights([h.bic for h in hypotheses]),
+            weighting.weights([h.bic for h in hypotheses]),
             tuple(skipped),
         )
+
+    def reweighted(self, weighting: Weighting) -> EntertainedSet:
+        """The same hypotheses, weighted by ``weighting``."""
+        return EntertainedSet.of(self.hypotheses, self.skipped, weighting=weighting)
 
     @property
     def top(self) -> int:
@@ -331,6 +442,7 @@ def fit_entertained(
     fitter: Fitter = certified_fit,
     config: FitConfig | None = None,
     max_size: int = ENTERTAINED_MAX,
+    weighting: Weighting = BIC_WEIGHTS,
 ) -> EntertainedSet:
     """Refit each candidate on ``datasets``; drop failed or uncertified fits."""
     if not candidates:
@@ -353,7 +465,7 @@ def fit_entertained(
         )
     if not kept:
         raise PolicyError(f"no candidate could be fitted: {skipped}")
-    return EntertainedSet.of(kept, skipped)
+    return EntertainedSet.of(kept, skipped, weighting=weighting)
 
 
 # --------------------------------------------------------------------------
@@ -395,6 +507,34 @@ def _check_weights(weights: Sequence[float], n: int) -> None:
         raise PolicyError(f"weights must sum to 1, got {math.fsum(weights)}")
 
 
+def _nodes(
+    k: int, ps: Sequence[Predictive], live: Sequence[bool]
+) -> tuple[np.ndarray, np.ndarray]:
+    """Composite Gauss-Legendre nodes ``x`` and weights for E_{N(0,1)}.
+
+    In ``p_k``'s standard units: its own panels every :data:`PANEL_STEP`, and
+    each narrower live component's panels every :data:`PANEL_STEP` of its
+    standard deviations (module docstring).
+    """
+    pk = ps[k]
+    sk = math.sqrt(pk.var)
+    breaks = [_STEPS]
+    for j, p in enumerate(ps):
+        if j == k or not live[j] or p.var >= pk.var:
+            continue
+        own = (p.mean - pk.mean + math.sqrt(p.var) * _STEPS) / sk
+        breaks.append(np.clip(own, -_RANGE, _RANGE))
+    edges = np.unique(np.concatenate(breaks))
+    lo, hi = edges[:-1], edges[1:]
+    keep = hi > lo
+    lo, hi = lo[keep], hi[keep]
+    half = 0.5 * (hi - lo)
+    x = ((lo + hi) * 0.5)[:, None] + half[:, None] * _GL_NODES[None, :]
+    w = half[:, None] * _GL_WEIGHTS[None, :]
+    x, w = x.reshape(-1), w.reshape(-1)
+    return x, w * np.exp(-0.5 * x * x - _LOG_SQRT_2PI)
+
+
 def _kl_to_mixture(k: int, weights: Sequence[float], ps: Sequence[Predictive]) -> float:
     """``KL(p_k ‖ p_w)`` (module docstring)."""
     pk = ps[k]
@@ -405,19 +545,20 @@ def _kl_to_mixture(k: int, weights: Sequence[float], ps: Sequence[Predictive]) -
         )
         kl -= pk.undefined * math.log(ratio)
     if pk.undefined < 1.0:
-        x = _NODES
-        y = pk.mean + math.sqrt(2.0 * pk.var) * x
+        live = [w > 0.0 and p.undefined < 1.0 for w, p in zip(weights, ps, strict=True)]
+        x, qw = _nodes(k, ps, live)
+        y = pk.mean + math.sqrt(pk.var) * x
         columns: list[np.ndarray] = []
         mix: list[float] = []
-        for w, p in zip(weights, ps, strict=True):
-            if w == 0.0 or p.undefined >= 1.0:
+        for w, p, alive in zip(weights, ps, live, strict=True):
+            if not alive:
                 continue
             if p == pk:
                 c = np.zeros_like(x)
             else:
                 shift = math.log((1.0 - p.undefined) / (1.0 - pk.undefined))
                 shift -= 0.5 * math.log(p.var / pk.var)
-                c = shift - (y - p.mean) ** 2 / (2.0 * p.var) + x**2
+                c = shift - (y - p.mean) ** 2 / (2.0 * p.var) + 0.5 * x * x
             columns.append(c)
             mix.append(w)
         logs = np.stack(columns, axis=1)
@@ -426,7 +567,7 @@ def _kl_to_mixture(k: int, weights: Sequence[float], ps: Sequence[Predictive]) -
             np.exp(logs - top[:, None]) * np.asarray(mix, dtype=np.float64)[None, :]
         )
         log_mix = top + np.log(reductions.row_totals(scaled))
-        kl += (1.0 - pk.undefined) * reductions.dot(_WEIGHTS, -log_mix)
+        kl += (1.0 - pk.undefined) * reductions.dot(qw, -log_mix)
     return max(kl, 0.0)
 
 
@@ -544,20 +685,59 @@ class DecisionContext:
     menu: Menu
 
 
-def choose(table: Table) -> tuple[int, int]:
-    """``(e, d)`` of the largest entry; ties to menu order (designs first)."""
+def choose(table: Table, *, tolerance: float = 0.0) -> tuple[int, int]:
+    """The first ``(e, d)`` in menu order within ``tolerance`` of the maximum."""
     if not table or not table[0]:
         raise PolicyError("an empty score table")
-    best: tuple[int, int] | None = None
-    value = -math.inf
+    if not (math.isfinite(tolerance) and tolerance >= 0.0):
+        raise PolicyError(f"tolerance must be finite and >= 0, got {tolerance}")
     for e, row in enumerate(table):
         for d, x in enumerate(row):
             if not math.isfinite(x):
                 raise PolicyError(f"score ({e}, {d}) is not finite: {x}")
-            if best is None or x > value:
-                best, value = (e, d), x
-    assert best is not None
-    return best
+    best = max(max(row) for row in table)
+    for e, row in enumerate(table):
+        for d, x in enumerate(row):
+            if best - x <= tolerance:
+                return e, d
+    raise PolicyError("no cell attains the maximum")
+
+
+@dataclass(frozen=True)
+class EIGSummary:
+    """Framework-only facts of one EIG decision, for the degeneracy count.
+
+    ``entropy`` is H(w) in nats; ``max_eig`` the table's maximum; ``tied`` the
+    number of cells within ``tolerance`` of it. ``degenerate``: every cell is
+    within the tolerance of 0, so the pick is the menu-first cell.
+    """
+
+    weights: tuple[float, ...]
+    entropy: float
+    max_eig: float
+    tolerance: float
+    tied: int
+
+    @property
+    def degenerate(self) -> bool:
+        return self.max_eig <= self.tolerance
+
+
+def weight_entropy(weights: Sequence[float]) -> float:
+    """``H(w) = -Σ w log w`` in nats (0 log 0 = 0)."""
+    return -math.fsum(w * math.log(w) for w in weights if w > 0.0)
+
+
+def eig_summary(weights: Sequence[float], table: Table, tolerance: float) -> EIGSummary:
+    """The :class:`EIGSummary` of an EIG table."""
+    best = max(max(row) for row in table)
+    tied = sum(1 for row in table for x in row if best - x <= tolerance)
+    return EIGSummary(tuple(weights), weight_entropy(weights), best, tolerance, tied)
+
+
+def _config(fields: Mapping[str, object]) -> str:
+    """Canonical JSON: sorted keys, no spaces."""
+    return json.dumps(fields, sort_keys=True, separators=(",", ":"))
 
 
 def eig_table(
@@ -747,17 +927,29 @@ class Choice:
     design: Design
     diagnostic: DiagnosticChoice
     scores: Table | None
+    eig: EIGSummary | None = None
 
 
 def _choice(
-    policy: str, decision: int, menu: Menu, e: int, d: int, scores: Table | None
+    policy: str,
+    decision: int,
+    menu: Menu,
+    e: int,
+    d: int,
+    scores: Table | None,
+    eig: EIGSummary | None = None,
 ) -> Choice:
-    return Choice(policy, decision, e, d, menu.designs[e], menu.diagnostics[d], scores)
+    return Choice(
+        policy, decision, e, d, menu.designs[e], menu.diagnostics[d], scores, eig
+    )
 
 
 class Policy(Protocol):
     @property
     def name(self) -> str: ...
+
+    @property
+    def config(self) -> str: ...
 
     def choose(self, context: DecisionContext, decision: int) -> Choice: ...
 
@@ -769,6 +961,10 @@ class RandomPolicy:
     seed: int
     name: str = "random"
 
+    @property
+    def config(self) -> str:
+        return _config({"policy": self.name})
+
     def choose(self, context: DecisionContext, decision: int) -> Choice:
         menu = context.menu
         n_d = len(menu.diagnostics)
@@ -779,23 +975,46 @@ class RandomPolicy:
 
 @dataclass(frozen=True)
 class EIGPolicy:
-    """The argmax of :func:`eig_table`."""
+    """The argmax of :func:`eig_table` under its weighting, ties within the floor.
+
+    The entertained set is reweighted by ``weighting`` before the table is
+    computed; ties within ``tolerance`` of the maximum go to menu order, and
+    the choice carries an :class:`EIGSummary`.
+    """
 
     seed: int
     replicates: int = REPLICATES
     max_events: int = POLICY_MAX_EVENTS
+    weighting: Weighting = BIC_WEIGHTS
+    tolerance: float = EIG_TIE_TOL
     name: str = "EIG"
 
+    @property
+    def config(self) -> str:
+        return _config(
+            {
+                "policy": self.name,
+                "replicates": self.replicates,
+                "max_events": self.max_events,
+                "weights": self.weighting.config,
+                "tie_tolerance": self.tolerance,
+                "quadrature": EIG_QUADRATURE,
+            }
+        )
+
     def choose(self, context: DecisionContext, decision: int) -> Choice:
+        entertained = context.entertained.reweighted(self.weighting)
+        weighted = dataclasses.replace(context, entertained=entertained)
         table = eig_table(
-            context,
+            weighted,
             self.seed,
             decision,
             replicates=self.replicates,
             max_events=self.max_events,
         )
-        e, d = choose(table)
-        return _choice(self.name, decision, context.menu, e, d, table)
+        e, d = choose(table, tolerance=self.tolerance)
+        summary = eig_summary(entertained.weights, table, self.tolerance)
+        return _choice(self.name, decision, context.menu, e, d, table, summary)
 
 
 @dataclass(frozen=True)
@@ -807,6 +1026,17 @@ class FSDPolicy:
     reference: Simulator | None = None
     max_events: int = POLICY_MAX_EVENTS
     name: str = "FSD"
+
+    @property
+    def config(self) -> str:
+        return _config(
+            {
+                "policy": self.name,
+                "replicates": self.replicates,
+                "max_events": self.max_events,
+                "reference": "wiener_hopf" if self.reference is None else "injected",
+            }
+        )
 
     def choose(self, context: DecisionContext, decision: int) -> Choice:
         table = fsd_table(

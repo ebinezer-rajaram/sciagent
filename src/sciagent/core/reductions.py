@@ -400,9 +400,14 @@ class ExactSum:
     Sums combine exactly (``+``, ``-``, unary ``-``), so the exact total of a
     union of arrays never re-reads them. Addends of magnitude ≥ 2⁹⁶⁰ and
     non-finite ones are kept aside and reach :func:`math.fsum` as they are,
-    so infinities and NaN behave as they do there; where ``fsum`` would raise
-    ``OverflowError`` on an intermediate overflow, this may instead return
-    the finite exact total.
+    so infinities and NaN behave as they do there.
+
+    Overflow is where this departs from ``fsum``, which raises
+    ``OverflowError`` whenever a *partial* sum overflows -- depending on the
+    order it meets its addends, and even when the total is representable.
+    :meth:`value` answers with the correctly rounded total whenever that is a
+    finite double, and raises :class:`~sciagent.core.errors.ExecutionError`
+    when it is not (the exact total rounds beyond the largest double).
     """
 
     hi: Floats
@@ -473,5 +478,50 @@ class ExactSum:
         return self + (-other)
 
     def value(self) -> float:
-        """The correctly rounded total, with :func:`math.fsum` semantics."""
-        return math.fsum([*self._terms().tolist(), *self.extra])
+        """The correctly rounded total, with :func:`math.fsum` semantics.
+
+        Overflow excepted, as the class describes: a representable total is
+        returned even where ``fsum``'s partial sums overflow, and a total
+        beyond the largest double raises
+        :class:`~sciagent.core.errors.ExecutionError`.
+        """
+        addends = [*self._terms().tolist(), *self.extra]
+        try:
+            return math.fsum(addends)
+        except OverflowError:
+            # fsum answers correctly whenever it answers, so this path is only
+            # ever reached where it did not, and every other result is fsum's.
+            return _overflow_fallback(addends)
+
+
+#: The grid every finite double lies on: an integer multiple of 2⁻¹⁰⁷⁴.
+_GRID_BITS: Final = 1074
+
+
+def _overflow_fallback(addends: list[float]) -> float:
+    """The correctly rounded sum of ``addends``, for when ``fsum`` overflowed.
+
+    Non-finite addends decide the sum outright, so they alone go back to
+    :func:`math.fsum`, which then cannot overflow and returns its own
+    answer for them (or raises its own ``ValueError`` for ``inf - inf``).
+    Otherwise every addend is an exact integer multiple of 2⁻¹⁰⁷⁴; those
+    integers are summed exactly as Python ints, and the one rounding is
+    Python's int true division, which is correctly rounded (to nearest, ties
+    to even, subnormals included) and raises ``OverflowError`` exactly when
+    the rounded result is beyond the largest double.
+    """
+    special = [v for v in addends if not math.isfinite(v)]
+    if special:
+        return math.fsum(special)
+    scaled = 0
+    for v in addends:
+        num, den = v.as_integer_ratio()  # den is 2**k with k <= 1074
+        scaled += num << (_GRID_BITS - (den.bit_length() - 1))
+    try:
+        return scaled / (1 << _GRID_BITS)
+    except OverflowError:
+        raise ExecutionError(
+            f"the exact sum overflows: it is {'+' if scaled > 0 else '-'}"
+            f"2^{scaled.bit_length() - 1 - _GRID_BITS} or more in magnitude, "
+            f"beyond the largest double"
+        ) from None

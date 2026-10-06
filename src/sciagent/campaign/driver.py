@@ -381,7 +381,7 @@ class Campaign:
         detail: dict[str, Json] = {
             "unit": self._unit_json(unit, "llm-session"),
             "session_config": session_text(
-                self.config.arm_of(unit.system), self.config
+                self.config.arm_of(unit.system), self.config, self.env
             ),
             "session": {
                 **out.detail,

@@ -167,6 +167,8 @@ def run_session(
             wall_time_s=config.wall_time_s,
             driver=driver,
             sandbox_root=sandbox_root,
+            prompt_variant=arm.prompt_variant,
+            policy=arm.policy,
         )
     except (SessionFailedError, ServedModelError, SandboxError) as error:
         return _retry(unit, error, start)

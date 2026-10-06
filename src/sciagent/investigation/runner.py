@@ -59,7 +59,13 @@ from sciagent.investigation.prompts import (
     opening_prompt,
     system_prompt,
 )
-from sciagent.investigation.tools import FIT_CONFIG, Lab, LabError, PredictionOutcome
+from sciagent.investigation.tools import (
+    FIT_CONFIG,
+    Lab,
+    LabError,
+    PredictionOutcome,
+    tool_specs,
+)
 from sciagent.investigation.view import Condition, make_view
 from sciagent.investigation.world import OBSERVATIONAL, Truth, World
 from sciagent.sandbox import Sandbox, SandboxLimits, ensure_image
@@ -74,6 +80,7 @@ __all__ = [
     "layer_factory",
     "leak_terms",
     "out_of_bounds",
+    "rendered_config",
     "rendered_surface",
     "replay_investigation",
     "run",
@@ -292,12 +299,53 @@ def rendered_surface(lab: Lab) -> dict[str, Any]:
     """Everything the agent is shown before its first call, by label.
 
     The system prompt, the opening prompt and every tool schema: the input to
-    the anonymisation leak test.
+    the anonymisation leak test. Without the opening prompt it equals
+    :func:`rendered_config` for the lab's configuration.
     """
     system, opening = _prompts(lab)
     surface: dict[str, Any] = {"system_prompt": system, "opening_prompt": opening}
     for schema in lab.layer().schemas():
         surface[f"tool:{schema['name']}"] = schema
+    return surface
+
+
+def rendered_config(
+    env: EnvironmentSpec,
+    channels: tuple[ChannelSpec, ...],
+    arm: Arm,
+    condition: Condition,
+    *,
+    experiments: int,
+    fits: int,
+    prompt_variant: str = "v1",
+) -> dict[str, Any]:
+    """The session surface from configuration alone (P4 Δ7).
+
+    :func:`rendered_surface` without the opening prompt (which reads the
+    observational log's size and horizon), rendered without resolving a truth
+    or building a world: the system prompt and every tool schema, by label.
+    Its inputs are the channel specs, the anonymised names, the arm, the
+    condition, the budgets, the prompt variant and this package's constants;
+    the truth, the seed and the sandbox limits are not among them. The
+    campaign's session key hashes it, so a prompt or schema edit moves the
+    key. A lab built from the same configuration shows exactly this.
+    """
+    if arm not in ("AG-c", "AG-o"):
+        raise LabError(f"arm must be 'AG-c' or 'AG-o', got {arm!r}")
+    if experiments < 0 or fits < 0:
+        raise LabError("budgets must be non-negative")
+    try:
+        variant = as_variant(prompt_variant)
+    except PromptError as error:
+        raise LabError(str(error)) from None
+    view = make_view(condition, channels, env.anon_channels)
+    surface: dict[str, Any] = {
+        "system_prompt": system_prompt(
+            view, arm, experiments=experiments, fits=fits, variant=variant
+        )
+    }
+    for spec in tool_specs(view, arm, experiments=experiments, fits=fits):
+        surface[f"tool:{spec.name}"] = spec.schema()
     return surface
 
 
@@ -351,13 +399,18 @@ def run(
     keep_sandbox: bool = False,
     fit_workers: int = 1,
     prompt_variant: str = "v1",
+    policy: str | None = None,
 ) -> InvestigationOutcome:
     """Run one investigation, save its record under ``out_dir``, and return it.
 
     A run aborted by the harness (hermeticity, served model, session failure,
     a tool bug) saves its partial record as ``aborted-<head>.json`` and
     re-raises. ``prompt_variant`` picks the system prompt's variant (P4 Δ6).
+    ``policy`` names an experiment-choice policy (P4 Δ11); no policy mode
+    exists yet, so any value but ``None`` is refused before anything runs.
     """
+    if policy is not None:
+        raise LabError(f"policy {policy!r}: policy arms are not implemented")
     try:
         variant = as_variant(prompt_variant)
     except PromptError as error:

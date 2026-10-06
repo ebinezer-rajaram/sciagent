@@ -32,11 +32,26 @@ An :class:`~sciagent.registry.store.ExperimentKey` with
 An LLM unit has two cells: the *session* (the expensive, non-reproducible
 investigation; no metric version, so a scorer change never reruns a model) and
 its *score* (keyed by the session's address plus :data:`METRIC_VERSION`).
+
+**The session surface** (P4 Δ7). A session's configuration text
+(:func:`session_text`) ends with the SHA-256 of the canonical JSON of the
+rendered surface (:func:`~sciagent.investigation.runner.rendered_config`: the
+system prompt and every tool schema for the arm, condition, budgets and prompt
+variant), so an edit to any prompt or schema text gives every session a new
+address instead of resuming old sessions under new text. The pilot's
+``harness/1`` sessions were addressed by a text without it;
+:func:`legacy_session_text_v1` keeps that text, frozen, so the rescore can
+still find them (:mod:`sciagent.campaign.rescore`).
+
+**Variants and policies.** An :class:`LLMArm` with a non-default prompt
+variant or a policy has its own system name (:meth:`LLMArm.system`), so two
+of them never share a unit.
 """
 
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Final, Literal
@@ -49,8 +64,9 @@ from sciagent.glm.grammar import ChannelSpec, Structure
 from sciagent.glm.simulate import MarkSampler
 from sciagent.glm.syntax import render
 from sciagent.harness.live import HARNESS_VERSION
-from sciagent.investigation.prompts import Arm
-from sciagent.investigation.runner import EnvironmentSpec
+from sciagent.harness.record import canonical_json
+from sciagent.investigation.prompts import Arm, PromptError, PromptVariant, as_variant
+from sciagent.investigation.runner import EnvironmentSpec, rendered_config
 from sciagent.investigation.tools import FIT_CONFIG as AGENT_FIT_CONFIG
 from sciagent.investigation.view import Condition
 from sciagent.investigation.world import OBSERVATIONAL_HORIZON, TruthSpec
@@ -147,15 +163,45 @@ class CampaignEnvironment:
 # --------------------------------------------------------------------------
 
 
+#: What a policy name may hold: it is part of a system name.
+_POLICY_NAME: Final = re.compile(r"[A-Za-z0-9_.-]+")
+
+
 @dataclass(frozen=True)
 class LLMArm:
-    """One LLM arm: tier and naming condition, on the campaign's model."""
+    """One LLM arm: tier and naming condition, on the campaign's model.
+
+    ``prompt_variant`` is the system prompt's variant (P4 Δ6); ``policy`` names
+    an experiment-choice policy (P4 Δ11; ``None``: the agent designs its own
+    experiments). Both enter the session key and, when not the default, the
+    system name.
+    """
 
     arm: Arm
     condition: Condition
+    prompt_variant: PromptVariant = "v1"
+    policy: str | None = None
+
+    def __post_init__(self) -> None:
+        try:
+            as_variant(self.prompt_variant)
+        except PromptError as error:
+            raise CampaignError(str(error)) from None
+        if self.policy is not None and not _POLICY_NAME.fullmatch(self.policy):
+            raise CampaignError(
+                f"policy name {self.policy!r} must match {_POLICY_NAME.pattern}"
+            )
 
     def system(self, letter: str) -> str:
-        return f"{self.arm}-{letter}/{self.condition}"
+        """``<arm>-<letter>/<condition>``, plus ``+<variant>`` for a non-default
+        variant and ``+policy=<name>`` for a policy (the pilot's arms keep
+        their names)."""
+        name = f"{self.arm}-{letter}/{self.condition}"
+        if self.prompt_variant != "v1":
+            name += f"+{self.prompt_variant}"
+        if self.policy is not None:
+            name += f"+policy={self.policy}"
+        return name
 
 
 #: The pilot's four arms, named first (the priority order of SPEC P3's brief).
@@ -214,6 +260,9 @@ class CampaignConfig:
                 "fit configuration it did not run. Use the default fit_config, "
                 "or no llm_arms"
             )
+        systems = self.llm_systems()
+        if len(set(systems)) != len(systems):
+            raise CampaignError(f"LLM arms must have distinct systems: {systems}")
 
     def llm_systems(self) -> tuple[str, ...]:
         return tuple(a.system(self.llm_letter) for a in self.llm_arms)
@@ -366,19 +415,72 @@ def baseline_key(
     )
 
 
-def session_text(arm: LLMArm, config: CampaignConfig) -> str:
-    """The full configuration of an LLM session as text."""
+def surface_digest(
+    arm: LLMArm, config: CampaignConfig, env: CampaignEnvironment
+) -> str:
+    """SHA-256 of the canonical JSON of the session's rendered surface.
+
+    The surface is :func:`~sciagent.investigation.runner.rendered_config` for
+    the environment's channels and anonymised names, the arm, the condition,
+    the budgets and the prompt variant: no truth and no seed.
+    """
+    if env.investigation is None:
+        raise CampaignError("the environment has no investigation spec")
+    surface = rendered_config(
+        env.investigation,
+        env.channels,
+        arm.arm,
+        arm.condition,
+        experiments=config.experiments,
+        fits=config.fits,
+        prompt_variant=arm.prompt_variant,
+    )
+    return _sha(canonical_json(surface))
+
+
+def session_text(arm: LLMArm, config: CampaignConfig, env: CampaignEnvironment) -> str:
+    """The full configuration of an LLM session as text (module docstring)."""
+    return (
+        f"model={config.llm_model}; arm={arm.arm}; condition={arm.condition}; "
+        f"prompt_variant={arm.prompt_variant}; "
+        f"policy={'none' if arm.policy is None else arm.policy}; "
+        f"experiments={config.experiments}; fits={config.fits}; "
+        f"max_turns={config.max_turns}; wall_time_s={config.wall_time_s!r}; "
+        f"harness={HARNESS_VERSION}; surface={surface_digest(arm, config, env)}"
+    )
+
+
+def session_config_digest(
+    arm: LLMArm, config: CampaignConfig, env: CampaignEnvironment
+) -> str:
+    """The SHA-256 of :func:`session_text` (the session key's config field)."""
+    return _sha(session_text(arm, config, env))
+
+
+#: The harness version the pilot's sessions were addressed under.
+LEGACY_HARNESS_VERSION: Final = "harness/1"
+
+
+def legacy_session_text_v1(arm: LLMArm, config: CampaignConfig) -> str:
+    """The pilot's (``harness/1``) session text, frozen: do not edit.
+
+    It holds no prompt variant, policy or surface digest; every pilot session
+    ran a default arm. Only :mod:`sciagent.campaign.rescore` reads it.
+    """
     return (
         f"model={config.llm_model}; arm={arm.arm}; condition={arm.condition}; "
         f"experiments={config.experiments}; fits={config.fits}; "
         f"max_turns={config.max_turns}; wall_time_s={config.wall_time_s!r}; "
-        f"harness={HARNESS_VERSION}"
+        f"harness={LEGACY_HARNESS_VERSION}"
     )
 
 
-def session_config_digest(arm: LLMArm, config: CampaignConfig) -> str:
-    """The SHA-256 of :func:`session_text` (the session key's config field)."""
-    return _sha(session_text(arm, config))
+def legacy_session_config_digest(arm: LLMArm, config: CampaignConfig) -> str | None:
+    """The SHA-256 of :func:`legacy_session_text_v1`; ``None`` for an arm the
+    pilot could not have run (a non-default variant or a policy)."""
+    if arm.prompt_variant != "v1" or arm.policy is not None:
+        return None
+    return _sha(legacy_session_text_v1(arm, config))
 
 
 def session_key(
@@ -387,6 +489,12 @@ def session_key(
     """The address of an LLM unit's session (no metric version)."""
     if unit.truth_id != truth.id:
         raise CampaignError(f"unit truth {unit.truth_id!r} is not {truth.id!r}")
+    if tuple(truth.spec.channels) != tuple(env.channels):
+        raise CampaignError(
+            f"truth {truth.id!r} has channels {truth.spec.channels}, the "
+            f"environment {env.channels}: the session surface is rendered from "
+            f"the environment's"
+        )
     arm = config.arm_of(unit.system)
     return _key(
         env,
@@ -397,7 +505,7 @@ def session_key(
             "system": unit.system,
             "truth": truth.id,
             "truth_digest": truth.digest,
-            "session_config": session_config_digest(arm, config),
+            "session_config": session_config_digest(arm, config, env),
         },
         "none",
     )

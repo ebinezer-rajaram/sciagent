@@ -111,7 +111,10 @@ __all__ = [
 ]
 
 #: Recorded in every config entry; bump when the record's meaning changes.
-HARNESS_VERSION: Final = "harness/1"
+#: /2 (P4 Δ7): truncation at the event cap (Δ2), designs (Δ3), beliefs and the
+#: stop reason (Δ4), the budget line (Δ12) and the harness-level void policy
+#: (Δ8) change what a session record means; the pilot's records are /1.
+HARNESS_VERSION: Final = "harness/2"
 
 #: The three models of SPEC §4.1, by tier letter's name.
 MODELS: Final[Mapping[str, str]] = {

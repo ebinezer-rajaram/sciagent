@@ -109,7 +109,13 @@ from sciagent.glm.simulate import (
 from sciagent.glm.syntax import render
 from sciagent.harness.ledger import Prediction, PredictionLedger
 from sciagent.harness.record import canonical_json as record_json
-from sciagent.harness.tools import BudgetMeter, ToolLayer, ToolOutput, ToolSpec
+from sciagent.harness.tools import (
+    BudgetMeter,
+    Handler,
+    ToolLayer,
+    ToolOutput,
+    ToolSpec,
+)
 from sciagent.investigation.prompts import (
     MAX_DESIGN_FILE_BYTES,
     STOP_REASONS,
@@ -150,6 +156,7 @@ __all__ = [
     "LabError",
     "PredictionOutcome",
     "budget_line",
+    "tool_specs",
 ]
 
 #: The one fit configuration every ``fit`` call uses (``workers`` aside, which
@@ -939,242 +946,23 @@ class Lab:
     # -- the layer --------------------------------------------------------------
 
     def specs(self) -> list[ToolSpec]:
-        view = self.view
-        experiment_schema = self._design_schema()
-        data_id = _string("A dataset id: `obs`, or `e0`, `e1`, ... for experiments.")
-        diagnostic_names = [agent for agent, _ in view.diagnostics()]
-        specs = [
-            ToolSpec(
-                "run_experiment",
-                "Run one new experiment: a fresh realisation of the process from "
-                "empty history on [0, horizon] under an intervention (see the "
-                f"system prompt). Costs one of the {self.experiments} experiments. "
-                f"Default horizon {num(view.time(DEFAULT_HORIZON))}. Forced times "
-                "may be a generator {start, step, n} and marks a pattern "
-                "{constant}, {alternate} or {repeat}. A run that reaches the "
-                f"limit of {MAX_EVENTS} events is truncated there and kept. "
-                "Returns a summary and the new dataset's id, and evaluates any "
-                "predictions committed for this experiment. Refused, uncharged, "
-                "unless you have recorded a `belief` since the last experiment.",
-                experiment_schema,
-                self.run_experiment,
-                budget=BUDGET_EXPERIMENTS,
-            ),
-            ToolSpec(
-                "diagnostic",
-                "Compute one catalogue statistic on one dataset. Time arguments "
-                "are in the dataset's time units and default to multiples of its "
-                "mean gap between events. Catalogue:\n" + _catalogue_text(view),
-                _schema(
-                    {
-                        "name": {"type": "string", "enum": diagnostic_names},
-                        "args": {
-                            "type": "object",
-                            "description": "The statistic's arguments; omit for "
-                            "defaults.",
-                        },
-                        "data_id": data_id,
-                    },
-                    ["name", "data_id"],
-                ),
-                self.diagnostic,
-            ),
-            ToolSpec(
-                "nonparam_kernels",
-                "Model-free linear estimate of how past events raise the rate "
-                "(Wiener-Hopf equations solved from second-order statistics, no "
-                "structure assumed). Drivers: `events` (every past event, weight "
-                "1) and one per mark channel (weight z for real-valued channels, "
-                "the value for -1/+1 channels). Reports each driver's kernel on a "
-                "lag grid and its integral. Sees only linear second-order "
-                "structure: gates, thresholds and non-identity links are "
-                "invisible to it.",
-                _schema({"data_id": data_id}, ["data_id"]),
-                self.nonparam_kernels,
-            ),
-            ToolSpec(
-                "fit",
-                "Certified maximum-likelihood fit of a structure (modelling-language "
-                "text) jointly over the named datasets: log-likelihood, BIC, "
-                "time-rescaling KS test, fitted coefficients and shape parameters. "
-                f"Costs one of the {self.fits} fits unless the same structure "
-                "was already fitted on the same data.",
-                _schema(
-                    {
-                        "structure": _string("A structure in the modelling language."),
-                        "data_ids": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "minItems": 1,
-                            "description": "Dataset ids to fit jointly.",
-                        },
-                    },
-                    ["structure", "data_ids"],
-                ),
-                self.fit,
-                budget=BUDGET_FITS,
-            ),
-            ToolSpec(
-                "predict",
-                "Commit a prediction for an experiment that has not run yet. The "
-                "framework computes the named catalogue diagnostic on that "
-                "experiment's data when it runs and reports whether it fell in "
-                "your interval. Refused for an experiment that already ran.",
-                _schema(
-                    {
-                        "experiment": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "description": "Experiment index (0 for e0, ...).",
-                        },
-                        "diagnostic": {"type": "string", "enum": diagnostic_names},
-                        "args": {
-                            "type": "object",
-                            "description": "The diagnostic's arguments; omit for "
-                            "defaults (resolved on the experiment's data).",
-                        },
-                        "hypothesis": _string(
-                            "The structure this prediction follows from: "
-                            "modelling-language text only (commentary goes in "
-                            "`note`)."
-                        ),
-                        "interval": {
-                            "type": "array",
-                            "items": {"type": "number"},
-                            "minItems": 2,
-                            "maxItems": 2,
-                            "description": "[low, high], a central interval.",
-                        },
-                        "level": {
-                            "type": "number",
-                            "exclusiveMinimum": 0,
-                            "exclusiveMaximum": 1,
-                            "description": "Probability the interval holds the value.",
-                        },
-                        "note": _string(
-                            f"Optional free text (at most {MAX_NOTE} characters), "
-                            "e.g. why you expect this. Recorded, not shown back."
-                        ),
-                    },
-                    ["experiment", "diagnostic", "hypothesis", "interval", "level"],
-                ),
-                self.predict,
-            ),
-            ToolSpec(
-                "belief",
-                "Record your current belief: the structure you favour, 1 to "
-                f"{MAX_RIVALS} rival structures you have not ruled out (the first "
-                "is your runner-up), and your confidence, a probability strictly "
-                "between 0 and 1, that the favoured structure is the true "
-                "mechanism. All must be different structures. Free. Needed "
-                "before every experiment (after the previous one) and before "
-                "`submit`.",
-                _schema(
-                    {
-                        "favoured": _string("The structure you currently favour."),
-                        "rivals": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "minItems": 1,
-                            "maxItems": MAX_RIVALS,
-                            "description": "Rival structures, runner-up first.",
-                        },
-                        "confidence": {
-                            "type": "number",
-                            "exclusiveMinimum": 0,
-                            "exclusiveMaximum": 1,
-                            "description": "Probability that the favoured "
-                            "structure is the true mechanism.",
-                        },
-                    },
-                    ["favoured", "rivals", "confidence"],
-                ),
-                self.belief,
-            ),
-        ]
-        if self.arm == "AG-o":
-            specs += [
-                ToolSpec(
-                    "notebook",
-                    "Append to your lab notebook; the whole notebook is shown back.",
-                    _schema({"append": _string("Text to append.")}, ["append"]),
-                    self.notebook,
-                ),
-                ToolSpec(
-                    "python",
-                    "Run Python code in the isolated sandbox (fresh process per "
-                    "call; data read-only in /data; persist files in /work). "
-                    "Returns the exit code, stdout and stderr.",
-                    _schema({"code": _string("Python source to run.")}, ["code"]),
-                    self.python,
-                ),
-            ]
-        specs.append(
-            ToolSpec(
-                "submit",
-                "Submit your final structure and a short report, with why you are "
-                "stopping. Once; ends the investigation. Refused, uncharged, "
-                "unless you have recorded a `belief` since the last experiment.",
-                _schema(
-                    {
-                        "structure": _string(
-                            "The structure in the modelling language."
-                        ),
-                        "report": _string("A short report of what you found and why."),
-                        "stop_reason": {
-                            "type": "string",
-                            "enum": list(STOP_REASONS),
-                            "description": "Why you are stopping now.",
-                        },
-                        "note": _string(
-                            f"Optional free text (at most {MAX_NOTE} characters) "
-                            "on the stopping decision. Recorded, not shown back."
-                        ),
-                    },
-                    ["structure", "report", "stop_reason"],
-                ),
-                self.submit,
-                budget=BUDGET_SUBMIT,
-                terminal=True,
-            )
+        return tool_specs(
+            self.view,
+            self.arm,
+            experiments=self.experiments,
+            fits=self.fits,
+            handlers={
+                "run_experiment": self.run_experiment,
+                "diagnostic": self.diagnostic,
+                "nonparam_kernels": self.nonparam_kernels,
+                "fit": self.fit,
+                "predict": self.predict,
+                "belief": self.belief,
+                "notebook": self.notebook,
+                "python": self.python,
+                "submit": self.submit,
+            },
         )
-        return specs
-
-    def _design_schema(self) -> dict[str, Any]:
-        """``run_experiment``'s input schema: the design schema, plus for AG-o
-        the ``{"from": "/work/..."}`` alternative for the intervention.
-
-        It carries no time-valued constant, so it is the same in both
-        conditions (times are in the agent's units by construction).
-        """
-        schema: dict[str, Any] = {
-            k: copy.deepcopy(v)
-            for k, v in DESIGN_SCHEMA.items()
-            if k not in ("$schema", "title")
-        }
-        if self.sandbox is not None:
-            properties: dict[str, Any] = schema["properties"]
-            properties["intervention"] = {
-                "oneOf": [
-                    properties["intervention"],
-                    {
-                        "type": "object",
-                        "properties": {
-                            FROM_KEY: {
-                                "type": "string",
-                                "pattern": _WORK_PATH.pattern,
-                                "description": "A JSON file you wrote under "
-                                f"{WORK_PREFIX} holding one intervention "
-                                "(generators allowed); at most "
-                                f"{MAX_DESIGN_FILE_BYTES} bytes.",
-                            }
-                        },
-                        "required": [FROM_KEY],
-                        "additionalProperties": False,
-                    },
-                ]
-            }
-        return schema
 
     def budgets(self) -> dict[str, int]:
         return {
@@ -1192,6 +980,267 @@ class Lab:
 
     def layer(self) -> ToolLayer:
         return ToolLayer(self.specs(), self.budgets(), footer=self._footer)
+
+
+def tool_specs(
+    view: AgentView,
+    arm: Arm,
+    *,
+    experiments: int,
+    fits: int,
+    handlers: Mapping[str, Handler] | None = None,
+) -> list[ToolSpec]:
+    """Every tool the agent is offered, for one view, arm and budget.
+
+    A pure function of its arguments and this module's constants: no world is
+    read, so the schemas render from configuration alone
+    (:func:`~sciagent.investigation.runner.rendered_config`, the session key's
+    input, P4 Δ7). :meth:`Lab.specs` passes its bound handlers; without
+    ``handlers`` each tool's handler refuses (a rendering, not a lab).
+    """
+
+    def handler(name: str) -> Handler:
+        if handlers is None:
+            return _render_only
+        return handlers[name]
+
+    experiment_schema = _design_schema(arm)
+    data_id = _string("A dataset id: `obs`, or `e0`, `e1`, ... for experiments.")
+    diagnostic_names = [agent for agent, _ in view.diagnostics()]
+    specs = [
+        ToolSpec(
+            "run_experiment",
+            "Run one new experiment: a fresh realisation of the process from "
+            "empty history on [0, horizon] under an intervention (see the "
+            f"system prompt). Costs one of the {experiments} experiments. "
+            f"Default horizon {num(view.time(DEFAULT_HORIZON))}. Forced times "
+            "may be a generator {start, step, n} and marks a pattern "
+            "{constant}, {alternate} or {repeat}. A run that reaches the "
+            f"limit of {MAX_EVENTS} events is truncated there and kept. "
+            "Returns a summary and the new dataset's id, and evaluates any "
+            "predictions committed for this experiment. Refused, uncharged, "
+            "unless you have recorded a `belief` since the last experiment.",
+            experiment_schema,
+            handler("run_experiment"),
+            budget=BUDGET_EXPERIMENTS,
+        ),
+        ToolSpec(
+            "diagnostic",
+            "Compute one catalogue statistic on one dataset. Time arguments "
+            "are in the dataset's time units and default to multiples of its "
+            "mean gap between events. Catalogue:\n" + _catalogue_text(view),
+            _schema(
+                {
+                    "name": {"type": "string", "enum": diagnostic_names},
+                    "args": {
+                        "type": "object",
+                        "description": "The statistic's arguments; omit for defaults.",
+                    },
+                    "data_id": data_id,
+                },
+                ["name", "data_id"],
+            ),
+            handler("diagnostic"),
+        ),
+        ToolSpec(
+            "nonparam_kernels",
+            "Model-free linear estimate of how past events raise the rate "
+            "(Wiener-Hopf equations solved from second-order statistics, no "
+            "structure assumed). Drivers: `events` (every past event, weight "
+            "1) and one per mark channel (weight z for real-valued channels, "
+            "the value for -1/+1 channels). Reports each driver's kernel on a "
+            "lag grid and its integral. Sees only linear second-order "
+            "structure: gates, thresholds and non-identity links are "
+            "invisible to it.",
+            _schema({"data_id": data_id}, ["data_id"]),
+            handler("nonparam_kernels"),
+        ),
+        ToolSpec(
+            "fit",
+            "Certified maximum-likelihood fit of a structure (modelling-language "
+            "text) jointly over the named datasets: log-likelihood, BIC, "
+            "time-rescaling KS test, fitted coefficients and shape parameters. "
+            f"Costs one of the {fits} fits unless the same structure "
+            "was already fitted on the same data.",
+            _schema(
+                {
+                    "structure": _string("A structure in the modelling language."),
+                    "data_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "minItems": 1,
+                        "description": "Dataset ids to fit jointly.",
+                    },
+                },
+                ["structure", "data_ids"],
+            ),
+            handler("fit"),
+            budget=BUDGET_FITS,
+        ),
+        ToolSpec(
+            "predict",
+            "Commit a prediction for an experiment that has not run yet. The "
+            "framework computes the named catalogue diagnostic on that "
+            "experiment's data when it runs and reports whether it fell in "
+            "your interval. Refused for an experiment that already ran.",
+            _schema(
+                {
+                    "experiment": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Experiment index (0 for e0, ...).",
+                    },
+                    "diagnostic": {"type": "string", "enum": diagnostic_names},
+                    "args": {
+                        "type": "object",
+                        "description": "The diagnostic's arguments; omit for "
+                        "defaults (resolved on the experiment's data).",
+                    },
+                    "hypothesis": _string(
+                        "The structure this prediction follows from: "
+                        "modelling-language text only (commentary goes in "
+                        "`note`)."
+                    ),
+                    "interval": {
+                        "type": "array",
+                        "items": {"type": "number"},
+                        "minItems": 2,
+                        "maxItems": 2,
+                        "description": "[low, high], a central interval.",
+                    },
+                    "level": {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "exclusiveMaximum": 1,
+                        "description": "Probability the interval holds the value.",
+                    },
+                    "note": _string(
+                        f"Optional free text (at most {MAX_NOTE} characters), "
+                        "e.g. why you expect this. Recorded, not shown back."
+                    ),
+                },
+                ["experiment", "diagnostic", "hypothesis", "interval", "level"],
+            ),
+            handler("predict"),
+        ),
+        ToolSpec(
+            "belief",
+            "Record your current belief: the structure you favour, 1 to "
+            f"{MAX_RIVALS} rival structures you have not ruled out (the first "
+            "is your runner-up), and your confidence, a probability strictly "
+            "between 0 and 1, that the favoured structure is the true "
+            "mechanism. All must be different structures. Free. Needed "
+            "before every experiment (after the previous one) and before "
+            "`submit`.",
+            _schema(
+                {
+                    "favoured": _string("The structure you currently favour."),
+                    "rivals": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "minItems": 1,
+                        "maxItems": MAX_RIVALS,
+                        "description": "Rival structures, runner-up first.",
+                    },
+                    "confidence": {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "exclusiveMaximum": 1,
+                        "description": "Probability that the favoured "
+                        "structure is the true mechanism.",
+                    },
+                },
+                ["favoured", "rivals", "confidence"],
+            ),
+            handler("belief"),
+        ),
+    ]
+    if arm == "AG-o":
+        specs += [
+            ToolSpec(
+                "notebook",
+                "Append to your lab notebook; the whole notebook is shown back.",
+                _schema({"append": _string("Text to append.")}, ["append"]),
+                handler("notebook"),
+            ),
+            ToolSpec(
+                "python",
+                "Run Python code in the isolated sandbox (fresh process per "
+                "call; data read-only in /data; persist files in /work). "
+                "Returns the exit code, stdout and stderr.",
+                _schema({"code": _string("Python source to run.")}, ["code"]),
+                handler("python"),
+            ),
+        ]
+    specs.append(
+        ToolSpec(
+            "submit",
+            "Submit your final structure and a short report, with why you are "
+            "stopping. Once; ends the investigation. Refused, uncharged, "
+            "unless you have recorded a `belief` since the last experiment.",
+            _schema(
+                {
+                    "structure": _string("The structure in the modelling language."),
+                    "report": _string("A short report of what you found and why."),
+                    "stop_reason": {
+                        "type": "string",
+                        "enum": list(STOP_REASONS),
+                        "description": "Why you are stopping now.",
+                    },
+                    "note": _string(
+                        f"Optional free text (at most {MAX_NOTE} characters) "
+                        "on the stopping decision. Recorded, not shown back."
+                    ),
+                },
+                ["structure", "report", "stop_reason"],
+            ),
+            handler("submit"),
+            budget=BUDGET_SUBMIT,
+            terminal=True,
+        )
+    )
+    return specs
+
+
+def _design_schema(arm: Arm) -> dict[str, Any]:
+    """``run_experiment``'s input schema: the design schema, plus for AG-o
+    the ``{"from": "/work/..."}`` alternative for the intervention.
+
+    It carries no time-valued constant, so it is the same in both
+    conditions (times are in the agent's units by construction).
+    """
+    schema: dict[str, Any] = {
+        k: copy.deepcopy(v)
+        for k, v in DESIGN_SCHEMA.items()
+        if k not in ("$schema", "title")
+    }
+    if arm == "AG-o":
+        properties: dict[str, Any] = schema["properties"]
+        properties["intervention"] = {
+            "oneOf": [
+                properties["intervention"],
+                {
+                    "type": "object",
+                    "properties": {
+                        FROM_KEY: {
+                            "type": "string",
+                            "pattern": _WORK_PATH.pattern,
+                            "description": "A JSON file you wrote under "
+                            f"{WORK_PREFIX} holding one intervention "
+                            "(generators allowed); at most "
+                            f"{MAX_DESIGN_FILE_BYTES} bytes.",
+                        }
+                    },
+                    "required": [FROM_KEY],
+                    "additionalProperties": False,
+                },
+            ]
+        }
+    return schema
+
+
+def _render_only(args: Mapping[str, Any]) -> ToolOutput:
+    raise LabError("these tool specs were rendered without a lab; they run nothing")
 
 
 # --------------------------------------------------------------------------

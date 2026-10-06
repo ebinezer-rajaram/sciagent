@@ -81,6 +81,10 @@ once per (dataset, leaf subtree, leaf ψ) in a
 :class:`~sciagent.glm.features.BlockCache`, and a feature block is combined
 from cached leaves (products and gates are elementwise): a profile costs Σ
 over leaves, not Π over a feature's slots (LOG.md 2026-10-01).
+The combined feature blocks (one per dataset, feature and feature ψ, so Π
+over a feature's slots) are kept in a least-recently-used cache bounded by
+``block_cache_bytes``; a dropped block is rebuilt from the leaves byte for
+byte, so the bound changes wall time and memory only (LOG 2026-10-06).
 Leaves can be computed in worker processes (``workers``); each is the same
 deterministic computation wherever it runs, and results are placed by key,
 so the output is unchanged.
@@ -116,6 +120,7 @@ from __future__ import annotations
 import hashlib
 import math
 import time
+from collections import OrderedDict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import contextmanager
@@ -176,6 +181,10 @@ PSI_FULL_GRID_MAX: Final = 512
 #: evaluates jointly. 128 keeps a ``Gate(Periodic, PhaseWindow)`` (100 points:
 #: the period and the window are coupled) in one block (LOG 2026-10-03).
 PSI_BLOCK_MAX: Final = 128
+#: Default bound on the bytes of feature blocks one fit keeps (LOG
+#: 2026-10-06, "fit/5 block cache"). Peak memory on the dev-013 superset
+#: (three long datasets) is about this plus 0.5 GB; unbounded it passed 11 GB.
+BLOCK_CACHE_BYTES: Final = 1 << 30
 #: Part of every fit's content address; bump on any change to fitted numbers.
 #: /3: Lomax (PowerK) history sums by a sum of exponentials (features.py).
 #: /4: inner-solve folds by the blocked pairwise tree; exact sums by ExactSum.
@@ -211,11 +220,15 @@ class UncertifiedFitError(FitError):
 
 @dataclass(frozen=True)
 class FitConfig:
-    """How a fit is computed. Every field but ``workers`` is in the cache key.
+    """How a fit is computed. Every field but ``workers`` and
+    ``block_cache_bytes`` is in the cache key.
 
     ``max_iter`` caps Newton steps (or Clarabel iterations per solve).
     ``workers`` > 1 computes feature blocks in that many processes; it changes
-    wall time only.
+    wall time only. ``block_cache_bytes`` bounds the feature blocks the ψ
+    search keeps (least recently used are dropped first; 0 keeps none); a
+    dropped block is rebuilt from the leaf cache byte for byte, so it changes
+    wall time and memory only.
     """
 
     quadrature: QuadratureSpec = DEFAULT_QUADRATURE
@@ -232,6 +245,7 @@ class FitConfig:
     psi_max_sweeps: int = 0
     psi_swap_rounds: int = 4
     workers: int = 1
+    block_cache_bytes: int = BLOCK_CACHE_BYTES
 
     def __post_init__(self) -> None:
         if self.inner_solver not in ("newton", "clarabel"):
@@ -256,9 +270,16 @@ class FitConfig:
             raise FitConfigError(f"psi_block_max must be ≥ 1: {self.psi_block_max}")
         if self.workers < 1:
             raise FitConfigError(f"workers must be ≥ 1: {self.workers}")
+        if self.block_cache_bytes < 0:
+            raise FitConfigError(
+                f"block_cache_bytes must be ≥ 0: {self.block_cache_bytes}"
+            )
 
     def key(self) -> str:
-        """The fields that can change a fitted number, as a fixed string."""
+        """The fields that can change a fitted number, as a fixed string.
+
+        ``workers`` and ``block_cache_bytes`` are left out: neither can.
+        """
         q = self.quadrature
         return "|".join(
             [
@@ -499,6 +520,53 @@ def _leaf_job(
         return None
 
 
+class _BlockLRU:
+    """Feature blocks by key, holding at most ``limit`` bytes of block arrays.
+
+    The least recently used block is dropped first; a block larger than the
+    limit is not kept. Recency follows the sequence of :meth:`get` and
+    :meth:`put` calls only (never timing or object ids), so what is kept is
+    deterministic. A dropped block is rebuilt by
+    :meth:`~sciagent.glm.features.BlockCache.block` from the leaf cache, which
+    is never bounded (it holds Σ over leaf grids, not Π over a feature's
+    slots), and the rebuild is byte-identical: the bound changes wall time and
+    memory only. ``None`` (a block whose values are not finite) costs 0 bytes.
+    """
+
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+        self.nbytes = 0
+        self._items: OrderedDict[_BlockKey, tuple[FeatureBlock | None, int]] = (
+            OrderedDict()
+        )
+
+    def __contains__(self, key: _BlockKey) -> bool:
+        return key in self._items
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+    def get(self, key: _BlockKey) -> FeatureBlock | None:
+        """The cached block (KeyError if absent), now the most recent."""
+        block, _ = self._items[key]
+        self._items.move_to_end(key)
+        return block
+
+    def put(self, key: _BlockKey, block: FeatureBlock | None) -> None:
+        size = (
+            0
+            if block is None
+            else block.at_events.nbytes + block.at_nodes.nbytes + block.integrals.nbytes
+        )
+        if size > self.limit:
+            return
+        self._items[key] = (block, size)
+        self.nbytes += size
+        while self.nbytes > self.limit:
+            _, (_, dropped) = self._items.popitem(last=False)
+            self.nbytes -= dropped
+
+
 class _Profile:
     """One fit's ψ profile: rules, the block cache and the evaluated points."""
 
@@ -524,7 +592,7 @@ class _Profile:
             BlockCache(d, channels, r.nodes, r.weights)
             for d, r in zip(datasets, self.rules, strict=True)
         )
-        self.blocks: dict[_BlockKey, FeatureBlock | None] = {}
+        self.blocks = _BlockLRU(config.block_cache_bytes)
         self.solutions: dict[_Point, Solution | None] = {}
         #: Local feature k is feature ``index[k]`` of the fitted structure;
         #: block keys use the fitted structure's indices.
@@ -561,10 +629,13 @@ class _Profile:
             for k in range(len(self.structure.features))
         ]
 
-    def _ensure_blocks(self, points: Sequence[_Point]) -> None:
-        missing = sorted(
-            {key for p in points for key in self._keys(p)} - set(self.blocks)
-        )
+    def _ensure_leaves(self, points: Sequence[_Point]) -> None:
+        """Compute every leaf that the blocks of ``points`` not in the block
+        cache need and no leaf cache holds, in one batch (in the pool, if
+        any). Blocks are built later, one point at a time (:meth:`designs`),
+        so a batch of points never holds all its blocks at once."""
+        needed = sorted({key for p in points for key in self._keys(p)})
+        missing = [key for key in needed if key not in self.blocks]
         # Every leaf the missing blocks need that no cache holds, each once, in
         # a fixed order (sorted block keys, then each tree's pre-order).
         leaf_keys: list[tuple[int, LeafKey]] = []
@@ -586,23 +657,29 @@ class _Profile:
             results = [_leaf_job(*job) for job in jobs]
         for (d, key), columns in zip(leaf_keys, results, strict=True):
             self.caches[d].put(key, columns)
-        for d, top, fkey in missing:
-            feature = self.top_features[top]
-            psi = self.slots.feature_psi(local_k[top], fkey)
-            try:
-                block = self.caches[d].block(feature, psi)
-            except FeatureNumericsError:
-                block = None
-            self.blocks[(d, top, fkey)] = block
+
+    def _block(self, d: int, k: int, point: _Point) -> FeatureBlock | None:
+        """Local feature k's block on dataset d at ``point``: from the block
+        cache, else built from the leaf cache (None if not finite)."""
+        fkey = self.slots.feature_key(k, point)
+        key = (d, self.index[k], fkey)
+        if key in self.blocks:
+            return self.blocks.get(key)
+        try:
+            block: FeatureBlock | None = self.caches[d].block(
+                self.structure.features[k], self.slots.feature_psi(k, fkey)
+            )
+        except FeatureNumericsError:
+            block = None
+        self.blocks.put(key, block)
+        return block
 
     def designs(self, point: _Point) -> list[Design] | None:
         designs = []
         for d, data in enumerate(self.datasets):
             blocks = []
             for k in range(len(self.structure.features)):
-                block = self.blocks[
-                    (d, self.index[k], self.slots.feature_key(k, point))
-                ]
+                block = self._block(d, k, point)
                 if block is None:
                     return None
                 blocks.append(block)
@@ -615,7 +692,7 @@ class _Profile:
     def evaluate(self, points: Sequence[_Point]) -> None:
         todo = [p for p in points if p not in self.solutions]
         self.solves[0] += len(todo)
-        self._ensure_blocks(todo)
+        self._ensure_leaves(todo)
         for point in todo:
             designs = self.designs(point)
             if designs is None:
@@ -1206,7 +1283,8 @@ def fit_cache_key(
     config: FitConfig | None = None,
 ) -> str:
     """The content address of a fit: SHA-256 over the fit version, the
-    canonical structure hash, the config (all but ``workers``), the channel
+    canonical structure hash, the config (all but ``workers`` and
+    ``block_cache_bytes``), the channel
     standardisation and every dataset's bytes, in order.
 
     Equivalent structures share a key, but θ is laid out in the order of the

@@ -9,22 +9,36 @@ Sampling stays random, and failures are kept in a committed corpus under
 database, and random sampling keeps widening coverage across runs, while the
 committed corpus still carries any counterexample between machines. A passing
 run writes nothing there. ``deadline`` is off because these properties simulate.
+
+It also pins BLAS to one thread, as the campaign driver does, before anything
+imports numpy (OpenBLAS reads the variables when it loads): at default threads
+each test process commits about 2.2 GB, and the campaign's reference numbers
+are computed single-threaded (LOG 2026-10-06). Nothing numpy-backed may be
+imported above that point; the sandbox fixtures import their module lazily.
 """
 
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from hypothesis import settings
 from hypothesis.database import DirectoryBasedExampleDatabase
 
-from sciagent.sandbox import (
-    Sandbox,
-    SandboxLimits,
-    SandboxUnavailableError,
-    ensure_image,
-)
+if TYPE_CHECKING:
+    from sciagent.sandbox import Sandbox
+
+#: The variables ``sciagent.campaign.driver.THREAD_VARIABLES`` sets for workers.
+BLAS_THREAD_VARIABLES = ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS")
+for _var in BLAS_THREAD_VARIABLES:
+    os.environ[_var] = "1"
+if "numpy" in sys.modules:
+    raise pytest.UsageError(
+        "numpy was imported before tests/conftest.py pinned BLAS to one thread"
+    )
 
 #: The committed corpus. Tracked, unlike Hypothesis's default ``.hypothesis/``,
 #: which writes a ``.gitignore`` holding ``*`` into itself -- so a counterexample
@@ -52,6 +66,8 @@ settings.load_profile("sciagent")
 
 @pytest.fixture(scope="session")
 def sandbox_image() -> str:
+    from sciagent.sandbox import SandboxUnavailableError, ensure_image
+
     try:
         return ensure_image()
     except SandboxUnavailableError as exc:
@@ -71,6 +87,8 @@ def run_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def sandbox(sandbox_image: str, run_dir: Path) -> Sandbox:
+    from sciagent.sandbox import Sandbox, SandboxLimits
+
     return Sandbox(
         run_dir,
         image=sandbox_image,

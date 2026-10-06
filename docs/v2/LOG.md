@@ -769,3 +769,32 @@ points evaluated. On the dev-013 superset it passed 11 GB, against 1.4 GB at
 fit/4. `test_dev013_superset_never_fits_worse_than_its_subset` cannot finish on
 this 16 GB machine and is unverified under D3. A bounded cache comes next,
 under step 2 (the defect hunt).
+
+## 2026-10-06 — fit/5 block cache bounded (`block_cache_bytes`, not in the key)
+
+**What grew.** fit/5's memory growth came from the feature-block cache. It
+holds one block per (dataset, feature, feature ψ), so its size is the product
+of the feature's slot grids. On the dev-013 superset it reached 2304 blocks and
+10.75 GiB by 1245 solves. The leaf cache stayed at 88 MB.
+
+**The fix.**
+- Blocks are now kept in a byte-bounded LRU, `FitConfig.block_cache_bytes`,
+  default 1 GiB.
+- Eviction order depends only on the order of get and put calls.
+- Blocks are built one point at a time.
+- A dropped block is rebuilt from the leaf cache, which is never bounded,
+  byte for byte. So the bound changes only wall time and memory.
+- The bound is not in `key()`, as with `workers`. `FIT_VERSION` stays fit/5.
+
+**Evidence.**
+- Output bytes and the evaluated ψ trajectory are identical at bounds 0,
+  64 KiB and 1 MiB versus unbounded, on both search paths and all three links.
+- The fit/4 digests still hold at bound 0.
+- On a three-dataset case, peak traced memory falls from 140 MiB to 11 MiB at
+  a 4 MiB bound.
+- On dev-013, peak commit was 1.48 GB, flat for 1410 s, against more than
+  11 GB before.
+
+**Also changed.** `tests/conftest.py` now pins BLAS to one thread before numpy
+loads, matching the campaign. At default threads, each process commits about
+2.2 GB.

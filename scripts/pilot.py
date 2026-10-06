@@ -7,6 +7,11 @@
     uv run python scripts/pilot.py --root .cache/pilot --truths 2 --seeds 1 \
         --llm-limit 4
 
+    # P3.1 (P4-PROPOSAL §2.2): rerun the non-LLM units under the current
+    # fitter and rescore the stored LLM sessions; no live session is launched
+    uv run python scripts/pilot.py --root .cache/pilot --truths 20 \
+        --b10f-truths 10 --workers 4 --rescore-llm
+
 Binds pointproc to the domain-independent campaign driver
 (``sciagent.campaign``): the dev split's truths (``records.read_split``,
 hash-verified), channels and marks, B-lib's library, B-sym's seeds (the
@@ -203,7 +208,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     reconfigure_stdout()
-    args = build_parser().parse_args()
+    parser = build_parser()
+    parser.add_argument(
+        "--rescore-llm",
+        action="store_true",
+        help="score the stored LLM sessions under the current versions; never "
+        "launch a live session (P4-PROPOSAL §2.2)",
+    )
+    args = parser.parse_args()
     from sciagent.campaign.driver import Campaign, DriverSettings
     from sciagent.campaign.plan import (
         BASELINES,
@@ -238,6 +250,7 @@ def main() -> None:
         run_baselines=not args.no_baselines,
         run_llm=not args.no_llm,
         max_heavy=args.max_heavy,
+        rescore_llm=args.rescore_llm,
     )
     campaign = Campaign(args.root, env, config, truth_entries(records), settings)
     try:

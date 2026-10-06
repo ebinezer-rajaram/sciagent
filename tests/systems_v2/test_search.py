@@ -395,7 +395,10 @@ def test_bsym_at_least_matches_blib_on_size_excitation() -> None:
     for seed in (101, 202, 303):
         data = _data("size_excitation", seed)
         held = _held_out("size_excitation", seed + 1)
-        sym = BSym(SEEDS, budget=40, seed=seed, workers=4).run(data)
+        # In-process: a 4-worker pool inside each of 6 xdist workers broke
+        # (BrokenProcessPool) under -n 6; results do not depend on workers
+        # (LOG 2026-10-03), so the pool bought only wall time.
+        sym = BSym(SEEDS, budget=40, seed=seed, workers=1).run(data)
         lib = BLib(v2.B_LIB_LIBRARY).run(data)
         gap = sym.model.held_out_per_event(held) - lib.model.held_out_per_event(held)
         wins.append((gap >= 0.0, round(gap, 4), sym.submitted))

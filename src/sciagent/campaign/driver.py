@@ -26,7 +26,18 @@ queue.
 
 **Resumable.** A unit whose address is in the store is skipped; nothing is
 ever overwritten. An LLM unit whose session is stored but whose score is not
-is scored from the session's stored detail, without calling the model.
+is scored from the session's stored detail, without calling the model. A
+session that is void under the policy of :mod:`~sciagent.campaign.voids`
+(P4-PROPOSAL Δ8) is never scored.
+
+**Rescore mode** (``DriverSettings.rescore_llm``, P4-PROPOSAL §2.2). A
+fitter change gives every session a new address, so the normal plan would
+relaunch every live session. In rescore mode the LLM plan is instead the
+stored sessions (:func:`~sciagent.campaign.rescore.stored_sessions`), each
+scored under the current versions (its score addressed by the stored
+session's digest); no session is ever launched (:meth:`Campaign._launch_llm`
+refuses), and a unit with no stored session is logged, not run. Non-LLM
+units plan and run as usual.
 
 **Failures.** A unit that fails with a framework or numerical error is
 recorded as a failed result by the worker (``execute``). A job that raises
@@ -101,7 +112,9 @@ from sciagent.campaign.plan import (
     session_text,
     system_config_text,
 )
+from sciagent.campaign.rescore import stored_sessions
 from sciagent.campaign.store import ResultStore
+from sciagent.campaign.voids import decoded, session_void
 from sciagent.core.errors import SciAgentError
 from sciagent.harness.live import SessionDriver
 from sciagent.registry.store import ExperimentKey
@@ -144,6 +157,9 @@ class DriverSettings:
     isolate_llm: bool = True
     #: Memory-heavy jobs (B-sparse) allowed in flight at once.
     max_heavy: int = 2
+    #: Score the stored LLM sessions under the current versions and never
+    #: launch one (module docstring); replaces the LLM plan.
+    rescore_llm: bool = False
     driver_factory: DriverFactory | None = field(default=None, compare=False)
 
 
@@ -272,12 +288,39 @@ class Campaign:
                 continue
             self.llm_queue.append(_LLMTask(u, skey))
 
+    def _plan_rescore(self) -> None:
+        found = stored_sessions(
+            self.store, self.env, self.config, list(self.truths.values())
+        )
+        absent = 0
+        for u in llm_units(self.order, self.config):
+            hit = found.get(u)
+            if hit is None:
+                absent += 1
+                continue
+            skey, cell = hit
+            if self.store.done(score_key(u, skey, self.env, self.config)):
+                self.skipped_done += 1
+            else:
+                self._queue_score(u, skey, cell)
+        self.log.info(
+            f"rescore: {len(found)} stored sessions; {absent} LLM units have none "
+            f"(not launched in rescore mode)"
+        )
+
     def _queue_score(
         self, unit: Unit, skey: ExperimentKey, cell: Mapping[str, Json]
     ) -> None:
         detail = cell["detail"]["session"]
         if cell["reading"].get("status") != (1.0).hex():
             return  # an aborted session has nothing to score
+        void = session_void(self.root, decoded(cell["reading"]), detail)
+        if void.void:
+            self.log.info(
+                f"llm-score {unit.system} {unit.truth_id} s{unit.seed}: void "
+                f"session, not scored: {list(void.reasons)}"
+            )
+            return
         job = ScoreJob(
             self.truths[unit.truth_id],
             unit.seed,
@@ -400,6 +443,8 @@ class Campaign:
             self.skipped_done += 1
         if (self.root / STOP_LLM_FILE).exists():
             return False
+        if s.rescore_llm:
+            return False
         if not s.run_llm or self.llm_stopped or not self.llm_queue:
             return False
         if s.llm_limit is not None and self.llm_launched >= s.llm_limit:
@@ -407,6 +452,8 @@ class Campaign:
         return time.monotonic() >= self.paused_until
 
     def _launch_llm(self, threads: ThreadPoolExecutor) -> Future[SessionOutcome]:
+        if self.settings.rescore_llm:
+            raise CampaignError("rescore mode never launches an LLM session")
         task = self.llm_queue.popleft()
         task.attempts += 1
         self.llm_launched += 1
@@ -496,7 +543,9 @@ class Campaign:
             self.log.info(f"recovered {recovered} cells from detail files")
         if self.settings.run_baselines:
             self._plan_baselines()
-        if self.settings.run_llm:
+        if self.settings.rescore_llm:
+            self._plan_rescore()
+        elif self.settings.run_llm:
             self._plan_llm()
         self.log.info(
             f"plan: {len(self.pool_queue)} pool jobs, {len(self.llm_queue)} LLM "

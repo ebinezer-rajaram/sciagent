@@ -18,7 +18,18 @@ one place truth enters a system, and is visible at the call site.
   non-answer.
 - **B-np** estimates the Wiener-Hopf filter on the observational log
   (exactly one, unintervened) and submits no structure. It uses no fits.
-- **ORACLE** fits the true structure; one fit.
+- **ORACLE** fits the true structure; one fit (by its budget). Given the
+  truth's ψ and coefficients, it also θ-refits at the truth's ψ point and keeps
+  that fit when its training log L is strictly higher than the search's, so
+  ORACLE never loses to its own truth on training data because the ψ search
+  stalled (PILOT-AUDIT §1). Its ``details`` record ``oracle_psi_source``
+  (``"search"`` or ``"truth"``), ``oracle_underfit`` (the kept fit's training
+  log L is below the true parameters' by more than ``1e-9·|log L|``), the
+  training log Ls, and ``oracle_truth_psi_on_grid``: a truth whose ψ is off
+  the grids (a test truth, not a sampled one) gets no truth-ψ refit and
+  ``oracle_underfit`` False: no fit can reach its true parameters, so a
+  deficit there measures the grid, not the search. The truth
+  enters only here, on the framework side (invariant 2).
 
 **Trajectory.** ``trajectory[i]`` is the best-so-far model after ``i + 1``
 fits (by the system's own criterion, BIC), so the scorer can draw the
@@ -32,15 +43,21 @@ structures and models make it up).
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Final, Protocol
 
 from sciagent.core.errors import SciAgentError
 from sciagent.glm.data import Dataset
-from sciagent.glm.fit import FitConfig, FitError, fit
+from sciagent.glm.fit import (
+    FitConfig,
+    FitError,
+    fit,
+    on_grid,
+    parameter_log_likelihood,
+)
 from sciagent.glm.grammar import ChannelSpec, Structure
-from sciagent.glm.simulate import MarkSampler
+from sciagent.glm.simulate import Coefficients, MarkSampler, PsiAssignment
 from sciagent.library.base import LibraryError, LibraryModel
 from sciagent.nonparam.wiener_hopf import DEFAULT, WienerHopfConfig
 from sciagent.systems.v2.models import (
@@ -90,7 +107,8 @@ class SystemResult:
 
     ``submitted`` names the submitted model (a library member's name, the
     oracle's, or B-np's). ``skipped`` lists members that could not be used
-    (failed or uncertified fits), in library order.
+    (failed or uncertified fits), in library order. ``details`` holds
+    system-specific diagnostics for the result record (ORACLE's truth-ψ check).
     """
 
     system: str
@@ -100,6 +118,7 @@ class SystemResult:
     fits_used: int
     trajectory: tuple[TrajectoryPoint, ...]
     skipped: tuple[str, ...] = ()
+    details: Mapping[str, str | bool | float] = field(default_factory=dict)
 
 
 class System(Protocol):
@@ -236,19 +255,71 @@ class BNp:
         )
 
 
+#: Relative tolerance of ``oracle_underfit``.
+UNDERFIT_TOL_REL: Final = 1e-9
+
+
+def oracle_underfit(fitted_ll: float, true_ll: float) -> bool:
+    """Whether a fit's training log L is below the true parameters' by more
+    than ``UNDERFIT_TOL_REL · |true_ll|``."""
+    return fitted_ll < true_ll - UNDERFIT_TOL_REL * abs(true_ll)
+
+
 @dataclass(frozen=True)
 class Oracle:
-    """Fit the true structure (SPEC §4.1, §6.4). ``structure`` is the truth's."""
+    """Fit the true structure (SPEC §4.1, §6.4). ``structure`` is the truth's;
+    ``truth_psi`` and ``truth_coefficients`` (both or neither) enable the
+    truth-ψ check (module docstring)."""
 
     structure: Structure
     fit_config: FitConfig | None = None
     name: str = ORACLE
+    truth_psi: PsiAssignment | None = None
+    truth_coefficients: Coefficients | None = None
 
     def run(self, data: InvestigationData) -> SystemResult:
-        result = fit(
-            self.structure, data.observational, data.channels, config=self.fit_config
-        )
-        model = GLMModel(self.name, result, data.channels, data.marks)
+        if (self.truth_psi is None) != (self.truth_coefficients is None):
+            raise SystemRunError(
+                "ORACLE takes the truth's ψ and coefficients together, or neither"
+            )
+        obs, channels = data.observational, data.channels
+        result = fit(self.structure, obs, channels, config=self.fit_config)
+        details: dict[str, str | bool | float] = {}
+        if self.truth_psi is not None and self.truth_coefficients is not None:
+            quadrature = (self.fit_config or FitConfig()).quadrature
+            true_ll = math.fsum(
+                parameter_log_likelihood(
+                    self.structure,
+                    self.truth_psi,
+                    self.truth_coefficients,
+                    obs,
+                    channels,
+                    quadrature=quadrature,
+                )
+            )
+            search_ll = result.log_likelihood
+            source = "search"
+            details = {"oracle_search_ll": search_ll, "oracle_true_params_ll": true_ll}
+            gridded = on_grid(self.structure, self.truth_psi)
+            details["oracle_truth_psi_on_grid"] = gridded
+            if gridded:
+                at_truth = fit(
+                    self.structure,
+                    obs,
+                    channels,
+                    config=self.fit_config,
+                    psi=self.truth_psi,
+                )
+                details["oracle_truth_psi_ll"] = at_truth.log_likelihood
+                if at_truth.log_likelihood > search_ll:
+                    result, source = at_truth, "truth"
+            details["oracle_psi_source"] = source
+            # Off the grids no fit can reach the true parameters, so the flag
+            # (a search failure) is only defined on them.
+            details["oracle_underfit"] = gridded and oracle_underfit(
+                result.log_likelihood, true_ll
+            )
+        model = GLMModel(self.name, result, channels, data.marks)
         return SystemResult(
             system=self.name,
             submitted=self.name,
@@ -258,6 +329,7 @@ class Oracle:
             trajectory=(
                 TrajectoryPoint(1, self.name, result.bic, self.name, result.bic, model),
             ),
+            details=details,
         )
 
 

@@ -608,3 +608,164 @@ rerun, the instruments must pass:
 - a mini-pilot gate whose criteria are fixed in advance.
 
 The fit/4 code is tagged `p3-fit4` so the pilot records stay replayable.
+
+## 2026-10-03 — P3.1 analysis: rescore mode, void policy, control-2 rank rule
+
+- **Rescore mode** (`pilot.py --rescore-llm`, `DriverSettings.rescore_llm`). A
+  fitter change moves every session to a new address, so the normal plan would
+  relaunch all 240 live sessions. Rescore enumerates stored `llm-session` cells
+  (`campaign/rescore.py`) and matches each on system, truth and truth digest,
+  seed, and session-config digest. Only the fit version and fit config may
+  differ. Scores are keyed by the old session's digest plus the current
+  versions. Rescore never launches a session: `_launch_llm` raises. The report
+  reads sessions this way (`--sessions stored`) but reads scores at the current
+  address only. `METRIC_VERSION` is bumped to `score/2`.
+- **Void policy** (Δ8, applied at analysis from the stored record; no cell is
+  edited). A session is void only if:
+  - a foreign tool executed (a non-error result);
+  - a foreign use has no recorded denial;
+  - a server tool was used;
+  - out-of-bounds code was found;
+  - there was an infrastructure fault (kept as before).
+
+  A denied unknown name counts as an `unknown_tool_attempt`. The driver no
+  longer scores void sessions, and the analysis drops their rows and counts
+  them. On the pilot, all 9 voids are reclassified as not void.
+- **Control 2** (Δ10). Per-truth d = planted − B-rand mean gap. A −inf mean
+  ranks lowest, and both at −inf is a tie. The control passes only if the
+  exact one-sided Wilcoxon p < 0.05 **and** the bootstrap CI of the median of
+  d has its lower end above 0. Both are required because the proposal named
+  them together and did not say which one decides. The exact test cannot pass
+  on fewer than 5 truths. Control 3's median also ranks −inf instead of
+  dropping it.
+- **T4.** Gap closed is flagged when |LL(ORACLE) − LL(B-lib)| on a seed is ≤
+  that truth's paired SE over seeds (control 1's yardstick). Flagged ratios
+  are not printed, are left out of medians and never pick a transcript. They
+  still count in the §7.1 close shares as preregistered.
+- **Control 1** also needs zero `oracle_underfit` flags. A missing flag, as on
+  every fit/4 cell, counts as "cannot show zero" and fails the control.
+
+## 2026-10-03 — fit/5: screening-start block-coordinate ψ search; ORACLE truth-ψ check
+
+`FIT_VERSION` is `sciagent.glm.fit/5` (P4-PROPOSAL §2.1, audit §1). Grids of
+at most 512 points are still searched exhaustively, bit for bit as in fit/4,
+pinned by digests in `tests/glm/test_fit_search.py`.
+
+On larger grids the search is now block-coordinate ascent from a **screening
+start**. Each feature is fitted alone (intercept plus that feature), on the
+full structure's quadrature rule and sharing its block cache. Its ψ is
+ascended block-wise from a small start sub-grid of at most 64 points. The
+joint start takes every feature's best ψ, and the joint ascent then runs from
+there.
+
+A block is one feature's slots if that feature's grid has ≤ 64 points.
+Otherwise blocks are its leaves (an `Excite`'s kernel and mark slots, a
+`PhaseWindow`'s period and phase), merged consecutively while their product
+stays ≤ 64. So no block exceeds 64 points, however deeply nested the feature.
+
+Defaults: `psi_screen=1`, `psi_starts=0`, `psi_line_start=False`,
+`psi_loo_starts=False`, `psi_block_max=64`, `psi_max_sweeps=0` (no cap). All
+of them are `FitConfig` fields and enter `key()`.
+
+**Benchmark.** A fixed set, scored against the θ-refit at the truth's ψ:
+
+- b1: the 20 dev truths × seeds 1–2.
+- b2: 100 seeded prior pairs (A, A+B), with A over 512 ψ points.
+- b3: 100 seeded prior structures over 512 points, each against 3 random grid
+  points.
+
+Wall ratios against the `p3-fit4` code were measured under equal parallel
+load:
+
+| design | b1 misses > 0.5 | b2 violations | b3 random beats | 2-window family misses | ratio median / worst | fits > 3× |
+|---|---|---|---|---|---|---|
+| fit/4 | 19/40 (max 256) | 5/100 (max 69) | 1/100 (13) | 9/10 | 1 / 1 | — |
+| fit/4 + 1× block refine (first fit/5) | 3/20 s1 (max 22) | dev-013 pair fails | — | — | ≤ 2× points | — |
+| **screen r=1, block 64 (default)** | **0/40** | **0/100** | **0/100** | 5/10 (max 35) | 1.4–1.8 / 22 | 49/240 |
+| + best sub-grid start | 0/40 | 0/100 | 0/100 | 0/10 | 1.5–2.5 / 21 | 70/240 |
+| screen r=2 | 0/40 | 0/100 | 0/100 | 3/10 | 1.2–2.1 / 27 | 60/240 |
+| screen r=1, block 20 | 3/40 (max 38) | 1/76 (15) | — | 5/10 | 1.1 / 4.1 | — |
+
+The dev-013 s2 pilot pair is now monotone: A −12930.91, A + Excite
+−12930.90, A + gated product −12864.20. With a single process on the hawkes
+unit, fit/4 → fit/5 timings are:
+
+- ORACLE, B-lib, B-sym, B-sym@10F and planted-hint: unchanged (exhaustive
+  path).
+- B-sparse: 72.8 s → 85.5 s.
+- B-rand: 77 s → 198 s (2.6×).
+- dev-008 ORACLE: 17.9 s → 16.8 s.
+
+**Known-failing:** the runtime target of at most 3× is missed on about 20% of
+coordinate fits. Some are 7–22×; the worst are cheap fit/4 fits of 3–4
+feature structures, and the dev-013 superset on three datasets runs ~6×. T2
+(beat k random grid points) also fails, on the synthetic two-window family:
+`test_fit_beats_random_grid_points` is a strict xfail citing this entry. Two
+fixes were tried and dropped:
+
+- Leave-one-out starts, recursive or one level down: 2–8× more and no gain on
+  the benchmark.
+- Swap moves between same-type blocks: 2× more and the window case still
+  missed.
+
+The leave-one-out start and the sweep cap remain available as options.
+
+`fit(..., psi=…)` θ-refits at one on-grid ψ point (`psi_search = "fixed"`).
+ORACLE also θ-refits at the truth's ψ point and keeps that fit if it is
+strictly better on training data. It records:
+
+- `oracle_psi_source`;
+- `oracle_underfit`: training log L more than 1e-9·|log L| below the true
+  parameters', defined only for an on-grid truth ψ;
+- `oracle_truth_psi_on_grid`;
+- the training log Ls.
+
+The agent prompt and the fit tool's text no longer claim that coordinate fits
+are optimal on the grid.
+
+## 2026-10-06 — fit/5 defaults: screen r=2 (D3), taken under the fallback
+
+Three designs were benchmarked against `p3-fit4`, with BLAS on one thread as
+the campaign runs it:
+
+- **D1:** screen 1, 1 sub-grid start, 4 swap rounds.
+- **D2:** screen 2, 2 starts, no swap.
+- **D3:** D1 with screen 2.
+
+The sets were b1 (20 dev × seeds 1–2), b2 (100 nested pairs), b3 (100 random
+structures), the two-window family, and T2 (300 derandomised examples,
+including (0, exp, 0)).
+
+**Results:**
+- **D3 had 0 misses on every set:** 0/40, 0/100, 0/99, 0/10 and 0/300.
+- **D2 also had 0 misses,** but cost 1.08× D3.
+- **D1 lost 3/300 T2 examples,** the worst by 2.87 nats. That fails even a
+  quantified rule.
+- **D3 is slow.** Its wall ratio to fit/4 has a median of 3.3–3.8× and a worst
+  case of about 37× (b3 #0, a 7 s fit/4 fit). It misses the ≤ 2.5× / ≤ 22×
+  runtime target. The ratios carry about ±30% because load was not equal.
+
+**Decision.** D3 was taken under the fallback the user authorised on
+2026-10-05: the cheapest design with 0 misses, provided the rerun stays at
+about 40 h or less.
+
+- `FIT_VERSION` stays `fit/5`; the config key changes.
+- T2 passes outright, so `test_fit_beats_random_grid_points` is strict again.
+  The 24 regression cases stay.
+
+**Unit slowdown.** Measured on dev-008, -013 and -017: s is 4.78 for B-rand
+and 2.20 for B-sym. The other systems' values were assumed from these. The
+projection is 178–221 worker-h, or about 30–37 h at 6 workers.
+
+**The probe failure of `test_bsym_at_least_matches_blib_on_size_excitation`
+was memory, not nondeterminism.** It failed once under `-n 6`. 11 runs, alone
+and under `-n 6`, gave one digest (`4f2e94efbf94dc24`). The failure was commit
+exhaustion from default-threaded OpenBLAS, about 2.2 GB per process.
+
+**Correction to 2026-10-03:** `psi_block_max` is 128, not 64.
+
+**Open, blocking the rerun:** fit/5's block cache grows with the number of
+points evaluated. On the dev-013 superset it passed 11 GB, against 1.4 GB at
+fit/4. `test_dev013_superset_never_fits_worse_than_its_subset` cannot finish on
+this 16 GB machine and is unverified under D3. A bounded cache comes next,
+under step 2 (the defect hunt).

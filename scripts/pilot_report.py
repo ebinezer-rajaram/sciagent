@@ -9,6 +9,18 @@ per-system tables, efficiency curves, the SPEC §6.4 controls, the §7.1
 verdict, the LLM cost table and the AG-o transcripts to read. The text between
 ``<!-- notes -->`` and ``<!-- /notes -->`` in an existing report is
 hand-written (smoke findings, observations) and is carried over unchanged.
+
+P3.1 (P4-PROPOSAL §2.2, §2.4): every score is read at its *current* address
+(current fitter and metric versions). LLM sessions are found by enumeration
+(``--sessions stored``, the default), so the fit/4 sessions are read and
+scored by their rescore cells; ``--sessions current`` reads only sessions at
+the current address. Void sessions are classified by the Δ8 policy
+(``sciagent.campaign.voids``), dropped from scoring and counted in every
+table; gap closed within its paired noise is shown as "flagged" (T4); control
+1 needs zero ``oracle_underfit`` flags; control 2 is the Δ10 rank rule.
+
+    uv run python scripts/pilot_report.py --root .cache/pilot --interim \
+        --out <scratch>/PILOT.md
 """
 
 from __future__ import annotations
@@ -78,6 +90,25 @@ def timing(root: Path) -> dict[str, list[float]]:
     return out
 
 
+def closed_text(r: Any) -> str:
+    """A row's gap closed for printing: the ratio, or "flagged" (T4)."""
+    if r is None or r.gap_closed is None:
+        return "-"
+    return "flagged" if r.closed_flagged else f"{r.gap_closed:.2f}"
+
+
+def planted_text(pc: Any) -> str:
+    ci = pc.median_ci
+    return (
+        f"{pc.wins} wins / {pc.ties} ties / {pc.losses} losses over {pc.n} truths; "
+        f"one-sided Wilcoxon signed-rank p = {pc.p_value:.4g}; median difference "
+        f"{fmt(ci.median)}, bootstrap 95% CI [{fmt(ci.low)}, {fmt(ci.high)}] "
+        f"(-inf ranks lowest). Beside them only: mean over the "
+        f"{pc.n - pc.n_infinite} finite truths {fmt(pc.mean_finite)}"
+        f"{f', {pc.n_infinite} infinite' if pc.n_infinite else ''}"
+    )
+
+
 def interim_controls(tab: Any, resamples: int) -> list[str]:
     """§6.4 controls on completed units only, without the drop rule (interim)."""
     import numpy as np
@@ -116,26 +147,12 @@ def interim_controls(tab: Any, resamples: int) -> list[str]:
         pc = gonogo.planted_beats_rand(
             srows, both, rng=np.random.default_rng(20261002), resamples=resamples
         )
-        idx = {(r.truth, r.system): r.gap for r in srows}
-        diffs = sorted(
-            statistics.fmean(
-                [g for (t2, sy), g in idx.items() if t2 == t and sy == gonogo.PLANTED]
-            )
-            - statistics.fmean(
-                [g for (t2, sy), g in idx.items() if t2 == t and sy == gonogo.B_RAND]
-            )
-            for t in both
-        )
         out += [
             "- Planted hint - B-rand per-truth differences: "
-            + ", ".join(f"{d:+.3f}" for d in diffs)
-            + f" (median {statistics.median(diffs):+.4f}); a mean is dominated "
-            "by any B-rand unit whose best-BIC model predicts held-out data "
-            "catastrophically.",
-            f"- Planted hint - B-rand over {len(both)} truths: mean "
-            f"{fmt(pc.ci.mean)}, bootstrap 95% CI [{fmt(pc.ci.low)}, "
-            f"{fmt(pc.ci.high)}] (would {'pass' if pc.passed else 'fail'}; "
-            f"inconclusive at n = {len(both)}).",
+            + ", ".join(f"{d:+.3f}" for d in sorted(pc.differences))
+            + ".",
+            f"- Planted hint - B-rand (rank rule): {planted_text(pc)} (would "
+            f"{'pass' if pc.passed else 'fail'}; inconclusive at n = {len(both)}).",
         ]
     c10 = sorted(have.get(gonogo.B_SYM_10F, set()))
     if c10:
@@ -157,14 +174,26 @@ def main() -> None:
     parser.add_argument(
         "--interim", action="store_true", help="mark the report INTERIM"
     )
+    parser.add_argument(
+        "--sessions",
+        choices=("stored", "current"),
+        default="stored",
+        help="find LLM sessions by enumeration (rescore) or at the current address",
+    )
     reconfigure_stdout()
     args = parser.parse_args()
 
     import numpy as np
 
     from sciagent.campaign import analysis
-    from sciagent.campaign.plan import B_SYM_10F, BASELINES, CampaignConfig
+    from sciagent.campaign.plan import (
+        B_SYM_10F,
+        BASELINES,
+        METRIC_VERSION,
+        CampaignConfig,
+    )
     from sciagent.campaign.store import ResultStore
+    from sciagent.glm.fit import FIT_VERSION
     from sciagent.scoring import gonogo
 
     records = select(load_split(args.split), args.truths, args.ids)
@@ -180,8 +209,12 @@ def main() -> None:
     )
     truths = truth_entries(records)
     with ResultStore(args.root) as store:
-        tab = analysis.load_rows(store, env, config, truths)
+        tab = analysis.load_rows(store, env, config, truths, sessions=args.sessions)
     rows = tab.rows
+    voided = analysis.void_counts(tab)
+    session_versions: dict[str, int] = {}
+    for x in tab.sessions:
+        session_versions[x.env_version] = session_versions.get(x.env_version, 0) + 1
     llm_systems = config.llm_systems()
     systems = [*BASELINES, *llm_systems]
     verdict = analysis.verdict(
@@ -231,6 +264,25 @@ def main() -> None:
         "(truth, seed), shared by every system on it. gap = LL - LL(ORACLE); "
         "gap closed = (LL - LL(B-lib)) / (LL(ORACLE) - LL(B-lib)). Recovery = exact "
         "canonical match (LOG 2026-10-02).",
+        f"- Scores are read at the current address only (`{METRIC_VERSION}`, "
+        f"`{FIT_VERSION}`). LLM sessions ({args.sessions}): "
+        + (
+            ", ".join(
+                f"{n} conducted under `{v}`"
+                for v, n in sorted(session_versions.items())
+            )
+            or "none found"
+        )
+        + ". Sessions conducted under an older fitter saw that fitter's fits; "
+        "their submissions are refitted and scored under the current one "
+        "(declared, P4-PROPOSAL §2.2).",
+        "- Void policy (P4-PROPOSAL Δ8): a session is void only if a foreign tool "
+        "executed, on server tool use, an out-of-bounds hit or an infrastructure "
+        "fault; a denied unknown tool name is an unknown-tool attempt. Void "
+        "sessions are dropped from scoring and counted in every table.",
+        "- Gap closed is shown as `flagged` when |LL(ORACLE) - LL(B-lib)| on that "
+        "(truth, seed) is within the truth's paired SE of that difference over "
+        "seeds (T4); flagged ratios never enter a median or choose a transcript.",
         "",
         "## Coverage",
         "",
@@ -239,18 +291,31 @@ def main() -> None:
     for s in systems:
         mine = [r for r in rows if r.system == s]
         sess = [x for x in tab.sessions if x.system == s]
+        llm = s in llm_systems
         cov_rows.append(
             [
                 s,
                 str(tab.planned.get(s, 0)),
-                str(len(sess)) if s in llm_systems else "",
+                str(len(sess)) if llm else "",
+                str(voided.get(s, 0)) if llm else "",
+                str(sum(x.void.unknown_tool_attempts for x in sess)) if llm else "",
                 str(len(mine)),
                 str(sum(not r.ok for r in mine)),
                 str(tab.missing.get(s, 0)),
             ]
         )
     L += table(
-        ["system", "planned", "sessions", "scored", "failed", "not run"], cov_rows
+        [
+            "system",
+            "planned",
+            "sessions",
+            "void (dropped)",
+            "unknown-tool attempts",
+            "scored",
+            "failed",
+            "not run",
+        ],
+        cov_rows,
     )
 
     L += ["## Notes", "", NOTES_OPEN, old_notes(args.out), NOTES_CLOSE, ""]
@@ -298,14 +363,39 @@ def main() -> None:
 
     # -- controls ----------------------------------------------------------
     L += ["## Positive controls (SPEC §6.4)", ""]
+    uf = analysis.underfit_check([r for r in rows if not r.llm])
     L += [
         "**1. ORACLE beats B-lib** per truth: mean over seeds of gap(ORACLE) - "
-        "gap(B-lib) must exceed its paired SE.",
+        "gap(B-lib) must exceed its paired SE, **and** zero `oracle_underfit` "
+        "flags on every ORACLE unit (P4-PROPOSAL §2.4): "
+        + (
+            f"**PASS** (no flag on {uf.checked} units)"
+            if uf.passed
+            else "**FAIL**: " + "; ".join(gonogo.underfit_reason(uf))
+        )
+        + ".",
         "",
     ]
     by_id = {t.id: t for t in truths}
+
+    def underfit_cell(t: str) -> str:
+        flagged = [f"s{s}" for tt, s in uf.flagged if tt == t]
+        unrecorded = sum(tt == t for tt, _ in uf.unrecorded)
+        parts = [f"flagged {', '.join(flagged)}"] if flagged else []
+        if unrecorded:
+            parts.append(f"{unrecorded} unrecorded")
+        return "; ".join(parts) or "none"
+
     L += table(
-        ["truth", "stratum", "dict", "margin (nats/event)", "SE", "pass"],
+        [
+            "truth",
+            "stratum",
+            "dict",
+            "margin (nats/event)",
+            "SE",
+            "margin pass",
+            "oracle_underfit",
+        ],
         [
             [
                 c.truth,
@@ -314,16 +404,17 @@ def main() -> None:
                 fmt(c.margin),
                 fmt(c.se),
                 "PASS" if c.passed else "FAIL",
+                underfit_cell(c.truth),
             ]
             for c in verdict.oracle_checks
         ],
     )
     if verdict.planted is not None:
-        ci = verdict.planted.ci
         L += [
-            "**2. Planted hint beats B-rand**: paired bootstrap 95% CI of the "
-            "per-truth mean gap difference (planted - B-rand) over kept truths: "
-            f"mean {fmt(ci.mean)}, CI [{fmt(ci.low)}, {fmt(ci.high)}], n = {ci.n} → "
+            "**2. Planted hint beats B-rand** (Δ10 rank rule: one-sided Wilcoxon "
+            f"p < {gonogo.CONTROL_2_ALPHA} **and** the median difference's CI "
+            "lower end > 0), per-truth mean gap difference planted - B-rand over "
+            f"kept truths: {planted_text(verdict.planted)} → "
             f"**{'PASS' if verdict.planted.passed else 'FAIL'}**.",
             "",
         ]
@@ -357,13 +448,14 @@ def main() -> None:
     srows = []
     for s in systems:
         m = analysis.summarise(rows, s)
-        if not m.units:
+        if not m.units and not voided.get(s):
             continue
         thin = " (thin)" if m.truths < THIN else ""
         srows.append(
             [
                 s + thin,
                 str(m.units),
+                str(voided.get(s, 0)) if s in llm_systems else "",
                 str(m.failed),
                 str(m.nonfinite),
                 str(m.no_submission),
@@ -373,6 +465,7 @@ def main() -> None:
                 fmt(m.gap_mean),
                 fmt(m.gap_median),
                 fmt(m.closed_median, ".2f"),
+                str(m.closed_flagged),
                 fmt(m.similarity_mean, ".3f"),
                 fmt(m.distance_mean, ".3f"),
             ]
@@ -381,6 +474,7 @@ def main() -> None:
         [
             "system",
             "units",
+            "void (excl.)",
             "failed",
             "-inf",
             "no submit",
@@ -390,6 +484,7 @@ def main() -> None:
             "mean gap",
             "median gap",
             "median closed",
+            "closed flagged",
             "similarity",
             "distance",
         ],
@@ -399,7 +494,11 @@ def main() -> None:
     def grouped(title: str, key: Callable[[str], str], groups: Sequence[str]) -> None:
         nonlocal L
         L += [f"### By {title}", ""]
-        header = ["system"] + [f"{g}: recovers / closes / median gap" for g in groups]
+        header = [
+            "system",
+            *[f"{g}: recovers / closes / median gap" for g in groups],
+            "void (excl.)",
+        ]
         out = []
         for s in systems:
             cells = []
@@ -415,7 +514,8 @@ def main() -> None:
                     f" (n={m.truths}{thin})"
                 )
             if any_rows:
-                out.append([s, *cells])
+                v = str(voided.get(s, 0)) if s in llm_systems else ""
+                out.append([s, *cells, v])
         L += table(header, out)
 
     grouped("stratum", lambda t: by_id[t].stratum, ("near", "mid", "far"))
@@ -452,8 +552,9 @@ def main() -> None:
                 if s == B_SYM_10F
                 else [""]
             )
+            + [str(voided.get(s, 0)) if s in llm_systems else ""]
         )
-    L += table(["system", *[f"k={p}" for p in points], "10xF"], erows)
+    L += table(["system", *[f"k={p}" for p in points], "10xF", "void (excl.)"], erows)
 
     # -- LLM ---------------------------------------------------------------
     L += ["## LLM arms: cost and behaviour (under Max)", ""]
@@ -488,7 +589,9 @@ def main() -> None:
                 med("experiments_used"),
                 pct(sum(r.get("experiments_used", 0.0) == 0.0 for r in rd) / len(rd)),
                 pct(sum(r.get("predictions", 0.0) > 0.0 for r in rd) / len(rd)),
-                str(int(sum(r.get("void", 0.0) for r in rd))),
+                str(sum(x.void.void for x in sess)),
+                str(sum(x.void.stored_void for x in sess)),
+                str(sum(x.void.unknown_tool_attempts for x in sess)),
                 f"{int(covered)}/{int(evaluated)}",
             ]
         )
@@ -507,7 +610,9 @@ def main() -> None:
             "experiments",
             "no experiment",
             "any prediction",
-            "void",
+            "void (policy)",
+            "void (stored)",
+            "unknown-tool attempts",
             "predictions covered/evaluated",
         ],
         crows,
@@ -518,12 +623,24 @@ def main() -> None:
         "the record does not carry explicitly, and are not computed here.",
         "",
     ]
-    voids = [x for x in tab.sessions if x.reading.get("void", 0.0) == 1.0]
-    L += ["### Void runs", ""]
+    flagged_runs = [x for x in tab.sessions if x.void.void or x.void.stored_void]
+    L += [
+        "### Void runs",
+        "",
+        "Stored = the harness's flag at the time; policy = Δ8, read from the "
+        "record. Reclassified runs are scored; void runs are not.",
+        "",
+    ]
     L += [
         f"- {x.system} {x.truth} seed {x.seed}: "
-        f"{x.detail.get('void_reasons') or x.detail.get('error')}"
-        for x in voids
+        + (
+            f"**void**: {list(x.void.reasons)}"
+            if x.void.void
+            else f"not void (reclassified; {x.void.unknown_tool_attempts} denied "
+            f"unknown-tool attempt(s)); stored reasons "
+            f"{x.detail.get('void_reasons') or x.detail.get('error')}"
+        )
+        for x in flagged_runs
     ] or ["- none"]
     L += [""]
 
@@ -551,8 +668,9 @@ def main() -> None:
     anon = [x for x in ago if x.system.endswith("/anon")]
 
     def has_closed(x: Any) -> bool:
+        # The corrected rule (T4): a flagged gap closed never chooses a pick.
         r = scored.get((x.truth, x.seed, x.system))
-        return r is not None and r.gap_closed is not None
+        return r is not None and r.gap_closed is not None and not r.closed_flagged
 
     pick("best gap closed (named)", [x for x in named if has_closed(x)], closed)
     pick(
@@ -573,7 +691,7 @@ def main() -> None:
         )
         L += [
             f"- **{why}**: {x.system} {x.truth} seed {x.seed}, gap closed "
-            f"{fmt(None if r is None else r.gap_closed, '.2f')}, exact "
+            f"{closed_text(r)}, exact "
             f"{None if r is None else r.exact}, record `{path}`; submitted "
             f"`{x.detail.get('submission')}` vs truth `{by_id[x.truth].dsl}`."
         ]

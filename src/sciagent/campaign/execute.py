@@ -208,7 +208,14 @@ def _run_system(
     start = time.perf_counter()
     match system:
         case "ORACLE":
-            result = Oracle(truth.structure, fit_config=fc).run(data)
+            # The truth-ψ check (P4-PROPOSAL Δ1): framework-side, so the
+            # ORACLE may see the truth's ψ and coefficients.
+            result = Oracle(
+                truth.structure,
+                fit_config=fc,
+                truth_psi=truth.spec.psi,
+                truth_coefficients=truth.spec.coef,
+            ).run(data)
         case "B-lib":
             result = BLib(env.library, fit_config=fc).run(data)
         case "B-np":
@@ -290,6 +297,7 @@ def run_baseline_job(job: BaselineJob) -> tuple[UnitResult, ...]:
             out.append(_failure(system, error, time.perf_counter() - t0))
             continue
         reading["fits_used"] = float(result.fits_used)
+        detail.update(result.details)
         detail.update(extra)
         detail.update(
             {

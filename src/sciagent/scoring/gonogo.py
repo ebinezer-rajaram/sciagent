@@ -26,17 +26,36 @@ B-sym run is its own system, :data:`B_SYM_10F`.
 
 - :func:`oracle_beats_lib`: per truth, the paired differences
   ``gap_oracle - gap_lib`` over seeds; it passes when their mean exceeds
-  their paired standard error (needs ≥ 2 seeds). A truth that fails is not
-  identifiable and is **dropped** by the preregistered rule before anything
-  else is read; if every truth is dropped, the controls fail.
-- :func:`planted_beats_rand`: the paired bootstrap CI (``scoring/stats.py``)
-  over retained truths of the per-truth mean gap of the planted-hint agent
-  minus B-rand's; passes when the CI's lower end is above 0.
-- :func:`bsym_approaches_oracle`: the median over retained truths of B-sym at
-  10xF's per-truth mean gap is at least ``-BSYM_TOLERANCE`` = -0.01
-  nats/event: twice the recovery tolerance, since the median must say the
-  space is searchable, not that B-sym recovers every truth, and a quarter of
-  the S11 library gap.
+  their paired standard error (needs ≥ 2 seeds with finite gaps). A truth
+  that fails is not identifiable and is **dropped** by the preregistered rule
+  before anything else is read; if every truth is dropped, the controls fail.
+  **And** (P4-PROPOSAL §2.4) the ORACLE must carry zero ``oracle_underfit``
+  flags (:func:`oracle_underfit_check`): an ORACLE fit whose training
+  log-likelihood is below the true parameters' is not an upper bound, so
+  nothing referenced to it can be read. A flag that was never recorded (a cell
+  from before fit/5) is not "zero flags": the check fails and says so.
+- :func:`planted_beats_rand` (Δ10, rank rule): per retained truth, the
+  difference ``d_t`` of the planted-hint agent's and B-rand's per-truth mean
+  gaps (a seed at ``-inf`` makes its truth's mean ``-inf``: it ranks lowest;
+  both at ``-inf`` is a tie, ``d_t = 0``). It passes when **both** the
+  one-sided exact Wilcoxon signed-rank test of ``d`` gives ``p <``
+  :data:`CONTROL_2_ALPHA` **and** the percentile bootstrap CI of the median of
+  ``d`` (``scoring/stats.py``) has its lower end above 0. The win count, the
+  median and, beside them only, the mean over the finite ``d_t`` are
+  reported. The mean is not the statistic: one explosive B-rand model
+  carried it to 6.8 in the pilot (audit §2). The exact test has
+  p >= 2**-n, so the control cannot pass on fewer than 5 truths.
+- :func:`bsym_approaches_oracle`: the median
+  (:func:`~sciagent.scoring.stats.order_median`, so a ``-inf`` truth ranks
+  lowest rather than being dropped) over retained truths of B-sym at 10xF's
+  per-truth mean gap is at least ``-BSYM_TOLERANCE`` = -0.01 nats/event: twice
+  the recovery tolerance, since the median must say the space is searchable,
+  not that B-sym recovers every truth, and a quarter of the S11 library gap.
+
+**Non-finite gaps.** A row's gap may be ``-inf`` (a model that gives a
+held-out event zero intensity); ``nan`` and ``+inf`` are refused. Control 1
+reads finite gaps only (a ``-inf`` B-lib seed carries no SE); controls 2 and 3
+read ``-inf`` by rank.
 
 **Verdict** (SPEC §7.1, in precedence order).
 
@@ -44,8 +63,10 @@ B-sym run is its own system, :data:`B_SYM_10F`.
 2. **Too easy** if B-lib or B-rand recovers ≥ 70% of truths, or B-sparse
    closes the gap on ≥ 70% of the out-of-dictionary truths (not triggered
    when there are none; the verdict says so).
-3. **Too hard** if the gap closes for < 10% of truths with *every* system
-   other than the ORACLE in the table (B-sym at 10xF is required to be there).
+3. **Too hard** if the gap closes for < 10% of truths with *every* non-LLM
+   system in the table (P4-PROPOSAL §2.4), the ORACLE excepted: it is the
+   reference the gap is measured from, so it closes by definition. B-sym at
+   10xF is required to be there.
 4. **Go** otherwise, regardless of who wins.
 
 Too easy and too hard are both computed and reported even when a
@@ -66,9 +87,11 @@ from sciagent.core import reductions
 from sciagent.scoring.errors import ScoringError
 from sciagent.scoring.stats import (
     DEFAULT_RESAMPLES,
-    BootstrapCI,
-    paired_bootstrap_ci,
+    MedianCI,
+    bootstrap_median_ci,
+    order_median,
     paired_mean_se,
+    signed_rank_greater,
 )
 
 ORACLE: Final = "ORACLE"
@@ -85,15 +108,19 @@ CLOSE_FRACTION: Final = 0.9
 BSYM_TOLERANCE: Final = 0.01
 TOO_EASY_SHARE: Final = 0.7
 TOO_HARD_SHARE: Final = 0.1
+#: One-sided level of control 2's signed-rank test (SPEC §6.2's 95%).
+CONTROL_2_ALPHA: Final = 0.05
 
 
 @dataclass(frozen=True)
 class ScoreRow:
     """One system's scores on one (truth, seed).
 
-    ``gap`` is ``LL_sub - LL_oracle`` per event; ``gap_closed`` is None when
-    undefined; ``in_dictionary`` is the truth's B-sparse dictionary membership
-    (the same on every row of a truth).
+    ``gap`` is ``LL_sub - LL_oracle`` per event (finite or ``-inf``);
+    ``gap_closed`` is None when undefined; ``in_dictionary`` is the truth's
+    B-sparse dictionary membership (the same on every row of a truth).
+    ``oracle_underfit`` is the ORACLE row's flag (None: not recorded, or not
+    an ORACLE row).
     """
 
     truth: str
@@ -103,6 +130,7 @@ class ScoreRow:
     gap_closed: float | None
     exact: bool
     in_dictionary: bool
+    oracle_underfit: bool | None = None
 
 
 class Outcome(Enum):
@@ -140,8 +168,8 @@ def _index(rows: Sequence[ScoreRow]) -> dict[tuple[str, int, str], ScoreRow]:
         key = (r.truth, r.seed, r.system)
         if key in out:
             raise ScoringError(f"duplicate row for {key}")
-        if not math.isfinite(r.gap):
-            raise ScoringError(f"non-finite gap in row {key}")
+        if math.isnan(r.gap) or r.gap == math.inf:
+            raise ScoringError(f"gap {r.gap} in row {key}: only -inf is allowed")
         if r.gap_closed is not None and not math.isfinite(r.gap_closed):
             raise ScoringError(f"non-finite gap closed in row {key}")
         if membership.setdefault(r.truth, r.in_dictionary) != r.in_dictionary:
@@ -188,8 +216,11 @@ class OracleCheck:
 
 
 def oracle_beats_lib(rows: Sequence[ScoreRow]) -> tuple[OracleCheck, ...]:
-    """Per truth: mean ``gap_oracle - gap_lib`` over seeds above its paired SE."""
-    index = _index(rows)
+    """Per truth: mean ``gap_oracle - gap_lib`` over seeds above its paired SE.
+
+    Finite gaps only (module docstring).
+    """
+    index = _index([r for r in rows if math.isfinite(r.gap)])
     checks: list[OracleCheck] = []
     for t in _truths(rows):
         oracle = {r.seed: r.gap for r in _system_rows(index, ORACLE, t)}
@@ -205,9 +236,77 @@ def oracle_beats_lib(rows: Sequence[ScoreRow]) -> tuple[OracleCheck, ...]:
 
 
 @dataclass(frozen=True)
+class UnderfitCheck:
+    """ORACLE ``oracle_underfit`` flags: (truth, seed) flagged and unrecorded."""
+
+    flagged: tuple[tuple[str, int], ...]
+    unrecorded: tuple[tuple[str, int], ...]
+    checked: int
+
+    @property
+    def passed(self) -> bool:
+        return not self.flagged and not self.unrecorded and self.checked > 0
+
+
+def oracle_underfit_check(
+    flags: Sequence[tuple[str, int, bool | None]],
+) -> UnderfitCheck:
+    """Control 1's second half: zero flags over ORACLE (truth, seed, flag)."""
+    ordered = sorted(flags, key=lambda f: (f[0], f[1]))
+    return UnderfitCheck(
+        flagged=tuple((t, s) for t, s, f in ordered if f is True),
+        unrecorded=tuple((t, s) for t, s, f in ordered if f is None),
+        checked=len(ordered),
+    )
+
+
+def underfit_reason(check: UnderfitCheck) -> list[str]:
+    """Why control 1's underfit half fails (empty when it passes)."""
+    out: list[str] = []
+    if check.flagged:
+        units = [f"{t} s{s}" for t, s in check.flagged]
+        out.append(
+            f"ORACLE oracle_underfit flagged on {len(check.flagged)} unit(s): {units}"
+        )
+    if check.unrecorded:
+        out.append(
+            f"ORACLE oracle_underfit not recorded on {len(check.unrecorded)} of "
+            f"{check.checked} unit(s) (cells from before fit/5): zero flags "
+            f"cannot be shown"
+        )
+    if check.checked == 0:
+        out.append("no ORACLE unit to check for oracle_underfit")
+    return out
+
+
+@dataclass(frozen=True)
 class PlantedCheck:
-    ci: BootstrapCI
+    """Control 2 by rank (module docstring); ``differences`` per truth."""
+
+    truths: tuple[str, ...]
+    differences: tuple[float, ...]
+    wins: int
+    ties: int
+    losses: int
+    p_value: float
+    median_ci: MedianCI
+    mean_finite: float | None
+    n_infinite: int
     passed: bool
+
+    @property
+    def median(self) -> float:
+        return self.median_ci.median
+
+    @property
+    def n(self) -> int:
+        return len(self.truths)
+
+
+def _difference(planted: float, rand: float) -> float:
+    if planted == rand:  # includes both at -inf: a tie, not nan
+        return 0.0
+    return planted - rand
 
 
 def planted_beats_rand(
@@ -217,12 +316,40 @@ def planted_beats_rand(
     rng: np.random.Generator,
     resamples: int = DEFAULT_RESAMPLES,
 ) -> PlantedCheck:
-    """Paired bootstrap of planted-hint minus B-rand per-truth mean gaps."""
+    """Planted-hint minus B-rand per-truth mean gaps, read by rank (docstring)."""
+    if not truths:
+        raise ScoringError("no truths to read control 2 on")
     index = _index(rows)
-    planted = [_mean_gap(index, PLANTED, t) for t in truths]
-    rand = [_mean_gap(index, B_RAND, t) for t in truths]
-    ci = paired_bootstrap_ci(planted, rand, rng, resamples=resamples)
-    return PlantedCheck(ci, ci.low > 0.0)
+    d = [
+        _difference(_mean_gap(index, PLANTED, t), _mean_gap(index, B_RAND, t))
+        for t in truths
+    ]
+    p = signed_rank_greater(d)
+    ci = bootstrap_median_ci(d, rng, resamples=resamples)
+    finite = [x for x in d if math.isfinite(x)]
+    return PlantedCheck(
+        truths=tuple(truths),
+        differences=tuple(d),
+        wins=sum(x > 0.0 for x in d),
+        ties=sum(x == 0.0 for x in d),
+        losses=sum(x < 0.0 for x in d),
+        p_value=p,
+        median_ci=ci,
+        mean_finite=_mean(finite) if finite else None,
+        n_infinite=len(d) - len(finite),
+        passed=p < CONTROL_2_ALPHA and ci.low > 0.0,
+    )
+
+
+def planted_reason(check: PlantedCheck) -> str:
+    """Why control 2 fails, in the rank rule's own terms."""
+    ci = check.median_ci
+    return (
+        f"planted-hint does not beat B-rand by the rank rule: Wilcoxon one-sided "
+        f"p = {check.p_value:.4g} (needs < {CONTROL_2_ALPHA}), median difference "
+        f"{ci.median:.4g} with CI [{ci.low:.4g}, {ci.high:.4g}] (lower end must "
+        f"be > 0), wins {check.wins}/{check.n}"
+    )
 
 
 @dataclass(frozen=True)
@@ -239,8 +366,7 @@ def bsym_approaches_oracle(
     if not truths:
         raise ScoringError("no truths to read B-sym at 10xF on")
     index = _index(rows)
-    gaps = np.array([_mean_gap(index, B_SYM_10F, t) for t in truths], dtype=np.float64)
-    median = float(np.median(gaps))
+    median = order_median([_mean_gap(index, B_SYM_10F, t) for t in truths])
     return BsymCheck(median, BSYM_TOLERANCE, median >= -BSYM_TOLERANCE)
 
 
@@ -266,6 +392,7 @@ class Verdict:
     close_share: Mapping[str, float]
     sparse_out_of_dictionary_close_share: float | None
     reasons: tuple[str, ...]
+    underfit: UnderfitCheck | None = None
 
 
 def _truth_share(
@@ -309,12 +436,16 @@ def go_no_go(
     index = _index(rows)
     _check_complete(index)
     checks = oracle_beats_lib(rows)
+    underfit = oracle_underfit_check(
+        [(t, n, r.oracle_underfit) for (t, n, s), r in index.items() if s == ORACLE]
+    )
     dropped = tuple(c.truth for c in checks if not c.passed)
     kept = tuple(c.truth for c in checks if c.passed)
     others = sorted({s for _, _, s in index if s != ORACLE})
     reasons: list[str] = []
     if dropped:
         reasons.append(f"dropped as not identifiable (ORACLE ≤ B-lib): {list(dropped)}")
+    reasons += underfit_reason(underfit)
     if not kept:
         reasons.append("every truth was dropped: ORACLE never beats B-lib")
         return Verdict(
@@ -331,16 +462,14 @@ def go_no_go(
             {},
             None,
             tuple(reasons),
+            underfit,
         )
 
     planted = planted_beats_rand(rows, kept, rng=rng, resamples=resamples)
     bsym = bsym_approaches_oracle(rows, kept)
-    controls = planted.passed and bsym.passed
+    controls = planted.passed and bsym.passed and underfit.passed
     if not planted.passed:
-        reasons.append(
-            f"planted-hint does not beat B-rand: CI [{planted.ci.low:.4g}, "
-            f"{planted.ci.high:.4g}]"
-        )
+        reasons.append(planted_reason(planted))
     if not bsym.passed:
         reasons.append(
             f"B-sym at 10xF median gap {bsym.median_gap:.4g} < -{BSYM_TOLERANCE}"
@@ -395,4 +524,5 @@ def go_no_go(
         close,
         sparse_ood,
         tuple(reasons),
+        underfit,
     )

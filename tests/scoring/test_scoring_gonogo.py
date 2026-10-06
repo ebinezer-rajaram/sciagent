@@ -25,10 +25,17 @@ from sciagent.scoring.gonogo import (
     closes,
     go_no_go,
     oracle_beats_lib,
+    oracle_underfit_check,
     planted_beats_rand,
     recovers,
 )
-from sciagent.scoring.stats import paired_bootstrap_ci, paired_mean_se
+from sciagent.scoring.stats import (
+    bootstrap_median_ci,
+    order_median,
+    paired_bootstrap_ci,
+    paired_mean_se,
+    signed_rank_greater,
+)
 
 TRUTHS = tuple(f"t{i:02d}" for i in range(10))
 SEEDS = (0, 1, 2)
@@ -45,7 +52,8 @@ def _row(
     in_dictionary: bool = False,
 ) -> ScoreRow:
     closed = None if lib_gap >= 0.0 else (gap - lib_gap) / (0.0 - lib_gap)
-    return ScoreRow(truth, seed, system, gap, closed, exact, in_dictionary)
+    underfit = False if system == ORACLE else None
+    return ScoreRow(truth, seed, system, gap, closed, exact, in_dictionary, underfit)
 
 
 def _table(
@@ -249,7 +257,8 @@ def test_oracle_beats_lib_needs_two_seeds() -> None:
 def test_planted_and_bsym_controls() -> None:
     rows = _table(GOOD)
     planted = planted_beats_rand(rows, TRUTHS, rng=np.random.default_rng(0))
-    assert planted.passed and planted.ci.low > 0.0
+    assert planted.passed and planted.median_ci.low > 0.0
+    assert planted.wins == len(TRUTHS) and planted.p_value < 0.05
     bsym = bsym_approaches_oracle(rows, TRUTHS)
     assert bsym.passed and bsym.median_gap == pytest.approx(-0.002)
     far = [
@@ -294,3 +303,153 @@ def test_paired_mean_se_matches_numpy(d: list[float]) -> None:
     mean, se = paired_mean_se(d, [0.0] * len(d))
     assert mean == pytest.approx(float(np.mean(d)), abs=1e-12)
     assert se == pytest.approx(float(np.std(d, ddof=1)) / len(d) ** 0.5, abs=1e-9)
+
+
+# --------------------------------------------------------------------------
+# Control 2 by rank (P4-PROPOSAL Δ10) and the ORACLE underfit flag (Δ1, §2.4)
+# --------------------------------------------------------------------------
+
+
+def _with_gap(
+    rows: list[ScoreRow], truth: str, seed: int, system: str, gap: float
+) -> list[ScoreRow]:
+    return [
+        ScoreRow(r.truth, r.seed, r.system, gap, None, r.exact, r.in_dictionary, None)
+        if (r.truth, r.seed, r.system) == (truth, seed, system)
+        else r
+        for r in rows
+    ]
+
+
+def test_control_2_takes_minus_infinity_and_outliers_by_rank() -> None:
+    """Audit §2 test: one -inf and one -400 B-rand unit give the same verdict
+    and a finite printed CI; -inf ranks lowest instead of crashing the read."""
+    rows = _table(GOOD)
+    clean = planted_beats_rand(rows, TRUTHS, rng=np.random.default_rng(0))
+    wild = _with_gap(rows, "t00", 0, B_RAND, float("-inf"))
+    wild = _with_gap(wild, "t01", 1, B_RAND, -400.0)
+    check = planted_beats_rand(wild, TRUTHS, rng=np.random.default_rng(0))
+    assert check.passed == clean.passed is True
+    assert np.isfinite(check.median_ci.low) and np.isfinite(check.median_ci.high)
+    assert check.wins == len(TRUTHS) and check.n_infinite == 1
+    assert check.mean_finite is not None and check.mean_finite > 10.0  # 133/9 truths
+    v_clean = go_no_go(rows, rng=np.random.default_rng(0))
+    v_wild = go_no_go(wild, rng=np.random.default_rng(0))
+    assert v_wild.outcome is v_clean.outcome is Outcome.GO, v_wild.reasons
+
+
+def test_control_2_fails_when_planted_is_the_one_at_minus_infinity() -> None:
+    rows = _table({**GOOD, PLANTED: -0.04})  # planted ties B-rand
+    for t in TRUTHS[:4]:
+        rows = _with_gap(rows, t, 0, PLANTED, float("-inf"))
+    check = planted_beats_rand(rows, TRUTHS, rng=np.random.default_rng(0))
+    assert not check.passed and check.losses == 4
+
+
+def test_control_2_needs_both_the_rank_test_and_the_median_ci() -> None:
+    # Planted wins narrowly on 6 truths and loses on 4: the median is positive
+    # but the evidence is not.
+    rows = _table(GOOD)
+    out: list[ScoreRow] = []
+    for r in rows:
+        if r.system == PLANTED:
+            i = TRUTHS.index(r.truth)
+            g = -0.039 if i < 6 else -0.041
+            r = ScoreRow(r.truth, r.seed, r.system, g, None, False, False, None)
+        out.append(r)
+    check = planted_beats_rand(out, TRUTHS, rng=np.random.default_rng(0))
+    assert check.median > 0.0 and check.wins == 6
+    assert not check.passed
+
+
+def test_signed_rank_matches_scipy_exact_and_ranks_infinities_last() -> None:
+    from scipy import stats as sps
+
+    d = [0.31, -0.12, 0.05, 0.44, 0.27, -0.03, 0.18, 0.09, 0.51, -0.22]
+    expected = sps.wilcoxon(d, alternative="greater", method="exact").pvalue
+    assert signed_rank_greater(d) == pytest.approx(expected, rel=1e-12)
+    top = [*d[:-1], 1e9]
+    assert signed_rank_greater([*d[:-1], float("inf")]) == signed_rank_greater(top)
+    bottom = [*d[:-1], -1e9]
+    assert signed_rank_greater([*d[:-1], float("-inf")]) == signed_rank_greater(bottom)
+    assert signed_rank_greater([0.0, 0.0]) == 1.0  # no evidence at all
+    with pytest.raises(ScoringError):
+        signed_rank_greater([float("nan"), 1.0])
+
+
+@given(
+    st.lists(
+        st.floats(-1, 1, allow_nan=False).filter(lambda x: x != 0.0),
+        min_size=1,
+        max_size=14,
+        unique=True,
+    )
+)
+def test_signed_rank_agrees_with_scipy_on_tie_free_data(d: list[float]) -> None:
+    from scipy import stats as sps
+
+    if len({abs(x) for x in d}) < len(d):
+        return
+    expected = sps.wilcoxon(d, alternative="greater", method="exact").pvalue
+    assert signed_rank_greater(d) == pytest.approx(expected, rel=1e-9, abs=1e-15)
+
+
+def test_median_ci_is_deterministic_and_tolerates_infinities() -> None:
+    d = [0.02, 0.01, float("-inf"), 0.03, 0.015, 0.025, float("inf"), 0.018]
+    a = bootstrap_median_ci(d, np.random.default_rng(5), resamples=2000)
+    b = bootstrap_median_ci(d, np.random.default_rng(5), resamples=2000)
+    assert a == b
+    assert a.low <= a.median <= a.high
+    assert a.median == order_median(d)
+    assert order_median([float("-inf"), float("inf")]) == 0.0
+    assert order_median([float("-inf"), 1.0]) == float("-inf")
+    assert order_median([1.0, 3.0, 2.0]) == 2.0
+    with pytest.raises(ScoringError):
+        bootstrap_median_ci([float("nan")], np.random.default_rng(0))
+
+
+def test_an_oracle_underfit_flag_fails_the_controls() -> None:
+    rows = [
+        ScoreRow(
+            r.truth,
+            r.seed,
+            r.system,
+            r.gap,
+            r.gap_closed,
+            r.exact,
+            r.in_dictionary,
+            True,
+        )
+        if (r.truth, r.seed, r.system) == ("t03", 1, ORACLE)
+        else r
+        for r in _table(GOOD)
+    ]
+    v = go_no_go(rows, rng=np.random.default_rng(0))
+    assert v.outcome is Outcome.CONTROLS_FAIL
+    assert v.underfit is not None and v.underfit.flagged == (("t03", 1),)
+    assert any("underfit" in r for r in v.reasons)
+
+
+def test_an_unrecorded_underfit_flag_is_not_zero_flags() -> None:
+    """Cells written before fit/5 carry no flag: C1 cannot show zero flags."""
+    rows = [
+        ScoreRow(
+            r.truth,
+            r.seed,
+            r.system,
+            r.gap,
+            r.gap_closed,
+            r.exact,
+            r.in_dictionary,
+            None,
+        )
+        for r in _table(GOOD)
+    ]
+    check = oracle_underfit_check(
+        [(r.truth, r.seed, r.oracle_underfit) for r in rows if r.system == ORACLE]
+    )
+    assert not check.passed and check.flagged == ()
+    assert len(check.unrecorded) == len(TRUTHS) * len(SEEDS)
+    v = go_no_go(rows, rng=np.random.default_rng(0))
+    assert v.outcome is Outcome.CONTROLS_FAIL
+    assert any("not recorded" in r for r in v.reasons)

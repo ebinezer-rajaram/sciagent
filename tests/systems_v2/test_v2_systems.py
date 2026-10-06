@@ -15,7 +15,22 @@ import pytest
 
 from environments.pointproc import v2
 from sciagent.glm.data import Dataset
-from sciagent.glm.fit import fit
+from sciagent.glm.fit import FitConfig, fit, parameter_log_likelihood
+from sciagent.glm.grammar import (
+    ALL,
+    ChannelKind,
+    ChannelSpec,
+    Excite,
+    Gate,
+    KernelKind,
+    Link,
+    Mark,
+    One,
+    PhaseWindow,
+    Structure,
+    psi_slots,
+)
+from sciagent.glm.simulate import Coefficients, PsiAssignment, simulate
 from sciagent.library.mixture import PoissonMixture2
 from sciagent.library.mmpp import MMPP2, MMPP2Params, simulate_mmpp2
 from sciagent.systems.v2.models import GLMModel, LibraryFittedModel, WienerHopfModel
@@ -28,6 +43,7 @@ from sciagent.systems.v2.systems import (
     ModelMember,
     Oracle,
     SystemRunError,
+    oracle_underfit,
 )
 
 HORIZON = 2000.0
@@ -167,3 +183,131 @@ def test_bnp_beats_null_on_hawkes_truth() -> None:
     gap = bnp.model.held_out_per_event(held) - null.model.held_out_per_event(held)
     assert gap > 0.05, gap
     assert math.isfinite(gap)
+
+
+# --------------------------------------------------------------------------
+# ORACLE's truth-ψ check (P4-PROPOSAL §2.1 b)
+# --------------------------------------------------------------------------
+
+_SIZE: tuple[ChannelSpec, ...] = (
+    ChannelSpec("size", ChannelKind.POSITIVE, location=1.0, scale=1.0),
+)
+_WINDOWS = Structure(
+    (
+        Gate(Excite(KernelKind.EXP, One(), ALL), PhaseWindow()),
+        Gate(Excite(KernelKind.EXP, Mark("size"), ALL), PhaseWindow()),
+    ),
+    Link.SOFTPLUS,
+)
+
+
+def _windows_psi() -> PsiAssignment:
+    values = (
+        {"exp_rate": 0.25, "period": 5.0, "phase": 1.5 * math.pi},
+        {"exp_rate": 1.0, "period": 10.0, "phase": 0.0},
+    )
+    return tuple(
+        {s: v[s.name] for s in psi_slots(f)}
+        for f, v in zip(_WINDOWS.features, values, strict=True)
+    )
+
+
+_WINDOWS_COEF = Coefficients(0.5, ((-2.0,), (0.8,)))
+#: fit/4's search alone (per-slot line search, no screening). On the seeded
+#: draw below it stops short of the truth's ψ point.
+_WEAK = FitConfig(psi_line_start=True, psi_screen=0, psi_starts=0, psi_block_max=1)
+
+
+def _size_marks(rng: np.random.Generator) -> dict[str, float]:
+    return {"size": float(rng.exponential(1.0))}
+
+
+def _windows_data() -> InvestigationData:
+    log = simulate(
+        _WINDOWS,
+        _windows_psi(),
+        _WINDOWS_COEF,
+        _SIZE,
+        _size_marks,
+        300.0,
+        np.random.default_rng(2),
+    )
+    return InvestigationData((Dataset.observational(log),), _SIZE, _size_marks)
+
+
+def _oracle(config: FitConfig | None) -> Oracle:
+    return Oracle(
+        _WINDOWS,
+        fit_config=config,
+        truth_psi=_windows_psi(),
+        truth_coefficients=_WINDOWS_COEF,
+    )
+
+
+def test_oracle_keeps_the_truth_psi_point_when_the_search_misses_it() -> None:
+    data = _windows_data()
+    searched = fit(_WINDOWS, data.observational, _SIZE, config=_WEAK)
+    at_truth = fit(
+        _WINDOWS, data.observational, _SIZE, config=_WEAK, psi=_windows_psi()
+    )
+    assert searched.log_likelihood < at_truth.log_likelihood - 1.0
+    result = _oracle(_WEAK).run(data)
+    assert isinstance(result.model, GLMModel)
+    assert result.model.fit == at_truth
+    assert result.details["oracle_psi_source"] == "truth"
+    assert result.details["oracle_underfit"] is False
+    assert result.trajectory[0].best_criterion == at_truth.bic
+
+
+def test_oracle_keeps_its_search_when_it_reaches_the_truth_psi() -> None:
+    data = _windows_data()
+    result = _oracle(None).run(data)
+    searched = fit(_WINDOWS, data.observational, _SIZE)
+    assert isinstance(result.model, GLMModel)
+    assert result.model.fit == searched
+    assert result.details["oracle_psi_source"] == "search"
+    assert result.details["oracle_underfit"] is False
+    true_ll = math.fsum(
+        parameter_log_likelihood(
+            _WINDOWS, _windows_psi(), _WINDOWS_COEF, data.observational, _SIZE
+        )
+    )
+    assert result.details["oracle_true_params_ll"] == true_ll
+    assert searched.log_likelihood >= true_ll
+
+
+def test_underfit_threshold() -> None:
+    """Below the true parameters by more than 1e-9·|log L| is underfit."""
+    assert not oracle_underfit(-1000.0, -1000.0)
+    assert not oracle_underfit(-1000.0 - 0.9e-6, -1000.0)
+    assert oracle_underfit(-1000.0 - 1.1e-6, -1000.0)
+    assert not oracle_underfit(-999.0, -1000.0)
+
+
+def test_oracle_needs_both_truth_parameters_or_neither() -> None:
+    data = _windows_data()
+    with pytest.raises(SystemRunError):
+        Oracle(_WINDOWS, truth_coefficients=_WINDOWS_COEF).run(data)
+    with pytest.raises(SystemRunError):
+        Oracle(_WINDOWS, truth_psi=_windows_psi()).run(data)
+
+
+def test_oracle_without_truth_parameters_is_the_plain_fit() -> None:
+    data = _data("size_excitation", 4, 400.0)
+    result = Oracle(v2.SIZE_EXCITED).run(data)
+    assert result.details == {}
+
+
+def test_oracle_with_an_off_grid_truth_psi_skips_the_refit() -> None:
+    data = _windows_data()
+    off = tuple(
+        {s: (0.3 if s.name == "exp_rate" else v) for s, v in m.items()}
+        for m in _windows_psi()
+    )
+    result = Oracle(_WINDOWS, truth_psi=off, truth_coefficients=_WINDOWS_COEF).run(data)
+    assert result.details["oracle_truth_psi_on_grid"] is False
+    assert result.details["oracle_underfit"] is False
+    assert "oracle_truth_psi_ll" not in result.details
+    assert result.details["oracle_psi_source"] == "search"
+    assert isinstance(result.model, GLMModel)
+    assert result.model.fit == fit(_WINDOWS, data.observational, _SIZE)

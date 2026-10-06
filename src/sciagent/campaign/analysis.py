@@ -4,13 +4,38 @@
 addresses (:func:`load_rows`): for every planned unit its key is recomputed
 and its cell looked up. A cell left by an older configuration has another
 address and is never read, so a report cannot silently mix configurations
-(the ledger's own docstring asks the report layer for exactly this).
+(the ledger's own docstring asks the report layer for exactly this). The one
+declared exception is ``sessions="stored"`` (P4-PROPOSAL §2.2, rescore): LLM
+*sessions* are then found by enumeration (:mod:`~sciagent.campaign.rescore`),
+so sessions conducted under an older fitter are read, but their *scores* are
+still read at the current address only (the old session's digest plus the
+current versions). Each :class:`Session` carries the ``env_version`` it ran
+under.
+
+**Void sessions** (P4-PROPOSAL Δ8, :mod:`~sciagent.campaign.voids`). Every
+session is classified by the void policy from its stored detail and record
+(no cell is edited). A void session's score row is dropped from every table
+even if a score cell exists (the pilot scored voids); the session itself stays
+in :attr:`Table.sessions` so reports count it (:func:`void_counts`).
 
 **Non-finite scores.** A model that gives a held-out event zero intensity
 scores ``-inf`` per event. That is kept as a result: its gap is ``-inf``, its
-gap closed undefined (so it never closes), it is excluded from means (and
-counted in ``nonfinite``), and it is left out of the §6.4 control rows, which
-need finite gaps -- conservative for the planted-vs-B-rand control.
+gap closed undefined (so it never closes), and it is excluded from means (and
+counted in ``nonfinite``). In the §6.4 controls it ranks lowest (control 2 and
+3, by rank; Δ10); control 1 reads finite gaps only.
+
+**Gap closed within noise** (P4-PROPOSAL T4). The denominator
+``LL(ORACLE) - LL(B-lib)`` of one (truth, seed) can be tiny, and the ratio is
+then noise (audit §1: 37.32 on a denominator of 0.0029). The rule, in
+:func:`derive`: for a truth with at least 2 seeds on which both ORACLE and
+B-lib have finite scores, let ``d_s = LL(ORACLE)_s - LL(B-lib)_s`` and
+``noise = sd(d, ddof=1) / sqrt(n)``, the paired standard error control 1 uses
+for the same difference. A row's gap closed on seed ``s`` is **flagged**
+(:attr:`Row.closed_flagged`) when ``|d_s| <= noise``: at control 1's own
+resolution the denominator cannot be told from 0. With fewer than 2 such seeds
+the noise is not estimable and nothing is flagged. A flagged ratio is kept
+(the §7.1 shares read it as preregistered) but is never printed as a ratio,
+never enters a median gap closed, and never chooses a transcript.
 
 **Derived scores** (SPEC §4.3), per (truth, seed), from the stored raw
 held-out values: ``gap = per_event - per_event[ORACLE]`` and
@@ -43,7 +68,7 @@ import math
 import statistics
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 import numpy as np
 
@@ -57,6 +82,7 @@ from sciagent.campaign.plan import (
     PLANTED,
     CampaignConfig,
     CampaignEnvironment,
+    CampaignError,
     TruthEntry,
     baseline_key,
     baseline_units,
@@ -64,7 +90,9 @@ from sciagent.campaign.plan import (
     score_key,
     session_key,
 )
+from sciagent.campaign.rescore import stored_sessions
 from sciagent.campaign.store import ResultStore
+from sciagent.campaign.voids import VoidStatus, decoded, session_void
 from sciagent.core import reductions
 from sciagent.scoring import gonogo
 from sciagent.scoring.heldout import gap_closed
@@ -100,17 +128,25 @@ class Row:
     gap: float | None = None
     gap_closed: float | None = None
     curve_gaps: tuple[tuple[int, float], ...] = ()
+    #: ORACLE rows: the fit/5 ``oracle_underfit`` flag (None: not recorded).
+    oracle_underfit: bool | None = None
+    #: ORACLE rows: where the chosen ψ came from, ``"search"`` or ``"truth"``.
+    oracle_psi_source: str | None = None
+    #: The gap closed's denominator is within its paired noise (docstring).
+    closed_flagged: bool = False
 
 
 @dataclass(frozen=True)
 class Session:
-    """One stored LLM session (scored or not)."""
+    """One stored LLM session (scored or not), under the void policy."""
 
     truth: str
     seed: int
     system: str
     reading: Mapping[str, float]
     detail: Mapping[str, Json]
+    void: VoidStatus
+    env_version: str
 
 
 @dataclass(frozen=True)
@@ -129,11 +165,31 @@ def _f(reading: Mapping[str, str], name: str) -> float | None:
     return None if v is None else float.fromhex(v)
 
 
-def _row(
+_PSI_SOURCES: Final = ("search", "truth")
+
+
+def _oracle_fields(
+    system: str, detail: Mapping[str, Json]
+) -> tuple[bool | None, str | None]:
+    """The ORACLE's underfit flag and ψ source; None where a cell predates them."""
+    if system != ORACLE:
+        return None, None
+    flag = detail.get("oracle_underfit")
+    source = detail.get("oracle_psi_source")
+    if flag is not None and not isinstance(flag, bool):
+        raise CampaignError(f"oracle_underfit must be a bool, got {flag!r}")
+    if source is not None and source not in _PSI_SOURCES:
+        raise CampaignError(f"oracle_psi_source must be one of {_PSI_SOURCES}")
+    return flag, source
+
+
+def row_from_cell(
     unit_truth: str, seed: int, system: str, llm: bool, cell: Mapping[str, Json]
 ) -> Row:
+    """One stored score cell as a :class:`Row` (gaps not derived yet)."""
     reading = cell["reading"]
     detail = cell["detail"]["result"]
+    underfit, psi_source = _oracle_fields(system, detail)
     status = _f(reading, "status")
     ok = status is not None and status >= 1.0
     submitted = status == 1.0
@@ -155,6 +211,8 @@ def _row(
         structure=detail.get("structure"),
         curve=tuple((int(k), float(v)) for k, _, v in detail.get("curve", [])),
         error=None if ok else str(detail.get("error")),
+        oracle_underfit=underfit,
+        oracle_psi_source=psi_source,
     )
 
 
@@ -163,12 +221,19 @@ def load_rows(
     env: CampaignEnvironment,
     config: CampaignConfig,
     truths: Sequence[TruthEntry],
+    *,
+    sessions: Literal["current", "stored"] = "current",
 ) -> Table:
-    """Every planned unit's cell, by address (module docstring)."""
+    """Every planned unit's cell, by address (module docstring).
+
+    ``sessions="stored"`` finds LLM sessions by enumeration (rescore); their
+    scores are still read at the current address only.
+    """
     by_id = {t.id: t for t in truths}
     order = [t.id for t in truths]
+    found = stored_sessions(store, env, config, truths) if sessions == "stored" else {}
     rows: list[Row] = []
-    sessions: list[Session] = []
+    found_sessions: list[Session] = []
     planned: dict[str, int] = {}
     missing: dict[str, int] = {}
     for u in baseline_units(order, config):
@@ -177,32 +242,86 @@ def load_rows(
         if not store.done(key):
             missing[u.system] = missing.get(u.system, 0) + 1
             continue
-        rows.append(_row(u.truth_id, u.seed, u.system, False, store.cell(key.digest)))
+        rows.append(
+            row_from_cell(u.truth_id, u.seed, u.system, False, store.cell(key.digest))
+        )
     for u in llm_units(order, config):
         planned[u.system] = planned.get(u.system, 0) + 1
-        skey = session_key(u, by_id[u.truth_id], env, config)
-        if not store.done(skey):
+        if sessions == "stored":
+            hit = found.get(u)
+        else:
+            skey = session_key(u, by_id[u.truth_id], env, config)
+            hit = (skey, store.cell(skey.digest)) if store.done(skey) else None
+        if hit is None:
             missing[u.system] = missing.get(u.system, 0) + 1
             continue
-        cell = store.cell(skey.digest)
-        reading = {k: float.fromhex(v) for k, v in cell["reading"].items()}
-        sessions.append(
-            Session(u.truth_id, u.seed, u.system, reading, cell["detail"]["session"])
+        skey, cell = hit
+        reading = decoded(cell["reading"])
+        detail = cell["detail"]["session"]
+        void = session_void(store.root, reading, detail)
+        found_sessions.append(
+            Session(
+                u.truth_id,
+                u.seed,
+                u.system,
+                reading,
+                detail,
+                void,
+                str(skey.env_version),
+            )
         )
         ckey = score_key(u, skey, env, config)
-        if store.done(ckey):
+        if store.done(ckey) and not void.void:
             rows.append(
-                _row(u.truth_id, u.seed, u.system, True, store.cell(ckey.digest))
+                row_from_cell(
+                    u.truth_id, u.seed, u.system, True, store.cell(ckey.digest)
+                )
             )
-    return Table(by_id, tuple(derive(rows)), tuple(sessions), planned, missing)
+    return Table(by_id, tuple(derive(rows)), tuple(found_sessions), planned, missing)
+
+
+def void_counts(table: Table) -> dict[str, int]:
+    """Void sessions per system (their scores are dropped; module docstring)."""
+    out: dict[str, int] = {}
+    for x in table.sessions:
+        if x.void.void:
+            out[x.system] = out.get(x.system, 0) + 1
+    return dict(sorted(out.items()))
+
+
+def _denominator_noise(
+    ref: Mapping[tuple[str, int, str], float],
+) -> tuple[dict[tuple[str, int], float], dict[str, float]]:
+    """Per (truth, seed) ``LL(ORACLE) - LL(B-lib)`` and per truth its paired SE."""
+    d: dict[tuple[str, int], float] = {}
+    for (t, seed, system), oracle in ref.items():
+        lib = ref.get((t, seed, B_LIB))
+        if (
+            system == ORACLE
+            and lib is not None
+            and math.isfinite(oracle)
+            and math.isfinite(lib)
+        ):
+            d[(t, seed)] = oracle - lib
+    by_truth: dict[str, list[float]] = {}
+    for (t, _), v in sorted(d.items()):
+        by_truth.setdefault(t, []).append(v)
+    noise = {
+        t: reductions.deviation(np.asarray(v, dtype=np.float64)) / math.sqrt(len(v))
+        for t, v in by_truth.items()
+        if len(v) >= 2
+    }
+    return d, noise
 
 
 def derive(rows: Sequence[Row]) -> list[Row]:
-    """Gaps, gaps closed and curve gaps against the same (truth, seed)'s refs."""
+    """Gaps, gaps closed (flagged within noise) and curve gaps against the
+    same (truth, seed)'s references (module docstring)."""
     ref: dict[tuple[str, int, str], float] = {}
     for r in rows:
         if r.system in (ORACLE, B_LIB) and r.per_event is not None:
             ref[(r.truth, r.seed, r.system)] = r.per_event
+    denominator, noise = _denominator_noise(ref)
     out: list[Row] = []
     for r in rows:
         oracle = ref.get((r.truth, r.seed, ORACLE))
@@ -216,7 +335,20 @@ def derive(rows: Sequence[Row]) -> list[Row]:
                 closed = gap_closed(r.per_event, lib, oracle)
         if oracle is not None:
             curve = tuple((k, v - oracle) for k, v in r.curve)
-        out.append(replace(r, gap=gap, gap_closed=closed, curve_gaps=curve))
+        d = denominator.get((r.truth, r.seed))
+        tol = noise.get(r.truth)
+        flagged = (
+            closed is not None and d is not None and tol is not None and abs(d) <= tol
+        )
+        out.append(
+            replace(
+                r,
+                gap=gap,
+                gap_closed=closed,
+                curve_gaps=curve,
+                closed_flagged=flagged,
+            )
+        )
     return out
 
 
@@ -274,12 +406,16 @@ class SystemSummary:
     closed_median: float | None
     similarity_mean: float | None
     distance_mean: float | None
+    #: Units whose gap closed is flagged within noise (left out of the median).
+    closed_flagged: int = 0
 
 
 def summarise(rows: Sequence[Row], system: str) -> SystemSummary:
     mine = [r for r in rows if r.system == system]
     gaps = [r.gap for r in mine if r.gap is not None and math.isfinite(r.gap)]
-    closed = [r.gap_closed for r in mine if r.gap_closed is not None]
+    closed = [
+        r.gap_closed for r in mine if r.gap_closed is not None and not r.closed_flagged
+    ]
     sims = [r.similarity for r in mine if r.ok and r.similarity is not None]
     dists = [
         r.distance for r in mine if r.ok and r.has_structure and r.distance is not None
@@ -300,6 +436,7 @@ def summarise(rows: Sequence[Row], system: str) -> SystemSummary:
         closed_median=_median(closed),
         similarity_mean=_mean(sims),
         distance_mean=_mean(dists),
+        closed_flagged=sum(r.closed_flagged for r in mine),
     )
 
 
@@ -346,12 +483,13 @@ class Verdict:
     sparse_ood_close: float | None
     reasons: tuple[str, ...]
     inconclusive: tuple[str, ...]
+    underfit: gonogo.UnderfitCheck | None = None
 
 
 def score_rows(
     rows: Sequence[Row], truths: Mapping[str, TruthEntry]
 ) -> list[gonogo.ScoreRow]:
-    """``gonogo.ScoreRow`` for every non-LLM unit that has a gap."""
+    """``gonogo.ScoreRow`` for every non-LLM unit with a finite or ``-inf`` gap."""
     return [
         gonogo.ScoreRow(
             truth=r.truth,
@@ -361,10 +499,24 @@ def score_rows(
             gap_closed=r.gap_closed,
             exact=r.exact,
             in_dictionary=truths[r.truth].in_dictionary,
+            oracle_underfit=r.oracle_underfit,
         )
         for r in rows
-        if not r.llm and r.gap is not None and math.isfinite(r.gap)
+        if not r.llm
+        and r.gap is not None
+        and (math.isfinite(r.gap) or r.gap == -math.inf)
     ]
+
+
+def underfit_check(rows: Sequence[Row]) -> gonogo.UnderfitCheck:
+    """Control 1's underfit half over every scored ORACLE unit of ``rows``."""
+    return gonogo.oracle_underfit_check(
+        [
+            (r.truth, r.seed, r.oracle_underfit)
+            for r in rows
+            if r.system == ORACLE and not r.llm and r.ok
+        ]
+    )
 
 
 def verdict(
@@ -373,11 +525,13 @@ def verdict(
     """SPEC §7.1 over the non-LLM systems (module docstring)."""
     rows = [r for r in table.rows if not r.llm]
     srows = score_rows(rows, table.truths)
+    underfit = underfit_check(rows)
     reasons: list[str] = []
     inconclusive: list[str] = []
     seeds_of: dict[tuple[str, str], set[int]] = {}
     for r in srows:
-        seeds_of.setdefault((r.truth, r.system), set()).add(r.seed)
+        if math.isfinite(r.gap):  # control 1 reads finite gaps only
+            seeds_of.setdefault((r.truth, r.system), set()).add(r.seed)
     truths_with_pairs = [
         t
         for t in sorted(table.truths)
@@ -395,6 +549,7 @@ def verdict(
         )
     if dropped:
         reasons.append(f"dropped as not identifiable (ORACLE ≤ B-lib): {list(dropped)}")
+    reasons += gonogo.underfit_reason(underfit)
     if not checks:
         return Verdict(
             "incomplete",
@@ -411,6 +566,7 @@ def verdict(
             None,
             ("no truth has ORACLE and B-lib on 2 seeds yet",),
             tuple(inconclusive),
+            underfit,
         )
     if not kept:
         reasons.append("no truth kept: ORACLE never shown to beat B-lib")
@@ -429,6 +585,7 @@ def verdict(
             None,
             tuple(reasons),
             tuple(inconclusive),
+            underfit,
         )
 
     def covered(system: str) -> list[str]:
@@ -440,10 +597,7 @@ def verdict(
     if len(both) >= 2:
         planted = gonogo.planted_beats_rand(srows, both, rng=rng, resamples=resamples)
         if not planted.passed:
-            reasons.append(
-                f"planted-hint does not beat B-rand: CI [{planted.ci.low:.4g}, "
-                f"{planted.ci.high:.4g}]"
-            )
+            reasons.append(gonogo.planted_reason(planted))
     else:
         inconclusive.append("planted-hint vs B-rand: fewer than 2 truths with both")
     bsym: gonogo.BsymCheck | None = None
@@ -458,7 +612,11 @@ def verdict(
     else:
         inconclusive.append("B-sym@10F: no kept truth has a result")
     controls = (
-        planted is not None and planted.passed and bsym is not None and bsym.passed
+        planted is not None
+        and planted.passed
+        and bsym is not None
+        and bsym.passed
+        and underfit.passed
     )
 
     kept_rows = [r for r in rows if r.truth in kept]
@@ -486,7 +644,13 @@ def verdict(
         reasons.append(
             f"B-sparse closes the gap on {sparse_ood:.0%} of out-of-dictionary truths"
         )
+    # Too hard (P4-PROPOSAL §2.4, literally): every non-LLM system closes on
+    # < 10% of truths. The ORACLE is the reference the gap is measured from
+    # (it closes by definition), so "every" is every other non-LLM system.
     present = [s for s in systems if close.get(s) is not None]
+    absent = [s for s in systems if s not in present]
+    if absent:
+        inconclusive.append(f"too hard read without {absent} (no kept rows)")
     too_hard = bool(present) and all(
         (close[s] or 0.0) < gonogo.TOO_HARD_SHARE for s in present
     )
@@ -518,6 +682,7 @@ def verdict(
         sparse_ood,
         tuple(reasons),
         tuple(inconclusive),
+        underfit,
     )
 
 

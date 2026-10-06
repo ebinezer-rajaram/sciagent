@@ -525,7 +525,7 @@ class Lab:
         search = (
             "globally optimal on the grid"
             if result.psi_search == "exhaustive"
-            else "coordinate-optimal on the grid"
+            else "from a local search; may not be the best on the grid"
         )
         lines.append(
             f"certified: {'yes' if result.certified else 'NO'} (psi {search}, "

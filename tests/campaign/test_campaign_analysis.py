@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 from campaign_support import entry
 
@@ -43,6 +45,7 @@ def row(
         structure=None,
         curve=curve,
         error=None if ok else "SciAgentError",
+        oracle_underfit=False if system == "ORACLE" else None,
     )
 
 
@@ -77,9 +80,14 @@ def test_shares_weight_truths_equally_and_failures_never_count() -> None:
     assert n == 3 and share is not None and abs(share - 1 / 3) < 1e-12
 
 
+#: Five truths: the smallest exact one-sided signed-rank p is 2**-n, so
+#: control 2 cannot pass on fewer than 5 truths (1/32 < 0.05).
+NAMES = ("hawkes", "size_excitation", "null", "t4", "t5")
+
+
 def _table(planted: float) -> Table:
     rows: list[Row] = []
-    for t in ("hawkes", "size_excitation", "null"):
+    for t in NAMES:
         for seed in (1, 2, 3):
             noise = 0.001 * seed
             base = -0.7 - noise
@@ -95,14 +103,14 @@ def _table(planted: float) -> Table:
             if seed == 1:
                 rows.append(row(t, seed, "B-sym@10F", base - 0.002))
             rows.append(row(t, seed, "AG-c-S/named", base - 0.01, llm=True))
-    truths = {t: entry("hawkes") for t in ("hawkes", "size_excitation", "null")}
+    truths = {t: entry("hawkes") for t in NAMES}
     return Table(truths, tuple(derive(rows)), (), {})
 
 
 def test_verdict_is_go_when_controls_pass_and_difficulty_is_in_band() -> None:
     v = verdict(_table(0.0), np.random.default_rng(0), resamples=500)
     assert v.outcome == "go", v.reasons
-    assert v.controls_pass and len(v.kept) == 3 and not v.dropped
+    assert v.controls_pass and len(v.kept) == 5 and not v.dropped
     assert v.bsym is not None and v.bsym.passed
     assert v.recovery["planted-hint"] == 1.0 and v.recovery["B-lib"] == 0.0
     assert v.close["planted-hint"] == 1.0
@@ -155,3 +163,103 @@ def test_a_minus_infinite_score_never_closes_and_stays_out_of_means() -> None:
     m = summarise(rows, "X")
     assert m.nonfinite == 1 and m.gap_mean is not None
     assert abs(m.gap_mean + 0.02) < 1e-12
+
+
+def test_gap_closed_is_flagged_when_the_denominator_is_within_its_paired_noise() -> (
+    None
+):
+    """T4: LL(ORACLE) - LL(B-lib) on a seed within the truth's paired SE of that
+    difference over seeds is not a usable denominator (audit §1: 37.32 on a
+    denominator of 0.0029). The ratio is still computed; it is flagged."""
+    rows = derive(
+        [
+            row("a", 1, "ORACLE", -0.70),
+            row("a", 1, "B-lib", -0.80),
+            row("a", 2, "ORACLE", -0.70),
+            row("a", 2, "B-lib", -0.76),
+            row("a", 3, "ORACLE", -0.70),
+            row("a", 3, "B-lib", -0.703),
+            row("a", 1, "X", -0.72),
+            row("a", 2, "X", -0.72),
+            row("a", 3, "X", -0.60),
+        ]
+    )
+    x = {r.seed: r for r in rows if r.system == "X"}
+    # d = (0.1, 0.06, 0.003): mean 0.0543, paired SE 0.0281.
+    assert not x[1].closed_flagged and not x[2].closed_flagged
+    assert x[3].closed_flagged and x[3].gap_closed is not None
+    from sciagent.campaign.analysis import summarise
+
+    m = summarise(rows, "X")
+    assert m.closed_flagged == 1
+    assert m.closed_median is not None
+    assert abs(m.closed_median - (0.8 + 2 / 3) / 2) < 1e-12  # seed 3 left out
+
+
+def test_gap_closed_is_not_flagged_without_two_seeds_to_estimate_noise() -> None:
+    rows = derive(
+        [
+            row("a", 1, "ORACLE", -0.70),
+            row("a", 1, "B-lib", -0.7001),
+            row("a", 1, "X", -0.70),
+        ]
+    )
+    (x,) = [r for r in rows if r.system == "X"]
+    assert not x.closed_flagged
+
+
+def test_control_1_needs_zero_oracle_underfit_flags() -> None:
+    from dataclasses import replace
+
+    base = _table(0.0)
+    flagged = tuple(
+        replace(r, oracle_underfit=True)
+        if (r.truth, r.seed, r.system) == ("null", 2, "ORACLE")
+        else r
+        for r in base.rows
+    )
+    v = verdict(replace(base, rows=flagged), np.random.default_rng(0), resamples=200)
+    assert v.outcome == "controls fail" and not v.controls_pass
+    assert v.underfit is not None and v.underfit.flagged == (("null", 2),)
+    unrecorded = tuple(
+        replace(r, oracle_underfit=None) if r.system == "ORACLE" else r
+        for r in base.rows
+    )
+    v = verdict(replace(base, rows=unrecorded), np.random.default_rng(0), resamples=200)
+    assert v.outcome == "controls fail"
+    assert any("not recorded" in r for r in v.reasons)
+
+
+def test_control_2_reads_a_minus_infinite_rand_unit_by_rank() -> None:
+    from dataclasses import replace
+
+    base = _table(0.0)
+    rows = derive(
+        [
+            replace(r, per_event=float("-inf"))
+            if (r.truth, r.seed, r.system) == ("hawkes", 1, "B-rand")
+            else r
+            for r in base.rows
+        ]
+    )
+    v = verdict(
+        replace(base, rows=tuple(rows)), np.random.default_rng(0), resamples=200
+    )
+    assert v.planted is not None and v.planted.n_infinite == 1
+    assert v.planted.wins == 5 and v.planted.passed
+
+
+def test_an_oracle_cell_without_the_underfit_key_reads_as_unrecorded() -> None:
+    from sciagent.campaign.analysis import row_from_cell
+
+    cell: dict[str, Any] = {
+        "reading": {"status": (1.0).hex(), "per_event": (-0.7).hex()},
+        "detail": {"result": {"structure": "s"}},
+    }
+    old = row_from_cell("a", 1, "ORACLE", False, cell)
+    assert old.oracle_underfit is None and old.oracle_psi_source is None
+    cell["detail"]["result"].update(
+        {"oracle_underfit": False, "oracle_psi_source": "truth"}
+    )
+    new = row_from_cell("a", 1, "ORACLE", False, cell)
+    assert new.oracle_underfit is False and new.oracle_psi_source == "truth"

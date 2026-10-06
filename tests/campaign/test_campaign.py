@@ -415,3 +415,109 @@ def test_a_retryable_session_drops_llm_concurrency_to_one(
     assert summary.retries == 2 and not summary.recorded
     lines = (tmp_path / "attempts.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(lines) == 2
+
+
+# --------------------------------------------------------------------------
+# Rescore mode (P4-PROPOSAL §2.2): score stored sessions, never launch one
+# --------------------------------------------------------------------------
+
+
+def test_rescore_scores_old_sessions_under_the_new_fit_and_launches_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The trap: a FIT_VERSION change gives every session a new address, so the
+    normal plan would relaunch every live session. Rescore enumerates the
+    stored session cells instead, writes new score cells keyed by the old
+    session's digest plus the current versions, and calls no provider."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from sciagent.campaign import analysis, plan
+    from sciagent.campaign.plan import CampaignError
+    from sciagent.campaign.store import DETAILS_DIR
+
+    clean(monkeypatch)
+    scored: list[ScoreJob] = []
+
+    def fake_score(job: ScoreJob) -> UnitResult:
+        scored.append(job)
+        return UnitResult(
+            job.system, True, {"status": 1.0, "per_event": -0.7}, {"s": 1}, 0.0
+        )
+
+    monkeypatch.setattr(driver_module, "run_score_job", fake_score)
+    config = tiny_config(seeds=(1,), llm_arms=(LLMArm("AG-c", "named"),))
+    truth = entry("size_excitation")
+    unit = Unit("size_excitation", 1, "AG-c-H/named")
+
+    def campaign(**settings: Any) -> Campaign:
+        return Campaign(
+            tmp_path,
+            environment(),
+            config,
+            [truth],
+            DriverSettings(workers=0, poll_s=0.05, run_baselines=False, **settings),
+        )
+
+    with monkeypatch.context() as old:
+        old.setattr(plan, "FIT_VERSION", "sciagent.glm.fit/OLD")
+        first = campaign(driver_factory=lambda u: ScriptedDriver(SCRIPT))
+        first.run()
+        first.close()
+        old_skey = session_key(unit, truth, environment(), config)
+    assert "fit/OLD" in str(old_skey.env_version) and len(scored) == 1
+    before = {p.name: p.read_bytes() for p in (tmp_path / DETAILS_DIR).glob("*.json")}
+
+    # The trap is real: the normal plan would launch the session again.
+    trap = campaign()
+    trap._plan_llm()
+    assert [t.unit for t in trap.llm_queue] == [unit]
+    trap.close()
+
+    def refuse(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("rescore mode must never launch a session")
+
+    monkeypatch.setattr(driver_module, "run_session", refuse)
+    monkeypatch.setattr(driver_module, "run_session_isolated", refuse)
+    rescore = campaign(rescore_llm=True, driver_factory=refuse)
+    summary = rescore.run()
+    new_ckey = score_key(unit, old_skey, environment(), config)
+    assert rescore.store.done(new_ckey)
+    assert not rescore.store.done(session_key(unit, truth, environment(), config))
+    with pytest.raises(CampaignError), ThreadPoolExecutor(max_workers=1) as pool:
+        rescore._launch_llm(pool)
+    rescore.close()
+    assert summary.bugs == 0 and len(scored) == 2
+    assert scored[1].submission == scored[0].submission
+    assert "fit/OLD" not in str(new_ckey.env_version)
+    assert new_ckey.config["session"] == str(old_skey.digest)
+
+    # Append-only: every old cell is byte-identical; one new cell was added.
+    after = {p.name: p.read_bytes() for p in (tmp_path / DETAILS_DIR).glob("*.json")}
+    assert {k: after[k] for k in before} == before
+    assert set(after) - set(before) == {f"{new_ckey.digest}.json"}
+
+    again = campaign(rescore_llm=True, driver_factory=refuse)
+    rerun = again.run()
+    again.close()
+    assert len(scored) == 2 and rerun.skipped_done == 1
+
+    with ResultStore(tmp_path) as store:
+        stored = analysis.load_rows(
+            store, environment(), config, [truth], sessions="stored"
+        )
+        current = analysis.load_rows(store, environment(), config, [truth])
+    assert [r.system for r in stored.rows] == [unit.system]
+    (session,) = stored.sessions
+    assert "fit/OLD" in session.env_version
+    assert current.sessions == () and current.missing[unit.system] == 1
+
+
+def test_the_oracle_cell_records_its_underfit_check() -> None:
+    """Control 1 reads ``oracle_underfit`` from the ORACLE cell (P4 §2.4): the
+    job must give the ORACLE the truth's ψ and coefficients and keep the
+    system's details in the cell."""
+    job = BaselineJob(entry("hawkes"), 1, ("ORACLE",), environment(), tiny_config())
+    (result,) = execute.run_baseline_job(job)
+    assert result.ok, result.detail
+    assert result.detail["oracle_underfit"] is False
+    assert result.detail["oracle_psi_source"] in ("search", "truth")

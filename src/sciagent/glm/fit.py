@@ -24,17 +24,54 @@ lexicographically lowest index tuple.
 
 - At most ``psi_full_grid_max`` (512) points: every point of the product grid
   is evaluated; the fit is globally optimal on the grid (``"exhaustive"``).
-- Otherwise (``"coordinate"``): an exhaustive search over a sub-grid, then
-  cycles of per-slot line searches. The sub-grid takes, per slot with L grid
-  values, the indices ``{0, ⌊(L-1)/2⌋, L-1}`` (s = 3), else
-  ``{⌊(L-1)/3⌋, ⌊2(L-1)/3⌋}`` (s = 2), else ``{⌊(L-1)/2⌋}`` (s = 1), using
-  the largest s whose product is within the cap (all of a slot's values when
-  L ≤ s). From its best point, each cycle visits the slots in order and
-  evaluates every value of the slot with the others fixed, moving only to a
-  strictly better value (the lowest index among the best). The search stops
-  after a cycle with no move (log L strictly increases on a finite grid, so it
-  terminates; ``max_psi_cycles`` is a backstop). The fit is then "certified in
-  θ, coordinate-optimal in ψ".
+- Otherwise (``"coordinate"``, fit/5): block-coordinate ascent from a set
+  of starts. Every option below is a :class:`FitConfig` field in ``key()``.
+
+  *Blocks.* A block is one feature's slots when the feature's grid has at
+  most ``psi_block_max`` (128) points. A larger feature is split by leaf (an
+  ``Excite``'s kernel and mark slots, a ``Periodic``'s period, a condition's
+  slots), a leaf over the cap into single slots, and consecutive leaves are
+  merged while the product stays within the cap. So coupled slots of one leaf
+  (``PhaseWindow`` period and phase, ``PowerK`` c and p) move together, and no
+  block exceeds the cap however deep the feature.
+
+  *Ascent.* Each cycle visits the blocks in order and evaluates the block's
+  joint grid with all other slots fixed, moving only to a strictly better
+  point (the lowest index tuple among the best), until a cycle with no move
+  (``max_psi_cycles`` is a backstop).
+
+  *Swap check.* After the ascent, every pair of slot groups with the same
+  slot names (two whole features, or two leaves anywhere, also inside one
+  nested feature) is tried with its values exchanged: one evaluation per
+  pair. From the best strictly improving swap the ascent is rerun; this
+  repeats at most ``psi_swap_rounds`` (4) times. It recovers fits that
+  converged with two features' ψ interchanged.
+
+  *Starts*, in order, duplicates dropped:
+
+  1. if ``psi_line_start``, the end of fit/4's search (an exhaustive start
+     sub-grid, below, then per-slot line searches);
+  2. the ``psi_starts`` best points of the start sub-grid: per slot with L
+     grid values the indices ``{0, ⌊(L-1)/2⌋, L-1}`` (s = 3), else
+     ``{⌊(L-1)/3⌋, ⌊2(L-1)/3⌋}`` (s = 2), else ``{⌊(L-1)/2⌋}`` (s = 1),
+     using the largest s whose product is within ``psi_full_grid_max``;
+  3. if ``psi_screen`` = r > 0 (default 2), **screening**: each feature alone (the
+     intercept plus that feature, on the fitted structure's rule, sharing its
+     block cache) is ascended from the best point of its own sub-grid of at
+     most ``psi_block_max`` points. Its r best points are kept; the joint
+     start takes every feature's best, and for r ≥ 2 one more start per
+     feature swaps in that feature's next-best. Cost: the sum over features,
+     not the product;
+  4. if ``psi_loo_starts``, for each feature m, the ψ of the structure
+     without m (searched one level down with screening starts only), with m's
+     slots from its screening.
+
+  ``psi_max_sweeps`` > 0 caps all inner solves of the search at that many
+  sweeps (one sweep evaluates every block once); 0 is no cap. The cap is a
+  solve count, so the result is deterministic. The fit is the best evaluated
+  point (ties to the lowest index tuple): "certified in θ,
+  block-coordinate-optimal in ψ", not globally optimal on the grid
+  (LOG 2026-10-03 has the benchmark).
 
 Every ψ point is solved from the same cold start, so a point's θ does not
 depend on the search path, and both searches return byte-identical results
@@ -118,8 +155,11 @@ from sciagent.glm.fit_solve import (
 )
 from sciagent.glm.grammar import (
     ChannelSpec,
+    Excite,
     Feature,
+    Gate,
     Link,
+    Product,
     PsiSlot,
     Structure,
     n_columns,
@@ -132,17 +172,23 @@ from sciagent.glm.simulate import Coefficients
 
 #: Largest product ψ grid searched exhaustively (SPEC §2.2).
 PSI_FULL_GRID_MAX: Final = 512
+#: Largest ψ block (product of its slots' grid sizes) the coordinate search
+#: evaluates jointly. 128 keeps a ``Gate(Periodic, PhaseWindow)`` (100 points:
+#: the period and the window are coupled) in one block (LOG 2026-10-03).
+PSI_BLOCK_MAX: Final = 128
 #: Part of every fit's content address; bump on any change to fitted numbers.
 #: /3: Lomax (PowerK) history sums by a sum of exponentials (features.py).
 #: /4: inner-solve folds by the blocked pairwise tree; exact sums by ExactSum.
-FIT_VERSION: Final = "sciagent.glm.fit/4"
+#: /5: screening-start block-coordinate ψ search with a swap check (LOG
+#:     2026-10-03, defaults LOG 2026-10-06).
+FIT_VERSION: Final = "sciagent.glm.fit/5"
 #: Default certificate tolerance: ``gap ≤ 1e-8 · max(1, |log L|)``. At the
 #: operating point (|log L| ≈ 10³-10⁴) that is ≤ 10⁻⁴ nats, four orders below
 #: the half-log-N ≈ 4 nats a BIC parameter costs, and well above the rounding
 #: of the exactly folded objective. Clarabel reaches it at tightened tolerances.
 GAP_TOL_REL: Final = 1e-8
 
-type PsiSearch = Literal["exhaustive", "coordinate"]
+type PsiSearch = Literal["exhaustive", "coordinate", "fixed"]
 type InnerSolver = Literal["newton", "clarabel"]
 type _Point = tuple[int, ...]
 type _BlockKey = tuple[int, int, tuple[int, ...]]
@@ -178,6 +224,13 @@ class FitConfig:
     gap_tol_rel: float = GAP_TOL_REL
     psi_full_grid_max: int = PSI_FULL_GRID_MAX
     max_psi_cycles: int = 50
+    psi_starts: int = 1
+    psi_block_max: int = PSI_BLOCK_MAX
+    psi_line_start: bool = False
+    psi_screen: int = 2
+    psi_loo_starts: bool = False
+    psi_max_sweeps: int = 0
+    psi_swap_rounds: int = 4
     workers: int = 1
 
     def __post_init__(self) -> None:
@@ -189,6 +242,18 @@ class FitConfig:
             raise FitConfigError(f"gap_tol_rel must be > 0: {self.gap_tol_rel}")
         if self.psi_full_grid_max < 1 or self.max_psi_cycles < 1:
             raise FitConfigError("psi_full_grid_max and max_psi_cycles must be ≥ 1")
+        if (
+            min(
+                self.psi_starts,
+                self.psi_screen,
+                self.psi_max_sweeps,
+                self.psi_swap_rounds,
+            )
+            < 0
+        ):
+            raise FitConfigError("psi_starts, psi_screen, psi_max_sweeps must be ≥ 0")
+        if self.psi_block_max < 1:
+            raise FitConfigError(f"psi_block_max must be ≥ 1: {self.psi_block_max}")
         if self.workers < 1:
             raise FitConfigError(f"workers must be ≥ 1: {self.workers}")
 
@@ -204,6 +269,13 @@ class FitConfig:
                 f"gap={self.gap_tol_rel.hex()}",
                 f"full={self.psi_full_grid_max}",
                 f"cycles={self.max_psi_cycles}",
+                f"starts={self.psi_starts}",
+                f"block={self.psi_block_max}",
+                f"line={int(self.psi_line_start)}",
+                f"screen={self.psi_screen}",
+                f"loo={int(self.psi_loo_starts)}",
+                f"sweeps={self.psi_max_sweeps}",
+                f"swap_rounds={self.psi_swap_rounds}",
             ]
         )
 
@@ -301,17 +373,25 @@ class _Slots:
     slots: tuple[tuple[int, PsiSlot], ...]
     grids: tuple[tuple[float, ...], ...]
     by_feature: tuple[tuple[int, ...], ...]
+    #: Per slot, the path of its leaf: an ``Excite`` (kernel and mark slots
+    #: together) or the node itself (``Periodic``, a condition).
+    leaves: tuple[tuple[int, ...], ...]
 
     @staticmethod
     def of(structure: Structure) -> _Slots:
         slots: list[tuple[int, PsiSlot]] = []
         by_feature: list[tuple[int, ...]] = []
+        leaves: list[tuple[int, ...]] = []
         for k, feature in enumerate(structure.features):
             start = len(slots)
-            slots.extend((k, s) for s in psi_slots(feature))
+            for s in psi_slots(feature):
+                slots.append((k, s))
+                parent = s.path[:-1]
+                is_excite = bool(s.path) and isinstance(_node(feature, parent), Excite)
+                leaves.append(parent if is_excite else s.path)
             by_feature.append(tuple(range(start, len(slots))))
         grids = tuple(grid(s.name) for _, s in slots)
-        return _Slots(tuple(slots), grids, tuple(by_feature))
+        return _Slots(tuple(slots), grids, tuple(by_feature), tuple(leaves))
 
     @property
     def size(self) -> int:
@@ -326,11 +406,49 @@ class _Slots:
             for i, j in zip(self.by_feature[k], key, strict=True)
         }
 
+    def point(self, psi: PsiAssignment) -> _Point:
+        """The grid indices of an on-grid assignment (FitConfigError if not)."""
+        if len(psi) != len(self.by_feature):
+            raise FitConfigError(
+                f"ψ has {len(psi)} feature(s); the structure has {len(self.by_feature)}"
+            )
+        out: list[int] = []
+        for k, positions in enumerate(self.by_feature):
+            given = psi[k]
+            wanted = {self.slots[i][1] for i in positions}
+            if set(given) != wanted:
+                raise FitConfigError(f"ψ of feature {k} does not match its slots")
+            for i in positions:
+                value = given[self.slots[i][1]]
+                values = self.grids[i]
+                if value not in values:
+                    raise FitConfigError(
+                        f"ψ value {value!r} of {self.slots[i][1].name} is off its grid"
+                    )
+                out.append(values.index(value))
+        return tuple(out)
+
     def assignment(self, point: _Point) -> PsiAssignment:
         return tuple(
             self.feature_psi(k, self.feature_key(k, point))
             for k in range(len(self.by_feature))
         )
+
+
+def _node(feature: Feature, path: tuple[int, ...]) -> object:
+    """The node at ``path`` (:class:`~sciagent.glm.grammar.PsiSlot` addressing)."""
+    node: object = feature
+    for step in path:
+        match node:
+            case Product(left=left, right=right):
+                node = (left, right)[step]
+            case Gate(feature=inner, cond=cond):
+                node = (inner, cond)[step]
+            case Excite(kernel=kernel, mark=mark):
+                node = (kernel, mark)[step]
+            case _:
+                raise AssertionError(f"no child {step} of {node!r}")
+    return node
 
 
 def _subgrid(length: int, s: int) -> tuple[int, ...]:
@@ -408,10 +526,37 @@ class _Profile:
         )
         self.blocks: dict[_BlockKey, FeatureBlock | None] = {}
         self.solutions: dict[_Point, Solution | None] = {}
+        #: Local feature k is feature ``index[k]`` of the fitted structure;
+        #: block keys use the fitted structure's indices.
+        self.index: tuple[int, ...] = tuple(range(len(structure.features)))
+        self.top_features = structure.features
+        #: Per-feature screening results, by fitted-structure feature index.
+        self.screens: dict[int, list[tuple[int, ...]]] = {}
+        #: Inner solves of this profile and all its views (the search budget).
+        self.solves = [0]
+
+    def view(self, features: tuple[int, ...]) -> _Profile:
+        """The sub-structure of ``features`` (indices into this profile's own
+        features, in order), evaluated on this profile's rule and sharing its
+        block cache: a sub-structure costs solves only, no new leaves."""
+        sub = object.__new__(_Profile)
+        sub.structure = Structure(
+            tuple(self.structure.features[k] for k in features), self.structure.link
+        )
+        sub.datasets, sub.channels = self.datasets, self.channels
+        sub.config, sub.pool = self.config, self.pool
+        sub.slots = _Slots.of(sub.structure)
+        sub.rules, sub.caches, sub.blocks = self.rules, self.caches, self.blocks
+        sub.screens = self.screens
+        sub.solves = self.solves
+        sub.solutions = {}
+        sub.index = tuple(self.index[k] for k in features)
+        sub.top_features = self.top_features
+        return sub
 
     def _keys(self, point: _Point) -> list[_BlockKey]:
         return [
-            (d, k, self.slots.feature_key(k, point))
+            (d, self.index[k], self.slots.feature_key(k, point))
             for d in range(len(self.datasets))
             for k in range(len(self.structure.features))
         ]
@@ -424,9 +569,10 @@ class _Profile:
         # a fixed order (sorted block keys, then each tree's pre-order).
         leaf_keys: list[tuple[int, LeafKey]] = []
         jobs: list[_LeafJob] = []
-        for d, k, fkey in missing:
-            feature = self.structure.features[k]
-            psi = self.slots.feature_psi(k, fkey)
+        local_k = {top: k for k, top in enumerate(self.index)}
+        for d, top, fkey in missing:
+            feature = self.top_features[top]
+            psi = self.slots.feature_psi(local_k[top], fkey)
             for key, leaf, local in self.caches[d].missing_leaves(feature, psi):
                 if (d, key) in leaf_keys:
                     continue
@@ -440,20 +586,23 @@ class _Profile:
             results = [_leaf_job(*job) for job in jobs]
         for (d, key), columns in zip(leaf_keys, results, strict=True):
             self.caches[d].put(key, columns)
-        for d, k, fkey in missing:
-            feature = self.structure.features[k]
+        for d, top, fkey in missing:
+            feature = self.top_features[top]
+            psi = self.slots.feature_psi(local_k[top], fkey)
             try:
-                block = self.caches[d].block(feature, self.slots.feature_psi(k, fkey))
+                block = self.caches[d].block(feature, psi)
             except FeatureNumericsError:
                 block = None
-            self.blocks[(d, k, fkey)] = block
+            self.blocks[(d, top, fkey)] = block
 
     def designs(self, point: _Point) -> list[Design] | None:
         designs = []
         for d, data in enumerate(self.datasets):
             blocks = []
             for k in range(len(self.structure.features)):
-                block = self.blocks[(d, k, self.slots.feature_key(k, point))]
+                block = self.blocks[
+                    (d, self.index[k], self.slots.feature_key(k, point))
+                ]
                 if block is None:
                     return None
                 blocks.append(block)
@@ -465,6 +614,7 @@ class _Profile:
 
     def evaluate(self, points: Sequence[_Point]) -> None:
         todo = [p for p in points if p not in self.solutions]
+        self.solves[0] += len(todo)
         self._ensure_blocks(todo)
         for point in todo:
             designs = self.designs(point)
@@ -512,13 +662,49 @@ def _stack(designs: list[Design], link: Link) -> Problem:
     return Problem(link, nodes_t, weights, events_t, integrals)
 
 
-def _search(profile: _Profile) -> tuple[_Point, PsiSearch]:
-    slots = profile.slots
-    ranges = [range(len(g)) for g in slots.grids]
-    if slots.size <= profile.config.psi_full_grid_max:
-        return profile.best(list(product(*ranges))), "exhaustive"
-    sub = _start_subgrid(slots, profile.config.psi_full_grid_max)
-    current = profile.best(list(product(*sub)))
+def _search_blocks(slots: _Slots, cap: int) -> tuple[tuple[int, ...], ...]:
+    """The slot positions searched jointly, feature by feature (module docstring).
+
+    A feature is one block when its grid is within ``cap``. Otherwise its
+    slots are grouped by leaf (an ``Excite``'s kernel and mark slots, a
+    ``Periodic``'s period, a condition's slots: consecutive in pre-order), a
+    leaf group over ``cap`` is split into single slots, and consecutive groups
+    are merged while the product of their grid sizes stays within ``cap``.
+    """
+
+    def size(block: Sequence[int]) -> int:
+        return math.prod(len(slots.grids[i]) for i in block)
+
+    blocks: list[tuple[int, ...]] = []
+    for positions in slots.by_feature:
+        groups: list[list[int]] = []
+        for i in positions:
+            leaf = slots.leaves[i]
+            if groups and slots.leaves[groups[-1][0]] == leaf:
+                groups[-1].append(i)
+            else:
+                groups.append([i])
+        split: list[list[int]] = []
+        for g in groups:
+            split.extend([[i] for i in g] if size(g) > cap else [g])
+        merged: list[list[int]] = []
+        for g in split:
+            if merged and size(merged[-1] + g) <= cap:
+                merged[-1] = merged[-1] + g
+            else:
+                merged.append(g)
+        blocks.extend(tuple(b) for b in merged)
+    return tuple(blocks)
+
+
+class _Budget(Exception):
+    """The refinement's point budget is spent (internal control flow)."""
+
+
+def _line_search(profile: _Profile, start: _Point) -> _Point:
+    """fit/4's per-slot coordinate cycles from ``start`` (module docstring)."""
+    ranges = [range(len(g)) for g in profile.slots.grids]
+    current = start
     for _ in range(profile.config.max_psi_cycles):
         moved = False
         for i, values in enumerate(ranges):
@@ -533,7 +719,181 @@ def _search(profile: _Profile) -> tuple[_Point, PsiSearch]:
                 moved = True
         if not moved:
             break
-    return current, "coordinate"
+    return current
+
+
+def _block_points(
+    grids: tuple[tuple[float, ...], ...], current: _Point, block: tuple[int, ...]
+) -> list[_Point]:
+    points: list[_Point] = []
+    for values in product(*(range(len(grids[i])) for i in block)):
+        moved_to = list(current)
+        for i, j in zip(block, values, strict=True):
+            moved_to[i] = j
+        points.append(tuple(moved_to))
+    return points
+
+
+def _ascend(
+    profile: _Profile,
+    start: _Point,
+    blocks: tuple[tuple[int, ...], ...],
+    limit: int,
+) -> None:
+    """Block-coordinate ascent from ``start``, strict improvements only.
+
+    Each cycle visits the blocks in order. Raises :class:`_Budget` before
+    evaluating a block that would take the search past ``limit`` inner
+    solves.
+    """
+    grids = profile.slots.grids
+
+    def best_in(current: _Point, block: tuple[int, ...]) -> _Point:
+        points = _block_points(grids, current, block)
+        new = sum(p not in profile.solutions for p in points)
+        if profile.solves[0] + new > limit:
+            raise _Budget
+        profile.evaluate(points)
+        best, value = current, profile.score(current)
+        for p in points:
+            if profile.score(p) > value:
+                best, value = p, profile.score(p)
+        return best
+
+    current = start
+    for _ in range(profile.config.max_psi_cycles):
+        moved = False
+        for block in blocks:
+            best = best_in(current, block)
+            if best != current:
+                current, moved = best, True
+        if not moved:
+            return
+
+
+def _search(profile: _Profile) -> tuple[_Point, PsiSearch]:
+    if profile.slots.size <= profile.config.psi_full_grid_max:
+        grids = profile.slots.grids
+        return profile.best(list(product(*(range(len(g)) for g in grids)))), (
+            "exhaustive"
+        )
+    return _coordinate(profile, top=True), "coordinate"
+
+
+def _ranked(profile: _Profile) -> list[_Point]:
+    return sorted(profile.solutions, key=lambda p: (-profile.score(p), p))
+
+
+def _screen(profile: _Profile, k: int) -> list[tuple[int, ...]]:
+    """Feature k alone (on this rule, sharing the block cache): block-coordinate
+    ascent from the best point of a start sub-grid of at most
+    ``psi_block_max`` points; its ``psi_screen`` best points. Memoised per
+    feature of the fitted structure, so views share it."""
+    top = profile.index[k]
+    if top not in profile.screens:
+        alone = profile.view((k,))
+        cap = alone.config.psi_block_max
+        start = alone.best(list(product(*_start_subgrid(alone.slots, cap))))
+        _ascend(alone, start, _search_blocks(alone.slots, cap), 1 << 62)
+        profile.screens[top] = _ranked(alone)[: alone.config.psi_screen]
+    return profile.screens[top]
+
+
+def _coordinate(profile: _Profile, top: bool) -> _Point:
+    """The coordinate search (module docstring) on the fitted structure
+    (``top``) or on one leave-one-out sub-structure (screening starts only)."""
+    slots, config = profile.slots, profile.config
+    n = len(profile.structure.features)
+    starts: list[_Point] = []
+    sub: list[_Point] = []
+    wants_sub = config.psi_line_start or config.psi_starts > 0 if top else False
+    if wants_sub or config.psi_screen == 0:
+        sub = list(product(*_start_subgrid(slots, config.psi_full_grid_max)))
+        profile.evaluate(sub)
+        sub.sort(key=lambda p: (-profile.score(p), p))
+        if top and config.psi_line_start:
+            starts.append(_line_search(profile, sub[0]))
+        starts.extend(sub[: max(config.psi_starts, 0 if top else 1)])
+    screened = [_screen(profile, k) for k in range(n)] if config.psi_screen else []
+
+    def joint(choice: Sequence[int]) -> _Point:
+        out: list[int] = []
+        for k, r in enumerate(choice):
+            out.extend(screened[k][min(r, len(screened[k]) - 1)])
+        return tuple(out)
+
+    if screened:
+        starts.append(joint([0] * n))
+        for k in range(n):
+            for r in range(1, config.psi_screen):
+                starts.append(joint([r if m == k else 0 for m in range(n)]))
+    if top and config.psi_loo_starts and n > 1:
+        # Each (n-1)-feature sub-structure's own fit, one level down, with
+        # the left-out feature's slots from its screening (or the sub-grid).
+        base = joint([0] * n) if screened else sub[0]
+        for m in range(n):
+            rest = tuple(k for k in range(n) if k != m)
+            view = profile.view(rest)
+            end = _coordinate(view, top=False)
+            merged = list(base)
+            for local, k in enumerate(rest):
+                inner = view.slots.by_feature[local]
+                for i, x in zip(slots.by_feature[k], inner, strict=True):
+                    merged[i] = end[x]
+            starts.append(tuple(merged))
+    blocks = _search_blocks(slots, config.psi_block_max)
+    # The budget, in sweeps: one sweep evaluates every block once.
+    sweep = sum(math.prod(len(slots.grids[i]) for i in b) for b in blocks)
+    limit = config.psi_max_sweeps * sweep if config.psi_max_sweeps else 1 << 62
+    unique = list(dict.fromkeys(starts))
+    profile.evaluate(unique)
+    try:
+        for start in unique:
+            _ascend(profile, start, blocks, limit)
+        pairs = _swap_pairs(slots)
+        for _ in range(config.psi_swap_rounds if top else 0):
+            best = _ranked(profile)[0]
+            swapped = [_swapped(best, a, b) for a, b in pairs]
+            profile.evaluate(swapped)
+            better = [p for p in swapped if profile.score(p) > profile.score(best)]
+            if not better:
+                break
+            _ascend(
+                profile,
+                min(better, key=lambda p: (-profile.score(p), p)),
+                blocks,
+                limit,
+            )
+    except _Budget:
+        pass
+    return _ranked(profile)[0]
+
+
+def _swap_pairs(slots: _Slots) -> list[tuple[tuple[int, ...], tuple[int, ...]]]:
+    """Pairs of slot groups whose values can be exchanged: two whole features
+    with the same slot names in order, and two leaves (anywhere, also inside
+    one nested feature) with the same slot names. Fixed order."""
+
+    def names(group: tuple[int, ...]) -> tuple[str, ...]:
+        return tuple(slots.slots[i][1].name for i in group)
+
+    leaves: dict[tuple[int, tuple[int, ...]], list[int]] = {}
+    for i, (k, _) in enumerate(slots.slots):
+        leaves.setdefault((k, slots.leaves[i]), []).append(i)
+    groups = [g for g in slots.by_feature if g] + [tuple(g) for g in leaves.values()]
+    pairs: list[tuple[tuple[int, ...], tuple[int, ...]]] = []
+    for x, a in enumerate(groups):
+        for b in groups[x + 1 :]:
+            if names(a) == names(b) and not set(a) & set(b):
+                pairs.append((a, b))
+    return list(dict.fromkeys(pairs))
+
+
+def _swapped(point: _Point, a: tuple[int, ...], b: tuple[int, ...]) -> _Point:
+    out = list(point)
+    for i, j in zip(a, b, strict=True):
+        out[i], out[j] = point[j], point[i]
+    return tuple(out)
 
 
 @contextmanager
@@ -629,12 +989,17 @@ def fit(
     channels: tuple[ChannelSpec, ...],
     *,
     config: FitConfig | None = None,
+    psi: PsiAssignment | None = None,
 ) -> FitResult:
     """Fit θ (shared across ``datasets``) and profile ψ over its grid.
 
     See the module docstring for the search, the certificate and every
     reported quantity. Uncertified fits are returned flagged, never raised:
     use :meth:`FitResult.require_certified` where only a certified fit will do.
+
+    With ``psi`` (an on-grid assignment), ψ is fixed there and only θ is
+    fitted (``psi_search == "fixed"``): the θ-refit at one ψ point, e.g. the
+    truth's, computed exactly as the search computes that point.
     """
     start = time.perf_counter()
     config = config or FitConfig()
@@ -642,14 +1007,20 @@ def fit(
     link = structure.link
     with _pool(config.workers) as pool:
         profile = _Profile(structure, data, channels, config, pool)
-        point, search = _search(profile)
+        if psi is None:
+            point, search = _search(profile)
+        else:
+            point, search = profile.slots.point(psi), "fixed"
+            profile.evaluate([point])
         sol = profile.solutions[point]
         designs = profile.designs(point)
         if sol is None or designs is None:
             raise FitError("no ψ point of this structure can be evaluated on the data")
-        psi = profile.slots.assignment(point)
+        chosen = profile.slots.assignment(point)
         theta = np.array(sol.theta)
-        jobs = [(theta, structure, psi, d, channels, config.quadrature) for d in data]
+        jobs = [
+            (theta, structure, chosen, d, channels, config.quadrature) for d in data
+        ]
         if pool is not None and len(jobs) > 1:
             errors = list(pool.map(_quadrature_error_job, *zip(*jobs, strict=True)))
         else:
@@ -660,7 +1031,7 @@ def fit(
     tau = np.concatenate(
         [
             _rescaled_increments(
-                theta, structure, psi, d, des, channels, config.quadrature
+                theta, structure, chosen, d, des, channels, config.quadrature
             )
             for d, des in zip(data, designs, strict=True)
         ]
@@ -678,7 +1049,7 @@ def fit(
     return FitResult(
         structure=structure,
         link=link,
-        psi=psi,
+        psi=chosen,
         theta_labels=designs[0].labels,
         theta=sol.theta,
         log_likelihood=total,
@@ -723,6 +1094,49 @@ def evaluate_log_likelihood(
             theta,
             design(result.structure, result.psi, d, channels, quadrature=quadrature),
             result.link,
+        )
+        for d in datasets
+    )
+
+
+def on_grid(structure: Structure, psi: PsiAssignment) -> bool:
+    """Whether ``psi`` is an assignment of ``structure``'s slots on their grids
+    (so ``fit(..., psi=psi)`` accepts it)."""
+    try:
+        _Slots.of(structure).point(psi)
+    except FitConfigError:
+        return False
+    return True
+
+
+def parameter_log_likelihood(
+    structure: Structure,
+    psi: PsiAssignment,
+    coefficients: Coefficients,
+    datasets: Sequence[Dataset],
+    channels: tuple[ChannelSpec, ...],
+    *,
+    quadrature: QuadratureSpec = DEFAULT_QUADRATURE,
+) -> tuple[float, ...]:
+    """log L of given parameters (e.g. a truth's) on each dataset (the inverse
+    of :func:`to_coefficients`). For on-grid ψ this is the rule and the folds
+    a fit of ``structure`` uses; an off-grid ψ also resolves its own scales.
+    """
+    theta = np.array(
+        [coefficients.intercept, *(c for f in coefficients.per_feature for c in f)]
+    )
+    return tuple(
+        log_likelihood(
+            theta,
+            design(
+                structure,
+                psi,
+                d,
+                channels,
+                quadrature=quadrature,
+                allow_off_grid=True,
+            ),
+            structure.link,
         )
         for d in datasets
     )

@@ -121,6 +121,24 @@ not part of the pilot's numbers.
   closed (the "37.32" below) and moves control 3 and every close share.
   Control 2 is genuine. The 9 voids are one rejected bare `python` call each.
   Fix, rescore plan and P4 deltas: `docs/v2/P4-PROPOSAL.md`.
+- **P3 gate read: AG-o-S/anon dev-013 seed 2 in full** (most sandbox use;
+  `.cache/pilot/llm/f390dcf4322f5f99/investigation-26f2388b722f512d.json`).
+  - **Right mechanism class.** The agent correctly concluded the process is a
+    deterministic periodic rate, with no excitation and no mark dependence.
+    That conclusion was well argued from sandbox checks: count dispersion,
+    pair correlation, time-rescaled gap CV, and cross-cycle correlations.
+  - **Its own likelihood search.** It wrote one in the sandbox over gated
+    periodic features. This is the only depth-3 search seen in the pilot.
+  - **The submission is wrong in structure and link.** It submitted an
+    exp-link two-feature approximation; the truth is softplus.
+  - **Experiments as data.** Both of its experiments were empty interventions
+    used as extra data.
+  - **It hit the fitter defect.** On the same data, adding `Excite` to its
+    model lowered log L from -12931 to -14218. A superset fitting worse is
+    impossible for a correct fitter. It then submitted the smaller model
+    because "the framework's search got stuck".
+  - **Honest report.** It says the model is an approximation and says it ran
+    no interventions.
 <!-- /notes -->
 
 ## Go/no-go (SPEC §7.1)

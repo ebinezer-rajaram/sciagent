@@ -74,9 +74,12 @@ B_SYM_10F: Final = "B-sym@10F"
 BASELINES: Final = (ORACLE, B_LIB, B_NP, B_RAND, B_SYM, B_SPARSE, PLANTED, B_SYM_10F)
 
 #: The scorer's version: held-out gap, structure, battery, efficiency curve.
-#: Bump when any scoring code or constant changes.
+#: Bump when any scoring code or constant changes. /2 (2026-10-03): the
+#: control-2 rank rule, the gap-closed noise flag and the ORACLE underfit
+#: requirement of control 1 (P4-PROPOSAL Δ10, T4, §2.4) change what is read
+#: from a score, so fit/5 scores are addressed apart from fit/4's.
 METRIC_VERSION: Final = (
-    f"sciagent.campaign.score/1|battery:{battery.BATTERY_HORIZON}"
+    f"sciagent.campaign.score/2|battery:{battery.BATTERY_HORIZON}"
     f"x{battery.REPLICATES}cap{battery.BATTERY_MAX_EVENTS}"
 )
 #: The data every unit sees: the world's observational log and the held-out log.
@@ -362,6 +365,11 @@ def session_text(arm: LLMArm, config: CampaignConfig) -> str:
     )
 
 
+def session_config_digest(arm: LLMArm, config: CampaignConfig) -> str:
+    """The SHA-256 of :func:`session_text` (the session key's config field)."""
+    return _sha(session_text(arm, config))
+
+
 def session_key(
     unit: Unit, truth: TruthEntry, env: CampaignEnvironment, config: CampaignConfig
 ) -> ExperimentKey:
@@ -378,7 +386,7 @@ def session_key(
             "system": unit.system,
             "truth": truth.id,
             "truth_digest": truth.digest,
-            "session_config": _sha(session_text(arm, config)),
+            "session_config": session_config_digest(arm, config),
         },
         "none",
     )

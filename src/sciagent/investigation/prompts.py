@@ -94,8 +94,11 @@ given the past):
 
 You choose the link g and the features phi_k. The framework fits every number:
 the coefficients theta and each feature's shape parameters psi (profiled over
-the fixed grids below, globally optimal on the grid, with a convex-optimality
-certificate). The language has no numeric literals.
+the fixed grids below). When a structure has at most 512 psi combinations, every
+one is tried and the fit is the best on the grid; otherwise a deterministic
+local search is used, which can miss the best grid point. For the chosen psi,
+theta is optimal, with a convex-optimality certificate. The language has no
+numeric literals.
 
     Structure := [link=identity; | link=exp; | link=softplus;] Feature + ...
                  (0 to {MAX_FEATURES} features; `null` is the intercept-only model)

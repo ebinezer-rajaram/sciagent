@@ -798,3 +798,38 @@ of the feature's slot grids. On the dev-013 superset it reached 2304 blocks and
 **Also changed.** `tests/conftest.py` now pins BLAS to one thread before numpy
 loads, matching the campaign. At default threads, each process commits about
 2.2 GB.
+
+## 2026-10-06 — P3.1 fixes after defect hunt B
+
+An independent hunt checked the campaign, budgets, replay, rescore and store on
+all 240 pilot sessions. All of those properties held. It also found two analysis
+defects and two latent ones, fixed test-first in 07be653:
+
+1. **A −inf reference no longer crashes `analysis.derive`.**
+   - Gap closed is None when B-lib or the submitter is not finite.
+   - An ORACLE at −inf on a (truth, seed) leaves every gap there undefined.
+     That truth fails control 1 (margin −inf) and is dropped, because an ORACLE
+     that gives a held-out event zero intensity is not an upper bound. This is
+     the preregistered drop rule applied to a case the code did not reach
+     before. The fit/4 pilot has no ORACLE −inf.
+   - B-lib at −inf keeps the preregistered finite-only rule.
+2. **A failed ORACLE unit now counts as "unrecorded"** in control 1's underfit
+   half. It was skipped, which passed a failure as zero flags.
+3. **`CampaignConfig` refuses LLM arms unless `fit_config.key()` equals
+   `tools.FIT_CONFIG.key()`.** Agents always fit with the latter, while the
+   session key records the former.
+4. **The void policy excuses a foreign result only if its text is exactly the
+   CLI's "No such tool available: {name}" error.** The pilot's 9 denials match
+   exactly.
+
+No session text, digest or key changed: the rescore still finds all 240 pilot
+sessions at the same addresses.
+
+**Open for the user (F5):** some address text is hand-written rather than
+derived. Examples:
+- B-rand's `max_draws_factor`;
+- the ORACLE text;
+- the B-lib members by type name;
+- `METRIC_VERSION`, which covers 3 of about 13 battery constants.
+
+These rely on manual version bumps.

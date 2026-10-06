@@ -49,6 +49,8 @@ from sciagent.harness.live import AgentConfig, SessionDriver, run_investigation
 from sciagent.harness.record import SessionRecord
 from sciagent.harness.replay import LayerFactory, ReplayReport, replay
 from sciagent.harness.tools import ToolLayer
+from sciagent.harness.voids import INFRASTRUCTURE, assess, foreign_reasons
+from sciagent.harness.voids import OUT_OF_BOUNDS as OUT_OF_BOUNDS_REASON
 from sciagent.investigation.prompts import (
     Arm,
     PromptError,
@@ -183,7 +185,11 @@ class InvestigationAgentConfig(AgentConfig):
 
 @dataclass(frozen=True)
 class InvestigationOutcome:
-    """What one finished investigation produced (framework-side)."""
+    """What one finished investigation produced (framework-side).
+
+    ``void`` and ``void_reasons`` follow the void policy of
+    :mod:`sciagent.harness.voids` (P4 Δ8); ``unknown_tool_attempts`` counts the
+    denied calls to unknown tool names, which do not void the run."""
 
     record_path: Path
     head: str
@@ -194,6 +200,7 @@ class InvestigationOutcome:
     fits_used: int
     void: bool
     void_reasons: tuple[str, ...]
+    unknown_tool_attempts: int
     predictions: tuple[PredictionOutcome, ...]
     num_turns: int | None
     wall_s: float | None
@@ -393,9 +400,17 @@ def run(
     record = result.record
     path = out_dir / f"investigation-{record.head[:16]}.json"
     record.save(path)
-    reasons = [f"foreign tool: {name}" for name in result.foreign_tool_uses]
-    reasons += [f"infrastructure: {f}" for f in lab.infrastructure_faults]
-    reasons += [f"out of bounds: {h}" for h in out_of_bounds(record)]
+    # The void policy (P4 Δ8) over every raw reason at once, so the reasons
+    # come out in the order the analysis gets from a cell storing these raw
+    # reasons (``sciagent.campaign.voids``).
+    verdict = assess(
+        [
+            *foreign_reasons(result.foreign_tool_uses),
+            *(INFRASTRUCTURE + f for f in lab.infrastructure_faults),
+            *(OUT_OF_BOUNDS_REASON + h for h in out_of_bounds(record)),
+        ],
+        record,
+    )
     results = record.of_kind("result")
     usage = results[-1].body.get("usage") if results else None
     wall = record.timing.get("wall_s")
@@ -407,8 +422,9 @@ def run(
         report=lab.report,
         experiments_used=lab.world.experiments_run,
         fits_used=lab.fits_used,
-        void=bool(reasons),
-        void_reasons=tuple(reasons),
+        void=verdict.void,
+        void_reasons=verdict.reasons,
+        unknown_tool_attempts=verdict.unknown_tool_attempts,
         predictions=lab.prediction_outcomes,
         num_turns=result.num_turns,
         wall_s=None if wall is None else float(wall),

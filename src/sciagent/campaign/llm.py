@@ -14,8 +14,12 @@ ceiling) is a result. So is a run the harness aborted for a reason that is
 about the run: :class:`~sciagent.harness.errors.HermeticityError` (the session
 offered a foreign tool) and :class:`~sciagent.harness.errors.HarnessFaultError`
 (a tool handler raised; a framework bug, recorded so it is visible). A void run
-(foreign tool use, sandbox infrastructure fault, out-of-bounds code) is a
-result with ``void = 1``.
+under the void policy of :mod:`sciagent.harness.voids` (P4 Δ8: a foreign tool
+that executed or has no recorded denial, server tool use, a sandbox
+infrastructure fault, out-of-bounds code) is a result with ``void = 1``. A
+denied call to an unknown tool name does not void it; the reading counts it
+in ``unknown_tool_attempts``, and ``void_reasons`` in the detail are the
+policy's.
 
 Retryable (:attr:`SessionOutcome.retryable`), never recorded as a result: the
 SDK session failing (:class:`~sciagent.harness.errors.SessionFailedError`), a
@@ -217,6 +221,7 @@ def run_session(
         else -1.0,
         "submitted": 0.0 if outcome.submission is None else 1.0,
         "void": 1.0 if outcome.void else 0.0,
+        "unknown_tool_attempts": float(outcome.unknown_tool_attempts),
         "turns": float(outcome.num_turns or 0),
         "wall_s": float(outcome.wall_s or 0.0),
         "fits_used": float(outcome.fits_used),

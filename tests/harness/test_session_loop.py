@@ -138,13 +138,16 @@ def test_the_options_are_hermetic() -> None:
     assert options.model == HAIKU
 
 
-def test_a_foreign_tool_use_voids_the_run() -> None:
+def test_a_denied_foreign_tool_use_is_recorded_and_counted_not_void() -> None:
+    """P4 Δ8: a denied call to a name the session does not offer ran nothing;
+    it is an unknown tool attempt (``tests/harness/test_harness_voids.py``)."""
     script = (
         Step(calls=(("Bash", {"command": "ls"}),), raw_names=True),
         Step(calls=(("submit", {"answer": "x", "report": ""}),)),
     )
     result = run_investigation(_config(), toy_layer(1), driver=ScriptedDriver(script))
-    assert result.void
+    assert result.foreign_tool_uses == ("Bash",)
+    assert not result.void and result.unknown_tool_attempts == 1
     assert result.outcome == "submitted"
     kinds = [e.kind for e in result.record.entries]
     assert "foreign_tool_result" in kinds

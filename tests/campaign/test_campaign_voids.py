@@ -27,7 +27,9 @@ from sciagent.campaign.voids import (
     denial_text,
     session_void,
 )
+from sciagent.harness.record import SessionRecord
 from sciagent.harness.scripted import ScriptedDriver, Step
+from sciagent.harness.voids import assess
 from sciagent.systems.llm.agent_sdk_provider import CONTAMINATING_VARIABLES
 
 DONE = {"status": 1.0, "void": 1.0, "submitted": 1.0}
@@ -134,9 +136,10 @@ BARE_PYTHON = (
 def test_a_session_with_a_denied_bare_name_is_scored_and_counted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """End to end through the real harness: it flags the bare name (stored
-    void = 1, as in the pilot), the policy reclassifies it from the record, the
-    driver scores it, and the analysis keeps its row and counts the attempt."""
+    """End to end through the real harness: the denied bare name is counted
+    in the stored reading (``unknown_tool_attempts = 1``) and does not void it
+    (``void = 0``; the pilot's ``harness/1`` stored 1), the driver scores it,
+    and the analysis keeps its row and counts the attempt."""
     _clean(monkeypatch)
     scored: list[ScoreJob] = []
 
@@ -165,9 +168,9 @@ def test_a_session_with_a_denied_bare_name_is_scored_and_counted(
     unit = Unit("hawkes", 1, "AG-c-H/named")
     cell = c.store.cell(session_key(unit, truth, environment(), config).digest)
     c.close()
-    assert float.fromhex(cell["reading"]["void"]) == 1.0  # the harness's flag
-    assert cell["detail"]["session"]["void_reasons"] == ["foreign tool: python"]
     reading = {k: float.fromhex(v) for k, v in cell["reading"].items()}
+    assert reading["void"] == 0.0 and reading["unknown_tool_attempts"] == 1.0
+    assert cell["detail"]["session"]["void_reasons"] == []
     status = session_void(tmp_path, reading, cell["detail"]["session"])
     assert not status.void and status.unknown_tool_attempts == 1
     assert len(scored) == 1
@@ -237,3 +240,148 @@ def test_a_void_session_is_not_scored_and_the_analysis_drops_it(
     assert session.void.void
     assert tab.rows == ()
     assert analysis.void_counts(tab) == {unit.system: 1}
+
+
+def test_an_executed_foreign_tool_is_stored_void_and_not_scored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clean(monkeypatch)
+
+    def refuse(job: ScoreJob) -> UnitResult:
+        raise AssertionError("a void session must not be scored")
+
+    monkeypatch.setattr(driver_module, "run_score_job", refuse)
+    config = tiny_config(seeds=(1,), llm_arms=(LLMArm("AG-c", "named"),))
+    truth = entry("hawkes")
+    executed = (
+        Step(calls=(("Bash", {"command": "ls"}),), raw_names=True, foreign="executed"),
+        *BARE_PYTHON[1:],
+    )
+    c = Campaign(
+        tmp_path,
+        environment(),
+        config,
+        [truth],
+        DriverSettings(
+            workers=0,
+            poll_s=0.05,
+            run_baselines=False,
+            driver_factory=lambda u: ScriptedDriver(executed),
+        ),
+    )
+    c.run()
+    unit = Unit("hawkes", 1, "AG-c-H/named")
+    cell = c.store.cell(session_key(unit, truth, environment(), config).digest)
+    c.close()
+    reading = {k: float.fromhex(v) for k, v in cell["reading"].items()}
+    assert reading["void"] == 1.0 and reading["unknown_tool_attempts"] == 0.0
+    session = cell["detail"]["session"]
+    assert session["void_reasons"] == ["foreign tool executed: Bash"]
+    status = session_void(tmp_path, reading, session)
+    assert status.void and not status.reclassified
+
+
+#: The pilot's record shapes (the tests above), as (stored reasons, foreign
+#: tool results in record order, the result's usage).
+PILOT_SHAPES: dict[str, tuple[tuple[str, ...], tuple[ForeignResult, ...], Any]] = {
+    "denied twice": (
+        ("foreign tool: python", "foreign tool: python"),
+        (
+            ForeignResult("python", True, PILOT_DENIAL),
+            ForeignResult("python", True, PILOT_DENIAL),
+        ),
+        {},
+    ),
+    "executed and denied": (
+        ("foreign tool: Bash", "foreign tool: python"),
+        (
+            ForeignResult("Bash", False, "ran"),
+            ForeignResult("python", True, PILOT_DENIAL),
+        ),
+        {},
+    ),
+    "no recorded denial": (("foreign tool: python",), (), {}),
+    "server block": (("foreign tool: server:web_search",), (), {}),
+    "server usage": ((), (), {"server_tool_use": {"web_search_requests": 1}}),
+    "out of bounds": (("out of bounds: call 3: /proc\b",), (), {}),
+    "infrastructure": (("infrastructure: sandbox died",), (), {}),
+    "clean": ((), (), {}),
+    "everything": (
+        (
+            "foreign tool: Bash",
+            "infrastructure: sandbox died",
+            "out of bounds: call 3: /proc\b",
+            "foreign tool: server:web_search",
+            "foreign tool: python",
+        ),
+        (
+            ForeignResult("python", True, PILOT_DENIAL),
+            ForeignResult("Bash", True, denial_text("Bash")),
+        ),
+        {"server_tool_use": {"web_fetch_requests": 2}},
+    ),
+}
+
+
+def _pilot_record(results: tuple[ForeignResult, ...], usage: Any) -> SessionRecord:
+    record = SessionRecord()
+    for k, r in enumerate(results):
+        record.append(
+            "foreign_tool_result",
+            {
+                "tool_use_id": f"toolu_{k:03d}",
+                "name": r.name,
+                "text": r.text,
+                "is_error": r.is_error,
+            },
+        )
+    record.append("result", {"subtype": "success", "usage": usage})
+    return record
+
+
+@pytest.mark.parametrize("shape", sorted(PILOT_SHAPES))
+def test_harness_and_analysis_classify_the_pilot_shapes_alike(
+    shape: str, tmp_path: Path
+) -> None:
+    """The harness classifies a record at run time; the analysis classifies
+    the stored cell, reading the saved record. On one record they agree."""
+    reasons, results, usage = PILOT_SHAPES[shape]
+    record = _pilot_record(results, usage)
+    (tmp_path / "llm").mkdir()
+    record.save(tmp_path / "llm" / "investigation-x.json")
+    at_harness = assess(reasons, record)
+    detail = {
+        "void_reasons": list(reasons),
+        "usage": usage,
+        "record_dir": "llm",
+        "record": "investigation-x.json",
+    }
+    at_analysis = session_void(
+        tmp_path, {"status": 1.0, "void": 1.0 if reasons else 0.0}, detail
+    )
+    assert at_analysis.void == at_harness.void
+    assert at_analysis.reasons == at_harness.reasons
+    assert at_analysis.unknown_tool_attempts == at_harness.unknown_tool_attempts
+    # A cell written under the policy stores the harness's verdict; reading it
+    # back gives the same verdict without the record.
+    stored = classify(
+        {
+            "status": 1.0,
+            "void": 1.0 if at_harness.void else 0.0,
+            "unknown_tool_attempts": float(at_harness.unknown_tool_attempts),
+        },
+        {"void_reasons": list(at_harness.reasons), "usage": usage},
+        (),
+    )
+    assert (stored.void, stored.reasons, stored.unknown_tool_attempts) == (
+        at_harness.void,
+        at_harness.reasons,
+        at_harness.unknown_tool_attempts,
+    )
+
+
+def test_the_campaign_module_re_exports_the_harness_classifier() -> None:
+    from sciagent.harness import voids as harness_voids
+
+    assert classify is harness_voids.classify
+    assert ForeignResult is harness_voids.ForeignResult

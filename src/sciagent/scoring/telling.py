@@ -208,15 +208,24 @@ def telling_diagnostic(
     return Telling.from_table(runs.table, menu.designs, menu.diagnostics, runs.stopped)
 
 
+def observed(
+    name: str,
+    channel_args: Mapping[str, ArgValue],
+    computed: Iterable[tuple[str, Mapping[str, ArgValue]]],
+) -> bool:
+    """True when some computed ``(name, args)`` is the diagnostic ``name`` on
+    the channels ``channel_args`` (time arguments are the observer's own)."""
+    for got, args in computed:
+        if got != name:
+            continue
+        if all(args.get(k) == v for k, v in channel_args.items()):
+            return True
+    return False
+
+
 def was_observed(
     telling: Telling, computed: Iterable[tuple[str, Mapping[str, ArgValue]]]
 ) -> bool:
     """True when some ``(name, args)`` computed on experiment data is d*."""
     target = telling.diagnostic
-    channels = dict(target.channel_args)
-    for name, args in computed:
-        if name != target.name:
-            continue
-        if all(args.get(k) == v for k, v in channels.items()):
-            return True
-    return False
+    return observed(target.name, dict(target.channel_args), computed)

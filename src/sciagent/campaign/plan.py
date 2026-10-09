@@ -46,6 +46,18 @@ still find them (:mod:`sciagent.campaign.rescore`).
 **Variants and policies.** An :class:`LLMArm` with a non-default prompt
 variant or a policy has its own system name (:meth:`LLMArm.system`), so two
 of them never share a unit.
+
+**The B-sym policy arms and the telling unit** (SPEC §4.2; P4 Δ11, WP9):
+:data:`POLICY_UNITS`, run only when named in ``CampaignConfig.baselines`` (the
+default plan is unchanged). ``B-sym+{random,EIG,FSD}`` run B-sym in two epochs
+around ``experiments`` policy-chosen experiments
+(:mod:`sciagent.systems.v2.policy_search`) on the (truth, seed)'s world;
+``B-sym+truthFSD`` is the control-5 arm (FSD against the truth, with B-lib's
+pick as the parametric side); ``telling`` computes the (truth, seed)'s telling
+diagnostic (:mod:`sciagent.scoring.telling`). Their configuration text holds
+the policy's own config (:func:`policy_arm_config`; P4 Δ11 decision 16) and
+:class:`PolicyArmSettings`, so a change to either moves their addresses and
+never an existing unit's. The telling unit's key has ``kind = "telling"``.
 """
 
 from __future__ import annotations
@@ -56,11 +68,15 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Final, Literal
 
+import numpy as np
+
 from sciagent.core.errors import SciAgentError
 from sciagent.core.program import stable_key
 from sciagent.core.types import DataVersion, EnvVersion, FrozenDict, MetricVersion, Seed
+from sciagent.glm.data import Dataset
 from sciagent.glm.fit import FIT_VERSION, FitConfig
 from sciagent.glm.grammar import ChannelSpec, Structure
+from sciagent.glm.interventions import Experiment
 from sciagent.glm.simulate import MarkSampler
 from sciagent.glm.syntax import render
 from sciagent.harness.live import HARNESS_VERSION
@@ -77,11 +93,28 @@ from sciagent.investigation.prompts import (
 from sciagent.investigation.runner import EnvironmentSpec, rendered_config
 from sciagent.investigation.tools import FIT_CONFIG as AGENT_FIT_CONFIG
 from sciagent.investigation.view import Condition
+from sciagent.investigation.world import MAX_EVENTS as WORLD_MAX_EVENTS
 from sciagent.investigation.world import OBSERVATIONAL_HORIZON, TruthSpec
 from sciagent.nonparam.wiener_hopf import DEFAULT as WIENER_HOPF_DEFAULT
 from sciagent.registry.store import ExperimentKey
 from sciagent.scoring import battery
+from sciagent.scoring.battery import Simulator
 from sciagent.scoring.heldout import HELDOUT_HORIZON
+from sciagent.scoring.telling import TELLING_REPLICATES
+from sciagent.systems.v2.policies import (
+    BIC_WEIGHTS,
+    ENTERTAINED_MAX,
+    POLICY_HORIZON,
+    POLICY_MAX_EVENTS,
+    REPLICATES,
+    EIGPolicy,
+    FSDPolicy,
+    Policy,
+    RandomPolicy,
+    Weighting,
+)
+from sciagent.systems.v2.policy_controls import TruthFSDPolicy
+from sciagent.systems.v2.policy_search import epoch_budgets
 from sciagent.systems.v2.search import GPConfig, StructureSampler
 from sciagent.systems.v2.sparse import SparseConfig
 from sciagent.systems.v2.systems import GrammarMember, LibraryEntry, ModelMember
@@ -97,6 +130,26 @@ B_SYM_10F: Final = "B-sym@10F"
 
 #: Every non-LLM system, in report order.
 BASELINES: Final = (ORACLE, B_LIB, B_NP, B_RAND, B_SYM, B_SPARSE, PLANTED, B_SYM_10F)
+
+#: The B-sym policy arms (SPEC §4.2; P4 Δ11) and control 5's truth-aware arm.
+B_SYM_RANDOM: Final = "B-sym+random"
+B_SYM_EIG: Final = "B-sym+EIG"
+B_SYM_FSD: Final = "B-sym+FSD"
+B_SYM_TRUTH_FSD: Final = "B-sym+truthFSD"
+#: The (truth, seed)'s telling diagnostic (SPEC §4.2; P4 Δ11 choice 12).
+TELLING: Final = "telling"
+#: Each policy arm's policy.
+ARM_POLICIES: Final = {
+    B_SYM_RANDOM: "random",
+    B_SYM_EIG: "EIG",
+    B_SYM_FSD: "FSD",
+    B_SYM_TRUTH_FSD: "truthFSD",
+}
+POLICY_ARMS: Final = (B_SYM_RANDOM, B_SYM_EIG, B_SYM_FSD, B_SYM_TRUTH_FSD)
+#: Units run only when named in ``CampaignConfig.baselines`` (module docstring).
+POLICY_UNITS: Final = (*POLICY_ARMS, TELLING)
+#: Every system ``CampaignConfig.baselines`` may name.
+KNOWN_BASELINES: Final = (*BASELINES, *POLICY_UNITS)
 
 #: The scorer's version: held-out gap, structure, battery, efficiency curve.
 #: Bump when any scoring code or constant changes. /2 (2026-10-03): the
@@ -169,6 +222,106 @@ class CampaignEnvironment:
 # --------------------------------------------------------------------------
 # Configuration
 # --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PolicyArmSettings:
+    """The B-sym policy arms' and the telling unit's settings (all addressed).
+
+    The defaults are the policy core's (``systems/v2/policies.py``) and
+    ``scoring/telling.py``'s. ``max_events`` is the event cap of the policies'
+    own simulations (past it a replicate is undefined): the lever on FSD's cost
+    on exploding designs (handoff 2026-10-06, decision 3), left at the core's
+    default until that decision is taken. ``weighting`` is the EIG policy's
+    (BIC weights, or tempered; handoff decision 2). ``entertained`` is the
+    entertained set's size. The telling unit has its own replicates and cap.
+    """
+
+    replicates: int = REPLICATES
+    max_events: int = POLICY_MAX_EVENTS
+    weighting: Weighting = BIC_WEIGHTS
+    entertained: int = ENTERTAINED_MAX
+    telling_replicates: int = TELLING_REPLICATES
+    telling_max_events: int = POLICY_MAX_EVENTS
+
+    def __post_init__(self) -> None:
+        for name in ("replicates", "telling_replicates"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 2:
+                raise CampaignError(f"{name} must be an integer ≥ 2, got {value!r}")
+        for name in ("max_events", "telling_max_events"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise CampaignError(f"{name} must be an integer ≥ 1, got {value!r}")
+        if not 1 <= self.entertained <= ENTERTAINED_MAX:
+            raise CampaignError(
+                f"entertained must lie in 1..{ENTERTAINED_MAX}, got {self.entertained}"
+            )
+
+
+class _ConfigOnly:
+    """Stands in for the truth and B-lib's pick when only a policy's
+    configuration is read (it never simulates)."""
+
+    def simulate_experiment(
+        self,
+        experiment: Experiment,
+        rng: np.random.Generator,
+        *,
+        label: str = "experiment",
+    ) -> Dataset:
+        raise CampaignError("a configuration placeholder cannot simulate")
+
+
+def build_policy(
+    system: str,
+    seed: int,
+    settings: PolicyArmSettings,
+    *,
+    truth: Simulator | None = None,
+    comparator: Simulator | None = None,
+) -> Policy:
+    """The policy of a B-sym policy arm, seeded with the investigation seed.
+
+    ``truth`` and ``comparator`` (B-lib's pick on the observational log) are
+    required by, and read only by, ``B-sym+truthFSD``: the truth enters there,
+    at the caller (``execute.py``), as it does for ORACLE.
+    """
+    match ARM_POLICIES.get(system):
+        case "random":
+            return RandomPolicy(seed)
+        case "EIG":
+            return EIGPolicy(
+                seed,
+                replicates=settings.replicates,
+                max_events=settings.max_events,
+                weighting=settings.weighting,
+            )
+        case "FSD":
+            return FSDPolicy(
+                seed, replicates=settings.replicates, max_events=settings.max_events
+            )
+        case "truthFSD":
+            if truth is None or comparator is None:
+                raise CampaignError(
+                    f"{system} needs the truth and B-lib's pick as its comparator"
+                )
+            return TruthFSDPolicy(
+                truth,
+                seed,
+                comparator=comparator,
+                replicates=settings.replicates,
+                max_events=settings.max_events,
+            )
+    raise CampaignError(f"{system!r} is not a policy arm")
+
+
+def policy_arm_config(system: str, settings: PolicyArmSettings) -> str:
+    """The arm's policy configuration (canonical JSON; no seed, no truth)."""
+    placeholder = _ConfigOnly()
+    return build_policy(
+        system, 0, settings, truth=placeholder, comparator=placeholder
+    ).config
 
 
 #: What a policy name may hold: it is part of a system name.
@@ -249,15 +402,20 @@ class CampaignConfig:
     gp: GPConfig = field(default_factory=GPConfig)
     sparse: SparseConfig = field(default_factory=SparseConfig)
     fit_config: FitConfig = field(default_factory=FitConfig)
+    #: The B-sym policy arms' and the telling unit's settings; addressed in
+    #: those units only.
+    policy: PolicyArmSettings = field(default_factory=PolicyArmSettings)
 
     def __post_init__(self) -> None:
         if not self.seeds or len(set(self.seeds)) != len(self.seeds):
             raise CampaignError("seeds must be non-empty and distinct")
         if not set(self.control_seeds) <= set(self.seeds):
             raise CampaignError("control seeds must be campaign seeds")
-        unknown = sorted(set(self.baselines) - set(BASELINES))
+        unknown = sorted(set(self.baselines) - set(KNOWN_BASELINES))
         if unknown:
             raise CampaignError(f"unknown baseline systems {unknown}")
+        if set(self.baselines) & set(POLICY_ARMS) and self.fits < 2:
+            raise CampaignError("the B-sym policy arms need fits ≥ 2 (two epochs)")
         if self.control_truths is not None and self.control_truths < 0:
             raise CampaignError("control_truths must be ≥ 0")
         if self.fits < 1 or self.experiments < 0 or self.control_factor < 1:
@@ -387,7 +545,42 @@ def system_config_text(
             return f"budget={budget}; gp={config.gp!r}; seeds={seeds}"
         case "B-sparse":
             return f"sparse: {config.sparse!r}"
+        case "B-sym+random" | "B-sym+EIG" | "B-sym+FSD" | "B-sym+truthFSD":
+            return _policy_arm_text(system, env, config, seeds)
+        case "telling":
+            s = config.policy
+            return (
+                f"telling: member=B-lib; library: {_library_text(env.library)}; "
+                f"replicates={s.telling_replicates}; "
+                f"max_events={s.telling_max_events}; "
+                f"design_horizon={POLICY_HORIZON!r}; menus=full, frozen on obs; "
+                f"argmax=diagnostic then design, ties to menu order; "
+                f"stopped runs dropped"
+            )
     raise CampaignError(f"unknown system {system!r}")
+
+
+def _policy_arm_text(
+    system: str, env: CampaignEnvironment, config: CampaignConfig, seeds: str
+) -> str:
+    first, second = epoch_budgets(config.fits)
+    s = config.policy
+    text = (
+        f"budget={config.fits}; epochs={first}+{second}; "
+        f"experiments={config.experiments}; gp={config.gp!r}; seeds={seeds}; "
+        f"policy={policy_arm_config(system, s)}; policy_seed=investigation seed; "
+        f"world_cap={WORLD_MAX_EVENTS}, truncating; stopped=used, no data"
+    )
+    if system == B_SYM_RANDOM:
+        return text + "; entertained=none"
+    text += (
+        f"; entertained=top {s.entertained} of epoch 1 by BIC, refitted on all "
+        f"data; design_horizon={POLICY_HORIZON!r}; menus=full, frozen on obs; "
+        f"fallback=random"
+    )
+    if system == B_SYM_TRUTH_FSD:
+        text += f"; comparator=B-lib: {_library_text(env.library)}"
+    return text
 
 
 def _key(
@@ -419,7 +612,7 @@ def baseline_key(
         config,
         unit.seed,
         {
-            "kind": "baseline",
+            "kind": "telling" if unit.system == TELLING else "baseline",
             "system": unit.system,
             "truth": truth.id,
             "truth_digest": truth.digest,

@@ -722,7 +722,12 @@ def _invariants() -> ModuleType:
 
 @pytest.mark.parametrize(
     "path",
-    [SYSTEMS / "policies.py", SYSTEMS / "policy_controls.py", SCORING / "telling.py"],
+    [
+        SYSTEMS / "policies.py",
+        SYSTEMS / "policy_controls.py",
+        SYSTEMS / "policy_search.py",
+        SCORING / "telling.py",
+    ],
     ids=lambda p: p.name,
 )
 def test_every_fold_uses_core_reductions(path: Path) -> None:

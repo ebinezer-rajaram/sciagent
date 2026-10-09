@@ -160,6 +160,9 @@ def pointproc_environment(records: tuple[TruthRecord, ...]) -> CampaignEnvironme
             anon_channels=ANON_CHANNELS,
             forbidden=FORBIDDEN,
             resolve=RecordResolver(records),
+            # The EIG and FSD policy arms simulate fitted structures with the
+            # environment's mark law (P4 Δ11); it enters no session address.
+            marks=v2.mark_sampler,
         ),
     )
 

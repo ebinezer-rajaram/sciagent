@@ -572,8 +572,12 @@ def main() -> None:
         for x in sess:
             o = str(x.detail.get("outcome"))
             outcomes[o] = outcomes.get(o, 0) + 1
-        evaluated = sum(r.get("predictions_evaluated", 0.0) for r in rd)
-        covered = sum(r.get("predictions_covered", 0.0) for r in rd)
+        tally = analysis.prediction_tally(tab, s)
+        if tally.read:
+            any_prediction = pct(tally.predicting / tally.read)
+            coverage = f"{tally.covered}/{tally.evaluated}"
+        else:  # every session is a policy arm's: its predictions are not read
+            any_prediction = coverage = "excl."
         crows.append(
             [
                 s,
@@ -588,11 +592,12 @@ def main() -> None:
                 med("fits_used"),
                 med("experiments_used"),
                 pct(sum(r.get("experiments_used", 0.0) == 0.0 for r in rd) / len(rd)),
-                pct(sum(r.get("predictions", 0.0) > 0.0 for r in rd) / len(rd)),
+                any_prediction,
                 str(sum(x.void.void for x in sess)),
                 str(sum(x.void.stored_void for x in sess)),
                 str(sum(x.void.unknown_tool_attempts for x in sess)),
-                f"{int(covered)}/{int(evaluated)}",
+                coverage,
+                f"{tally.excluded} ({tally.excluded_predictions})",
             ]
         )
     L += table(
@@ -614,13 +619,16 @@ def main() -> None:
             "void (stored)",
             "unknown-tool attempts",
             "predictions covered/evaluated",
+            "policy (excl.): sessions (predictions)",
         ],
         crows,
     )
     L += [
         "Medians per investigation. Prediction coverage is SPEC §4.4 calibration "
         "raw; falsification-seeking, revision and stopping need a belief timeline "
-        "the record does not carry explicitly, and are not computed here.",
+        "the record does not carry explicitly, and are not computed here. "
+        "Predictions made in a policy arm are not read (P4 Δ11: the agent did "
+        "not choose the experiment); the last column counts what was left out.",
         "",
     ]
     flagged_runs = [x for x in tab.sessions if x.void.void or x.void.stored_void]

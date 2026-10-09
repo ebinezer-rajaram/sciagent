@@ -1085,8 +1085,11 @@ still runs first.
 
 AG-S-boed is `LLMArm("AG-c", "named", policy="EIG")` on Sonnet:
 `AG-c-S/named+policy=EIG`. Predictions made in a policy arm are left out of
-contrast C6, because the agent did not choose the experiment they test. This
-rule is to be applied at analysis; no code applies it yet.
+contrast C6, because the agent did not choose the experiment they test. The
+analysis applies it (2026-10-09) in `behaviour_sessions`, keyed on the arm's
+policy: such a session's predictions leave calibration, falsification-seeking
+and revision, and the session is counted as excluded. Its score and its
+stopping are kept, since the agent still chose when to experiment and submit.
 
 ## 2026-10-09 — WP10 gate: any typed error inside a policy decision is a void
 

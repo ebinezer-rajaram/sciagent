@@ -61,6 +61,17 @@ system, so its cell becomes :attr:`Table.telling`, and
 §4.2 from the two. The verdict reads :data:`~sciagent.campaign.plan.BASELINES`
 only, so these units never enter it.
 
+**Policy-arm predictions** (P4 Δ11, plan choice 10). In an LLM policy arm
+(``AG-c-S+{random,EIG,FSD}``, AG-S-boed: :attr:`LLMArm.policy` set, which is
+in the session's address and in its record's ``InvestigationSpec.policy``) the
+framework chose every experiment, so the agent's predictions about them are
+left out of the §4.4 measures read from predictions: calibration,
+falsification-seeking and revision (C6). :func:`behaviour_sessions` is the one
+place that rule is applied, keyed on :attr:`Session.policy`, never on the
+system name. An excluded session is counted (:attr:`PredictionTally.excluded`),
+as a void is, not dropped; its score row and its stopping are unaffected (the
+agent still chose when to run an experiment and when to submit).
+
 **Shares** are over truths, each truth weighted equally (its value is the
 fraction of its seeds with the property), as in
 :mod:`sciagent.scoring.gonogo`.
@@ -178,6 +189,10 @@ class Session:
     detail: Mapping[str, Json]
     void: VoidStatus
     env_version: str
+    #: The arm's experiment-choice policy (P4 Δ11); None when the agent
+    #: designs its own experiments. When set, its predictions are not read
+    #: (:func:`behaviour_sessions`).
+    policy: str | None = None
 
 
 @dataclass(frozen=True)
@@ -326,6 +341,7 @@ def load_rows(
                 detail,
                 void,
                 str(skey.env_version),
+                config.arm_of(u.system).policy,
             )
         )
         ckey = score_key(u, skey, env, config)
@@ -352,6 +368,61 @@ def void_counts(table: Table) -> dict[str, int]:
         if x.void.void:
             out[x.system] = out.get(x.system, 0) + 1
     return dict(sorted(out.items()))
+
+
+def behaviour_sessions(
+    table: Table, system: str
+) -> tuple[tuple[Session, ...], tuple[Session, ...]]:
+    """A system's sessions whose predictions the §4.4 measures read, and those
+    excluded because a policy chose their experiments (module docstring).
+
+    Every measure read from predictions (calibration, falsification-seeking,
+    revision) must take its sessions from here. Void sessions are not
+    filtered: that is the void policy's business, not this rule's.
+    """
+    mine = [x for x in table.sessions if x.system == system]
+    return (
+        tuple(x for x in mine if x.policy is None),
+        tuple(x for x in mine if x.policy is not None),
+    )
+
+
+@dataclass(frozen=True)
+class PredictionTally:
+    """A system's §4.4 prediction counts, policy-arm sessions excluded."""
+
+    #: Every stored session of the system.
+    sessions: int
+    #: Sessions in a policy arm, whose predictions are not read.
+    excluded: int
+    #: The predictions those excluded sessions made.
+    excluded_predictions: int
+    #: Sessions whose predictions are read (``sessions - excluded``).
+    read: int
+    #: Read sessions with at least one prediction.
+    predicting: int
+    predictions: int
+    evaluated: int
+    covered: int
+
+
+def prediction_tally(table: Table, system: str) -> PredictionTally:
+    """The prediction counts of :func:`behaviour_sessions`' read sessions."""
+    read, excluded = behaviour_sessions(table, system)
+
+    def total(sessions: Sequence[Session], name: str) -> int:
+        return int(sum(x.reading.get(name, 0.0) for x in sessions))
+
+    return PredictionTally(
+        sessions=len(read) + len(excluded),
+        excluded=len(excluded),
+        excluded_predictions=total(excluded, "predictions"),
+        read=len(read),
+        predicting=sum(x.reading.get("predictions", 0.0) > 0.0 for x in read),
+        predictions=total(read, "predictions"),
+        evaluated=total(read, "predictions_evaluated"),
+        covered=total(read, "predictions_covered"),
+    )
 
 
 def _denominator_noise(

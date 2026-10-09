@@ -48,6 +48,7 @@ from sciagent.campaign.plan import (
 from sciagent.campaign.store import ResultStore
 from sciagent.glm.interventions import Compose, Experiment
 from sciagent.investigation.world import World
+from sciagent.scoring.controls_p4 import policy_separation
 from sciagent.scoring.telling import Telling
 from sciagent.systems.v2.policies import (
     POLICY_MAX_EVENTS,
@@ -435,3 +436,27 @@ def test_the_pilot_environment_carries_the_mark_law_for_eig_and_fsd(
     env = module.pointproc_environment(())
     assert env.investigation is not None
     assert env.investigation.marks is v2.mark_sampler
+
+
+def test_control_5_reads_the_two_arms_telling_observations() -> None:
+    """Control 5 (WP11) pairs truthFSD and random by (truth, seed) on the
+    analysis read-out; a failed unit counts as not observed."""
+    target = TellingCell("mean_rate", ())
+    hit = (("mean_rate", ()),)
+    miss = (("fano_factor", ()),)
+    truths = [f"t{i}" for i in range(7)]
+    rows = (
+        *(_row(t, 1, B_SYM_TRUTH_FSD, hit) for t in truths[:6]),
+        _row(truths[6], 1, B_SYM_TRUTH_FSD, (), ok=False),
+        *(_row(t, 1, B_SYM_RANDOM, miss) for t in truths[:5]),
+        *(_row(t, 1, B_SYM_RANDOM, hit) for t in truths[5:]),
+    )
+    table = Table({}, rows, (), {}, telling={(t, 1): target for t in truths})
+    v = policy_separation(
+        telling_observed(table, B_SYM_TRUTH_FSD), telling_observed(table, B_SYM_RANDOM)
+    )
+    assert (v.units, v.both, v.truth_only, v.random_only, v.neither) == (7, 1, 5, 1, 0)
+    # P(Binom(6, 1/2) >= 5) = 7/64 > 0.05: five against one does not pass.
+    assert v.p_value == 7 / 64 and not v.passed
+    assert v.truth_rate == pytest.approx(6 / 7)
+    assert v.random_rate == pytest.approx(2 / 7)

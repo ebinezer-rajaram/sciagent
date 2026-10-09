@@ -86,8 +86,9 @@ identical samples and 1 for disjoint ones, and is the same bounded metric
 FSD uses (LOG 2026-10-01). Variances are sample variances (ddof 1; 0 for one
 value) floored at ``(1e-9 · (1 + |μ₁| + |μ₂|))²`` so that two equal constants
 give 0 and two different constants give 1. Under the null (model = truth)
-its expectation is about ``1 / (4R)`` per readout from sampling noise alone,
-about 0.01 at R = 32.
+its expectation is about ``1 / (2R)`` per readout from sampling noise alone
+(``≈ 1/(4R)`` from the means plus ``≈ 1/(4R)`` from the scales; measured
+2.10/(4R) at R = 16, LOG 2026-10-06), about 0.016 at R = 32.
 
 **Similarity** = 1 - the mean over experiments of the mean over that
 experiment's readouts of H². Experiments weigh equally, whatever their

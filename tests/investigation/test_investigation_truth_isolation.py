@@ -41,7 +41,7 @@ from sciagent.investigation.runner import leak_terms, rendered_surface
 
 PACKAGE = Path(__file__).resolve().parents[2] / "src" / "sciagent" / "investigation"
 #: Modules whose code runs on an agent request or renders what the agent sees.
-AGENT_FACING = ("tools.py", "view.py", "prompts.py")
+AGENT_FACING = ("tools.py", "view.py", "prompts.py", "policy.py")
 #: The only World methods allowed to touch ``self._truth``.
 TRUTH_READERS = {"__init__", "_simulate"}
 #: Native-unit constants that must not survive into the anonymised view.
@@ -74,6 +74,38 @@ def test_agent_facing_modules_never_name_the_truth(module: str) -> None:
         for alias in node.names
     }
     assert imported <= {"MAX_EVENTS", "OBSERVATIONAL", "World", "experiment_id"}
+
+
+@pytest.mark.parametrize("module", ["tools.py", "prompts.py", "policy.py", "view.py"])
+def test_agent_facing_modules_never_import_the_truth_aware_control(
+    module: str,
+) -> None:
+    """``policy_controls`` gets the truth through its constructor (control 5,
+    P4 Δ11); the tool layer and what renders the agent's surface never import
+    it, directly or by name."""
+    tree = ast.parse((PACKAGE / module).read_text(encoding="utf-8"))
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            modules.add(node.module)
+            modules.update(f"{node.module}.{a.name}" for a in node.names)
+        elif isinstance(node, ast.Import):
+            modules.update(a.name for a in node.names)
+    assert not [m for m in modules if "policy_controls" in m], modules
+    assert "policy_controls" not in _names(tree)
+    assert "TruthFSDPolicy" not in _names(tree)
+
+
+def test_the_control_import_guard_would_catch_an_import() -> None:
+    """Positive control for the guard above."""
+    tree = ast.parse("from sciagent.systems.v2 import policy_controls")
+    modules = {
+        f"{n.module}.{a.name}"
+        for n in ast.walk(tree)
+        if isinstance(n, ast.ImportFrom) and n.module
+        for a in n.names
+    }
+    assert [m for m in modules if "policy_controls" in m]
 
 
 def test_world_touches_the_truth_only_in_its_readers() -> None:

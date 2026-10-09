@@ -25,7 +25,8 @@ from sciagent.investigation import (
     build_lab,
     run,
 )
-from sciagent.investigation.prompts import Arm, PromptVariant
+from sciagent.investigation.policy import PolicySettings
+from sciagent.investigation.prompts import Arm, PolicyName, PromptVariant
 from sciagent.investigation.view import Condition
 
 #: The anonymised channel names SPEC §5 fixes for pointproc.
@@ -61,6 +62,15 @@ POINTPROC: Final = EnvironmentSpec(
     anon_channels=ANON_CHANNELS,
     forbidden=POINTPROC_FORBIDDEN,
     resolve=resolve,
+    marks=v2.mark_sampler,
+)
+
+#: Small policy menus and replicates (P4 Δ11), so a scripted policy session is
+#: fast: two designs, two diagnostics, three replicates.
+SMALL_POLICY: Final = PolicySettings(
+    replicates=3,
+    designs=("burst", "clamp_release"),
+    diagnostics=("mean_rate", "fano_factor"),
 )
 
 
@@ -75,6 +85,8 @@ def lab(
     sandbox_root: Path | None = None,
     image: str | None = None,
     prompt_variant: PromptVariant = "v1",
+    policy: PolicyName | None = None,
+    policy_settings: PolicySettings | None = None,
 ) -> Lab:
     spec = InvestigationSpec(
         POINTPROC.name,
@@ -85,6 +97,8 @@ def lab(
         experiments,
         fits,
         prompt_variant=prompt_variant,
+        policy=policy,
+        policy_settings=policy_settings,
     )
     return build_lab(spec, POINTPROC, sandbox_root=sandbox_root, image=image)
 
@@ -113,6 +127,8 @@ def scripted_run(
     fits: int = 4,
     sandbox_root: Path | None = None,
     prompt_variant: str = "v1",
+    policy: str | None = None,
+    policy_settings: PolicySettings | None = None,
 ) -> InvestigationOutcome:
     return run(
         POINTPROC,
@@ -129,6 +145,8 @@ def scripted_run(
         driver=ScriptedDriver(script),
         sandbox_root=sandbox_root,
         prompt_variant=prompt_variant,
+        policy=policy,
+        policy_settings=policy_settings,
     )
 
 

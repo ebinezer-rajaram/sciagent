@@ -76,6 +76,7 @@ from sciagent.glm.interventions import (
     InjectMarks,
     Intervention,
     experiment_from_json,
+    experiment_to_json,
     rescale_experiment,
     validate_experiment,
 )
@@ -234,6 +235,20 @@ class AgentView:
             _rename_intervention(native.intervention, self.channel_native),
             native.horizon,
         )
+
+    def experiment_json(self, native: Experiment) -> dict[str, object]:
+        """Native experiment -> its JSON in the agent's names and units.
+
+        The inverse of :meth:`experiment_native` for an explicit experiment:
+        times and windows * c, clamp rates ÷ c (exact, c a power of two), and
+        channel names forward. Used to show a design the framework chose
+        (policy mode, P4 Δ11).
+        """
+        agent = rescale_experiment(native, self.factor)
+        renamed = Experiment(
+            _rename_intervention(agent.intervention, self.channel), agent.horizon
+        )
+        return experiment_to_json(renamed)
 
     # -- fitted numbers ------------------------------------------------------
 

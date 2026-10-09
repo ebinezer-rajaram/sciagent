@@ -11,7 +11,8 @@ changed tool, a numerics drift or a perturbed sandbox result is detected.
 What the record's config holds. The harness records ``AgentConfig.as_json()``;
 :class:`InvestigationAgentConfig` adds an ``investigation`` field with the
 :class:`InvestigationSpec` (environment name, truth id, arm, condition, seed,
-budgets, sandbox limits). That is what :func:`layer_factory` rebuilds from.
+budgets, sandbox limits, and in policy mode the policy and its settings).
+That is what :func:`layer_factory` rebuilds from.
 The config is framework-side: the model sees only the system prompt, the
 opening prompt and the tool schemas, none of which carry the truth id. The
 truth itself is never in the record; it is resolved by id from the
@@ -38,6 +39,7 @@ from typing import Any, Final
 from sciagent.anonymise import DEFAULT_FORBIDDEN
 from sciagent.diagnostics import catalogue
 from sciagent.glm.grammar import ChannelSpec, Structure
+from sciagent.glm.simulate import MarkSampler
 from sciagent.glm.syntax import parse
 from sciagent.harness.errors import (
     HarnessFaultError,
@@ -51,11 +53,15 @@ from sciagent.harness.replay import LayerFactory, ReplayReport, replay
 from sciagent.harness.tools import ToolLayer
 from sciagent.harness.voids import INFRASTRUCTURE, assess, foreign_reasons
 from sciagent.harness.voids import OUT_OF_BOUNDS as OUT_OF_BOUNDS_REASON
+from sciagent.investigation.policy import NEEDS_MARKS, PolicySettings
 from sciagent.investigation.prompts import (
     Arm,
+    PolicyName,
     PromptError,
     PromptVariant,
+    as_policy,
     as_variant,
+    check_policy_arm,
     opening_prompt,
     system_prompt,
 )
@@ -111,13 +117,17 @@ class EnvironmentSpec:
     ``resolve`` maps a truth id to a :class:`Truth` (a registry lookup, so
     replay needs only the id). ``anon_channels`` maps native channel names to
     anonymised ones; ``forbidden`` adds the environment's own leak terms to
-    :data:`~sciagent.anonymise.DEFAULT_FORBIDDEN`.
+    :data:`~sciagent.anonymise.DEFAULT_FORBIDDEN`. ``marks`` is the
+    environment's mark law, which the EIG and FSD policies need to simulate
+    fitted structures (P4 Δ11, as B-sym's policies and the scorer use it);
+    an environment without it cannot run them.
     """
 
     name: str
     anon_channels: Mapping[str, str]
     forbidden: tuple[str, ...]
     resolve: Callable[[str], Truth]
+    marks: MarkSampler | None = None
 
 
 @dataclass(frozen=True)
@@ -135,9 +145,15 @@ class InvestigationSpec:
     sandbox_memory_mb: int = 2048
     #: The system prompt's variant (P4 Δ6); a record without it is ``v1``.
     prompt_variant: PromptVariant = "v1"
+    #: The experiment-choice policy (P4 Δ11); a record without it has none.
+    policy: PolicyName | None = None
+    #: Policy mode's settings; None is the defaults (recorded explicitly).
+    policy_settings: PolicySettings | None = None
 
     def as_json(self) -> dict[str, Any]:
-        return {
+        """The recorded form. Without a policy it holds exactly the keys it
+        held before policy mode, so a non-policy record is unchanged."""
+        data: dict[str, Any] = {
             "environment": self.environment,
             "truth_id": self.truth_id,
             "arm": self.arm,
@@ -150,6 +166,11 @@ class InvestigationSpec:
             "fit_config": FIT_CONFIG.key(),
             "prompt_variant": self.prompt_variant,
         }
+        if self.policy is not None:
+            settings = self.policy_settings or PolicySettings()
+            data["policy"] = self.policy
+            data["policy_settings"] = settings.as_json()
+        return data
 
     @staticmethod
     def from_json(data: Mapping[str, Any]) -> InvestigationSpec:
@@ -164,8 +185,10 @@ class InvestigationSpec:
             )
         try:
             variant = as_variant(data.get("prompt_variant", "v1"))
+            policy = as_policy(data.get("policy"))
         except PromptError as error:
-            raise LabError(f"bad prompt variant in record: {error}") from None
+            raise LabError(f"bad prompt variant or policy in record: {error}") from None
+        settings = data.get("policy_settings")
         return InvestigationSpec(
             environment=str(data["environment"]),
             truth_id=str(data["truth_id"]),
@@ -177,6 +200,10 @@ class InvestigationSpec:
             sandbox_wall_seconds=float(data["sandbox_wall_seconds"]),
             sandbox_memory_mb=int(data["sandbox_memory_mb"]),
             prompt_variant=variant,
+            policy=policy,
+            policy_settings=None
+            if policy is None or settings is None
+            else PolicySettings.from_json(settings),
         )
 
 
@@ -265,6 +292,10 @@ def build_lab(
         sandbox=sandbox,
         fit_workers=fit_workers,
         prompt_variant=spec.prompt_variant,
+        policy=spec.policy,
+        policy_settings=spec.policy_settings,
+        policy_seed=spec.seed,
+        marks=env.marks,
     )
 
 
@@ -290,6 +321,7 @@ def _prompts(lab: Lab) -> tuple[str, str]:
         experiments=lab.experiments,
         fits=lab.fits,
         variant=lab.prompt_variant,
+        policy=lab.policy,
     )
     opening = opening_prompt(lab.view, observational.log.n, observational.log.horizon)
     return system, opening
@@ -318,6 +350,7 @@ def rendered_config(
     experiments: int,
     fits: int,
     prompt_variant: str = "v1",
+    policy: str | None = None,
 ) -> dict[str, Any]:
     """The session surface from configuration alone (P4 Δ7).
 
@@ -325,10 +358,11 @@ def rendered_config(
     observational log's size and horizon), rendered without resolving a truth
     or building a world: the system prompt and every tool schema, by label.
     Its inputs are the channel specs, the anonymised names, the arm, the
-    condition, the budgets, the prompt variant and this package's constants;
-    the truth, the seed and the sandbox limits are not among them. The
-    campaign's session key hashes it, so a prompt or schema edit moves the
-    key. A lab built from the same configuration shows exactly this.
+    condition, the budgets, the prompt variant, the policy (P4 Δ11; it is
+    validated here, and runs on AG-c only) and this package's constants; the
+    truth, the seed and the sandbox limits are not among them. The campaign's
+    session key hashes it, so a prompt or schema edit moves the key. A lab
+    built from the same configuration shows exactly this.
     """
     if arm not in ("AG-c", "AG-o"):
         raise LabError(f"arm must be 'AG-c' or 'AG-o', got {arm!r}")
@@ -336,15 +370,25 @@ def rendered_config(
         raise LabError("budgets must be non-negative")
     try:
         variant = as_variant(prompt_variant)
+        policy_name = as_policy(policy)
+        check_policy_arm(arm, policy_name)
     except PromptError as error:
         raise LabError(str(error)) from None
     view = make_view(condition, channels, env.anon_channels)
     surface: dict[str, Any] = {
         "system_prompt": system_prompt(
-            view, arm, experiments=experiments, fits=fits, variant=variant
+            view,
+            arm,
+            experiments=experiments,
+            fits=fits,
+            variant=variant,
+            policy=policy_name,
         )
     }
-    for spec in tool_specs(view, arm, experiments=experiments, fits=fits):
+    specs = tool_specs(
+        view, arm, experiments=experiments, fits=fits, policy=policy_name
+    )
+    for spec in specs:
         surface[f"tool:{spec.name}"] = spec.schema()
     return surface
 
@@ -400,21 +444,31 @@ def run(
     fit_workers: int = 1,
     prompt_variant: str = "v1",
     policy: str | None = None,
+    policy_settings: PolicySettings | None = None,
 ) -> InvestigationOutcome:
     """Run one investigation, save its record under ``out_dir``, and return it.
 
     A run aborted by the harness (hermeticity, served model, session failure,
     a tool bug) saves its partial record as ``aborted-<head>.json`` and
     re-raises. ``prompt_variant`` picks the system prompt's variant (P4 Δ6).
-    ``policy`` names an experiment-choice policy (P4 Δ11); no policy mode
-    exists yet, so any value but ``None`` is refused before anything runs.
+    ``policy`` names an experiment-choice policy (P4 Δ11: ``random``, ``EIG``
+    or ``FSD``, AG-c only), which puts the lab in policy mode
+    (:mod:`sciagent.investigation.policy`); ``policy_settings`` overrides its
+    replicates and menus (tests). An unknown policy, a policy on AG-o, or EIG
+    or FSD in an environment without a mark law is refused before anything
+    runs.
     """
-    if policy is not None:
-        raise LabError(f"policy {policy!r}: policy arms are not implemented")
     try:
         variant = as_variant(prompt_variant)
+        policy_name = as_policy(policy)
+        check_policy_arm(arm, policy_name)
     except PromptError as error:
         raise LabError(str(error)) from None
+    if policy_name in NEEDS_MARKS and env.marks is None:
+        raise LabError(
+            f"policy {policy_name!r} needs the environment's mark law "
+            "(EnvironmentSpec.marks)"
+        )
     spec = InvestigationSpec(
         environment=env.name,
         truth_id=truth_id,
@@ -424,6 +478,8 @@ def run(
         experiments=experiments,
         fits=fits,
         prompt_variant=variant,
+        policy=policy_name,
+        policy_settings=policy_settings,
     )
     lab = build_lab(spec, env, sandbox_root=sandbox_root, fit_workers=fit_workers)
     system, opening = _prompts(lab)

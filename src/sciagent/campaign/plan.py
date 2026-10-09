@@ -65,7 +65,15 @@ from sciagent.glm.simulate import MarkSampler
 from sciagent.glm.syntax import render
 from sciagent.harness.live import HARNESS_VERSION
 from sciagent.harness.record import canonical_json
-from sciagent.investigation.prompts import Arm, PromptError, PromptVariant, as_variant
+from sciagent.investigation.policy import policy_config
+from sciagent.investigation.prompts import (
+    Arm,
+    PromptError,
+    PromptVariant,
+    as_policy,
+    as_variant,
+    check_policy_arm,
+)
 from sciagent.investigation.runner import EnvironmentSpec, rendered_config
 from sciagent.investigation.tools import FIT_CONFIG as AGENT_FIT_CONFIG
 from sciagent.investigation.view import Condition
@@ -173,8 +181,10 @@ class LLMArm:
 
     ``prompt_variant`` is the system prompt's variant (P4 Δ6); ``policy`` names
     an experiment-choice policy (P4 Δ11; ``None``: the agent designs its own
-    experiments). Both enter the session key and, when not the default, the
-    system name.
+    experiments): one of ``random``, ``EIG`` or ``FSD``, on AG-c only. Both
+    enter the session key and, when not the default, the system name.
+    AG-S-boed (SPEC §4.1) is ``LLMArm("AG-c", "named", policy="EIG")`` on the
+    Sonnet letter: its system name is ``AG-c-S/named+policy=EIG``.
     """
 
     arm: Arm
@@ -191,6 +201,10 @@ class LLMArm:
             raise CampaignError(
                 f"policy name {self.policy!r} must match {_POLICY_NAME.pattern}"
             )
+        try:
+            check_policy_arm(self.arm, as_policy(self.policy))
+        except PromptError as error:
+            raise CampaignError(str(error)) from None
 
     def system(self, letter: str) -> str:
         """``<arm>-<letter>/<condition>``, plus ``+<variant>`` for a non-default
@@ -422,7 +436,12 @@ def surface_digest(
 
     The surface is :func:`~sciagent.investigation.runner.rendered_config` for
     the environment's channels and anonymised names, the arm, the condition,
-    the budgets and the prompt variant: no truth and no seed.
+    the budgets, the prompt variant and the policy: no truth and no seed. A
+    policy arm's digest also covers the policy's framework-only configuration
+    (:func:`~sciagent.investigation.policy.policy_config`: replicates, weights,
+    tie tolerance, quadrature, menus; P4 Δ11 decision 16), which the agent
+    never sees, so a change to it moves the key too. A non-policy arm's digest
+    is the surface's alone, as before.
     """
     if env.investigation is None:
         raise CampaignError("the environment has no investigation spec")
@@ -434,8 +453,14 @@ def surface_digest(
         experiments=config.experiments,
         fits=config.fits,
         prompt_variant=arm.prompt_variant,
+        policy=arm.policy,
     )
-    return _sha(canonical_json(surface))
+    policy = as_policy(arm.policy)
+    if policy is None:
+        return _sha(canonical_json(surface))
+    return _sha(
+        canonical_json({"surface": surface, "policy_config": policy_config(policy)})
+    )
 
 
 def session_text(arm: LLMArm, config: CampaignConfig, env: CampaignEnvironment) -> str:

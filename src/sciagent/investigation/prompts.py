@@ -24,6 +24,15 @@ structural distance, without v1's "a simpler structure beats a larger one").
 Beliefs (P4 Δ4). The prompt asks for a ``belief`` before every experiment and
 before ``submit`` (the tools enforce it), for at least one prediction under a
 rival per experiment, and for a ``stop_reason`` at ``submit``.
+
+Policy mode (P4 Δ11). With a ``policy`` (:data:`POLICY_NAMES`, AG-c only) the
+framework chooses every experiment and the agent only decides whether and when
+to run one. Two places change, and only then: the ``run_experiment`` line of
+the tools section, and a paragraph after the experiments section saying who
+chooses (:func:`_policy_paragraph`). The text never names the rule, so the
+three policies show the agent the same prompt, and no policy number is ever in
+it. Without a policy every text is byte-identical to the text before policy
+mode existed.
 """
 
 from __future__ import annotations
@@ -44,12 +53,15 @@ from sciagent.investigation.world import MAX_EVENTS
 
 __all__ = [
     "MAX_DESIGN_FILE_BYTES",
+    "POLICY_NAMES",
     "PROMPT_VARIANTS",
     "STOP_REASONS",
     "WORK_PREFIX",
     "Arm",
+    "PolicyName",
     "PromptError",
     "PromptVariant",
+    "as_policy",
     "as_variant",
     "budget_line",
     "examples",
@@ -63,6 +75,9 @@ type Arm = Literal["AG-c", "AG-o"]
 #: :func:`_scoring`). Everything else is the same text in both.
 type PromptVariant = Literal["v1", "link-neutral"]
 PROMPT_VARIANTS: Final[tuple[PromptVariant, ...]] = ("v1", "link-neutral")
+#: The experiment-choice policies of policy mode (P4 Δ11, SPEC §4.2).
+type PolicyName = Literal["random", "EIG", "FSD"]
+POLICY_NAMES: Final[tuple[PolicyName, ...]] = ("random", "EIG", "FSD")
 #: Why the agent submits (P4 Δ4); ``submit`` takes exactly one of these.
 STOP_REASONS: Final = ("confident", "budget", "evidence_unlikely_to_change", "other")
 
@@ -81,6 +96,24 @@ def as_variant(value: object) -> PromptVariant:
         f"unknown prompt variant {value!r}; the variants are "
         f"{', '.join(PROMPT_VARIANTS)}"
     )
+
+
+def as_policy(value: object) -> PolicyName | None:
+    """``value`` as a :data:`PolicyName`, or None; :class:`PromptError` otherwise."""
+    if value is None:
+        return None
+    for name in POLICY_NAMES:
+        if value == name:
+            return name
+    raise PromptError(
+        f"unknown policy {value!r}; the policies are {', '.join(POLICY_NAMES)}"
+    )
+
+
+def check_policy_arm(arm: object, policy: PolicyName | None) -> None:
+    """Policy mode exists for the constrained tier only (P4 Δ11: AG-c-S)."""
+    if policy is not None and arm != "AG-c":
+        raise PromptError(f"policy {policy!r} runs on AG-c only, not on {arm!r}")
 
 
 #: The sandbox's writable directory, as the agent's code sees it.
@@ -261,8 +294,30 @@ Shape-parameter grids (time-valued ones in the units of your data):
 """
 
 
-def _tools(view: AgentView, arm: Arm, experiments: int, fits: int) -> str:
+def _run_experiment_line(
+    view: AgentView, experiments: int, policy: PolicyName | None
+) -> str:
+    if policy is not None:
+        return f"""\
+- `run_experiment()`: run the next experiment. The framework chooses it (see
+  "Who chooses the experiments" below); you decide whether and when to run one.
+  Budget: {experiments} experiments in total. Its dataset id is `e0`, `e1`, ...
+  in order."""
     horizon = num(view.time(DEFAULT_HORIZON))
+    return f"""\
+- `run_experiment(intervention, horizon)`: one new realisation of the process,
+  from empty history on [0, horizon] (default {horizon}), under an intervention.
+  Budget: {experiments} experiments in total. Its dataset id is `e0`, `e1`, ...
+  in order."""
+
+
+def _tools(
+    view: AgentView,
+    arm: Arm,
+    experiments: int,
+    fits: int,
+    policy: PolicyName | None = None,
+) -> str:
     open_tools = ""
     if arm == "AG-o":
         open_tools = """\
@@ -285,10 +340,7 @@ def _tools(view: AgentView, arm: Arm, experiments: int, fits: int) -> str:
     return f"""\
 ## Tools and budgets
 
-- `run_experiment(intervention, horizon)`: one new realisation of the process,
-  from empty history on [0, horizon] (default {horizon}), under an intervention.
-  Budget: {experiments} experiments in total. Its dataset id is `e0`, `e1`, ...
-  in order.
+{_run_experiment_line(view, experiments, policy)}
 - `diagnostic(name, args, data_id)`: one statistic from a fixed catalogue on
   one dataset. Free.
 - `nonparam_kernels(data_id)`: a model-free estimate of linear excitation
@@ -336,10 +388,38 @@ The rule is expanded to lists before the experiment runs.
 {from_file}"""
 
 
+def _policy_paragraph(experiments: int, policy: PolicyName | None) -> str:
+    """Who chooses the experiments, in policy mode only (module docstring)."""
+    if policy is None:
+        return ""
+    return f"""
+## Who chooses the experiments
+
+In this investigation the experiments are chosen by the framework, not by you.
+When you call `run_experiment` (it takes no arguments), the framework chooses
+the next experiment, an intervention and a horizon, and one catalogue
+diagnostic to read on its data, both from a fixed menu, by its own rule; the
+rule may take your latest `belief` into account. You decide whether and when
+to run an experiment. The result shows the design that was run, written in the
+intervention language above and in your units, and the chosen diagnostic, with
+its arguments and its value on the new dataset, besides the usual summary.
+Each experiment still costs one of the {experiments} experiments, a `belief`
+is still required before each one, and you can still commit predictions for
+the next experiment before you run it.
+"""
+
+
 def system_prompt(
-    view: AgentView, arm: Arm, *, experiments: int, fits: int, variant: str = "v1"
+    view: AgentView,
+    arm: Arm,
+    *,
+    experiments: int,
+    fits: int,
+    variant: str = "v1",
+    policy: PolicyName | None = None,
 ) -> str:
-    """The system prompt for ``arm`` in ``view``'s condition."""
+    """The system prompt for ``arm`` in ``view``'s condition; ``policy`` adds
+    policy mode's text (module docstring)."""
     max_horizon = num(view.time(MAX_HORIZON))
     max_rate = num(view.rate(MAX_CLAMP_RATE))
     return f"""\
@@ -358,7 +438,7 @@ framework fits it; you never supply numbers.
 {_scoring(variant)}
 
 {_grammar(view, variant)}
-{_tools(view, arm, experiments, fits)}
+{_tools(view, arm, experiments, fits, policy)}
 ## Experiments
 
 An experiment is an intervention on a fresh run of the process. Windows are
@@ -385,7 +465,7 @@ an experiment and its dataset is kept, but the result reports the time t up to
 which it was observed, and nothing after t is. Diagnostics, kernel estimates
 and predictions use [0, t]{_files_too(arm)};
 fits account for the truncation themselves.
-
+{_policy_paragraph(experiments, policy)}
 ## Predictions
 
 Before an experiment runs you may, and are encouraged to, commit predictions

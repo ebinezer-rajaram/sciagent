@@ -42,6 +42,7 @@ from sciagent.campaign.rescore import stored_sessions
 from sciagent.campaign.store import ResultStore
 from sciagent.glm.grammar import ChannelKind
 from sciagent.harness.live import HARNESS_VERSION
+from sciagent.harness.record import canonical_json
 from sciagent.harness.scripted import ScriptedDriver, Step
 from sciagent.investigation import prompts, tools
 from sciagent.investigation.runner import rendered_config
@@ -203,15 +204,50 @@ def test_variants_and_policies_never_share_a_unit() -> None:
     assert len(keys) == len(arms)
 
 
+def test_policy_arms_hash_the_policy_surface_and_its_config() -> None:
+    """P4 Δ11 (WP10): ``surface_digest`` renders the policy's surface and, for
+    a policy arm only, covers the policy's framework-only config; the three
+    policies show the agent the same surface, so the config is what separates
+    their digests. A non-policy digest is the surface's alone."""
+    config, env = tiny_config(), environment()
+    assert env.investigation is not None
+    plain = rendered_config(
+        env.investigation,
+        env.channels,
+        "AG-c",
+        "named",
+        experiments=config.experiments,
+        fits=config.fits,
+    )
+    assert (
+        plan.surface_digest(AG_C_NAMED, config, env)
+        == hashlib.sha256(canonical_json(plain).encode("utf-8")).hexdigest()
+    )
+    digests = {
+        name: plan.surface_digest(LLMArm("AG-c", "named", policy=name), config, env)
+        for name in ("random", "EIG", "FSD")
+    }
+    assert len(set(digests.values())) == 3
+    assert plan.surface_digest(AG_C_NAMED, config, env) not in digests.values()
+
+
+def test_ag_s_boed_is_the_eig_policy_arm_on_sonnet() -> None:
+    """AG-S-boed (SPEC §4.1) = AG-c-S + the EIG policy, named."""
+    boed = LLMArm("AG-c", "named", policy="EIG")
+    assert boed.system("S") == "AG-c-S/named+policy=EIG"
+
+
 def test_bad_arms_are_refused() -> None:
     bad: Any = "v2"
     with pytest.raises(CampaignError):
         LLMArm("AG-c", "named", bad)
-    for policy in ("", "a+b", "has space"):
+    for policy in ("", "a+b", "has space", "greedy", "eig"):
         with pytest.raises(CampaignError):
             LLMArm("AG-c", "named", policy=policy)
     with pytest.raises(CampaignError):
         tiny_config(llm_arms=(AG_C_NAMED, LLMArm("AG-c", "named")))
+    with pytest.raises(CampaignError, match="AG-c"):
+        LLMArm("AG-o", "named", policy="EIG")
 
 
 # --------------------------------------------------------------------------

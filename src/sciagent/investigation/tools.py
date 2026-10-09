@@ -72,6 +72,17 @@ recorded as canonical native text; free commentary goes in ``note``, which is
 recorded and never shown back. Every hypothesis label in the record is
 ``render(canonicalise(parse(text)))`` in native names, so one structure has one
 label whatever the spelling or the naming condition.
+
+Policy mode (P4 Δ11, SPEC §4.2). A lab built with a ``policy`` (AG-c only)
+offers ``run_experiment`` with no arguments: after the belief gate, the
+framework's policy (:mod:`sciagent.investigation.policy`) fits the latest
+belief's structures (uncharged, unshown), chooses a design and a diagnostic
+from its menus, and the design runs through the same path as an agent's design
+(``_run``), so the charge, the ledger seal, truncation and the summary are the
+same. The result adds the design (in the agent's names and units) and the
+chosen diagnostic's value on the new dataset; the decision, with its scores,
+weights and degeneracy summary, is in the output's ``record`` only, under
+``policy``. Without a policy every schema, text and record is as before.
 """
 
 from __future__ import annotations
@@ -83,7 +94,7 @@ import math
 import os
 import re
 import stat
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Final
@@ -99,10 +110,12 @@ from sciagent.glm.fit import FitConfig, FitResult, fit, fit_cache_key
 from sciagent.glm.grammar import ChannelKind, Structure, n_columns, psi_slots
 from sciagent.glm.interventions import (
     DEFAULT_HORIZON,
+    Experiment,
     canonical_json,
 )
 from sciagent.glm.simulate import (
     ExplosionError,
+    MarkSampler,
     NegativeIntensityError,
     SimulationError,
 )
@@ -116,15 +129,24 @@ from sciagent.harness.tools import (
     ToolOutput,
     ToolSpec,
 )
+from sciagent.investigation.policy import (
+    DEFAULT_SETTINGS,
+    PolicyDecision,
+    PolicyMode,
+    PolicySettings,
+)
 from sciagent.investigation.prompts import (
     MAX_DESIGN_FILE_BYTES,
     STOP_REASONS,
     WORK_PREFIX,
     Arm,
+    PolicyName,
     PromptError,
     PromptVariant,
+    as_policy,
     as_variant,
     budget_line,
+    check_policy_arm,
     num,
 )
 from sciagent.investigation.view import (
@@ -263,6 +285,9 @@ class _State:
     beliefs: int = 0
     #: ``World.experiments_run`` when the latest belief was recorded.
     belief_at: int | None = None
+    #: The latest belief's structures, favoured first, as ``(native label,
+    #: native structure)``: policy mode's entertained candidates.
+    belief_structures: tuple[tuple[str, Structure], ...] = ()
 
 
 class Lab:
@@ -279,6 +304,10 @@ class Lab:
         sandbox: Sandbox | None = None,
         fit_workers: int = 1,
         prompt_variant: str = "v1",
+        policy: str | None = None,
+        policy_settings: PolicySettings | None = None,
+        policy_seed: int | None = None,
+        marks: MarkSampler | None = None,
     ) -> None:
         if arm not in ("AG-c", "AG-o"):
             raise LabError(f"arm must be 'AG-c' or 'AG-o', got {arm!r}")
@@ -288,8 +317,12 @@ class Lab:
             raise LabError("budgets must be non-negative")
         try:
             variant = as_variant(prompt_variant)
+            policy_name = as_policy(policy)
+            check_policy_arm(arm, policy_name)
         except PromptError as error:
             raise LabError(str(error)) from None
+        if policy_name is not None and policy_seed is None:
+            raise LabError("policy mode needs a seed for the policy")
         self.world = world
         self.view = view
         self.arm: Arm = arm
@@ -304,6 +337,20 @@ class Lab:
         self.fit_config = replace(FIT_CONFIG, workers=fit_workers)
         self.ledger = PredictionLedger()
         self.state = _State()
+        #: The experiment-choice policy (P4 Δ11); None: the agent designs.
+        self.policy: PolicyName | None = policy_name
+        self.policy_mode: PolicyMode | None = None
+        if policy_name is not None and policy_seed is not None:
+            self.policy_mode = PolicyMode(
+                policy_name,
+                policy_seed,
+                DEFAULT_SETTINGS if policy_settings is None else policy_settings,
+                world.channels,
+                view,
+                world.datasets[OBSERVATIONAL],
+                marks,
+                self.fit_config,
+            )
         if sandbox is not None:
             self._publish(OBSERVATIONAL)
 
@@ -395,14 +442,56 @@ class Lab:
 
     def run_experiment(self, args: Mapping[str, Any]) -> ToolOutput:
         self._require_belief("an experiment")
+        if self.policy_mode is not None:
+            return self._run_policy(self.policy_mode, args)
         args, source = self._design_args(args)
         native = self.view.experiment_native(args)
+        provenance = {} if source is None else {"design_file": source}
+        return self._run(native, provenance)
+
+    def _run_policy(self, mode: PolicyMode, args: Mapping[str, Any]) -> ToolOutput:
+        """Policy mode: the framework chooses the experiment (module docstring)."""
+        if args:
+            raise LabError(
+                "run_experiment takes no arguments here: the framework chooses "
+                "the experiment. Nothing was run and nothing was charged."
+            )
+        datasets = self.world.datasets
+        try:
+            chosen = mode.decide(
+                self.world.experiments_run,
+                self.state.belief_structures,
+                [datasets[i] for i in _ordered_ids(datasets)],
+            )
+        except SciAgentError as error:
+            # A fault inside the framework's decision (the policy core, its
+            # fits, simulations or diagnostics), not an agent act: its message
+            # may carry policy numbers or native names, so it is recorded (and
+            # voids the run), and the agent is told only that nothing ran. The
+            # layer would otherwise show any SciAgentError's message verbatim.
+            self.state.infrastructure_faults.append(
+                f"policy {mode.name}: {type(error).__name__}: {error}"
+            )
+            return ToolOutput(
+                "the framework could not choose an experiment; nothing was run "
+                "and nothing was charged",
+                is_error=True,
+            )
+        return self._run(chosen.experiment, {}, chosen)
+
+    def _run(
+        self,
+        native: Experiment,
+        provenance: Mapping[str, Any],
+        chosen: PolicyDecision | None = None,
+    ) -> ToolOutput:
+        """Seal, run and summarise one experiment, chosen by the agent or, with
+        ``chosen``, by the policy; charged alike (the layer charges a success)."""
         index = self.world.experiments_run
         if index != self.ledger.next_experiment:
             raise LabError("internal: ledger and world disagree on the next index")
         self.ledger.seal(index)
         design = canonical_json(native.intervention)
-        provenance = {} if source is None else {"design_file": source}
         try:
             index, _ = self.world.run(native)
         except SimulationError as error:
@@ -411,17 +500,23 @@ class Lab:
             reason = _stop_reason(error)
             self.ledger.evaluate(index, lambda _p: math.nan)
             self._record_outcomes(index, failed=reason)
-            return ToolOutput(
+            stopped = [
                 f"experiment {experiment_id(index)} was stopped and produced no "
-                f"dataset: {reason}. It counts against the budget.",
-                record={
-                    "experiment": index,
-                    "design": design,
-                    "horizon": native.horizon,
-                    "stopped": True,
-                    **provenance,
-                },
-            )
+                f"dataset: {reason}. It counts against the budget."
+            ]
+            stopped_record: dict[str, Any] = {
+                "experiment": index,
+                "design": design,
+                "horizon": native.horizon,
+                "stopped": True,
+                **provenance,
+            }
+            if chosen is not None:
+                stopped.append(self._design_text(chosen))
+                no_data = "the experiment was stopped"
+                stopped.append(self._diagnostic_text(chosen, None, no_data))
+                stopped_record["policy"] = self._policy_record(chosen, None, no_data)
+            return ToolOutput("\n".join(stopped), record=stopped_record)
         data_id = experiment_id(index)
         dataset = self.world.datasets[data_id]
         tau = self.world.truncated_at(data_id)
@@ -439,6 +534,8 @@ class Lab:
             f"experiment {data_id} done ({used} of {self.experiments} experiments "
             f"used)."
         ]
+        if chosen is not None:
+            text.append(self._design_text(chosen))
         record: dict[str, Any] = {
             "experiment": index,
             "design": design,
@@ -456,12 +553,61 @@ class Lab:
             if empty
             else self._summary(data_id)
         )
+        if chosen is not None and self.policy_mode is not None:
+            shown, why = self.policy_mode.value(
+                chosen, None if empty else self._agent_data(data_id).log
+            )
+            text.append(self._diagnostic_text(chosen, shown, why, data_id))
+            record["policy"] = self._policy_record(chosen, shown, why)
         if values:
             text.append("committed predictions for this experiment:")
             text.extend(_outcome_line(o, self.view) for o in values)
         record["predictions"] = [o.as_json() for o in values]
         record.update(provenance)
         return ToolOutput("\n".join(text), record=record)
+
+    # -- policy mode's texts and record (P4 Δ11) ----------------------------------
+
+    @staticmethod
+    def _design_text(chosen: PolicyDecision) -> str:
+        return "design chosen by the framework: " + json.dumps(
+            chosen.design, sort_keys=True
+        )
+
+    def _diagnostic_text(
+        self,
+        chosen: PolicyDecision,
+        value: float | None,
+        why: str | None,
+        data_id: str | None = None,
+    ) -> str:
+        choice = chosen.diagnostic
+        name = self.view.diagnostic(choice.name)
+        head = (
+            f"diagnostic chosen by the framework: {name} "
+            f"(arguments: {_args_text(dict(choice.args))})"
+        )
+        if value is not None and data_id is not None:
+            return f"{head} on {data_id} = {num(value)}"
+        return f"{head}: not available ({why})"
+
+    def _policy_record(
+        self, chosen: PolicyDecision, value: float | None, why: str | None
+    ) -> dict[str, Any]:
+        """The framework-only decision, plus what was shown of it."""
+        choice = chosen.diagnostic
+        return {
+            **chosen.record,
+            "shown": {
+                "design": chosen.design,
+                "diagnostic": {
+                    "name": self.view.diagnostic(choice.name),
+                    "args": dict(choice.args),
+                },
+                "value": value,
+                "error": why,
+            },
+        }
 
     def _truncation_text(self, end: float, horizon: float) -> str:
         shown = num(self.view.time(end))
@@ -832,6 +978,10 @@ class Lab:
         run = self.world.experiments_run
         self.state.beliefs += 1
         self.state.belief_at = run
+        self.state.belief_structures = (
+            (label, favoured),
+            *zip(labels, rivals, strict=True),
+        )
         view = self.view
         lines = [
             f"belief {index} recorded (after {run} of {self.experiments} experiments).",
@@ -951,6 +1101,7 @@ class Lab:
             self.arm,
             experiments=self.experiments,
             fits=self.fits,
+            policy=self.policy,
             handlers={
                 "run_experiment": self.run_experiment,
                 "diagnostic": self.diagnostic,
@@ -989,6 +1140,7 @@ def tool_specs(
     experiments: int,
     fits: int,
     handlers: Mapping[str, Handler] | None = None,
+    policy: str | None = None,
 ) -> list[ToolSpec]:
     """Every tool the agent is offered, for one view, arm and budget.
 
@@ -997,33 +1149,24 @@ def tool_specs(
     (:func:`~sciagent.investigation.runner.rendered_config`, the session key's
     input, P4 Δ7). :meth:`Lab.specs` passes its bound handlers; without
     ``handlers`` each tool's handler refuses (a rendering, not a lab).
+    ``policy`` (P4 Δ11, AG-c only) gives ``run_experiment`` policy mode's
+    description and an empty schema; every other spec is unchanged.
     """
+    try:
+        policy_name = as_policy(policy)
+        check_policy_arm(arm, policy_name)
+    except PromptError as error:
+        raise LabError(str(error)) from None
 
     def handler(name: str) -> Handler:
         if handlers is None:
             return _render_only
         return handlers[name]
 
-    experiment_schema = _design_schema(arm)
     data_id = _string("A dataset id: `obs`, or `e0`, `e1`, ... for experiments.")
     diagnostic_names = [agent for agent, _ in view.diagnostics()]
     specs = [
-        ToolSpec(
-            "run_experiment",
-            "Run one new experiment: a fresh realisation of the process from "
-            "empty history on [0, horizon] under an intervention (see the "
-            f"system prompt). Costs one of the {experiments} experiments. "
-            f"Default horizon {num(view.time(DEFAULT_HORIZON))}. Forced times "
-            "may be a generator {start, step, n} and marks a pattern "
-            "{constant}, {alternate} or {repeat}. A run that reaches the "
-            f"limit of {MAX_EVENTS} events is truncated there and kept. "
-            "Returns a summary and the new dataset's id, and evaluates any "
-            "predictions committed for this experiment. Refused, uncharged, "
-            "unless you have recorded a `belief` since the last experiment.",
-            experiment_schema,
-            handler("run_experiment"),
-            budget=BUDGET_EXPERIMENTS,
-        ),
+        _run_experiment_spec(view, arm, experiments, policy_name, handler),
         ToolSpec(
             "diagnostic",
             "Compute one catalogue statistic on one dataset. Time arguments "
@@ -1200,6 +1343,48 @@ def tool_specs(
         )
     )
     return specs
+
+
+def _run_experiment_spec(
+    view: AgentView,
+    arm: Arm,
+    experiments: int,
+    policy: PolicyName | None,
+    handler: Callable[[str], Handler],
+) -> ToolSpec:
+    """``run_experiment``: the agent's design, or policy mode's no arguments."""
+    if policy is not None:
+        return ToolSpec(
+            "run_experiment",
+            "Run the next experiment, chosen by the framework (see the system "
+            "prompt): a design, run on a fresh realisation of the process, and "
+            "one catalogue diagnostic to read on its data. Takes no arguments. "
+            f"Costs one of the {experiments} experiments. A run that reaches "
+            f"the limit of {MAX_EVENTS} events is truncated there and kept. "
+            "Returns the design that was run, a summary, the chosen "
+            "diagnostic's value and the new dataset's id, and evaluates any "
+            "predictions committed for this experiment. Refused, uncharged, "
+            "unless you have recorded a `belief` since the last experiment.",
+            _schema({}, []),
+            handler("run_experiment"),
+            budget=BUDGET_EXPERIMENTS,
+        )
+    return ToolSpec(
+        "run_experiment",
+        "Run one new experiment: a fresh realisation of the process from "
+        "empty history on [0, horizon] under an intervention (see the "
+        f"system prompt). Costs one of the {experiments} experiments. "
+        f"Default horizon {num(view.time(DEFAULT_HORIZON))}. Forced times "
+        "may be a generator {start, step, n} and marks a pattern "
+        "{constant}, {alternate} or {repeat}. A run that reaches the "
+        f"limit of {MAX_EVENTS} events is truncated there and kept. "
+        "Returns a summary and the new dataset's id, and evaluates any "
+        "predictions committed for this experiment. Refused, uncharged, "
+        "unless you have recorded a `belief` since the last experiment.",
+        _design_schema(arm),
+        handler("run_experiment"),
+        budget=BUDGET_EXPERIMENTS,
+    )
 
 
 def _design_schema(arm: Arm) -> dict[str, Any]:

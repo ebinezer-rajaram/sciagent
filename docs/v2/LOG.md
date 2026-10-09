@@ -853,3 +853,342 @@ better. When the refit is better but uncertified:
   other cell's bytes are unchanged.
 
 **Verification.** The keys and config text are unchanged.
+
+## 2026-10-05 — P4 deltas: how they are built, and what is for review
+
+The P4 deltas are built on the branch `p4-deltas` in work packages WP1-WP12.
+Instruments get tests first. The entries below mark each decision:
+- **Approved:** the user approved it (P4-PROPOSAL §5 decisions 1-17).
+- **For review:** a SPEC-silent choice taken while building, not yet approved.
+- **Open:** not decided. A setting exists where one was needed, at a default
+  that keeps current behaviour.
+
+Orchestrator decisions:
+- **Δ12 is approved** (decision 17). It was folded into WP6 so that the
+  session key changes once, not twice. Every tool result, refusals included,
+  ends with "budget left: e of E experiments, f of F fits", appended after
+  charging (`prompts.budget_line`).
+- **No merge into v2 before the P3.1 rescore finishes,** because a merge
+  would change the session keys the rescore matches.
+- **The Δ6 Sonnet check runs** only after WP7 and WP8 pass their gates.
+- **SPEC is not edited.** The Δ11 SPEC-silent choices and controls 4-6 are
+  recorded here.
+
+## 2026-10-06 — Δ2: an experiment at the event cap is truncated, not stopped
+
+**Approved** in outline (P4-PROPOSAL Δ2). The SPEC-silent details are **for
+review**.
+
+- **τ is the time of the N-th event, which is kept,** whether or not an
+  (N+1)-th would follow. Stopping only when an (N+1)-th appears would make
+  "truncated" depend on the future. At the N-th event, τ = min(t_N, H) is a
+  stopping time and Σ log λ − ∫₀^τ λ is the exact likelihood.
+- **The dataset keeps the planned horizon H,** so `Trend` still reads t/H. The
+  tail [nextafter(τ), H) joins `excluded`, so the fit-key schema is unchanged.
+- **N counts every history event,** including forced, clamped and censored
+  ones.
+- **The observational log is never truncated.** A truth whose free log reaches
+  the cap must fail loudly. `max_events=0` with truncation is refused.
+- **Runs below the cap are byte-identical** to before, pinned by a digest.
+- **The tool layer** charges a truncated run. Its record carries `truncated_at`
+  (native τ) and `analysis_horizon`. Agent-side analysis (diagnostics, kernels,
+  sandbox files, prediction checks) reads `view.clip_to_analysis`. Fits read
+  the native dataset.
+- **The leak rule.** The shown end is τ, unless an excluded window holds τ.
+  Then it is that window's start, so the time of a censored event is never
+  shown. This conservative cut can drop visible clamped or forced events
+  between the window start and τ; that is accepted.
+
+## 2026-10-06 — Δ3: design generators expand to arrays before validation; AG-o `from`
+
+**Approved** in outline (P4-PROPOSAL Δ3). The details are **for review**.
+
+`glm/designs.py` `expand` is a pure JSON→JSON transform run before parsing.
+So the recorded and replayed design is always arrays, and a generator design
+is the same experiment as its array form, byte for byte.
+- `times: {start, step, n}` is computed as `start + k·step` for each k, never
+  as a running sum, so it does not drift with n. n is capped at
+  `MAX_FORCED_EVENTS`.
+- Mark patterns are `constant`, `alternate [a, b]` and `repeat [...]`. A
+  `repeat` block must divide n exactly rather than be truncated, because 134
+  of the pilot's 155 rejected calls were silent count drift.
+- An explicit array of the wrong length is refused with its JSON path.
+
+AG-o can pass `{"from": "/work/x.json"}`. The path must be plain segments
+under /work, and every component is `lstat`-checked, so links and reparse
+points are refused. It must be a regular file of at most
+`MAX_DESIGN_FILE_BYTES` (1,000,000). Its sha256 is recorded, and replay
+re-runs the sandbox calls that wrote it. AG-c gets an error.
+
+## 2026-10-06 — `ExactSum` and `total()` survive fsum's partial-sum overflow
+
+`math.fsum` raises OverflowError when a partial sum overflows, which depends on
+the order of the addends, even when the total is finite. Hypothesis found a
+case with a total of about −7.94e307. `reductions._fsum` now returns fsum's
+answer whenever fsum gives one, so existing results are bit-identical. Only on
+OverflowError does it fall back to exact integer arithmetic on the 2^-1074
+grid, with one correct rounding. A total beyond the largest double raises
+`ExecutionError`. `ExactSum.value()`, `total()` and `row_totals()` all go
+through it. The property test's reference is now `Fraction`, because fsum
+shares the flaw.
+
+## 2026-10-06 — Δ4: beliefs as tool calls, read into a timeline
+
+**Approved:** belief entries are tool-enforced (decision 8).
+
+The tools:
+- **`belief(favoured, rivals, confidence)`** is free. It takes 1 to 3 rivals,
+  distinct from the favoured structure and from each other after
+  canonicalisation, and a confidence in (0, 1).
+- **Freshness.** A belief is fresh until the next experiment. A stopped
+  experiment uses it up; a refused design does not. `run_experiment` and
+  `submit` are refused, uncharged, without a fresh belief.
+- **`submit`** needs a `stop_reason` from `STOP_REASONS` and takes a note of
+  at most 1,000 characters, which is never echoed.
+- **`predict.hypothesis`** is structure-only.
+- **Labels.** Every structure is recorded as canonical native text.
+
+`investigation/timeline.py` builds the SPEC §4.4 inputs from framework-written
+`record` fields only, in call order. A belief's turn is the number of
+experiments run before it; no agent argument reaches a turn. `Belief` gains
+`rivals` and `confidence`.
+
+**For review:**
+- (a) The runner-up is `rivals[0]` only, so a prediction under `rivals[1]` is
+  confirmation-only. Counting any rival is a one-line change.
+- (b) Several beliefs between two experiments are all kept, in order, and
+  wavering counts as revision.
+- (c) The submission is a final belief with no rivals, so submitting a refuted
+  structure is a zombie return.
+
+## 2026-10-06 — Δ6: prompt variants `v1` and `link-neutral`
+
+**Approved** (decision 9): adopt whichever variant tries more links and depth
+on the dev check. Which one is adopted waits for that Sonnet check.
+`prompt_variant` is `v1` or `link-neutral`. `v1` keeps the
+pilot's examples and scoring text byte for byte, and a record without a
+variant reads as `v1`. `link-neutral` changes only those two places:
+- the examples rotate across the exp, softplus and identity links, with one
+  depth-3 example;
+- the scoring sentence becomes "held-out prediction and structural distance",
+  which drops "a simpler structure that is right beats a larger one".
+
+A non-default variant gets a system-name suffix, `+link-neutral`.
+
+## 2026-10-06 — Δ8: one void classifier, at harness level
+
+**Approved:** void only on an executed foreign tool, a server tool use or an
+out-of-bounds hit (decision 6). This entry
+moves the rule from analysis into the harness. `harness/voids.py` holds the
+one classifier, `judge`, and `InvestigationResult`, `runner.run` (via
+`assess`) and the analysis (`classify`) all share it, so they cannot drift.
+`campaign/voids.py` re-exports it, and an invariant test forbids the harness
+from importing campaign.
+
+A session is void when:
+- a foreign tool executed;
+- a foreign use has no recorded denial;
+- a server tool was used (a block, or `usage.server_tool_use`);
+- out-of-bounds code was found;
+- there was an infrastructure fault.
+
+Denied unknown names count as `unknown_tool_attempts`. `ScriptedDriver`'s
+`Step` gains `foreign` and `server_tools`, so every void path has a positive
+control.
+
+## 2026-10-06 — Δ7: the session key hashes the rendered surface; harness/2
+
+A prompt or schema edit used to resume old sessions silently under new text.
+`session_text` now ends with `surface_digest`, the sha256 of
+`canonical_json(rendered_config(...))`. That is the system prompt and every
+tool schema, for the channels, anonymised names, arm, condition, budgets,
+variant and policy. It does not hash the truth, the seed or the sandbox limits.
+The opening prompt reads the observational log, so it is excluded.
+
+`HARNESS_VERSION` is `harness/2`, covering Δ2-Δ4, Δ8 and Δ12.
+`legacy_session_text_v1` is frozen. Rescore matches in tiers: the current
+address, then the current digest, then the `harness/1` digest. So the pilot's
+sessions are still found.
+
+A non-default policy gets the suffix `+policy=<name>`, and policy names must
+match `[A-Za-z0-9_.-]+`.
+
+## 2026-10-06 — Δ11 evidence policies: the core, and its SPEC-silent choices
+
+**For review,** all of them (plan choices 1-8, 12, 15 and 17). The code is in
+`systems/v2/policies.py` (random, EIG, FSD and the FSD null), the truth-aware
+control-5 policy in `policy_controls.py`, and `scoring/telling.py`.
+
+- **Menus.** Designs are the battery's shapes at horizon 2000
+  (`POLICY_HORIZON`). Diagnostics are the whole catalogue in catalogue order;
+  channel arguments expand in channel order and pairs as i < j. Every argument
+  is resolved on the observational log and then frozen. The only required
+  `period` is frozen at 1/`spectral_peak_frequency`, clipped.
+- **Outcome and predictive.** A replicate reads the frozen diagnostic on the
+  whole experiment log. An `InsufficientDataError`, or a stop at the 15,000
+  cap (`POLICY_MAX_EVENTS`), is undefined. The predictive is an undefined atom
+  plus a Gaussian over R = 16 replicates.
+- **Entertained set and weights.** At most K = 4 structures, each refitted on
+  all the data, uncharged; failed or uncertified fits are dropped. The weights
+  are w ∝ exp(−ΔBIC/2), because SPEC §2.4 says "posterior weights".
+- **EIG** is Σ w_k KL(p_k‖p_w). WP5's 256-node Gauss–Hermite rule erred by up
+  to 0.14 nats at a variance ratio of 1e4. It is replaced by composite
+  Gauss–Legendre: 8 nodes, panels every 0.5 sd of each component, ±12 sd. Its
+  error is ≤ 2.2e-16 over 306 cases.
+- **Ties.** Scores within `EIG_TIE_TOL` = 1e-13 nats of the maximum tie, and
+  ties go to menu order, designs before diagnostics. FSD has no floor: it is
+  closed form, and its differences are Monte Carlo signal. Each EIG decision
+  records H(w), the maximum EIG, the tied cells and a `degenerate` flag. The
+  weighting, the tolerance and the quadrature id are part of the EIG policy's
+  config, and so of the key.
+- **FSD** is He²(top-weight fit, Wiener–Hopf on the observational log with iid
+  empirical marks). The raw value selects. `fsd_null` (B = 8 bootstraps) is a
+  separate negative control. Its sampling floor is about 1/(2R), not 1/(4R),
+  because the mean and scale terms each give about 1/(4R): measured
+  2.10/(4R) at R = 16.
+- **Random** is one uniform draw over the (design, diagnostic) cells, with
+  replacement.
+- **Seeds.** `policy_seed(seed, decision, k, r, …)` is
+  `SeedSequence(seed, spawn_key=(POLICY, decision, k, r, …))`. There is no
+  design index, so designs share common random numbers. Reserved values of k
+  are 2^32−1 (reference), 2^32−2 (random draw), 2^32−3 (null) and 2^32−4
+  (injected parametric model).
+- **Telling diagnostic.** d* = argmax over d of max over e of He²(truth, B-lib's
+  pick on obs), with R = 32 on the TELLING stream. Stopped replicates are
+  dropped, not counted as undefined, and a design where either side always
+  stops scores 0. Otherwise an exploding design ties every diagnostic at 1:
+  S11 against Hawkes gave `mean_rate`.
+
+Cost per decision at fit/4 (R = 16, 8 designs): EIG at K = 3 took 97-116 s,
+FSD 81-86 s and one FSD-null bootstrap 85-97 s. An exploding Wiener–Hopf
+design costs about 23 min per decision. The weights and that cost are open
+(see the 2026-10-09 entry on open decisions).
+
+## 2026-10-06 — Δ11 policy mode for AG-c-S; AG-S-boed
+
+**For review** (plan choices 10, 11 and 16). With a policy (random, EIG or
+FSD; AG-c only), `run_experiment` takes no arguments, and the belief gate
+still runs first.
+- **What the framework does.** It refits the latest belief's structures
+  (K ≤ 4) on all the data, uncharged and unshown, and picks the cell. The
+  design runs through the same `_run` as an agent's, with the same charging,
+  sealing and truncation.
+- **What the agent sees.** The design in its own names and units, and the
+  chosen diagnostic's value. Never a score, a weight or a BIC. The prompt
+  never names the rule.
+- **What only the record holds.** Under `policy`: the cell, the config, the
+  BICs and weights, the score table and the degeneracy summary.
+- **Fallback.** If no structure can be fitted, the decision uses the random
+  draw, and that is recorded.
+- **The key.** `surface_digest` adds the policy's framework-only config for
+  policy arms, so the arms are separated without the agent seeing the rule.
+
+AG-S-boed is `LLMArm("AG-c", "named", policy="EIG")` on Sonnet:
+`AG-c-S/named+policy=EIG`. Predictions made in a policy arm are left out of
+contrast C6, because the agent did not choose the experiment they test. This
+rule is to be applied at analysis; no code applies it yet.
+
+## 2026-10-09 — WP10 gate: any typed error inside a policy decision is a void
+
+`Lab._run_policy` caught only `PolicyError`. Other typed errors from inside a
+decision (for example `BoundViolationError` or `DiagnosticArgumentError`)
+reached the harness, which shows a `SciAgentError`'s message verbatim. That
+leaked policy numbers, and native channel names in anon, and the call was
+neither charged nor void. Now any `SciAgentError` in a decision is an
+infrastructure fault, which voids the run. The agent is told only that nothing
+ran and nothing was charged. The fix was test-first.
+
+When the branch was rebased onto v2 (ea055be), v2's exact-denial-text rule (F4)
+was ported into `harness/voids.py`, where WP4 had moved the classifier.
+`ForeignResult` carries the result text, and `campaign/voids.py` re-exports
+`denial_text`.
+
+## 2026-10-09 — B-sym policy arms and the telling unit
+
+`B-sym+{random,EIG,FSD}`, the control `B-sym+truthFSD` and the `telling` unit
+are opt-in: they are not in `BASELINES`, and every existing unit key is pinned
+unchanged. **For review** (plan choices 9, 12 and 13):
+1. **Epochs.** Epoch 1 is plain B-sym with F//2 fits on obs and the arm's
+   search seed, so it is identical across policies. Epoch 2 gets the rest of
+   F, so an odd fit goes to epoch 2. Its GP seed is
+   `SeedSequence(search_seed, spawn_key=(2,))`.
+2. **Epoch 2's start.** It starts from epoch 1's top `GPConfig.population`
+   certified structures. Refitting them on the new data costs epoch-2 fits.
+3. **Submission.** The best BIC among epoch-2 fits only, because epoch-1 BICs
+   are on other data. No certified epoch-2 fit fails the unit.
+4. **Entertained set.** Epoch 1's top four certified structures by BIC, fixed,
+   and refitted (uncharged) on obs plus the collected data at every decision.
+   With no certified candidate or refit, the decision uses the random draw.
+5. **Policy seed.** The investigation seed, as in AG-c-S.
+6. **Pairing.** Experiments run on the (truth, seed) truncating World, paired
+   with the agent arms, with E = `CampaignConfig.experiments`.
+7. **truthFSD.** The truth is `TruthModel(truth.spec)`, built in `execute.py`
+   as ORACLE's is. The comparator is B-lib's pick on obs.
+8. **Telling unit.** It is its own unit kind, with R = 32 and a cap of 15,000.
+9. **Scoring** refits the submission on obs only.
+10. **"Observed"** means the policy's chosen diagnostic was computed on an
+    experiment that left data. A failed unit is not observed. The rate weights
+    truths equally.
+
+## 2026-10-09 — Positive controls 4-6 (preregistered)
+
+Plan choice 18 puts controls 4-6 here rather than in SPEC. The code is
+`scoring/controls_p4.py`. Each control must pass before the contrast it gates
+is reported. A failure means fixing the instrument first (§7.1).
+
+- **C4, naming null (gates C2).** A scripted planted-hint agent runs through
+  the tool layer on the same truth and seed in every naming condition (named
+  and anon; `rescaled` joins when Δ9 lands). It records a belief in the
+  truth's hint, fits the hint and then the truth on obs, runs one unintervened
+  experiment, fits both on obs + e0, and submits the truth. It passes if and
+  only if the canonical submission, and every fit's structure, datasets and
+  native log-likelihood, are bit-identical to named's. The time factor is a
+  power of two, so no tolerance is allowed.
+- **C5, policy separation (gates C3 and C5).** B-sym+truthFSD against
+  B-sym+random, paired by (truth, seed), on whether d* was computed on
+  experiment data. A failed unit counts as not observed. With b the units only
+  truthFSD observed and c the units only random observed, the one-sided exact
+  McNemar p is P(Binom(b+c, ½) ≥ b). It passes if and only if p < 0.05. An
+  unpaired unit voids the read. It cannot pass on fewer than 5 discordant
+  units. Both arms' truth-weighted telling rates are reported beside it.
+- **C6, behaviour instrument (gates C6).** The 14-call scripted agent of
+  instrument test 10b runs through the live loop. Its record, read by
+  `timeline`, must reproduce the hand values, with floats equal to 1e-12
+  relative:
+  - refusals at calls 0, 5 and 11 (0-based), all uncharged;
+  - calibration coverage 2/3 at mean level 11/15; A (n 1, coverage 0, level
+    0.9), B (2, 1, 0.65);
+  - falsification-seeking 1/3;
+  - one falsification, revised, and one zombie;
+  - favoured path A, B, A, C;
+  - stopping converged at 3, 0 burned, not early, used share 1.
+
+**For review:**
+- C4 submits the truth, because the hint drops mark functions and only the
+  truth's text carries channel names through the anonymiser.
+- C4 includes one experiment, so that the anon time rescaling is crossed.
+- C4 and C5 refuse partial or unpaired input rather than dropping it.
+
+## 2026-10-09 — Open decisions for the user (not decided)
+
+Each has a setting or a proposal. None is resolved here.
+
+1. **EIG weights.** On dev the BIC posterior is degenerate. On dev-013,
+   H(w) ≈ 3e-13, so EIG is near 0 everywhere and some cells clear the tie
+   floor with negligible EIG; the pick then follows tiny but correct values.
+   That is the evidence-wall proposition, not a bug. A tempered weighting,
+   `tempered(T)`, exists but is off by default. `PolicyArmSettings.weighting`
+   (default BIC) is the lever for the B-sym arms. AG-c-S has no weighting
+   setting and uses BIC.
+2. **FSD cost and the policy event cap.** An exploding Wiener–Hopf design
+   costs about 23 min per decision. `PolicyArmSettings.max_events` exists at
+   its default of 15,000, which is the current behaviour; changing it moves
+   only the EIG, FSD and truthFSD unit keys. AG-c-S's `PolicySettings` has no
+   cap setting yet.
+3. **C5 random-arm seeding.** `policy_seed` carries no truth id. So on a given
+   seed, the random arm draws the same (design, diagnostic) sequence on every
+   truth, for both B-sym+random and AG-c-S+random. Pairing is intact, but C5
+   then compares truthFSD against one fixed random draw, so its verdict does
+   not generalise to random selection. The proposed fix keys random draws by
+   truth too. That moves the unit keys of the four B-sym+* arms and of
+   AG-c-S+random, so it must be decided before any policy unit runs for real.

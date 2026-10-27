@@ -101,3 +101,68 @@ mini-pilot gate. Ask the owner about the `p4-deltas` branch.
 `.cache/slow/`): read its tail first and root-cause any failure. Then the sandbox follow-ups
 (engineer, test first, in a worktree if the slow tier is still running), then the smoke. The
 follow-ups come before any AG-o run that produces reported numbers.
+
+## 2026-10-27: Lane session 2 (11:41 UTC): slow tier green, hunt checks cross-checked, two proposals
+
+**Done.**
+- Oriented on `v2` at 4a6d780 (clean). The slow tier from session 1 was running in tmux
+  `sci-slow`. `free -g`: 8 GB available. `docs/v2/INBOX.md` (new, from the owner) has no entries.
+- **Slow tier on dm-devbox, green:** `273 passed, 24 warnings in 5716.76s (1:35:16)`, exit 0,
+  at 4a6d780 (`.cache/slow/run.log`). It is slow because the machine is shared with
+  agent-control's jobs.
+- **Owner pushes during the session:** `origin/p4-deltas` (WP8-WP12 committed; slow tier
+  never run), `origin/windows-salvage` (not merged into `v2`; its `salvage/` `.py` files would
+  enter ruff and pytest), and three `v2` commits (INBOX, AUTOPILOT reads INBOX first, queue
+  items). I read HANDOFF-2026-10-09 before any smoke. It adds open decision 6 (C5 random-arm
+  seeding), now in the veto-rule decisions item. My first push hit a queue conflict with the
+  owner's commits; I resolved it on the owner's version and re-applied only my items.
+- **Session wall time:** proposal in LOG 2026-10-27 (veto window ends 2026-10-28T12:00Z). My
+  draft said "leave it in the cell". The red team rejected that, and I checked its two points:
+  - the record's timing section is not hashed (`harness/record.py:20-22`);
+  - under the scripted driver, `wall_s` is the only difference between two runs' session cells
+    (`tests/campaign/test_audit_driver.py:85-98`).
+
+  The proposal is now to move `wall_s`, `duration_api_ms` and `total_cost_usd` to
+  `timing.jsonl`, before the full pilot.
+- **Cross-check of the rebuilt hunt checks** against the salvaged originals (engineer, test
+  first; 7406810, merged). The rebuild had covered only §6 of the original `store_check.py`.
+  - **Ported:** `check_budgets` (budget accounting per record, an instrument),
+    `check_sessions` (every stored session found by the rescore's enumeration;
+    `scripts/session_check.py`), `KEY_FIELDS`, and p3_gap's beats-truth flag
+    (`hunt_gap.py --split`).
+  - **Failing first:** import errors, then stub runs failing on each condition.
+  - **Positive control** on dev-008 seed 1: truth reference −0.59890 per event, ORACLE
+    −0.0007 below it.
+  - **Gate change:** the engineer made beats-truth by more than +0.01 *fail* the gate. That
+    changes a gate fixed in HANDOFF-2026-10-06, so I reworded it as a proposal (veto window
+    ends 2026-10-28T13:00Z). Its red-team review stalled after 10 minutes without a verdict
+    (its only note: held-out logs hold about 1,800 to 2,330 events), so the review must be
+    rerun before adoption.
+  - **Not ported** as one-off migration probes: p3b_refit, inf_scan, cache_bound_check, the
+    fit/4 equality parts.
+  - **Left, queued:** store-level replay, peak memory on Linux, rescore_guard extras, the
+    hash-seed pair.
+- **Checks on the merged tree:**
+  - ruff format and check clean; `mypy` no issues in 227 files.
+  - Fast tier in the engineer's worktree (same content): exit 0, 2,593 passed and 3 skipped
+    (the QTM tests), counted from the progress marks. The `-q` in addopts plus my `-q`
+    suppressed the summary line.
+  - Audit slow tests on `v2`: `3 passed`.
+- **Sandbox follow-ups** (engineer, worktree `.claude/worktrees/agent-ab762e5af9832a80f`,
+  branch `worktree-agent-ab762e5af9832a80f`, based on 4a6d780): still in progress at hand-over;
+  asked to commit a checkpoint. State below.
+
+**Learned.**
+- Don't add `-q` to pytest here: addopts already has it, and `-qq` drops the count line.
+- The research-team guard blocks inline scripts that write under `.claude/` paths, which
+  includes agent worktrees. Use the Edit tool there.
+- A red-team agent on Opus xhigh can stall. Give it a narrower question, or split the two
+  questions.
+
+**Next.**
+1. Verify and merge the sandbox follow-ups branch: rebase onto `v2`, the fast tier and
+   `tests/sandbox -m slow`.
+2. Smoke (pilot-runner), with the dev split copied and its sha256 checked.
+3. After 2026-10-28T12:00Z, unless vetoed: implement the `wall_s` move.
+4. Re-run the beats-truth red team.
+5. Decide how to measure peak worker memory on Linux before the mini-pilot.

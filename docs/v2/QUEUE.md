@@ -20,7 +20,10 @@ Each item says when it is done. Move finished items to the bottom section after 
   LOG 2026-10-27) (P4-PROPOSAL §2.2): rerun
   `check_identifiable` on the 20 dev truths with v2's fitter and report any truth that changes
   status. Done when the result is in the journal and LOG.
-- [ ] **Sandbox handoff follow-ups, before any AG-o run that produces reported numbers**
+- [~] **Sandbox handoff follow-ups, before any AG-o run that produces reported numbers**
+  (2026-10-27: in progress by an engineer in worktree
+  `.claude/worktrees/agent-ab762e5af9832a80f`, branch `worktree-agent-ab762e5af9832a80f`, based
+  on 4a6d780; see JOURNAL for its state. Next session: verify, rebase onto `v2`, merge.)
   (engineer, test first; red-team review of 2026-10-27, findings in JOURNAL 2026-10-27):
   (1) before the back handoff, confirm the agent container is gone (`docker inspect`), else
   raise `SandboxError`; catch `TimeoutExpired` in `_remove`; (2) put both handoffs under one
@@ -38,9 +41,8 @@ Each item says when it is done. Move finished items to the bottom section after 
   sandbox follow-ups land in `campaign/llm.py`: implement (engineer, test first: every cell kind
   byte-identical across two scripted-driver runs; `pilot_report.py` reads session wall times from
   `timing.jsonl`). Must land before the full pilot.
-- [ ] **Slow tier on dm-devbox** once Docker exists (the split is in place):
-  `nice uv run pytest -m slow -n 2`. Done when green, or each failure has a root cause in the
-  journal.
+- [x] 2026-10-27 **Slow tier on dm-devbox**: `nice -n 10 uv run pytest -m slow -n 2` at 4a6d780,
+  `273 passed, 24 warnings in 5716.76s (1:35:16)`, exit 0 (`.cache/slow/run.log`).
 - [x] 2026-10-27 **Rebuild the defect-hunt checks** (`scripts/hunt_gap.py`, `store_check.py`,
   `store_compare.py`, `report_determinism.py`; LOG 2026-10-27) lost with the Windows PC (`.cache/hunt/A/p3_gap.py`,
   `B/store_check.py`, `B/report_determinism.py`) as committed scripts with tests (engineer):
@@ -87,10 +89,17 @@ Each item says when it is done. Move finished items to the bottom section after 
   (older v2). Merge into v2 only after the pilot's numbers are produced (it changes the harness:
   HARNESS_VERSION harness/2, session keys), re-run fast and slow tiers and the determinism check
   on dm-devbox. The `p3-fit4` tag was not pushed; not needed unless an old record cites it.
-- [ ] **Cross-check the rebuilt defect-hunt checks against the originals** now on
-  `origin/windows-salvage` (`salvage/windows-2026-10/hunt/`, plus mini-pilot scripts and the P4
-  plan): note any check the rebuild missed, port it test-first. Do not merge that branch; copy
-  what is needed. The PC's handoff of 2026-10-09 is now on v2 (a944ed8): read it before the smoke.
+- [x] 2026-10-27 **Cross-check the rebuilt defect-hunt checks against the originals** (7406810,
+  LOG 2026-10-27): ported test-first `check_budgets`, `check_sessions` (`scripts/session_check.py`),
+  `KEY_FIELDS` and the beats-truth flag (`hunt_gap.py --split`; making it fail the gate is a
+  proposal, veto window ends 2026-10-28T13:00Z). Coverage table in JOURNAL 2026-10-27.
+- [ ] **Hunt-check leftovers** (from the cross-check): (a) re-run the red-team review of the
+  beats-truth gate proposal before adopting it (the first one stalled); (b) peak worker memory
+  and measured slowdown on dm-devbox for the mini-pilot gate (the Windows sampler has no Linux
+  equivalent: decide how to measure, e.g. a `/proc` RSS sampler, before the mini-pilot);
+  (c) store-level replay check (`hunt/B/replay_check.py`), after the sandbox follow-ups land;
+  (d) `rescore_guard` extras (strip the CLI from PATH, patch the SDK entry points);
+  (e) explicit hash-seed baseline pair and report-on-a-copy (low).
 - [ ] **Decisions open since 2026-10-06** (HANDOFF-2026-10-06): the prompt variant freeze
   (Δ6), EIG weights (Δ11), an event cap for FSD, hand-written address text (F5), the
   review items, and decision 6 of HANDOFF-2026-10-09 (C5 random-arm seeding: `policy_seed` has

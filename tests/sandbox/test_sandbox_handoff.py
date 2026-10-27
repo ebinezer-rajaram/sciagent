@@ -462,9 +462,19 @@ def test_platform_check_table(owner: str | None, file_uid: int, ok: bool) -> Non
 
 
 def test_the_handoff_timeout_grows_with_the_wall_time() -> None:
-    assert runner._handoff_timeout(SandboxLimits()) == 600.0
+    """20 s per second of wall time: a 60 s call nesting directories built a
+    chain 910,000 deep, and emptying it took about 390 s (LOG 2026-10-27)."""
+    assert runner._handoff_timeout(SandboxLimits()) == 1200.0
     assert runner._handoff_timeout(SandboxLimits(wall_seconds=5)) == 300.0
-    assert runner._handoff_timeout(SandboxLimits(wall_seconds=120)) == 1200.0
+    assert runner._handoff_timeout(SandboxLimits(wall_seconds=120)) == 2400.0
+
+
+def test_a_recovery_allows_at_least_a_call_s_handoff_time(
+    docker: FakeDocker, tmp_path: Path
+) -> None:
+    (tmp_path / "work").mkdir()
+    runner.recover(tmp_path, image=IMAGE, limits=SandboxLimits(wall_seconds=120))
+    assert docker.timeouts == [2400.0]
 
 
 def test_a_handoff_that_times_out_is_removed_and_typed(
@@ -472,9 +482,9 @@ def test_a_handoff_that_times_out_is_removed_and_typed(
 ) -> None:
     _skip_platform_probe(monkeypatch)
     docker.helper_times_out.add("0:0")
-    with pytest.raises(SandboxError, match="longer than 600 s"):
+    with pytest.raises(SandboxError, match="longer than 1200 s"):
         _sandbox(tmp_path).run("print('hello')")
-    assert docker.timeouts == [600.0, 600.0]
+    assert docker.timeouts == [1200.0, 1200.0]
     removed = [c[-1] for c in docker.calls if c[1] == "rm"]
     assert len(removed) == 1 and removed[0].startswith("sciagent-own-")
 
@@ -541,3 +551,116 @@ def test_sandbox_recover_after_a_failed_back_handoff_hands_work_back(
     sb.recover()
     assert docker.handoffs == ["65534:65534", "0:0", "0:0"]
     assert docker.timeouts[-1] == 1800.0
+
+
+# --------------------------------------------------------------------------
+# Red-team follow-ups (JOURNAL 2026-10-27, lane session 3)
+# --------------------------------------------------------------------------
+
+
+def test_both_handoffs_failing_still_leave_work_to_recover(
+    docker: FakeDocker, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``work/`` counts as handed away from before the forward handoff: one
+    that fails part way may have given some of it to 65534 already, and if
+    the back handoff fails too, only :meth:`Sandbox.recover` hands it back."""
+    _skip_platform_probe(monkeypatch)
+    sb = _sandbox(tmp_path)
+    docker.helper_rc = {"65534:65534": 1, "0:0": 1}
+    with pytest.raises(SandboxError):
+        sb.run("print('hello')")
+    docker.helper_rc = {}
+    sb.recover()
+    assert docker.handoffs == ["65534:65534", "0:0", "0:0"]
+
+
+def test_work_gone_after_the_back_handoff_is_a_typed_error(
+    docker: FakeDocker, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ownership check after the back handoff raises a sandbox error, not
+    ``FileNotFoundError``, so the sandbox is marked unusable like any other
+    failed back handoff."""
+    _skip_platform_probe(monkeypatch)
+    sb = _sandbox(tmp_path)
+    handoff = runner.Sandbox._handoff
+
+    def vanish(self: Sandbox, owner: str) -> bool:
+        emptied = handoff(self, owner)
+        if owner == "0:0":
+            self.work_dir.rmdir()
+        return emptied
+
+    monkeypatch.setattr(runner.Sandbox, "_handoff", vanish)
+    with pytest.raises(SandboxError, match="work/"):
+        sb.run("print('hello')")
+    with pytest.raises(SandboxError, match="unusable"):
+        sb.run("print('again')")
+
+
+def test_the_sweep_walks_a_chain_deeper_than_the_recursion_limit(
+    tmp_path: Path,
+) -> None:
+    """``work/`` may be deep: up to 512 levels after a back handoff, any
+    depth where there is no handoff (Docker Desktop). The host's sweep must
+    walk it without recursing per level (Python's recursion limit is 1,000)."""
+    work = tmp_path / "work"
+    work.mkdir()
+    rel = "/".join(["d"] * 1024)
+    assert len(rel) == 2047
+    bottom = work
+    for _ in range(1024):  # not mkdir(parents=True): it recurses per level
+        bottom = bottom / "d"
+        bottom.mkdir()
+    assert bottom == work / rel
+    os.mkfifo(bottom / "p")
+    os.symlink("/", work / "d" / "l")
+    try:
+        removed = runner._sweep_special_files(work, os.getuid())
+        assert removed == [f"{rel}/p", "d/l"]
+        assert bottom.is_dir() and not (bottom / "p").exists()
+    finally:
+        # pytest removes tmp_path with shutil.rmtree, which recurses per level.
+        subprocess.run(["rm", "-rf", "--", str(work / "d")], check=True)
+
+
+def test_the_sweep_checks_a_directory_before_removing_from_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With an owner to check, nothing is removed from a directory holding an
+    entry that is not the host user's."""
+    work = tmp_path / "work"
+    work.mkdir()
+    os.mkfifo(work / "a")
+    (work / "b").touch()
+    real_lstat = os.lstat
+
+    def lstat(path: Any, *args: Any, **kwargs: Any) -> os.stat_result:
+        st = real_lstat(path, *args, **kwargs)
+        if Path(path).name == "b":
+            fields = list(st)
+            fields[4] = os.getuid() + 1  # st_uid
+            return os.stat_result(fields)
+        return st
+
+    monkeypatch.setattr(os, "lstat", lstat)
+    with pytest.raises(SandboxError, match="work/b"):
+        runner._sweep_special_files(work, os.getuid())
+    assert (work / "a").exists()
+
+
+def test_recover_run_dirs_finds_containers_under_a_symlinked_root(
+    docker: FakeDocker, tmp_path: Path
+) -> None:
+    """Containers are found by ``docker ps --filter volume=<work>``, an exact
+    match on the mount source, and :class:`Sandbox` mounts the resolved path;
+    recovery must ask for the resolved path too."""
+    real = tmp_path / "real"
+    (real / "run" / "work").mkdir(parents=True)
+    link = tmp_path / "link"
+    link.symlink_to(real, target_is_directory=True)
+    runner.recover_run_dirs(link, image=IMAGE)
+    asked = [c[-1] for c in docker.calls if c[1] == "ps"]
+    assert asked and set(asked) == {f"volume={(real / 'run' / 'work').as_posix()}"}
+    assert {str(_mount_source(c, "/work")) for c in docker.calls if c[1] == "run"} == {
+        str(real / "run" / "work")
+    }

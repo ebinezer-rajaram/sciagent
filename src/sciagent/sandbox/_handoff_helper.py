@@ -16,8 +16,9 @@ Command line: ``OWNER MAX_ENTRIES MAX_PATH_BYTES ROOT``. It prints one line,
    ``MAX_PATH_BYTES``, everything under ``ROOT`` is deleted (``emptied``). The
    count stops at the first entry past a limit, so counting costs at most the
    limit however many files the code wrote, and the walk never goes deeper
-   than the path limit allows. Deletion is GNU ``find -delete``, which handles
-   any depth and width.
+   than the path limit allows. Deletion (:func:`empty`) goes breadth-first
+   through a queue, in memory and open files independent of the tree's depth
+   and width.
 2. **Handoff.** Every entry, and ``ROOT`` itself, is given to ``OWNER``
    (``lchown``: a symbolic link is never followed); every entry that is not a
    link loses its POSIX ACLs (access and default) and gets
@@ -33,7 +34,6 @@ from __future__ import annotations
 import errno
 import os
 import stat
-import subprocess
 import sys
 
 #: The extended attributes that carry POSIX ACLs.
@@ -125,9 +125,83 @@ def hand_over(root: str, uid: int, gid: int) -> None:
                 pending.append(path)
 
 
+_DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+
+def _open_dir(name: str, dir_fd: int | None = None) -> int:
+    return os.open(name, _DIR_FLAGS, dir_fd=dir_fd)
+
+
+def _new_queue(root_fd: int) -> tuple[str, int]:
+    """Create an empty directory under the root; return its name and an fd."""
+    k = 0
+    while True:
+        name = f".sciagent-queue-{k}"
+        try:
+            os.mkdir(name, 0o700, dir_fd=root_fd)
+        except FileExistsError:
+            k += 1
+            continue
+        return name, _open_dir(name, root_fd)
+
+
+def _drain(dir_fd: int, queue_fd: int, end: int, skip: str | None = None) -> int:
+    """Unlink every non-directory of ``dir_fd`` and move every directory into
+    the queue as ``str(end)``, ``str(end + 1)``, ...; skip ``skip``. Scan
+    again until a scan finds nothing to do. Return the queue's new end."""
+    while True:
+        done = True
+        with os.scandir(dir_fd) as entries:
+            for entry in entries:
+                if entry.name == skip:
+                    continue
+                done = False
+                if entry.is_dir(follow_symlinks=False):
+                    os.rename(
+                        entry.name, str(end), src_dir_fd=dir_fd, dst_dir_fd=queue_fd
+                    )
+                    end += 1
+                else:
+                    os.unlink(entry.name, dir_fd=dir_fd)
+        if done:
+            return end
+
+
 def empty(root: str) -> None:
-    """Delete everything under ``root``, keeping ``root``."""
-    subprocess.run(["find", root, "-mindepth", "1", "-delete"], check=True)
+    """Delete everything under ``root``, keeping ``root``.
+
+    Breadth-first through a queue directory, in memory and open files
+    independent of the tree's depth and width: every directory is first
+    renamed into the queue (as ``0``, ``1``, ...); taking one off the queue
+    unlinks its non-directories, renames its subdirectories onto the end of
+    the queue, and removes it. At most three directories are open at once,
+    the queue is never scanned (its names are known), and each entry is
+    renamed at most once and removed once, so time is linear in the tree. A
+    chain a million directories deep costs what a million directories side by
+    side would. (GNU ``find -delete`` keeps state per level: on the chain one
+    call built in 60 s it was still running after 10 minutes, its memory
+    growing; LOG 2026-10-27.)
+    """
+    root_fd = _open_dir(root)
+    try:
+        queue, queue_fd = _new_queue(root_fd)
+        try:
+            end = _drain(root_fd, queue_fd, 0, skip=queue)
+            done = 0
+            while done < end:
+                name = str(done)
+                sub_fd = _open_dir(name, queue_fd)
+                try:
+                    end = _drain(sub_fd, queue_fd, end)
+                finally:
+                    os.close(sub_fd)
+                os.rmdir(name, dir_fd=queue_fd)
+                done += 1
+        finally:
+            os.close(queue_fd)
+        os.rmdir(queue, dir_fd=root_fd)
+    finally:
+        os.close(root_fd)
 
 
 def main(argv: list[str]) -> int:

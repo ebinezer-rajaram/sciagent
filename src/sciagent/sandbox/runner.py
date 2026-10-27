@@ -123,6 +123,7 @@ from sciagent.sandbox.errors import (
 from sciagent.sandbox.image import check_docker
 
 __all__ = [
+    "HANDOFF_HELPER_SHA256",
     "SANDBOX_UID",
     "TIMEOUT_EXIT_CODE",
     "Sandbox",
@@ -157,12 +158,19 @@ _HANDOFF_TIMEOUT_S: Final = 300.0
 
 #: Handoff time allowed per second of ``wall_seconds``. A back handoff walks
 #: at most the entry limit, unless the call just wrote more, which it then
-#: deletes; what one call can write grows with its wall time. Measured on
-#: dm-devbox under load (2026-10-27): a 60 s call created 1.7 million files
-#: and the back handoff took 163 s to delete them, so 10 s per second leaves
-#: a margin of about 3.7. Reaching the bound is then a harness fault, not
-#: something the agent's code can cause.
-_HANDOFF_SECONDS_PER_WALL_SECOND: Final = 10.0
+#: deletes; what one call can write grows with its wall time (and, for
+#: directories, with its memory: their dentries and inodes are charged to the
+#: container). The deletion's cost is mostly reading back directory blocks
+#: the call's memory limit pushed out of the page cache, so it is bound by
+#: the disk's IOPS, not by CPU. Measured on dm-devbox under load
+#: (2026-10-27), at the production limits (60 s, 2,048 MB): a call writing
+#: files built 1.7 million, deleted in 163 s; a call nesting directories
+#: (``mkdir`` + ``chdir``) built a chain 910,000 deep, deleted in about
+#: 390 s. 20 s per second (1,200 s) leaves a margin of about 3 over the
+#: slower. That is a measured margin over the shapes tried, on this disk, not
+#: a proof that agent code cannot reach the bound; reaching it is a harness
+#: fault (``SandboxError``), which voids the run.
+_HANDOFF_SECONDS_PER_WALL_SECOND: Final = 20.0
 
 #: Upper bound on a recovery handoff (:func:`recover`): after a session was
 #: killed, the agent's container may have run far past ``wall_seconds``.
@@ -181,10 +189,19 @@ _HELPER_SOURCE: Final = (
     Path(__file__).with_name("_handoff_helper.py").read_text(encoding="utf-8")
 )
 
-#: Longest ``max_work_path_bytes``: the host walks ``work/`` by path, and a
-#: path must stay well inside ``PATH_MAX`` (4096) with the run directory
-#: in front of it.
-_MAX_WORK_PATH_BYTES: Final = 2048
+#: SHA-256 of the helper program as sent to the container. The helper lives
+#: in ``src/``, not in the image, so the image tag does not name it; an AG-o
+#: run records this beside its limits (:mod:`sciagent.investigation.runner`).
+HANDOFF_HELPER_SHA256: Final = hashlib.sha256(
+    _HELPER_SOURCE.encode("utf-8")
+).hexdigest()
+
+#: Longest ``max_work_path_bytes``. A path must stay well inside ``PATH_MAX``
+#: (4096) with the run directory in front of it, and the depth it allows
+#: (512 directories) well inside Python's recursion limit (1,000):
+#: ``shutil.rmtree`` recurses once per level (Python 3.12), and the run
+#: directory is removed with it after the run.
+_MAX_WORK_PATH_BYTES: Final = 1024
 
 _OWNER_RE: Final = re.compile(r"[0-9]+:[0-9]+")
 
@@ -766,8 +783,16 @@ def _handoff(
 
 
 def _check_owned(work_dir: Path) -> None:
-    """Raise unless ``work_dir`` belongs to the host user (after a back handoff)."""
-    uid = work_dir.lstat().st_uid
+    """Raise unless ``work_dir`` belongs to the host user (after a back handoff).
+
+    Raises:
+        SandboxError: it does not, or it cannot be read (typed, so the
+            caller's ``except SandboxError`` marks the sandbox unusable).
+    """
+    try:
+        uid = work_dir.lstat().st_uid
+    except OSError as exc:
+        raise SandboxError(f"cannot read work/ after handing it back: {exc}") from exc
     if uid != _host_uid():
         raise SandboxError(
             f"work/ is owned by uid {uid}, not by the host user (uid "
@@ -788,13 +813,17 @@ def recover(
     still mounting ``work/`` (an agent container whose client was killed runs
     on, past any wall time) and confirms each gone; then, where there is a
     handoff, hands ``work/`` back with the usual helper (``limits``, default
-    :class:`SandboxLimits`, within ``_RECOVERY_TIMEOUT_S``) and checks it.
+    :class:`SandboxLimits`, within ``_RECOVERY_TIMEOUT_S`` or a call's
+    handoff time, whichever is longer) and checks it.
 
     Raises:
         SandboxError: a container could not be removed or the handoff failed;
             and whatever :func:`_probe_handoff_owner` raises.
     """
-    work = run_dir / "work"
+    # Resolved, as :class:`Sandbox` mounts it: ``docker ps --filter volume=``
+    # matches the mount source exactly, so a path through a symbolic link
+    # would find no container.
+    work = run_dir.resolve() / "work"
     for container in _containers_mounting(docker, work):
         _confirm_gone(docker, container)
     left = _containers_mounting(docker, work)
@@ -803,13 +832,14 @@ def recover(
     owner = _probe_handoff_owner(docker)
     if owner is None:
         return
+    limits = SandboxLimits() if limits is None else limits
     _handoff(
         docker,
         image,
         work,
         owner,
-        SandboxLimits() if limits is None else limits,
-        timeout=_RECOVERY_TIMEOUT_S,
+        limits,
+        timeout=max(_RECOVERY_TIMEOUT_S, _handoff_timeout(limits)),
     )
     _check_owned(work)
 
@@ -983,30 +1013,35 @@ def _sweep_special_files(work_dir: Path, owner_uid: int | None = None) -> list[s
     agent is told in stderr.
     """
     removed: list[str] = []
-
-    def walk(d: Path, rel: str) -> None:
-        with os.scandir(d) as it:
-            entries = sorted(it, key=lambda e: e.name)
-        for e in entries:
-            st = os.lstat(e.path)
+    # Iterative, not recursive: ``work/`` is up to 512 levels deep after a
+    # back handoff, and deeper where there is none (Docker Desktop applies
+    # no limit), so a walk per level could reach Python's recursion limit.
+    pending: list[tuple[Path, str]] = [(work_dir, "")]
+    while pending:
+        directory, rel = pending.pop()
+        with os.scandir(directory) as it:
+            names = sorted(e.name for e in it)
+        entries: list[tuple[Path, str, os.stat_result]] = []
+        for base in names:
+            path = directory / base
+            st = os.lstat(path)
             if owner_uid is not None and st.st_uid != owner_uid:
                 raise SandboxError(
-                    f"work/{rel}{e.name} is owned by uid {st.st_uid}, not by the "
+                    f"work/{rel}{base} is owned by uid {st.st_uid}, not by the "
                     f"host user (uid {owner_uid}), after handing work/ back"
                 )
+            entries.append((path, f"{rel}{base}", st))
+        for path, name, st in entries:
             attrs = getattr(st, "st_file_attributes", 0)
             reparse = bool(attrs & _FILE_ATTRIBUTE_REPARSE_POINT)
-            name = f"{rel}{e.name}"
             if not reparse and stat.S_ISDIR(st.st_mode):
-                walk(Path(e.path), f"{name}/")
+                pending.append((path, f"{name}/"))
             elif reparse or not stat.S_ISREG(st.st_mode):
                 if attrs & _FILE_ATTRIBUTE_DIRECTORY:
-                    os.rmdir(e.path)
+                    os.rmdir(path)
                 else:
-                    os.unlink(e.path)
+                    os.unlink(path)
                 removed.append(name)
-
-    walk(work_dir, "")
     return sorted(removed)
 
 

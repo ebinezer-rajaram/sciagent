@@ -715,6 +715,48 @@ def test_too_many_files_empty_work_and_the_run_goes_on(
     assert sandbox.limits.max_work_entries == limit
 
 
+def test_a_deep_directory_chain_is_emptied_and_the_run_goes_on(
+    sandbox: Sandbox, run_dir: Path
+) -> None:
+    """The adversarial shape for the deletion, not the count: one call nesting
+    directories (``mkdir`` + ``chdir``) for its whole wall time builds a chain
+    hundreds of thousands of levels deep. The back handoff must still empty
+    it within its timeout and within the helper's memory, so the call is a
+    recorded result; a helper killed part way would be a harness fault that
+    voids the run, and so a void the agent could cause at will.
+
+    At the production limits (60 s, 2,048 MB): the chain grows until the wall
+    time or until its kernel memory (dentries, inodes, charged to the
+    container) runs out, whichever comes first."""
+    sb = _with(sandbox, memory_mb=2048)
+    t0 = time.monotonic()
+    r = _run(
+        sb,
+        """
+        import os
+        depth = 0
+        while True:
+            os.mkdir("d")
+            os.chdir("d")
+            depth += 1
+            if depth % 10_000 == 0:
+                print(depth, flush=True)
+        """,
+    )
+    total = time.monotonic() - t0
+    depth = int(r.stdout.split()[-1])
+    print(
+        f"chain depth {depth}, call {r.duration_s:.0f} s (exit {r.exit_code}), "
+        f"call and handoffs {total:.0f} s"
+    )
+    assert r.timed_out or r.exit_code == 137, r.stderr
+    assert depth >= 100_000, "the chain is too shallow to test anything"
+    assert "work/ was emptied" in r.stderr
+    assert list((run_dir / "work").iterdir()) == []
+    again = _run(sb, "open('/work/f', 'w').write('ok'); print('fine')")
+    assert again.stdout == "fine\n" and again.exit_code == 0, again.stderr
+
+
 @pytest.mark.parametrize("wrong", [None, f"{os.getuid()}:{os.getgid()}"])
 def test_wrong_platform_detection_fails_loudly(
     sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch, wrong: str | None

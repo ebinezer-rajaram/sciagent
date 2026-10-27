@@ -13,6 +13,7 @@ import csv
 import dataclasses
 import io
 import itertools
+import subprocess
 import zipfile
 from pathlib import Path, PureWindowsPath
 from typing import Any
@@ -26,6 +27,7 @@ from sciagent.sandbox import (
     Sandbox,
     SandboxConfigError,
     SandboxError,
+    SandboxImageError,
     SandboxLimits,
     SandboxPathError,
     SandboxResult,
@@ -136,7 +138,7 @@ def test_errors_derive_from_sciagent_error() -> None:
         {"max_file_mb": 0},
         {"max_work_entries": 0},
         {"max_work_path_bytes": 0},
-        {"max_work_path_bytes": 2049},
+        {"max_work_path_bytes": 1025},
     ],
 )
 def test_limits_reject_nonsense(bad: dict[str, Any]) -> None:
@@ -201,6 +203,33 @@ def test_missing_docker_is_unavailable_error(tmp_path: Path) -> None:
     )
     with pytest.raises(SandboxUnavailableError):
         sb.run("print(1)")
+
+
+@pytest.mark.parametrize(
+    ("hangs", "error", "message"),
+    [
+        ("inspect", SandboxUnavailableError, "image inspect did not answer"),
+        ("build", SandboxImageError, "took longer than"),
+    ],
+)
+def test_a_docker_command_that_hangs_is_a_typed_error(
+    monkeypatch: pytest.MonkeyPatch,
+    hangs: str,
+    error: type[SandboxError],
+    message: str,
+) -> None:
+    """``ensure_image`` never lets ``subprocess.TimeoutExpired`` out."""
+
+    def fake_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        sub = argv[1] if argv[1] != "image" else argv[2]
+        if sub == hangs:
+            raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+        rc = 1 if sub == "inspect" else 0  # the image is absent: build it
+        return subprocess.CompletedProcess(argv, rc, b"27.0.0\n", b"")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(error, match=message):
+        ensure_image()
 
 
 # --------------------------------------------------------------------------

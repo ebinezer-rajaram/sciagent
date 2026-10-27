@@ -29,13 +29,18 @@ backs off, and gives up on a unit after a fixed number of attempts.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import logging
 import multiprocessing
+import multiprocessing.process
+import os
 import shutil
+import signal
+import sys
 import tempfile
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from multiprocessing.connection import Connection
 from pathlib import Path
@@ -274,6 +279,58 @@ def _child(
     conn.close()
 
 
+#: What an isolated session's process runs: :func:`_child`'s signature.
+SessionTarget = Callable[
+    [
+        Connection,
+        Unit,
+        TruthEntry,
+        CampaignEnvironment,
+        CampaignConfig,
+        Path,
+        Path | None,
+    ],
+    None,
+]
+
+
+def _session_process(
+    target: SessionTarget,
+    conn: Connection,
+    unit: Unit,
+    truth: TruthEntry,
+    env: CampaignEnvironment,
+    config: CampaignConfig,
+    out_dir: Path,
+    sandbox_root: Path | None,
+) -> None:
+    """Entry point of an isolated session's process.
+
+    It first leads a process group of its own, so the parent can kill it
+    together with every process it started (:func:`_kill_session`).
+    """
+    if sys.platform != "win32":
+        os.setpgid(0, 0)
+    target(conn, unit, truth, env, config, out_dir, sandbox_root)
+
+
+def _kill_session(process: multiprocessing.process.BaseProcess) -> None:
+    """Kill an isolated session's process and every process it started.
+
+    Killing only the process would orphan the Docker clients of its
+    ``python`` calls and handoffs; their containers are removed by the
+    recovery that follows, but the clients themselves would run on. On
+    POSIX the whole process group goes (:func:`_session_process`).
+    """
+    if sys.platform != "win32" and process.pid is not None:
+        # No such group yet means the process has not reached setpgid, so it
+        # has started nothing, and the kill below is enough.
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+    process.kill()
+    process.join()
+
+
 def run_session_isolated(
     unit: Unit,
     truth: TruthEntry,
@@ -358,13 +415,18 @@ def _run_isolated(
     out_dir: Path,
     sandbox_root: Path | None,
     grace_s: float,
+    *,
+    target: SessionTarget = _child,
 ) -> SessionOutcome:
-    """The process part of :func:`run_session_isolated`."""
+    """The process part of :func:`run_session_isolated`.
+
+    ``target`` is what the process runs (:func:`_child`; tests replace it).
+    """
     ctx = multiprocessing.get_context("spawn")
     receive, send = ctx.Pipe(duplex=False)
     process = ctx.Process(
-        target=_child,
-        args=(send, unit, truth, env, config, out_dir, sandbox_root),
+        target=_session_process,
+        args=(target, send, unit, truth, env, config, out_dir, sandbox_root),
         daemon=True,
     )
     start = time.perf_counter()
@@ -381,8 +443,7 @@ def _run_isolated(
         return _retry(unit, error, start)
     finally:
         receive.close()
-    process.kill()
-    process.join()
+    _kill_session(process)
     detail: dict[str, Json] = {
         "outcome": "hard_timeout",
         "error": "HardTimeout",

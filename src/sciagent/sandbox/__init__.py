@@ -19,6 +19,7 @@ from sciagent.sandbox.errors import (
 )
 from sciagent.sandbox.image import check_docker, ensure_image, image_tag
 from sciagent.sandbox.runner import (
+    HANDOFF_HELPER_SHA256,
     TIMEOUT_EXIT_CODE,
     Sandbox,
     SandboxLimits,
@@ -34,6 +35,7 @@ from sciagent.sandbox.runner import (
 )
 
 __all__ = [
+    "HANDOFF_HELPER_SHA256",
     "TIMEOUT_EXIT_CODE",
     "DatasetConflictError",
     "Sandbox",

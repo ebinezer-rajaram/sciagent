@@ -67,16 +67,21 @@ def put_baseline(
     fit_config: str = "fc",
     text: str | None = None,
     variant: str = "",
+    truth_digest: str | None = None,
 ) -> ExperimentKey:
     """One baseline cell; ``per_event=None`` writes a failed unit. ``text``
-    replaces the stored config text (not the key's hash of it)."""
+    replaces the stored config text (not the key's hash of it);
+    ``truth_digest`` replaces the truth record's digest (``sha(truth)``)."""
     config_text = f"config of {system}{variant}"
     key = make_key(
         "baseline",
         system,
         truth,
         seed,
-        {"truth_digest": sha(truth), "system_config": sha(config_text)},
+        {
+            "truth_digest": sha(truth) if truth_digest is None else truth_digest,
+            "system_config": sha(config_text),
+        },
         env=env,
         fit_config=fit_config,
     )

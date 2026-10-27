@@ -35,6 +35,17 @@ beating the data-generating process on independent held-out data by that much
 is a leakage flag whatever ORACLE does (hunt A's ``p3_gap.py``, "BEATS-TRUTH").
 A scored unit without a reference is refused rather than skipped.
 
+A truth id does not identify a truth: two splits can share their ids with
+different records (the Windows and Linux dev splits do). So the reference
+carries the digest of the truth record it was computed from
+(:class:`TruthReference`), and each unit's own record is established from its
+cell (:func:`cell_truth_digest`: a baseline key's ``truth_digest``, an
+``llm-score``'s through its session cell). The gate fails, naming the unit
+(:attr:`GapReport.digest_issues`), when a unit's record cannot be established
+or is not the reference's; such a unit gets no margin over the truth. Without
+a reference, a group whose cells come from more than one record fails the
+same way, since its gaps would pair cells of different truths.
+
 Void LLM sessions are not dropped here: the check is of ORACLE as an upper
 bound, and a void session's score is still a fit through the same fitter.
 
@@ -206,6 +217,16 @@ def matches_env(env_version: str, env: str) -> bool:
 
 
 @dataclass(frozen=True)
+class TruthReference:
+    """The held-out per-event log L of a truth's own parameters on one seed's
+    held-out log, and the digest of the truth record it was computed from (the
+    SHA-256 a cell's key carries as ``truth_digest``)."""
+
+    digest: str
+    per_event: float
+
+
+@dataclass(frozen=True)
 class GapUnit:
     """One scored unit and its gap to the ORACLE of the same group."""
 
@@ -220,6 +241,13 @@ class GapUnit:
     oracle_underfit: bool | None
     truth_ll: float | None = None
     over_truth: float | None = None
+    #: The digest of the truth record the cell was scored on (an
+    #: ``llm-score``'s comes from its session cell); None when it cannot be
+    #: established.
+    truth_digest: str | None = None
+    #: Why the unit's truth record is not established, or not the reference's
+    #: (or, without a reference, not its group's only one); None when it is.
+    digest_issue: str | None = None
 
 
 @dataclass(frozen=True)
@@ -254,12 +282,19 @@ class GapReport:
         )
 
     @property
+    def digest_issues(self) -> tuple[GapUnit, ...]:
+        """Units not shown to be scored on the reference's truth record (or,
+        without a reference, on their group's only one)."""
+        return tuple(u for u in self.units if u.digest_issue is not None)
+
+    @property
     def passed(self) -> bool:
         return (
             bool(self.units)
             and not self.above
             and not self.unreferenced
             and not self.beats_truth
+            and not self.digest_issues
             and self.underfit.passed
         )
 
@@ -284,18 +319,79 @@ def _group(key: ExperimentKey) -> tuple[str, str, str, str, str, int]:
     )
 
 
+def _short(digest: str) -> str:
+    return f"{digest[:12]}..."
+
+
+def cell_truth_digest(
+    key: ExperimentKey, cells: Mapping[str, Mapping[str, Json]]
+) -> tuple[str | None, str | None]:
+    """The digest of the truth record a scored cell was scored on, or None
+    and the reason it cannot be established. A ``baseline`` key carries it;
+    an ``llm-score`` key names its session, whose key carries it, and that
+    session must be a committed ``llm-session`` cell of the same truth and
+    seed (``cells``: committed cells by digest)."""
+    unit = f"{key.config['truth']} s{int(key.seed)}"
+    if key.config.get("kind") == "llm-score":
+        session = key.config.get("session", "")
+        cell = cells.get(session)
+        if cell is None:
+            return None, f"its session {_short(session)} is not a committed cell"
+        skey = key_from_json(cell["key"])
+        skind = skey.config.get("kind")
+        if skind != "llm-session":
+            return None, f"its session {_short(session)} is a {skind} cell"
+        sunit = f"{skey.config.get('truth')} s{int(skey.seed)}"
+        if sunit != unit:
+            return None, f"its session {_short(session)} is for {sunit}"
+        key = skey
+    digest = key.config.get("truth_digest", "")
+    if not digest:
+        return None, f"its {key.config.get('kind')} key has no truth_digest"
+    return digest, None
+
+
+def _digest_issues(
+    digests: Mapping[str, tuple[str | None, str | None]],
+    reference: TruthReference | None,
+) -> dict[str, str]:
+    """Per system of one group, why its truth record is not shown to be the
+    reference's (without a reference: the group's only one)."""
+    known = sorted({d for d, _ in digests.values() if d is not None})
+    out: dict[str, str] = {}
+    for system, (digest, reason) in sorted(digests.items()):
+        if digest is None:
+            out[system] = f"truth record not established: {reason}"
+        elif reference is not None and digest != reference.digest:
+            out[system] = (
+                f"truth record {_short(digest)} is not the reference's "
+                f"{_short(reference.digest)}"
+            )
+        elif reference is None and len(known) > 1:
+            out[system] = (
+                f"the group's cells come from {len(known)} truth records "
+                f"({', '.join(_short(d) for d in known)})"
+            )
+    return out
+
+
 def gap_check(
     store: ResultStore,
     env: str,
     *,
     threshold: float = GAP_THRESHOLD,
-    truth: Mapping[tuple[str, int], float] | None = None,
+    truth: Mapping[tuple[str, int], TruthReference] | None = None,
 ) -> GapReport:
     """Per unit, the gap of each system to ORACLE and, given ``truth`` (per
-    (truth id, seed), the truth's own held-out per-event log L), its margin
-    over the truth (module docstring)."""
+    (truth id, seed), the truth's own held-out per-event log L and its
+    record's digest), its margin over the truth (module docstring)."""
     groups: dict[tuple[str, str, str, str, str, int], list[Row]] = {}
-    for cell in store.cells():
+    digests: dict[
+        tuple[str, str, str, str, str, int], dict[str, tuple[str | None, str | None]]
+    ] = {}
+    cells = store.cells()
+    by_digest = {str(c["digest"]): c for c in cells}
+    for cell in cells:
         key = key_from_json(cell["key"])
         kind = key.config.get("kind")
         if kind not in SCORED_KINDS or not matches_env(str(key.env_version), env):
@@ -309,6 +405,7 @@ def gap_check(
                 f"({cell['digest']}); select a single run's store"
             )
         rows.append(row_from_cell(g[4], g[5], system, kind == "llm-score", cell))
+        digests.setdefault(g, {})[system] = cell_truth_digest(key, by_digest)
     derived: list[Row] = []
     units: list[GapUnit] = []
     for g in sorted(groups):
@@ -324,10 +421,12 @@ def gap_check(
                     f"no truth reference for {g[4]} s{g[5]}, which has scored cells"
                 )
             reference = truth[(g[4], g[5])]
-            if not math.isfinite(reference):
+            if not math.isfinite(reference.per_event):
                 raise CampaignError(
-                    f"truth reference for {g[4]} s{g[5]} is {reference!r}, not finite"
+                    f"truth reference for {g[4]} s{g[5]} is "
+                    f"{reference.per_event!r}, not finite"
                 )
+        issues = _digest_issues(digests[g], reference)
         units += [
             GapUnit(
                 truth=r.truth,
@@ -339,8 +438,14 @@ def gap_check(
                 oracle=oracle,
                 gap=r.gap,
                 oracle_underfit=r.oracle_underfit,
-                truth_ll=reference,
-                over_truth=_margin(r.per_event, reference),
+                truth_ll=None if reference is None else reference.per_event,
+                over_truth=(
+                    None
+                    if reference is None or r.system in issues
+                    else _margin(r.per_event, reference.per_event)
+                ),
+                truth_digest=digests[g][r.system][0],
+                digest_issue=issues.get(r.system),
             )
             for r in rows
         ]

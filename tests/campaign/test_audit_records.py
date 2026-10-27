@@ -20,6 +20,7 @@ from typing import Any
 import pytest
 from audit_support import (
     CALLS,
+    FIT4,
     call,
     clean_store,
     make_key,
@@ -33,6 +34,7 @@ from campaign_support import TRUTH_IDS, entry, environment, tiny_config
 from test_audit_driver import run_campaign
 
 from sciagent.campaign.audit import (
+    TruthReference,
     check_budgets,
     check_sessions,
     check_store,
@@ -347,6 +349,13 @@ def test_two_stored_sessions_for_one_unit_are_an_issue(tmp_path: Path) -> None:
 # Beating the truth's own parameters (p3_gap.py's leakage flag)
 # --------------------------------------------------------------------------
 
+#: The digest every planted dev-008 cell carries (``audit_support.sha``).
+DEV8 = sha("dev-008")
+
+
+def _ref(per_event: float, digest: str = DEV8) -> TruthReference:
+    return TruthReference(digest=digest, per_event=per_event)
+
 
 def _store(root: Path, oracle: float, blib: float) -> Path:
     with ResultStore(root) as store:
@@ -361,9 +370,9 @@ def test_a_system_above_the_truths_parameters_fails_even_below_oracle(
     root = _store(tmp_path / "s", -0.70, -0.705)
     with ResultStore(root) as store:
         plain = gap_check(store, "fit/5")
-        flagged = gap_check(store, "fit/5", truth={("dev-008", 1): -0.72})
+        flagged = gap_check(store, "fit/5", truth={("dev-008", 1): _ref(-0.72)})
     assert plain.passed and plain.beats_truth == ()
-    assert not flagged.passed
+    assert not flagged.passed and flagged.digest_issues == ()
     assert [
         (u.system, round(u.over_truth or 0.0, 12)) for u in flagged.beats_truth
     ] == [
@@ -371,6 +380,7 @@ def test_a_system_above_the_truths_parameters_fails_even_below_oracle(
         ("ORACLE", 0.02),
     ]
     assert {u.truth_ll for u in flagged.units} == {-0.72}
+    assert {u.truth_digest for u in flagged.units} == {DEV8}
 
 
 def test_a_system_at_the_truth_plus_the_threshold_passes(tmp_path: Path) -> None:
@@ -378,10 +388,13 @@ def test_a_system_at_the_truth_plus_the_threshold_passes(tmp_path: Path) -> None
     root = _store(tmp_path / "s", -1.0, -1.0)
     with ResultStore(root) as store:
         at = gap_check(
-            store, "fit/5", threshold=step, truth={("dev-008", 1): -1.0 - step}
+            store, "fit/5", threshold=step, truth={("dev-008", 1): _ref(-1.0 - step)}
         )
         above = gap_check(
-            store, "fit/5", threshold=step, truth={("dev-008", 1): -1.0 - 2 * step}
+            store,
+            "fit/5",
+            threshold=step,
+            truth={("dev-008", 1): _ref(-1.0 - 2 * step)},
         )
     assert at.passed and at.beats_truth == ()
     assert not above.passed and len(above.beats_truth) == 2
@@ -392,4 +405,97 @@ def test_a_truth_reference_missing_for_a_scored_unit_is_refused(tmp_path: Path) 
     with ResultStore(root) as store:
         put_score(store, "AG-o-S/named", "0" * 64, -0.72, seed=2)
         with pytest.raises(CampaignError, match="dev-008 s2"):
-            gap_check(store, "fit/5", truth={("dev-008", 1): -0.60})
+            gap_check(store, "fit/5", truth={("dev-008", 1): _ref(-0.60)})
+
+
+def test_a_reference_from_another_truth_record_fails_naming_each_unit(
+    tmp_path: Path,
+) -> None:
+    """Same truth id, byte-different record (the Windows and Linux dev splits
+    share their 20 ids): the reference is not the cells' truth, so the margin
+    over it means nothing and the check fails, even though no unit is above
+    it."""
+    root = _store(tmp_path / "s", -0.70, -0.80)
+    other = sha("dev-008 of another split")
+    with ResultStore(root) as store:
+        report = gap_check(store, "fit/5", truth={("dev-008", 1): _ref(-0.60, other)})
+    assert not report.passed
+    assert report.beats_truth == ()
+    assert [u.system for u in report.digest_issues] == ["B-lib", "ORACLE"]
+    for u in report.digest_issues:
+        assert u.over_truth is None
+        assert u.digest_issue is not None
+        assert DEV8[:12] in u.digest_issue and other[:12] in u.digest_issue
+
+
+def test_one_cell_from_another_truth_record_is_named(tmp_path: Path) -> None:
+    root = _store(tmp_path / "s", -0.70, -0.80)
+    with ResultStore(root) as store:
+        put_baseline(store, "B-rand", -0.75, truth_digest=sha("elsewhere"))
+        referenced = gap_check(store, "fit/5", truth={("dev-008", 1): _ref(-0.60)})
+        unreferenced = gap_check(store, "fit/5")
+    assert not referenced.passed
+    assert [u.system for u in referenced.digest_issues] == ["B-rand"]
+    # Without a reference the group itself mixes two truth records: its gaps
+    # pair cells of different truths, so every unit in it is named.
+    assert not unreferenced.passed
+    assert [u.system for u in unreferenced.digest_issues] == [
+        "B-lib",
+        "B-rand",
+        "ORACLE",
+    ]
+    assert all("2 truth records" in (u.digest_issue or "") for u in unreferenced.units)
+
+
+def test_an_llm_score_takes_its_truth_record_from_its_session(tmp_path: Path) -> None:
+    root = _store(tmp_path / "s", -0.70, -0.80)
+    with ResultStore(root) as store:
+        session = put_session(store, "AG-o-S/named")
+        put_score(store, "AG-o-S/named", str(session.digest), -0.72)
+        same = gap_check(store, "fit/5", truth={("dev-008", 1): _ref(-0.60)})
+        other = gap_check(
+            store, "fit/5", truth={("dev-008", 1): _ref(-0.60, sha("other"))}
+        )
+    assert same.passed, same.digest_issues
+    (score,) = [u for u in same.units if u.llm]
+    assert score.truth_digest == DEV8
+    assert "AG-o-S/named" in [u.system for u in other.digest_issues]
+
+
+@pytest.mark.parametrize(
+    ("case", "reason"),
+    [
+        ("absent", "is not a committed cell"),
+        ("other truth", "is for dev-009 s1"),
+        ("not a session", "is a baseline cell"),
+    ],
+)
+def test_an_llm_score_whose_truth_record_cannot_be_established_fails(
+    tmp_path: Path, case: str, reason: str
+) -> None:
+    root = _store(tmp_path / "s", -0.70, -0.80)
+    with ResultStore(root) as store:
+        if case == "absent":
+            target = "0" * 64
+        elif case == "other truth":
+            target = str(put_session(store, "AG-o-S/named", truth="dev-009").digest)
+        else:
+            # dev-008 s1, but under fit/4: not itself a unit of this check
+            target = str(put_baseline(store, "B-rand", -0.9, env=FIT4).digest)
+        put_score(store, "AG-o-S/named", target, -0.72)
+        report = gap_check(store, "fit/5", truth={("dev-008", 1): _ref(-0.60)})
+        unreferenced = gap_check(store, "fit/5")
+    for r in (report, unreferenced):
+        assert not r.passed
+        (unit,) = r.digest_issues
+        assert unit.system == "AG-o-S/named" and unit.truth_digest is None
+        assert reason in (unit.digest_issue or "")
+
+
+def test_a_baseline_key_without_a_truth_digest_fails(tmp_path: Path) -> None:
+    root = _store(tmp_path / "s", -0.70, -0.80)
+    with ResultStore(root) as store:
+        put_baseline(store, "B-rand", -0.75, truth_digest="")
+        report = gap_check(store, "fit/5", truth={("dev-008", 1): _ref(-0.60)})
+    assert [u.system for u in report.digest_issues] == ["B-rand"]
+    assert "no truth_digest" in (report.digest_issues[0].digest_issue or "")

@@ -79,11 +79,15 @@ Each item says when it is done. Move finished items to the bottom section after 
 
 ## P4 preparation (after a GO)
 
-- [!] **The `p4-deltas` branch** (P4 work packages 1-8 committed, 10 uncommitted; plan in
-  `.cache/p4/PLAN.md`) exists only on the Windows PC. The owner will push it and the `p3-fit4`
-  tag from the PC (2026-10-27); integrate after the Linux pilot. Until it appears on origin,
-  do not redo that work. Done when the work is on GitHub or
-  the redo is queued item by item.
+- [ ] **Integrate `origin/p4-deltas` after the Linux pilot.** Pushed from the Windows PC on
+  2026-10-27 11:45 UTC: P4 work packages 4 to 12 plus core.reductions fixes, based on ea055be
+  (older v2). Merge into v2 only after the pilot's numbers are produced (it changes the harness:
+  HARNESS_VERSION harness/2, session keys), re-run fast and slow tiers and the determinism check
+  on dm-devbox. The `p3-fit4` tag was not pushed; not needed unless an old record cites it.
+- [ ] **Cross-check the rebuilt defect-hunt checks against the originals** now on
+  `origin/windows-salvage` (`salvage/windows-2026-10/hunt/`, plus mini-pilot scripts and the P4
+  plan): note any check the rebuild missed, port it test-first. Do not merge that branch; copy
+  what is needed. The PC's handoff of 2026-10-09 is now on v2 (a944ed8): read it before the smoke.
 - [ ] **Decisions open since 2026-10-06** (HANDOFF-2026-10-06): the prompt variant freeze
   (Δ6), EIG weights (Δ11), an event cap for FSD, hand-written address text (F5), and the
   review items. Owner's rule (2026-10-27): the lane writes a recommendation for each with its

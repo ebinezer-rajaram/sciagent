@@ -17,7 +17,8 @@ scored by their rescore cells; ``--sessions current`` reads only sessions at
 the current address. Void sessions are classified by the Δ8 policy
 (``sciagent.campaign.voids``), dropped from scoring and counted in every
 table; gap closed within its paired noise is shown as "flagged" (T4); control
-1 needs zero ``oracle_underfit`` flags; control 2 is the Δ10 rank rule.
+1 needs zero ``oracle_underfit`` flags and no ORACLE at ``-inf`` on any
+(truth, seed) (LOG 2026-10-27 item (c)); control 2 is the Δ10 rank rule.
 
     uv run python scripts/pilot_report.py --root .cache/pilot --interim \
         --out <scratch>/PILOT.md
@@ -490,14 +491,18 @@ def main() -> None:
     # -- controls ----------------------------------------------------------
     L += ["## Positive controls (SPEC §6.4)", ""]
     uf = analysis.underfit_check([r for r in rows if not r.llm])
+    oracle_inf = analysis.oracle_inf_units([r for r in rows if not r.llm])
+    c1_fail = gonogo.underfit_reason(uf) + analysis.oracle_inf_reason(oracle_inf)
     L += [
         "**1. ORACLE beats B-lib** per truth: mean over seeds of gap(ORACLE) - "
-        "gap(B-lib) must exceed its paired SE, **and** zero `oracle_underfit` "
-        "flags on every ORACLE unit (P4-PROPOSAL §2.4): "
+        "gap(B-lib) must exceed its paired SE (finite seeds only), **and** zero "
+        "`oracle_underfit` flags on every ORACLE unit (P4-PROPOSAL §2.4), "
+        "**and** no ORACLE scoring -inf per event on held-out data on any "
+        "(truth, seed) (not an upper bound; LOG 2026-10-27 item (c)): "
         + (
-            f"**PASS** (no flag on {uf.checked} units)"
-            if uf.passed
-            else "**FAIL**: " + "; ".join(gonogo.underfit_reason(uf))
+            f"**PASS** (no flag and no -inf on {uf.checked} units)"
+            if uf.passed and not oracle_inf
+            else "**FAIL**: " + "; ".join(c1_fail)
         )
         + ".",
         "",

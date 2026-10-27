@@ -30,9 +30,13 @@ undefined (None); B-lib's own gap is ``-inf``, which control 1 does not read
 (preregistered: a ``-inf`` seed carries no SE), so the truth is checked on its
 other seeds. ORACLE at ``-inf``: every gap, gap closed and curve gap on that
 seed is undefined (None), since nothing can be referenced to it; and the
-ORACLE is then not an upper bound for the truth, so the truth fails control 1
-(margin ``-inf``) and is dropped (:func:`verdict`), whatever its other seeds
-show.
+ORACLE is then not an upper bound, so **control 1 fails** (:func:`verdict`,
+LOG 2026-10-27 item (c)), exactly as for an ``oracle_underfit`` flag, with a
+reason naming every such (truth, seed) unit (:func:`oracle_inf_reason`). The
+truth is not dropped: its ORACLE-vs-B-lib check reads its finite seeds only,
+as for a B-lib at ``-inf``, so it is never labelled "not identifiable" for
+the ``-inf`` and controls 2 and 3 still read it. (The rule from 2026-10-06
+dropped the truth instead, which shrank the samples controls 2 and 3 read.)
 
 **Gap closed within noise** (P4-PROPOSAL T4). The denominator
 ``LL(ORACLE) - LL(B-lib)`` of one (truth, seed) can be tiny, and the ratio is
@@ -502,6 +506,7 @@ class Verdict:
     reasons: tuple[str, ...]
     inconclusive: tuple[str, ...]
     underfit: gonogo.UnderfitCheck | None = None
+    oracle_inf: tuple[tuple[str, int], ...] = ()
 
 
 def score_rows(
@@ -541,19 +546,32 @@ def underfit_check(rows: Sequence[Row]) -> gonogo.UnderfitCheck:
     )
 
 
-def oracle_not_finite(rows: Sequence[Row]) -> list[str]:
-    """Truths on which a non-LLM ORACLE unit scored a non-finite held-out
-    log-likelihood (module docstring): sorted."""
-    return sorted(
-        {
-            r.truth
-            for r in rows
-            if r.system == ORACLE
-            and not r.llm
-            and r.per_event is not None
-            and not math.isfinite(r.per_event)
-        }
+def oracle_inf_units(rows: Sequence[Row]) -> tuple[tuple[str, int], ...]:
+    """(truth, seed) units on which a non-LLM ORACLE scored a non-finite
+    held-out log-likelihood (module docstring): sorted."""
+    return tuple(
+        sorted(
+            {
+                (r.truth, r.seed)
+                for r in rows
+                if r.system == ORACLE
+                and not r.llm
+                and r.per_event is not None
+                and not math.isfinite(r.per_event)
+            }
+        )
     )
+
+
+def oracle_inf_reason(units: Sequence[tuple[str, int]]) -> list[str]:
+    """Why control 1's upper-bound half fails (empty when it passes)."""
+    if not units:
+        return []
+    named = [f"{t} s{s}" for t, s in units]
+    return [
+        f"ORACLE scores -inf per event on held-out data (not an upper bound) "
+        f"on {len(units)} unit(s): {named}"
+    ]
 
 
 def verdict(
@@ -576,21 +594,10 @@ def verdict(
     ]
     pair_rows = [r for r in srows if r.truth in truths_with_pairs]
     checks = gonogo.oracle_beats_lib(pair_rows) if pair_rows else ()
-    # An ORACLE at -inf on any seed is not an upper bound: margin -inf, SE
-    # undefined, the truth fails control 1 (module docstring).
-    no_bound = [t for t in oracle_not_finite(rows) if t in table.truths]
-    if no_bound:
-        checks = tuple(
-            sorted(
-                [c for c in checks if c.truth not in no_bound]
-                + [gonogo.OracleCheck(t, -math.inf, math.nan, False) for t in no_bound],
-                key=lambda c: c.truth,
-            )
-        )
-        reasons.append(
-            f"ORACLE scores -inf per event on held-out data (not an upper "
-            f"bound) for {no_bound}"
-        )
+    # An ORACLE at -inf on any (truth, seed) is not an upper bound: control 1
+    # fails, as for an oracle_underfit flag (module docstring). The truth is
+    # not dropped; its check above read its finite seeds only.
+    oracle_inf = tuple(u for u in oracle_inf_units(rows) if u[0] in table.truths)
     kept = tuple(c.truth for c in checks if c.passed)
     dropped = tuple(c.truth for c in checks if not c.passed)
     checked = {c.truth for c in checks}
@@ -602,6 +609,7 @@ def verdict(
     if dropped:
         reasons.append(f"dropped as not identifiable (ORACLE ≤ B-lib): {list(dropped)}")
     reasons += gonogo.underfit_reason(underfit)
+    reasons += oracle_inf_reason(oracle_inf)
     if not checks:
         return Verdict(
             "incomplete",
@@ -619,6 +627,7 @@ def verdict(
             ("no truth has ORACLE and B-lib on 2 seeds yet",),
             tuple(inconclusive),
             underfit,
+            oracle_inf,
         )
     if not kept:
         reasons.append("no truth kept: ORACLE never shown to beat B-lib")
@@ -638,6 +647,7 @@ def verdict(
             tuple(reasons),
             tuple(inconclusive),
             underfit,
+            oracle_inf,
         )
 
     def covered(system: str) -> list[str]:
@@ -669,6 +679,7 @@ def verdict(
         and bsym is not None
         and bsym.passed
         and underfit.passed
+        and not oracle_inf
     )
 
     kept_rows = [r for r in rows if r.truth in kept]
@@ -735,6 +746,7 @@ def verdict(
         tuple(reasons),
         tuple(inconclusive),
         underfit,
+        oracle_inf,
     )
 
 

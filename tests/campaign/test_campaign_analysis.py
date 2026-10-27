@@ -336,20 +336,77 @@ def test_a_minus_infinite_oracle_seed_leaves_every_gap_there_undefined() -> None
             assert r.gap is not None and math.isfinite(r.gap)
 
 
-def test_control_1_drops_a_truth_whose_oracle_is_minus_infinite() -> None:
-    """An ORACLE that gives a held-out event zero intensity is not an upper
-    bound: its truth fails control 1 (margin -inf) and is dropped, even when
-    its other seeds alone would pass."""
+def test_an_oracle_minus_inf_unit_fails_control_1() -> None:
+    """LOG 2026-10-27 item (c), replacing the 2026-10-06 drop rule: an ORACLE
+    at -inf on any (truth, seed) is not an upper bound, and fails control 1
+    exactly as an ``oracle_underfit`` flag does, with a reason naming the
+    unit. The red team's probe: on this table the drop shrank controls 2 and 3
+    and turned GO into CONTROLS FAIL through the drop; now it is control 1."""
     t = _with(_table(0.0), {("hawkes", 3, "ORACLE"): float("-inf")})
     v = verdict(t, np.random.default_rng(0), resamples=200)
-    assert "hawkes" in v.dropped and "hawkes" not in v.kept
-    (c,) = [c for c in v.oracle_checks if c.truth == "hawkes"]
-    assert not c.passed and c.margin == float("-inf")
-    assert any("-inf" in m and "hawkes" in m for m in v.reasons)
-    # Not checkable on finite pairs alone (one finite seed left): still dropped.
+    assert v.outcome == "controls fail" and not v.controls_pass
+    assert v.oracle_inf == (("hawkes", 3),)
+    assert any("-inf" in m and "['hawkes s3']" in m for m in v.reasons), v.reasons
+    # Controls 2 and 3 still read every kept truth: the -inf truth is not
+    # dropped, so they pass on this table and C1 alone fails.
+    assert v.planted is not None and v.planted.passed
+    assert v.bsym is not None and v.bsym.passed
+
+
+def test_every_oracle_minus_inf_unit_is_named() -> None:
+    t = _with(
+        _table(0.0),
+        {
+            ("hawkes", 3, "ORACLE"): float("-inf"),
+            ("hawkes", 1, "ORACLE"): float("-inf"),
+        },
+    )
+    v = verdict(t, np.random.default_rng(0), resamples=200)
+    assert v.oracle_inf == (("hawkes", 1), ("hawkes", 3))
+    assert any(
+        "2 unit(s)" in m and "['hawkes s1', 'hawkes s3']" in m for m in v.reasons
+    )
+    assert not v.controls_pass
+
+
+def test_an_oracle_minus_inf_truth_is_not_labelled_not_identifiable() -> None:
+    """The old rule listed the -inf truth under "dropped as not identifiable
+    (ORACLE ≤ B-lib)", which it was not shown to be. Now its ORACLE-vs-B-lib
+    check reads its finite seeds only, as for a -inf B-lib seed; with fewer
+    than 2 finite pairs it is not checkable (inconclusive)."""
+    t = _with(_table(0.0), {("hawkes", 3, "ORACLE"): float("-inf")})
+    v = verdict(t, np.random.default_rng(0), resamples=200)
+    assert "hawkes" not in v.dropped and "hawkes" in v.kept
+    assert not any("not identifiable" in m and "hawkes" in m for m in v.reasons)
     t = _with(_table(0.0), {("hawkes", s, "ORACLE"): float("-inf") for s in (2, 3)})
     v = verdict(t, np.random.default_rng(0), resamples=200)
-    assert "hawkes" in v.dropped
+    assert "hawkes" not in v.dropped and "hawkes" not in v.kept
+    assert not any("not identifiable" in m and "hawkes" in m for m in v.reasons)
+    assert any("hawkes" in m for m in v.inconclusive)
+    assert not v.controls_pass
+
+
+def test_no_oracle_minus_inf_leaves_the_verdict_unchanged() -> None:
+    v = verdict(_table(0.0), np.random.default_rng(0), resamples=200)
+    assert v.outcome == "go" and v.controls_pass, v.reasons
+    assert v.oracle_inf == ()
+    assert not any("-inf" in m for m in v.reasons)
+    # A -inf elsewhere (B-lib) is not an ORACLE -inf and fails nothing.
+    one = _with(_table(0.0), {("hawkes", 3, "B-lib"): float("-inf")})
+    v = verdict(one, np.random.default_rng(0), resamples=200)
+    assert v.outcome == "go" and v.oracle_inf == ()
+
+
+def test_an_llm_oracle_row_is_not_read_for_minus_inf() -> None:
+    from sciagent.campaign.analysis import oracle_inf_units
+
+    rows = [
+        row("a", 1, "ORACLE", float("-inf"), llm=True),
+        row("a", 2, "ORACLE", float("-inf")),
+        row("a", 3, "ORACLE", None),
+        row("b", 1, "ORACLE", -0.7),
+    ]
+    assert oracle_inf_units(rows) == (("a", 2),)
 
 
 # --------------------------------------------------------------------------

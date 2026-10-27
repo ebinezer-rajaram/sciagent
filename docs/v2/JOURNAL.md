@@ -431,3 +431,44 @@ ends: memory summary, S3 copy, ledger.
 `wall-time-move` df0ce40 (fast tier `2720 passed, 3 skipped`), `c1-oracle-inf` 285485a (fast
 tier had 2 unidentified failures before the kill: find them first). None has a confirmed slow
 tier; details are in QUEUE and LOG. The INBOX sprint entry is marked handled.
+
+
+## 2026-10-28: Lane session 6 (23:50 UTC): checkpoint (smoke closed, usage brake stalls lane-unit runs)
+
+**Done so far.**
+- Oriented on `v2` at 46fc27b (clean, up to date). INBOX: the sprint entry is handled; no new
+  entries. VETO.md has no vetoes. `free -g`: 7 GB available.
+- **Smoke closed.** `.cache/smoke-run.log` ends `exit: 0 at 2026-10-27T22:23:43Z`, `RunSummary`
+  20 recorded (2 per system), `failed={}`, `bugs=0`, `retries=0`. Per-unit wall times (s), from
+  the log's `ok` lines:
+
+  | system | dev-000 | dev-001 |
+  |---|---|---|
+  | ORACLE | 50.7 | 72.2 |
+  | B-lib | 14.6 | 26.0 |
+  | B-np | 13.5 | 27.0 |
+  | B-rand | 6812.8 | 1153.1 |
+  | B-sym | 772.6 | 124.3 |
+  | B-sparse | 1152.5 | 239.0 |
+  | planted-hint | 3684.4 | 738.6 |
+  | B-sym@10F | 17411.8 | 2083.6 |
+  | AG-o-S/named | 209.0 | 37.8 |
+  | AG-c-S/named | 177.8 | 99.7 |
+
+  Memory (`mem_sampler.py --summary .cache/smoke-mem.csv --workers 2`): peak worker VmHWM
+  1.923 GB, × 2 = 3.846 GB; lowest MemAvailable 2.134 GB (the 22:05 helper test runs, session 5,
+  not the smoke). Store and logs copied to
+  `s3://delaymargin-results-482913/sciagent/p3-linux/smoke-e3fc6f1/` (35 objects, 4,435,906
+  bytes, equal to the local total); ledger lines added. Queue item marked done.
+- **Usage brake stalls the mini-pilot.** `~/logs/usage/brake.log`: `freeze until 23:50 UTC:
+  five-hour 99% >= 92%` at 2026-10-27T22:13:59Z, thaw 23:50:49Z. The brake runs `systemctl --user
+  freeze` on `research-lane@sciagent`, and `/proc/<pid>/cgroup` puts mini-pilot run A's worker
+  (684645) and run B's driver in `research-lane@sciagent.service`. Run A's memory sampler has no
+  row between 22:13 and 23:50; run B's wait script logged nothing in that gap and started run B
+  at 23:50:49Z, 87 min after the smoke ended. So run A's in-flight job (planted-hint dev-008,
+  started 20:58:23Z) carries about 97 min of frozen time in its wall time. The smoke (same tmux
+  socket, started in session 3) kept running through the freeze; why its processes were outside
+  the unit is not established. New queue item (needs the owner; `~/bin` is theirs).
+- In progress: an engineer is rebasing and testing the four waiting branches one tier at a
+  time (no merges before their windows); an analyst is drafting the Δ6 link-balanced variant
+  for its red team.

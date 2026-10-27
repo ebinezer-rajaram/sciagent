@@ -1,3 +1,5 @@
 date,item,provider,hours,usd,stage
 2026-10-27,platform check and dev split regeneration (2 CPU workers),dm-devbox,0.55,0,p3
 2026-10-27,full slow tier at 4a6d780 (2 workers; nice 10),dm-devbox,1.59,0,p3
+2026-10-27,P3 smoke at e3fc6f1 (dev-000/001 seed 1; 2 workers; 4 LLM units under Max; nice 10),dm-devbox,6.57,0,p3
+2026-10-28,S3 copy of the smoke store and logs (35 objects; 4.4 MB; sciagent/p3-linux/smoke-e3fc6f1/),aws-s3,0,0,p3

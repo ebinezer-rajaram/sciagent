@@ -69,6 +69,14 @@ Each item says when it is done. Move finished items to the bottom section after 
   passed`; full fast tier and campaign slow tier NOT run on 903937e. Next: those, then after the
   window rebase onto `v2`, merge. Resuming the smoke or mini-pilot stores under it needs
   `--reuse-from unrecorded`.
+- [!] **Pilot runs and the usage brake** (needs the owner; found 2026-10-28, JOURNAL session 6):
+  `~/bin/usage_brake.py` freezes `research-lane@sciagent.service`, and pilot processes started
+  from a lane session live in that unit, so a brake freeze stalls a baseline-only run and adds the
+  frozen time to its measured wall times (mini-pilot run A, 22:13:59Z-23:50:49Z). Recommendation:
+  start pilot tmux servers in their own transient user unit (`systemd-run --user --unit=sci-<run>`)
+  so non-LLM runs are not braked, and have the brake also freeze that unit while a run has LLM
+  units (it spends Max usage); until then, measure wall times only on units that overlap no
+  interval in `~/logs/usage/brake.log`. `~/bin` is the owner's; the lane does not edit it.
 - [x] 2026-10-27 **Slow tier on dm-devbox**: `nice -n 10 uv run pytest -m slow -n 2` at 4a6d780,
   `273 passed, 24 warnings in 5716.76s (1:35:16)`, exit 0 (`.cache/slow/run.log`).
 - [x] 2026-10-27 **Rebuild the defect-hunt checks** (`scripts/hunt_gap.py`, `store_check.py`,
@@ -80,8 +88,10 @@ Each item says when it is done. Move finished items to the bottom section after 
 
 ## P3 pilot, rerun from scratch on dm-devbox (LOG 2026-10-27)
 
-- [~] **Smoke** (2026-10-27 19:00Z: 11 of 12 pool jobs and all 4 LLM units `ok`, B-sym@10F
-  dev-000 still running; AG-o and AG-c replays PASS (JOURNAL session 4). Was: running since 15:49Z in `tmux -L sciagent` session `sci-smoke`,
+- [x] 2026-10-28 **Smoke** (finished 2026-10-27T22:23:43Z, exit 0: 20 units recorded, 0
+  failed, 0 bugs; AG-o and AG-c replays PASS (JOURNAL session 4); per-unit wall times in JOURNAL
+  session 6; store and logs at `s3://delaymargin-results-482913/sciagent/p3-linux/smoke-e3fc6f1/`.
+  Ran in `tmux -L sciagent` session `sci-smoke`,
   store `.cache/smoke`, frozen worktree `.claude/worktrees/smoke` at e3fc6f1; see JOURNAL)
   (pilot-runner): `nice -n 10 uv run python scripts/pilot.py --root .cache/smoke
   --ids dev-000,dev-001 --seeds 1 --llm-limit 4 --workers 2` in tmux, then replay one AG-o and
@@ -94,6 +104,12 @@ Each item says when it is done. Move finished items to the bottom section after 
   runs, measured wall time per unit on dm-devbox, the report rendering, and peak memory per
   worker times workers at most 6 GB. Done when each criterion is recorded as pass or fail; a
   failure stops the rerun until it is fixed.
+  2026-10-28 00:00Z: running in `tmux -L sciagent` session `sci-mini` (worktree
+  `.claude/worktrees/mini` at 4cd2564). Run A (`.cache/mini-a`) 6 of 15 jobs done; run B
+  (`.cache/mini-b`) started 23:50:49Z. Caveat for the wall-time criterion: the usage brake froze
+  the lane unit 2026-10-27T22:13:59Z-23:50:49Z (`~/logs/usage/brake.log`) and run A's processes
+  are in it, so run A's planted-hint dev-008 wall time includes about 97 min frozen; take wall
+  times from units that overlap no freeze interval in brake.log (JOURNAL session 6).
 - [ ] **Where the baselines run.** From the mini-pilot's per-unit times, project the full plan
   at 2 workers. At about 48 hours or less, run on dm-devbox. Above that, stop point: the owner
   chooses between the longer dm-devbox run and the AWS CPU option (LOG 2026-10-27: m6i.xlarge,

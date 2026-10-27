@@ -27,11 +27,14 @@ Each item says when it is done. Move finished items to the bottom section after 
   bytes on disk per call bounded only per file; no lock on a `Sandbox` (asyncio abandons tool
   threads after 300 s). The scored-not-voided choice is a proposal (veto window ends
   2026-10-28T15:00Z).
-- [ ] **Session keys and the sandbox** (before any AG-o cell that produces reported numbers):
+- [~] **Session keys and the sandbox** (before any AG-o cell that produces reported numbers):
   `session_text` covers neither `SandboxLimits`, the handoff helper's sha256 nor the image tag,
   so a stored AG-o session cell would be reused across a change to any of them. Recommend
   (veto rule) adding them to the AG-o session key, or refusing reuse on mismatch; engineer,
   test first.
+  2026-10-27: implemented on local branch `worktree-agent-a501a8588ae2e77cb` (2dbd125); proposal
+  in LOG (veto window ends 2026-10-28T17:00Z). Next: after the window, rebase onto `v2`, rerun
+  the fast tier and `tests/campaign -m slow`, merge.
 - [~] **Session cells carry wall time**: proposed 2026-10-27 to move `wall_s`, `duration_api_ms`
   and `total_cost_usd` from the `llm-session` cell to its `timing.jsonl` line (LOG 2026-10-27,
   veto window ends 2026-10-28T12:00Z). After the window, unless VETO.md objects, and after the

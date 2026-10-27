@@ -1209,3 +1209,23 @@ tighter settings. The number of warning lines in a log means nothing (once per p
 Noted, not acted on: the fitter certifies to 1e-8 relative while `oracle_underfit` flags at
 1e-9 relative; fitted ORACLE log-likelihoods sit 0.1 to 1 nat above the truth's, so not a risk
 on the truths checked (dev-000, dev-004, dev-006). Evidence: `/tmp/inacc/*.log` (session 4).
+
+## 2026-10-27: An AG-o session's key names its sandbox (proposal; veto window ends: 2026-10-28T17:00Z)
+
+`session_text` covered neither the sandbox limits, the handoff helper's sha256 nor the image tag,
+so `scripts/pilot.py` would reuse a stored AG-o session cell across a change to any of them.
+Recommendation, implemented test first on the local branch `worktree-agent-a501a8588ae2e77cb`
+(2dbd125, based on 5cab148, not merged): for AG-o only, append `sandbox=<sorted-key JSON of the
+same dict the record carries: every SandboxLimits field and HANDOFF_HELPER_SHA256>; image=<tag
+from image_tag(SANDBOX_CONTEXT), no Docker call>`. The limits come from one new source,
+`investigation.runner.run_sandbox_limits()`, which `run()` now builds its spec from (the campaign
+config carries no sandbox settings because `run()` takes none). AG-c text and digests are
+unchanged and pinned (AG-c named `33163b91…`, anonymised `1f88aa59…`); AG-o named moves
+`68b91867…` to `6617e8a5…`, so the smoke's AG-o cells will not be reused. Refusing reuse on a
+mismatch is not added: reuse, rescore and audit all go by address, and the address now carries
+the sandbox. No version constant moves. Caveat: AG-o `session_text` now raises
+`SandboxImageError` without the `docker/sandbox` build context (a checkout is required, as it
+already is to build the image). Checks on the branch: ruff clean, mypy no issues in 236 files,
+fast tier `2731 passed, 3 skipped`, campaign slow tests `10 passed` and the event-cap test
+`1 passed`; 26 new tests seen failing first (import, then 12 failed). Merge into `v2` after the
+window unless VETO.md objects; it must land before AG-o cells that count.

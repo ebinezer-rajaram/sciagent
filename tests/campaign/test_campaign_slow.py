@@ -4,18 +4,28 @@ reruns, the spawn process pool, and a scripted LLM unit scored for real."""
 from __future__ import annotations
 
 import math
+import os
+import signal
+import subprocess
+import sys
+import time
+from multiprocessing.connection import Connection
 from pathlib import Path
 
 import pytest
 from campaign_support import entry, environment, tiny_config
 from test_campaign import SCRIPT, clean
 
+from sciagent.campaign import llm
 from sciagent.campaign.driver import Campaign, DriverSettings
 from sciagent.campaign.execute import BaselineJob, run_baseline_job
 from sciagent.campaign.llm import run_session_isolated
 from sciagent.campaign.plan import (
     BASELINES,
+    CampaignConfig,
+    CampaignEnvironment,
     LLMArm,
+    TruthEntry,
     Unit,
     baseline_key,
     score_key,
@@ -115,3 +125,59 @@ def test_an_isolated_session_past_its_hard_deadline_is_killed_and_voided(
     assert not out.retryable
     assert out.detail["outcome"] == "hard_timeout"
     assert out.reading["void"] == 1.0 and out.reading["status"] == 0.0
+
+
+def _starts_a_client_and_hangs(
+    conn: Connection,
+    unit: Unit,
+    truth: TruthEntry,
+    env: CampaignEnvironment,
+    config: CampaignConfig,
+    out_dir: Path,
+    sandbox_root: Path | None,
+) -> None:
+    """Stands in for a session stuck in a ``python`` call: a Docker client
+    (here ``sleep``) running under the session's process."""
+    client = subprocess.Popen(["sleep", "600"])
+    (out_dir / "client.pid").write_text(str(client.pid), encoding="utf-8")
+    time.sleep(600)
+
+
+def _running(pid: int) -> bool:
+    """Whether ``pid`` is a live process (a zombie is not)."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return False
+    return stat.rsplit(")", 1)[1].split()[0] != "Z"
+
+
+def test_a_killed_session_takes_the_processes_it_started_with_it(
+    tmp_path: Path,
+) -> None:
+    """A session killed at its hard deadline must not leave its Docker
+    clients running: killing only the session's process orphans them."""
+    if sys.platform != "linux":
+        pytest.fail("this check reads /proc")
+    config = tiny_config(seeds=(1,), wall_time_s=0.0)
+    unit = Unit("hawkes", 1, "AG-c-H/named")
+    out = llm._run_isolated(
+        unit,
+        entry("hawkes"),
+        environment(),
+        config,
+        tmp_path,
+        None,
+        30.0,
+        target=_starts_a_client_and_hangs,
+    )
+    assert out.detail["outcome"] == "hard_timeout"
+    pid = int((tmp_path / "client.pid").read_text(encoding="utf-8"))
+    try:
+        deadline = time.monotonic() + 10.0
+        while _running(pid):
+            assert time.monotonic() < deadline, "the session's client outlived it"
+            time.sleep(0.1)
+    finally:
+        if _running(pid):
+            os.kill(pid, signal.SIGKILL)

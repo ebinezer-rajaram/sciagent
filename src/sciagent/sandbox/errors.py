@@ -17,6 +17,7 @@ __all__ = [
     "SandboxError",
     "SandboxImageError",
     "SandboxPathError",
+    "SandboxPlatformError",
     "SandboxUnavailableError",
 ]
 
@@ -49,6 +50,18 @@ class SandboxPathError(SandboxError):
     Raised for a host path Docker's ``--mount`` syntax cannot carry (a comma,
     a quote or a control character) and for a dataset or channel name outside
     ``[A-Za-z0-9_]``, which could otherwise name a file outside ``data/``.
+    """
+
+
+class SandboxPlatformError(SandboxError):
+    """The Docker platform is not what detection concluded.
+
+    Detection reads ``docker info`` to decide whether ``work/`` needs an
+    ownership handoff and to whom (rootless, rootful or Docker Desktop). A
+    wrong answer would not fail by itself: the agent's code would meet a
+    ``PermissionError`` in ``/work`` and that would be recorded as the
+    agent's own result. So the answer is checked against what the daemon
+    actually does, and a mismatch raises this instead.
     """
 
 

@@ -13,6 +13,7 @@ import csv
 import dataclasses
 import io
 import itertools
+import subprocess
 import zipfile
 from pathlib import Path, PureWindowsPath
 from typing import Any
@@ -26,6 +27,7 @@ from sciagent.sandbox import (
     Sandbox,
     SandboxConfigError,
     SandboxError,
+    SandboxImageError,
     SandboxLimits,
     SandboxPathError,
     SandboxResult,
@@ -40,6 +42,9 @@ from sciagent.sandbox import (
     write_dataset,
 )
 from sciagent.sandbox.image import SANDBOX_CONTEXT
+
+#: ``src/sciagent/sandbox`` of this checkout (the context is ``docker/sandbox``).
+SANDBOX_PACKAGE = SANDBOX_CONTEXT.parents[1] / "src" / "sciagent" / "sandbox"
 
 # --------------------------------------------------------------------------
 # result_digest: what replay compares
@@ -131,6 +136,9 @@ def test_errors_derive_from_sciagent_error() -> None:
         {"pids": 1},
         {"output_bytes": 0},
         {"max_file_mb": 0},
+        {"max_work_entries": 0},
+        {"max_work_path_bytes": 0},
+        {"max_work_path_bytes": 1025},
     ],
 )
 def test_limits_reject_nonsense(bad: dict[str, Any]) -> None:
@@ -142,6 +150,7 @@ def test_limit_defaults() -> None:
     lim = SandboxLimits()
     assert (lim.wall_seconds, lim.memory_mb, lim.cpus, lim.pids) == (60, 2048, 1.0, 256)
     assert lim.output_bytes == 20_000
+    assert (lim.max_work_entries, lim.max_work_path_bytes) == (100_000, 1024)
 
 
 # --------------------------------------------------------------------------
@@ -194,6 +203,33 @@ def test_missing_docker_is_unavailable_error(tmp_path: Path) -> None:
     )
     with pytest.raises(SandboxUnavailableError):
         sb.run("print(1)")
+
+
+@pytest.mark.parametrize(
+    ("hangs", "error", "message"),
+    [
+        ("inspect", SandboxUnavailableError, "image inspect did not answer"),
+        ("build", SandboxImageError, "took longer than"),
+    ],
+)
+def test_a_docker_command_that_hangs_is_a_typed_error(
+    monkeypatch: pytest.MonkeyPatch,
+    hangs: str,
+    error: type[SandboxError],
+    message: str,
+) -> None:
+    """``ensure_image`` never lets ``subprocess.TimeoutExpired`` out."""
+
+    def fake_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        sub = argv[1] if argv[1] != "image" else argv[2]
+        if sub == hangs:
+            raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+        rc = 1 if sub == "inspect" else 0  # the image is absent: build it
+        return subprocess.CompletedProcess(argv, rc, b"27.0.0\n", b"")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(error, match=message):
+        ensure_image()
 
 
 # --------------------------------------------------------------------------
@@ -306,10 +342,11 @@ def _handoff(tmp_path: Path, owner: str = "0:0") -> list[str]:
         image="sciagent-sandbox:abc",
         work_dir=tmp_path / "work",
         owner=owner,
+        limits=SandboxLimits(max_work_entries=500, max_work_path_bytes=300),
     )
 
 
-def test_handoff_argv_is_isolated_and_runs_only_chown(tmp_path: Path) -> None:
+def test_handoff_argv_is_isolated_and_runs_only_the_helper(tmp_path: Path) -> None:
     argv = _handoff(tmp_path, owner="65534:65534")
     pairs = _pairs(argv)
     assert argv[:2] == ["docker", "run"]
@@ -324,6 +361,7 @@ def test_handoff_argv_is_isolated_and_runs_only_chown(tmp_path: Path) -> None:
         ("--name", "sciagent-sbx-own"),
         ("--memory", "256m"),
         ("--pids-limit", "64"),
+        ("--workdir", "/"),
     ]:
         assert pair in pairs, pair
     # Exactly the three capabilities chown/chmod need, nothing more.
@@ -336,12 +374,19 @@ def test_handoff_argv_is_isolated_and_runs_only_chown(tmp_path: Path) -> None:
     assert not any(a in ("-e", "--env", "--env-file") for a in argv)
     for bad in ("-v", "--volume", "--privileged", "-i"):
         assert bad not in argv
-    # A fixed command: no symlink is followed (-h, -P; chmod -R skips links).
-    assert argv[-4:] == [
+    # A fixed program, isolated from /work's files (-I), with the limits.
+    source = (SANDBOX_PACKAGE / "_handoff_helper.py").read_text(encoding="utf-8")
+    assert argv[-10:] == [
         "sciagent-sandbox:abc",
-        "sh",
+        "python",
+        "-I",
+        "-B",
         "-c",
-        "chown -hRP 65534:65534 /work && chmod -R u+rwX /work",
+        source,
+        "65534:65534",
+        "500",
+        "300",
+        "/work",
     ]
 
 

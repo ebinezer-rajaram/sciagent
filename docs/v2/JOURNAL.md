@@ -272,20 +272,58 @@ follow-ups come before any AG-o run that produces reported numbers.
   branch is merged; it holds the owed-test log) and `.claude/worktrees/smoke` (in use).
 
 
-## 2026-10-27: Lane session 4 (15:57 UTC): checkpoint, work in progress
+## 2026-10-27: Lane session 4 (15:57 UTC): smoke 11 of 12 jobs, replays pass, three proposals
 
-**Done so far.**
-- Oriented on `v2` at 5cab148 (clean, up to date). INBOX has no entries; VETO.md has no
-  vetoes. `free -g`: 9 GB available; load about 9 to 10.
-- Smoke (`tmux -L sciagent`, `sci-smoke`) still running. At 15:59 UTC per `.cache/smoke-run.log`:
-  ORACLE, B-lib, B-np dev-000 scored (50.7, 14.6, 13.5 s); AG-c-S/named dev-000 submitted
-  (257 s, 33 turns), AG-o-S/named dev-000 (132 s, 16 turns), AG-c-S/named dev-001 (109 s,
-  28 turns), AG-o-S/named dev-001 (53 s, 16 turns). No exit line yet.
-- Started (background): an engineer in a worktree on "Session keys and the sandbox" (test
-  first; AG-o session key to cover `SandboxLimits`, the handoff helper sha256 and the image
-  tag, AG-c keys unchanged); an engineer investigating the `Solution may be inaccurate`
-  warning at `glm/fit_solve.py:591` (read-only, recommendation only); a red-team review of a
-  recommendation for open decision 6 (C5 random-arm seeding: key every policy stream by truth).
+**Done.**
+- Oriented on `v2` at 5cab148 (clean). INBOX has no entries; VETO.md has no vetoes. `free -g`:
+  9 GB available; load 8 to 10 all session (shared machine).
+- **Smoke** (`tmux -L sciagent`, session `sci-smoke`, store `.cache/smoke`): at 19:00 UTC 23
+  lines in `timing.jsonl`, every one `ok`; still running B-sym@10F dev-000, the last of 12 pool
+  jobs. Wall times from `.cache/smoke-run.log` (pool times include queueing behind the other
+  worker):
+  - LLM sessions (named, seed 1): AG-c-S dev-000 257 s (33 turns), dev-001 109 s (28);
+    AG-o-S dev-000 132 s (16), dev-001 53 s (16). Their scores: 178, 100, 209, 38 s.
+  - dev-000: ORACLE+B-lib+B-np job 50.7 s, B-sym 772.6 s, B-sparse 1152.5 s, planted-hint
+    3684.4 s, B-rand 6812.8 s.
+  - dev-001: ORACLE+B-lib+B-np 72.2 s, B-rand 1153.1 s, B-sym 124.3 s, B-sparse 239.0 s,
+    planted-hint 738.6 s, B-sym@10F 2083.6 s.
+  - B-rand on dev-000 (1.9 h) and planted-hint dominate; they matter for "Where the baselines
+    run". Only 4 LLM sessions ran (`--llm-limit 4`; named only).
+- **Offline replays pass** (smoke worktree's code, `/tmp/smoke-replay/replay_smoke.py`, log
+  `.cache/smoke-replay.log`): AG-o-S/named dev-001 (`6afaace3…`) `PASS steps=15
+  budgets={experiments: 0, fits: 10, submit: 1} 31.6s`; AG-c-S/named dev-001 (`93051fa9…`)
+  `PASS steps=27 budgets={experiments: 0, fits: 20, submit: 1} 83.6s`; `exit: 0`.
+- **Session keys and the sandbox** (engineer, test first): AG-o session text now names every
+  `SandboxLimits` field, the handoff helper sha256 and the image tag; AG-c digests pinned
+  unchanged. On local branch `worktree-agent-a501a8588ae2e77cb` (2dbd125, worktree locked), not
+  merged: it is a veto-rule proposal (LOG, window ends 2026-10-28T17:00Z). I read the src diff.
+  Engineer's checks on the branch: ruff clean, mypy 236 files clean, fast tier `2731 passed, 3
+  skipped`, campaign slow `10 passed`, event-cap `1 passed`; 26 new tests seen failing first.
+- **Solver warning** (engineer, investigation only): `Solution may be inaccurate` is Clarabel
+  `optimal_inaccurate` on identity-link cutting-plane subproblems, certified by the code's own
+  gap; cost at most 8.4e-7 nats per held-out event. Not from ORACLE/B-lib/B-np (0 Clarabel calls
+  on dev-000); reproduced in B-rand. Decision in LOG: stays accepted; record it at the next
+  `FIT_VERSION` bump. I checked `ACCEPTED_STATUS` (`glm/fit_solve.py:133`) and the repro logs.
+- **Decision 6, C5 random-arm seeding** (veto rule): recommend keying every policy stream by
+  truth id through an opaque framework-side seed; red team: adopt with changes (all seven policy
+  arms move, address text must say so, not a variance argument), folded in. LOG, window ends
+  2026-10-28T16:05Z. I checked three of its cited lines on `origin/p4-deltas`.
+- Owner pushes for both proposals were not delivered (Remote Control inactive).
+- Checks on `v2` (docs only changed here): ruff format and check clean, `mypy` no issues in
+  235 files. The fast tier was not rerun on `v2`: no code changed on it.
 
-**Next.** Read the smoke and its replays; verify and record the three results above. This
-entry is replaced by the session's final entry at hand-over if the session ends normally.
+**Learned.**
+- `cd` into a worktree moves this session's working directory; use absolute paths instead.
+- The solver warning's position in the log misattributes it: warnings print once per process
+  per line, beside whatever job logs next. Its count means nothing.
+- A smoke over two truths takes over 3 hours on this loaded machine, mostly B-rand and
+  planted-hint. The mini-pilot's per-unit times will decide where the baselines run.
+
+**Next.**
+1. Read the smoke: `tail .cache/smoke-run.log` (last line `exit: <code>`), then
+   `uv run python scripts/mem_sampler.py --summary .cache/smoke-mem.csv --workers 2`; mark the
+   smoke item done if B-sym@10F dev-000 is `ok`; copy the store to S3.
+2. After 2026-10-28T17:00Z, unless vetoed: rebase 2dbd125 onto `v2`, fast tier and
+   `tests/campaign -m slow`, merge (session keys).
+3. After 2026-10-28T12:00Z: the `wall_s` move (engineer, test first).
+4. Mini-pilot gate (pilot-runner) with `mem_sampler.py` beside it.

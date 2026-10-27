@@ -126,7 +126,9 @@ Each item says when it is done. Move finished items to the bottom section after 
   2026-10-28T16:05Z); implement with the p4-deltas integration.
   F5 (hand-written address text) proposed and red-teamed 2026-10-27 (LOG, veto window ends
   2026-10-28T19:15Z): the guard above before the pilot; derived address text with the p4-deltas
-  integration.
+  integration. Δ11 (EIG weights) proposed 2026-10-27 after the red team rejected the first
+  draft's tie rule (LOG, veto window ends 2026-10-28T21:40Z). Drafts of the FSD event cap and the
+  five review items are in `.cache/drafts/` (review items under red-team review); Δ6 still open.
 - [ ] **Remaining P4 work packages**: WP9 (1327de9), WP10 (98205b4), WP11 controls 4-6
   (6ac6142) and WP12 LOG entries (f4a38e0) are committed on `origin/p4-deltas`
   (HANDOFF-2026-10-09); its slow tier was never run. Folded into the integration item above.

@@ -1301,3 +1301,37 @@ wrong); a new store refuses any `--reuse-from`. Cost: any commit, docs-only incl
 the fingerprint, so resuming from a newer commit needs an explicit, recorded `--reuse-from`.
 Cell bytes are unchanged (`compare_stores` on guarded and bare copies). `store_check.py`
 prints the sidecar history.
+
+## 2026-10-27: Δ11 EIG weights: keep BIC, report the degeneracy, break full ties from the truth-keyed random draw, compute EIG to relative precision (proposal; veto window ends: 2026-10-28T21:40Z)
+
+Open decision Δ11 (HANDOFF-2026-10-06, decision 2): on dev the BIC posterior is degenerate,
+so EIG is about 0 and the arm picks the first menu cell (`burst` read with `mean_rate`). The
+theorist's check (`.cache/drafts/d11-draft.md`, scripts in `.cache/drafts/d11-scripts/`; the red
+team reran every number): with the truth in the entertained set all 20 dev truths have
+H(w) < 1e-13, the tie floor (`policies.py:187` on `origin/p4-deltas`); with the library alone 6
+of 20. The draft recommended ranking tied cells by Σ v_k·KL(p_k‖p_top). The red-team review
+(session 5; probes in `.cache/drafts/d11-probe/`) rejected that rule: it is the η → 0 limit of
+EIG, not EIG at the actual weights (two cells swap order at dev-013's η, and the lowest-EIG
+cell ranks first); KL is infinite whenever a rival's run stops in 1 of 16 replicates (the
+"undefined" atom, `policies.py:485-498`, `:625-630`), and a constant leader's floored variance
+(`:497`) then decides; 1 − w_top is exactly 0 in float past ΔBIC ≈ 73; and it redefines EIG,
+which SPEC §2.4 fixes and whose ≈ 0 is the evidence wall's own prediction, so it would be a SPEC
+change. Recommendation:
+1. Keep the BIC weights. Reject tempering (a temperature has no data-free value; any fixed T
+   collapses again as n grows: on dev T for H = 0.1 nats ranges 1.2 to 52) and a ΔBIC cut-off
+   (one survivor makes EIG identically 0).
+2. Compute EIG to relative precision: weights from BICs in log space, and the leader's term
+   without the rounding that makes it 3e-18 against a true 8e-114 (`policies.py:569`; the red
+   team confirmed). Otherwise partial-tie orders are noise. Test first (EIG is an instrument).
+3. On a fully tied decision (every cell within the floor), take the cell the random arm draws
+   from the truth-keyed policy stream (the C5 seeding proposal), so on degenerate decisions the
+   EIG arm equals random and their paired contrast is exactly zero; a strict-subset tie draws
+   from its own reserved index. This replaces the 2026-10-06 menu-order rule (p4-deltas LOG
+   line 1039, `test_policies_eig_ties.py`), whose fixed design would confound C5 with the menu's
+   order. The tie rule enters `EIGPolicy.config` and so the run key.
+4. Report the degeneracy as a finding: C5 is split, before any run, into degenerate and
+   non-degenerate decisions, using what `EIGSummary` already records.
+5. Log the KL-ranked pick on every EIG decision, framework-side, as an exploratory diagnostic
+   (it reuses the same simulations), never as the arm's choice.
+Not checked: how often stops and floored variances occur in real policy simulations (no policy
+unit has run; one EIG decision takes about 95 to 99 s). Lands with the p4-deltas integration.

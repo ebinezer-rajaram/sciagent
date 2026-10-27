@@ -28,7 +28,11 @@ queue.
 ever overwritten. An LLM unit whose session is stored but whose score is not
 is scored from the session's stored detail, without calling the model. A
 session that is void under the policy of :mod:`~sciagent.campaign.voids`
-(P4-PROPOSAL Δ8) is never scored.
+(P4-PROPOSAL Δ8) is never scored. A campaign is constructed with the caller's
+code ``fingerprint``, and :func:`~sciagent.campaign.fingerprint.guard_store`
+refuses, before the store is opened, to resume a store written under another
+one unless ``reuse_from`` names it (the permission is recorded beside the
+cells); rescore mode is guarded the same way.
 
 **Rescore mode** (``DriverSettings.rescore_llm``, P4-PROPOSAL §2.2). A
 fitter change gives every session a new address, so the normal plan would
@@ -93,6 +97,7 @@ from sciagent.campaign.execute import (
     run_baseline_job,
     run_score_job,
 )
+from sciagent.campaign.fingerprint import FINGERPRINT_FILE, guard_store
 from sciagent.campaign.llm import SessionOutcome, run_session, run_session_isolated
 from sciagent.campaign.plan import (
     B_LIB,
@@ -214,10 +219,15 @@ class Campaign:
         config: CampaignConfig,
         truths: Sequence[TruthEntry],
         settings: DriverSettings,
+        *,
+        fingerprint: str,
+        reuse_from: str | None = None,
     ) -> None:
         ids = [t.id for t in truths]
         if len(set(ids)) != len(ids):
             raise CampaignError("truth ids must be distinct")
+        # Before the store is opened (or created) and before any unit runs.
+        guarded = guard_store(root, fingerprint, reuse_from=reuse_from)
         self.root = root
         self.env = env
         self.worker_env = replace(env, investigation=None)
@@ -241,6 +251,15 @@ class Campaign:
         self.paused_until = 0.0
         self._llm_tasks: dict[Future[SessionOutcome], _LLMTask] = {}
         self.llm_concurrency = settings.llm_concurrency
+        if guarded is None:
+            self.log.info(f"code fingerprint {fingerprint} (the store's)")
+        elif guarded.reuse_from is None:
+            self.log.info(f"code fingerprint {fingerprint} established")
+        else:
+            self.log.warning(
+                f"code fingerprint {fingerprint}: reuse of cells written under "
+                f"{guarded.reuse_from} permitted and recorded in {FINGERPRINT_FILE}"
+            )
 
     # -- planning ------------------------------------------------------------
 

@@ -21,6 +21,13 @@ environment the LLM runner resolves truths from. Results go to ``--root``
 (git-ignored) and are resumable: rerun the same command to continue; create
 ``<root>/STOP`` to stop launching new units (running ones finish).
 
+Every run is guarded by the checkout's code fingerprint (:func:`code_fingerprint`:
+the commit, a clean-tree flag and the ``uv.lock`` sha256; LOG 2026-10-27, F5).
+A dirty tree refuses to run. A store written under another fingerprint refuses
+before any unit is launched, unless ``--reuse-from`` names the store's
+fingerprint exactly, which is recorded in ``<root>/fingerprint.jsonl``
+(``--reuse-from unrecorded`` for a store with cells and no fingerprint).
+
 A live LLM run uses the logged-in Claude subscription (do not set
 ANTHROPIC_API_KEY; the harness refuses it).
 """
@@ -31,6 +38,7 @@ import argparse
 import hashlib
 import io
 import os
+import subprocess
 import sys
 import time
 from dataclasses import dataclass
@@ -74,6 +82,45 @@ def wait_for_split(directory: Path, timeout_s: float, poll_s: float = 60.0) -> N
             raise SystemExit(f"no manifest.json in {directory} after {timeout_s}s")
         print(f"waiting for {directory / 'manifest.json'} ...", flush=True)
         time.sleep(poll_s)
+
+
+def _git(repo: Path, *args: str) -> str:
+    from sciagent.campaign.plan import CampaignError
+
+    try:
+        done = subprocess.run(
+            ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        detail = getattr(error, "stderr", None) or error
+        raise CampaignError(
+            f"cannot read the code fingerprint: git {' '.join(args)} in {repo} "
+            f"failed: {str(detail).strip()}"
+        ) from error
+    return done.stdout
+
+
+def code_fingerprint(repo: Path = ROOT) -> str:
+    """The checkout's code fingerprint, ``commit=<sha>,tree=clean,uv.lock=<sha256>``.
+
+    Refuses (:class:`~sciagent.campaign.plan.CampaignError`) when the tree is
+    not clean: ``git status --porcelain`` lists a modified, staged or untracked
+    file. Ignored files (the copied split under ``data/``, ``.venv``, ``.cache``)
+    do not count.
+    """
+    from sciagent.campaign.plan import CampaignError
+
+    head = _git(repo, "rev-parse", "HEAD").strip()
+    dirty = _git(repo, "status", "--porcelain").splitlines()
+    if dirty:
+        shown = "; ".join(dirty[:5]) + ("; ..." if len(dirty) > 5 else "")
+        raise CampaignError(
+            f"the working tree at {repo} is not clean ({len(dirty)} paths: "
+            f"{shown}); commit or remove the changes first, so the store records "
+            f"the code that wrote it"
+        )
+    lock = hashlib.sha256((repo / "uv.lock").read_bytes()).hexdigest()
+    return f"commit={head},tree=clean,uv.lock={lock}"
 
 
 def truth_spec(record: TruthRecord) -> TruthSpec:
@@ -203,6 +250,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--arms", default=None, help="comma-separated LLM arms, e.g. AG-o/anon"
     )
     p.add_argument("--wait", type=float, default=0.0, help="wait for the split (s)")
+    p.add_argument(
+        "--reuse-from",
+        default=None,
+        help="the store's code fingerprint, exactly, to keep its cells under this "
+        "checkout's (recorded in the store); 'unrecorded' for a store written "
+        "before fingerprints were kept",
+    )
     return p
 
 
@@ -240,7 +294,13 @@ def main() -> None:
     )
     args = parser.parse_args()
     from sciagent.campaign.driver import Campaign, DriverSettings
+    from sciagent.campaign.plan import CampaignError
 
+    try:
+        fingerprint = code_fingerprint()
+    except CampaignError as error:
+        raise SystemExit(f"refused: {error}") from error
+    print(f"code fingerprint: {fingerprint}", flush=True)
     if args.wait:
         wait_for_split(args.split, args.wait)
     records = select(load_split(args.split), args.truths, args.ids)
@@ -255,7 +315,18 @@ def main() -> None:
         max_heavy=args.max_heavy,
         rescore_llm=args.rescore_llm,
     )
-    campaign = Campaign(args.root, env, config, truth_entries(records), settings)
+    try:
+        campaign = Campaign(
+            args.root,
+            env,
+            config,
+            truth_entries(records),
+            settings,
+            fingerprint=fingerprint,
+            reuse_from=args.reuse_from,
+        )
+    except CampaignError as error:
+        raise SystemExit(f"refused: {error}") from error
     try:
         summary = campaign.run()
     finally:

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from campaign_support import TRUTH_IDS, entry, environment, tiny_config
+from campaign_support import FINGERPRINT, TRUTH_IDS, entry, environment, tiny_config
 
 from sciagent.campaign import driver as driver_module
 from sciagent.campaign import execute
@@ -166,6 +166,7 @@ def _campaign(root: Path, **settings: Any) -> Campaign:
         tiny_config(),
         [entry(t) for t in TRUTH_IDS],
         DriverSettings(workers=0, poll_s=0.05, **settings),
+        fingerprint=FINGERPRINT,
     )
 
 
@@ -283,6 +284,7 @@ def test_a_scripted_llm_unit_is_recorded_scored_and_not_rerun(
             DriverSettings(
                 workers=0, poll_s=0.05, run_baselines=False, driver_factory=factory
             ),
+            fingerprint=FINGERPRINT,
         )
 
     c = campaign()
@@ -408,6 +410,7 @@ def test_a_retryable_session_drops_llm_concurrency_to_one(
             backoff_after=99,
             driver_factory=lambda unit: ScriptedDriver(SCRIPT),
         ),
+        fingerprint=FINGERPRINT,
     )
     summary = campaign.run()
     campaign.close()
@@ -456,6 +459,7 @@ def test_rescore_scores_old_sessions_under_the_new_fit_and_launches_nothing(
             config,
             [truth],
             DriverSettings(workers=0, poll_s=0.05, run_baselines=False, **settings),
+            fingerprint=FINGERPRINT,
         )
 
     with monkeypatch.context() as old:

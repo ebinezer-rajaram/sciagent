@@ -1162,3 +1162,29 @@ a mismatch. AG-c record bytes and the result digest are unchanged, and no AG-o r
 yet, so no version constant moves. Open: a campaign session's key (`session_text`) covers
 neither the sandbox limits, the helper hash nor the image tag, so stored AG-o session cells
 could be reused across a change to any of them (queued; decide before AG-o cells that count).
+
+## 2026-10-27: C5 random-arm seeding: key every policy stream by truth (proposal; veto window ends: 2026-10-28T16:05Z)
+
+Open decision 6 (HANDOFF-2026-10-09; LOG on `origin/p4-deltas`). `policy_seed(seed, decision,
+k, r)` carries no truth, and the menu size depends only on the channels (280 cells for
+pointproc), so on a seed every truth's random arm draws the same (design, diagnostic) indices:
+3 sequences in a 3-seed design, and C5's comparison against random would not generalise to
+random selection. Recommendation: derive a per-(truth, seed) policy seed framework-side,
+`stable_key(f"{truth_id}|{seed}|policy") % 2**63` as `search_seed` does (`campaign/plan.py`),
+and pass that opaque integer where `policy_seed=` takes the investigation seed today
+(`execute.py`, `investigation/runner.py`), so every policy stream (random draw, fallback, EIG and
+FSD simulations) depends on the truth and the agent-facing modules never see a truth id. Key on
+the truth id, not the digest: digests change with the machine class, and the two dev splits
+sharing ids hold the same truths, which is pairing, not a collision. Within a (truth, seed) all
+arms and both naming conditions still share streams. The red-team review (session 4) adopted it
+with changes, folded in here: the random fallback is used by all seven policy arms (AG-c-S+EIG
+and +FSD through `random_cell`, the three B-sym policy arms through `random_choice`), so the
+change moves every policy unit key, not the five the earlier note listed, and costs nothing
+extra for EIG and FSD; the address text must say so (B-sym's `policy_seed=investigation seed`
+at `plan.py:571`, and a field in AG-c-S's `policy_config`), or the bytes would change under an
+unchanged key; the `seeds.py` docstring sentence on shared policy streams is rewritten. The
+reason is consistency with the scorer and search streams, which are truth-keyed; it is not a
+variance argument, since world data on a seed is already shared across truths
+(`world.py`, `SeedSequence([seed, stream, index])`). No policy unit has run for real. Implement
+on the `p4-deltas` integration, test first (seeds are an instrument), after the window unless
+VETO.md objects.

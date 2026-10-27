@@ -108,6 +108,8 @@ Each item says when it is done. Move finished items to the bottom section after 
   reasoning, has the red-team agent review it, records it in LOG.md with `veto window ends:
   <UTC>` 24 hours ahead, pushes the owner a summary, and adopts it after the window unless a
   `VETO` line appears in docs/v2/VETO.md. Done when each is adopted or vetoed and logged.
+  Progress: decision 6 (C5 seeding) proposed and red-teamed 2026-10-27 (LOG, veto window ends
+  2026-10-28T16:05Z); implement with the p4-deltas integration.
 - [ ] **Remaining P4 work packages**: WP9 (1327de9), WP10 (98205b4), WP11 controls 4-6
   (6ac6142) and WP12 LOG entries (f4a38e0) are committed on `origin/p4-deltas`
   (HANDOFF-2026-10-09); its slow tier was never run. Folded into the integration item above.

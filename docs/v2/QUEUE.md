@@ -107,7 +107,8 @@ Each item says when it is done. Move finished items to the bottom section after 
   `scripts/mem_sampler.py` (`/proc` VmHWM per pool worker, STOP brake below 2 GB available;
   run it beside the mini-pilot with `--pid`),
   measured slowdown on dm-devbox still to decide;
-  (c) store-level replay check (`hunt/B/replay_check.py`), after the sandbox follow-ups land;
+  (c) ~~store-level replay check~~ done 2026-10-27: `scripts/replay_check.py` (98e3aa4;
+  smoke store 4 of 4 PASS);
   (d) `rescore_guard` extras (strip the CLI from PATH, patch the SDK entry points);
   (e) explicit hash-seed baseline pair and report-on-a-copy (low).
 - [ ] **Decisions open since 2026-10-06** (HANDOFF-2026-10-06): the prompt variant freeze

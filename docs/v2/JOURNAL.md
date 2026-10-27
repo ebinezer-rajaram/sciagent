@@ -270,3 +270,22 @@ follow-ups come before any AG-o run that produces reported numbers.
    `hunt_gap.py --split data/v2/truths/dev`.
 - Left in place: the old worktree `.claude/worktrees/agent-ab762e5af9832a80f` (locked; its
   branch is merged; it holds the owed-test log) and `.claude/worktrees/smoke` (in use).
+
+
+## 2026-10-27: Lane session 4 (15:57 UTC): checkpoint, work in progress
+
+**Done so far.**
+- Oriented on `v2` at 5cab148 (clean, up to date). INBOX has no entries; VETO.md has no
+  vetoes. `free -g`: 9 GB available; load about 9 to 10.
+- Smoke (`tmux -L sciagent`, `sci-smoke`) still running. At 15:59 UTC per `.cache/smoke-run.log`:
+  ORACLE, B-lib, B-np dev-000 scored (50.7, 14.6, 13.5 s); AG-c-S/named dev-000 submitted
+  (257 s, 33 turns), AG-o-S/named dev-000 (132 s, 16 turns), AG-c-S/named dev-001 (109 s,
+  28 turns), AG-o-S/named dev-001 (53 s, 16 turns). No exit line yet.
+- Started (background): an engineer in a worktree on "Session keys and the sandbox" (test
+  first; AG-o session key to cover `SandboxLimits`, the handoff helper sha256 and the image
+  tag, AG-c keys unchanged); an engineer investigating the `Solution may be inaccurate`
+  warning at `glm/fit_solve.py:591` (read-only, recommendation only); a red-team review of a
+  recommendation for open decision 6 (C5 random-arm seeding: key every policy stream by truth).
+
+**Next.** Read the smoke and its replays; verify and record the three results above. This
+entry is replaced by the session's final entry at hand-over if the session ends normally.

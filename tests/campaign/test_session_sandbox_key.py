@@ -18,8 +18,10 @@ import pytest
 from campaign_support import entry, environment, resolve, tiny_config
 
 from sciagent.campaign import plan
+from sciagent.campaign.audit import check_sessions
 from sciagent.campaign.plan import (
     CampaignConfig,
+    CampaignError,
     LLMArm,
     Unit,
     session_config_digest,
@@ -27,14 +29,24 @@ from sciagent.campaign.plan import (
     session_sandbox_text,
     session_text,
 )
+from sciagent.campaign.store import ResultStore
 from sciagent.investigation import runner as investigation_runner
+from sciagent.investigation import tools as investigation_tools
 from sciagent.investigation.runner import (
     EnvironmentSpec,
     InvestigationSpec,
     run_sandbox_limits,
     sandbox_json,
 )
-from sciagent.sandbox import HANDOFF_HELPER_SHA256, SandboxLimits, image_tag
+from sciagent.sandbox import (
+    HANDOFF_HELPER_SHA256,
+    SandboxLimits,
+    SandboxResult,
+    ensure_image,
+    image_tag,
+)
+from sciagent.sandbox import dataset as sandbox_dataset
+from sciagent.sandbox import runner as sandbox_runner
 from sciagent.sandbox.image import SANDBOX_CONTEXT
 
 AG_C = LLMArm("AG-c", "named")
@@ -110,11 +122,18 @@ def test_an_ag_o_session_text_carries_the_sandbox_the_runner_uses() -> None:
 def test_the_sandbox_text_is_a_fixed_rendering() -> None:
     """Pinned bytes: a reordering or reformatting would move every AG-o key."""
     text = session_sandbox_text(SandboxLimits(), "ab" * 32, "sciagent-sandbox:0123")
-    assert text == (
-        'sandbox={"handoff_helper_sha256":"' + "ab" * 32 + '","limits":'
+    assert text.startswith('sandbox={"data_format_sha256":"')
+    assert (
+        '"handoff_helper_sha256":"' + "ab" * 32 + '","limits":'
         '{"cpus":1.0,"max_file_mb":256,"max_work_entries":100000,'
         '"max_work_path_bytes":1024,"memory_mb":2048,"output_bytes":20000,'
-        '"pids":256,"wall_seconds":60}}; image=sciagent-sandbox:0123'
+        '"pids":256,"wall_seconds":60.0},"python_tool":{"max_code":50000,'
+        '"max_notebook_append":20000,"output_format_sha256":'
+    ) in text
+    assert '"run_argv":["docker","run","--rm","-i","--init",' in text
+    assert text.endswith('"python","-B","-"]}; image=sciagent-sandbox:0123')
+    assert hashlib.sha256(text.encode()).hexdigest() == (
+        "8b4e45ef1879f8679b96fec91d9f51b0e0144d2742a3a94b6e8f88de568930dc"
     )
 
 
@@ -239,3 +258,215 @@ def test_run_builds_the_sandbox_the_key_names(
     assert spec.sandbox_json() == sandbox_json(
         run_sandbox_limits(), HANDOFF_HELPER_SHA256
     )
+
+    # The same with limits other than the spec's defaults: a run() that
+    # ignored run_sandbox_limits() would pass the lines above, not these.
+    altered = SandboxLimits(wall_seconds=61.0, memory_mb=4096)
+    monkeypatch.setattr(investigation_runner, "run_sandbox_limits", lambda: altered)
+    with pytest.raises(_Stop):
+        investigation_runner.run(
+            env, "t", "AG-o", "named", "m", 7, tmp_path / "out", driver=None
+        )
+    assert seen[-1].sandbox_limits() == altered
+
+
+def _env() -> EnvironmentSpec:
+    return EnvironmentSpec(
+        name="pointproc", anon_channels={}, forbidden=(), resolve=resolve
+    )
+
+
+def test_build_lab_gives_the_sandbox_the_spec_limits(tmp_path: Path) -> None:
+    spec = InvestigationSpec(
+        environment="pointproc",
+        truth_id="hawkes",
+        arm="AG-o",
+        condition="named",
+        seed=3,
+        sandbox_wall_seconds=61.0,
+        sandbox_memory_mb=4096,
+    )
+    lab = investigation_runner.build_lab(
+        spec, _env(), sandbox_root=tmp_path, image="img:1"
+    )
+    assert lab.sandbox is not None
+    assert lab.sandbox.limits == spec.sandbox_limits()
+
+
+def _fake_docker(tmp_path: Path) -> Path:
+    """A ``docker`` that answers ``version`` and ``image inspect`` and nothing
+    else (so the image counts as present and nothing is built)."""
+    script = tmp_path / "docker"
+    script.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = version ]; then echo 99.0; exit 0; fi\n'
+        'if [ "$1" = image ] && [ "$2" = inspect ]; then '
+        "echo sha256:0123; exit 0; fi\n"
+        "exit 1\n"
+    )
+    script.chmod(0o755)
+    return script
+
+
+def test_the_image_build_lab_uses_is_the_one_the_key_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    docker = str(_fake_docker(tmp_path))
+    real = ensure_image
+    returned: list[str] = []
+
+    def ensure() -> str:
+        returned.append(real(docker=docker))
+        return returned[-1]
+
+    monkeypatch.setattr(investigation_runner, "ensure_image", ensure)
+    spec = InvestigationSpec(
+        environment="pointproc",
+        truth_id="hawkes",
+        arm="AG-o",
+        condition="named",
+        seed=3,
+    )
+    lab = investigation_runner.build_lab(spec, _env(), sandbox_root=tmp_path / "r")
+    assert lab.sandbox is not None
+    assert returned == [lab.sandbox.image]
+    text = session_text(AG_O, CampaignConfig())
+    assert text.endswith(f"; image={lab.sandbox.image}")
+
+
+# --------------------------------------------------------------------------
+# The key names what the agent can do or see (red-team finding 1)
+# --------------------------------------------------------------------------
+
+_real_build_run_argv = sandbox_runner.build_run_argv
+_real_environment = sandbox_runner._environment
+
+
+def _replace_in_argv(old: str, new: str) -> Any:
+    def patched(**kwargs: Any) -> list[str]:
+        return [a.replace(old, new) for a in _real_build_run_argv(**kwargs)]
+
+    return patched
+
+
+def _replace_in_environment(name: str, new: str) -> Any:
+    def patched(seed: int) -> list[tuple[str, str]]:
+        return [(k, new if k == name else v) for k, v in _real_environment(seed)]
+
+    return patched
+
+
+def _hex_seed(seed: int) -> list[tuple[str, str]]:
+    return [
+        (k, hex(seed) if k == "SANDBOX_SEED" else v) for k, v in _real_environment(seed)
+    ]
+
+
+def _six_digit_csv(columns: list[tuple[str, Any]]) -> bytes:
+    lines = [",".join(name for name, _ in columns)]
+    for i in range(columns[0][1].size):
+        lines.append(",".join(f"{float(col[i]):.6g}" for _, col in columns))
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def _other_python_text(result: SandboxResult) -> str:
+    return f"exit {result.exit_code}\n{result.stdout}{result.stderr}"
+
+
+#: name -> (module, attribute, replacement): each a change to what the agent's
+#: code can do or what the agent sees, made where the real code lives.
+_MUTATIONS: dict[str, tuple[Any, str, Any]] = {
+    "tmpfs size": (
+        sandbox_runner,
+        "_TMPFS",
+        "/tmp:rw,noexec,nosuid,nodev,size=65m",
+    ),
+    "network": (sandbox_runner, "build_run_argv", _replace_in_argv("none", "host")),
+    "nofile": (
+        sandbox_runner,
+        "build_run_argv",
+        _replace_in_argv("nofile=1024:1024", "nofile=4096:4096"),
+    ),
+    "threads": (
+        sandbox_runner,
+        "_environment",
+        _replace_in_environment("OMP_NUM_THREADS", "2"),
+    ),
+    "hashseed": (
+        sandbox_runner,
+        "_environment",
+        _replace_in_environment("PYTHONHASHSEED", "1"),
+    ),
+    "tz": (sandbox_runner, "_environment", _replace_in_environment("TZ", "CET")),
+    "locale": (sandbox_runner, "_environment", _replace_in_environment("LC_ALL", "C")),
+    "sandbox seed": (sandbox_runner, "_environment", _hex_seed),
+    "csv precision": (sandbox_dataset, "_csv_bytes", _six_digit_csv),
+    "code cap": (investigation_tools, "_MAX_CODE", 50_001),
+    "notebook cap": (investigation_tools, "_MAX_NOTEBOOK_APPEND", 20_001),
+    "python output": (investigation_tools, "python_tool_text", _other_python_text),
+}
+
+
+@pytest.mark.parametrize("name", sorted(_MUTATIONS))
+def test_what_the_agent_can_do_or_see_moves_the_ag_o_key_only(
+    name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tiny_config()
+    before = _keys(config)
+    module, attribute, replacement = _MUTATIONS[name]
+    monkeypatch.setattr(module, attribute, replacement)
+    after = _keys(config)
+    assert after[:2] == before[:2]
+    assert after[2] != before[2] and after[3] != before[3]
+
+
+def test_the_python_tool_shows_python_tool_text() -> None:
+    """The output format the key samples is the format the tool returns."""
+    result = SandboxResult("out\n", "err\n", 1, True, False, 0.5)
+    assert investigation_tools.python_tool_text(result) == (
+        "exit code 1 (stopped: time limit)\n--- stdout ---\nout\n"
+        "\n--- stderr ---\nerr\n"
+    )
+    quiet = SandboxResult("x", "", 0, False, False, 0.1)
+    assert investigation_tools.python_tool_text(quiet) == (
+        "exit code 0\n--- stdout ---\nx"
+    )
+
+
+# --------------------------------------------------------------------------
+# Float versus int (red-team finding 5)
+# --------------------------------------------------------------------------
+
+
+def test_an_integral_float_limit_renders_like_its_int() -> None:
+    a = session_sandbox_text(SandboxLimits(wall_seconds=60, cpus=1), "ab" * 32, "i:1")
+    b = session_sandbox_text(
+        SandboxLimits(wall_seconds=60.0, cpus=1.0), "ab" * 32, "i:1"
+    )
+    assert a == b
+    assert '"wall_seconds":60.0' in a
+
+
+# --------------------------------------------------------------------------
+# A broken build context is a CampaignError (red-team finding 4)
+# --------------------------------------------------------------------------
+
+
+def test_a_broken_build_context_is_a_campaign_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(plan, "SANDBOX_CONTEXT", tmp_path)
+    assert session_text(AG_C, CampaignConfig())
+    with pytest.raises(CampaignError, match="sandbox image"):
+        session_text(AG_O, CampaignConfig())
+
+
+def test_the_session_check_reports_a_broken_build_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(plan, "SANDBOX_CONTEXT", tmp_path / "ctx")
+    config = tiny_config(seeds=(1,), llm_arms=(AG_O,))
+    with ResultStore(tmp_path / "store") as store:
+        check = check_sessions(store, environment(), config, [entry("hawkes")])
+    assert [f.kind for f in check.issues] == ["session_config"]
+    assert "sandbox image" in check.issues[0].message

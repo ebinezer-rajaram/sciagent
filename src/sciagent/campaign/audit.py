@@ -917,14 +917,20 @@ def check_sessions(
     """Every stored session found by the rescore's enumeration, and the void
     policy against each found session's stored flag (module docstring)."""
     by_id = {t.id: t for t in truths}
-    digests = {
-        s: session_config_digest(config.arm_of(s), config) for s in config.llm_systems()
-    }
     cells = [
         c for c in store.cells() if c["key"]["config"].get("kind") == "llm-session"
     ]
     issues: list[Finding] = []
     warnings: list[Finding] = []
+    try:
+        # An AG-o digest names the sandbox image, read from its build context.
+        digests = {
+            s: session_config_digest(config.arm_of(s), config)
+            for s in config.llm_systems()
+        }
+    except CampaignError as error:
+        issues.append(Finding("session_config", "campaign", str(error)))
+        return SessionCheck(len(cells), 0, 0, tuple(issues), ())
     try:
         found = stored_sessions(store, env, config, truths)
     except CampaignError as error:

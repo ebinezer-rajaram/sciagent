@@ -32,7 +32,9 @@ session that is void under the policy of :mod:`~sciagent.campaign.voids`
 code ``fingerprint``, and :func:`~sciagent.campaign.fingerprint.guard_store`
 refuses, before the store is opened, to resume a store written under another
 one unless ``reuse_from`` names it (the permission is recorded beside the
-cells); rescore mode is guarded the same way.
+cells); rescore mode is guarded the same way. The store is written only by
+this process's main thread (pool workers and LLM sessions return results), so
+the guard and the lock below cover every cell write.
 
 **Rescore mode** (``DriverSettings.rescore_llm``, P4-PROPOSAL §2.2). A
 fitter change gives every session a new address, so the normal plan would
@@ -61,10 +63,12 @@ is launched for the rest of the run, and that is logged. Creating the file
 ``STOP`` in the root stops launching new units of either kind; ``STOP_LLM``
 stops launching LLM sessions only.
 
-**Several processes on one store.** Before a job or a session is launched its
-units are checked against the store again, so two drivers on one root (say a
-second, LLM-only one) never run a unit twice; at worst both run it at the same
-moment and the second write is refused and logged.
+**One driver per store.** A campaign holds an exclusive lock on its root
+(:class:`~sciagent.campaign.fingerprint.StoreLock`) from construction to
+:meth:`Campaign.close`; a second driver on the same root is refused. Two
+drivers could otherwise record competing reuse permissions, or one could keep
+writing cells under a fingerprint the other had replaced. (Before a job or a
+session is launched its units are still checked against the store again.)
 """
 
 from __future__ import annotations
@@ -97,7 +101,7 @@ from sciagent.campaign.execute import (
     run_baseline_job,
     run_score_job,
 )
-from sciagent.campaign.fingerprint import FINGERPRINT_FILE, guard_store
+from sciagent.campaign.fingerprint import FINGERPRINT_FILE, StoreLock, guard_store
 from sciagent.campaign.llm import SessionOutcome, run_session, run_session_isolated
 from sciagent.campaign.plan import (
     B_LIB,
@@ -226,8 +230,16 @@ class Campaign:
         ids = [t.id for t in truths]
         if len(set(ids)) != len(ids):
             raise CampaignError("truth ids must be distinct")
-        # Before the store is opened (or created) and before any unit runs.
-        guarded = guard_store(root, fingerprint, reuse_from=reuse_from)
+        # Before the store is opened (or created) and before any unit runs; the
+        # lock is held until close(), so no other driver writes this store.
+        self._lock = StoreLock(root)
+        try:
+            guarded = guard_store(
+                root, fingerprint, reuse_from=reuse_from, lock=self._lock
+            )
+        except CampaignError:
+            self._lock.release()
+            raise
         self.root = root
         self.env = env
         self.worker_env = replace(env, investigation=None)
@@ -716,6 +728,7 @@ class Campaign:
 
     def close(self) -> None:
         self.store.close()
+        self._lock.release()
 
 
 def _is_heavy(pj: _PoolJob) -> bool:

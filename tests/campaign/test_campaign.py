@@ -350,12 +350,17 @@ def test_a_unit_another_process_ran_after_planning_is_not_run_again(
 ) -> None:
     calls: list[tuple[str, int, tuple[str, ...]]] = []
     monkeypatch.setattr(driver_module, "run_baseline_job", _fake_job(calls))
+    """A second driver on the store is refused outright (the store lock,
+    ``test_fingerprint``); the re-check before launch still skips a unit whose
+    cell reached the store after planning."""
     late = _campaign(tmp_path, run_llm=False)
     late._plan_baselines()
     planned = list(late.pool_queue)
-    early = _campaign(tmp_path, run_llm=False)
-    early.run()
-    early.close()
+    with pytest.raises(SciAgentError, match="another driver"):
+        _campaign(tmp_path, run_llm=False)
+    for pj in planned:
+        for unit, key in zip(pj.units, pj.keys, strict=True):
+            late.store.put(key, {"status": 1.0}, {"unit": unit.system})
     assert planned and all(late._pending(pj) is None for pj in planned)
     late.close()
 
@@ -425,6 +430,10 @@ def test_a_retryable_session_drops_llm_concurrency_to_one(
 # --------------------------------------------------------------------------
 
 
+#: The code fingerprint of the rescore (the sessions were stored under FINGERPRINT).
+NEW_CODE = "commit=new,tree=clean"
+
+
 def test_rescore_scores_old_sessions_under_the_new_fit_and_launches_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -452,14 +461,17 @@ def test_rescore_scores_old_sessions_under_the_new_fit_and_launches_nothing(
     truth = entry("size_excitation")
     unit = Unit("size_excitation", 1, "AG-c-H/named")
 
-    def campaign(**settings: Any) -> Campaign:
+    def campaign(
+        fingerprint: str = FINGERPRINT, reuse_from: str | None = None, **settings: Any
+    ) -> Campaign:
         return Campaign(
             tmp_path,
             environment(),
             config,
             [truth],
             DriverSettings(workers=0, poll_s=0.05, run_baselines=False, **settings),
-            fingerprint=FINGERPRINT,
+            fingerprint=fingerprint,
+            reuse_from=reuse_from,
         )
 
     with monkeypatch.context() as old:
@@ -482,7 +494,9 @@ def test_rescore_scores_old_sessions_under_the_new_fit_and_launches_nothing(
 
     monkeypatch.setattr(driver_module, "run_session", refuse)
     monkeypatch.setattr(driver_module, "run_session_isolated", refuse)
-    rescore = campaign(rescore_llm=True, driver_factory=refuse)
+    # The rescore runs under new code: allowed by naming the old fingerprint,
+    # and it writes (the guard does not merely let it start).
+    rescore = campaign(NEW_CODE, FINGERPRINT, rescore_llm=True, driver_factory=refuse)
     summary = rescore.run()
     new_ckey = score_key(unit, old_skey, environment(), config)
     assert rescore.store.done(new_ckey)
@@ -500,7 +514,7 @@ def test_rescore_scores_old_sessions_under_the_new_fit_and_launches_nothing(
     assert {k: after[k] for k in before} == before
     assert set(after) - set(before) == {f"{new_ckey.digest}.json"}
 
-    again = campaign(rescore_llm=True, driver_factory=refuse)
+    again = campaign(NEW_CODE, rescore_llm=True, driver_factory=refuse)
     rerun = again.run()
     again.close()
     assert len(scored) == 2 and rerun.skipped_done == 1

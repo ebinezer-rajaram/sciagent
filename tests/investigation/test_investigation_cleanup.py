@@ -36,11 +36,17 @@ SUBMIT = (
 )
 
 
+def _image_without_docker(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The image tag and the ID the record carries, without asking Docker."""
+    monkeypatch.setattr(runner_module, "ensure_image", lambda: "sciagent-sandbox:test")
+    monkeypatch.setattr(runner_module, "image_id", lambda *a, **k: "sha256:test")
+
+
 def _open_lab_without_docker(
     monkeypatch: pytest.MonkeyPatch, events: list[str]
 ) -> None:
     clean_environment(monkeypatch)
-    monkeypatch.setattr(runner_module, "ensure_image", lambda: "sciagent-sandbox:test")
+    _image_without_docker(monkeypatch)
 
     def recover(self: Sandbox) -> None:
         events.append("recover")
@@ -100,7 +106,7 @@ def test_a_failed_recovery_keeps_the_record_and_the_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     clean_environment(monkeypatch)
-    monkeypatch.setattr(runner_module, "ensure_image", lambda: "sciagent-sandbox:test")
+    _image_without_docker(monkeypatch)
 
     def recover(self: Sandbox) -> None:
         raise SandboxError("docker inspect: the agent container is still there")

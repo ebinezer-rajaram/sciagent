@@ -9,19 +9,19 @@ Each item says when it is done. Move finished items to the bottom section after 
 - [x] 2026-10-27 **Docker on dm-devbox.** Rootless Docker 29.9.2 installed by the owner's
   interactive session (daemon runs as `ubuntu`; no docker group; root daemon disabled). Lanes get
   `DOCKER_HOST=unix:///run/user/1000/docker.sock`. Checked: `docker run --network none hello-world`.
-- [ ] **Sandbox on native Linux Docker** (engineer, test first; after Docker). Suspected break,
+- [~] **Sandbox on native Linux Docker** (engineer, test first; after Docker). Suspected break,
   from reading the code: the container runs as `65534:65534` (`SANDBOX_UID`) while the host
   creates the run's `work/` as uid 1000 with mode 0755, so writes to `/work` (state between
   calls, `test_state_persists_only_through_work`) probably fail, and files the container
   creates may not be removable by the host. Docker Desktop on Windows hid this. Done when
   `nice uv run pytest tests/sandbox -m slow` passes on dm-devbox with every isolation test kept.
-- [ ] **Identifiability of the dev truths under fit/5** (P4-PROPOSAL §2.2): rerun
+- [~] **Identifiability of the dev truths under fit/5** (P4-PROPOSAL §2.2): rerun
   `check_identifiable` on the 20 dev truths with v2's fitter and report any truth that changes
   status. Done when the result is in the journal and LOG.
 - [ ] **Slow tier on dm-devbox** once Docker exists (the split is in place):
   `nice uv run pytest -m slow -n 2`. Done when green, or each failure has a root cause in the
   journal.
-- [ ] **Rebuild the defect-hunt checks** lost with the Windows PC (`.cache/hunt/A/p3_gap.py`,
+- [~] **Rebuild the defect-hunt checks** lost with the Windows PC (`.cache/hunt/A/p3_gap.py`,
   `B/store_check.py`, `B/report_determinism.py`) as committed scripts with tests (engineer):
   the gap check against ORACLE on a store, store consistency, and a byte comparison of two
   stores. Their contracts are in HANDOFF-2026-10-06 and LOG 2026-10-06. Done when each runs on

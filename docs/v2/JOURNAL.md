@@ -42,3 +42,23 @@ Decisions themselves go in `docs/v2/LOG.md`; the work queue is `docs/v2/QUEUE.md
 **Next.** The owner's OK to install Docker; then the sandbox fix (test
 first), the slow tier, the rebuilt defect-hunt checks, the smoke and the
 mini-pilot gate. Ask the owner about the `p4-deltas` branch.
+
+## 2026-10-27: Lane session 1 (10:46 UTC): sandbox, defect-hunt checks, identifiability (in progress)
+
+**Done.**
+- Oriented on `v2` at fc89c4f (clean, up to date). No sciagent runs in tmux; no `.cache/`
+  stores in the lane checkout. `free -g`: 11 GB available.
+- The lane checkout (`~/lanes/sciagent`) had no dev split. Copied it from the owner's checkout
+  (`~/research/sciagent/data/v2/truths/dev`, git-ignored) after checking `truths.json` has the
+  logged sha256 `604acec5…`; the copy hashes the same.
+- Rootless Docker answers on `unix:///run/user/1000/docker.sock` (server 29.9.2).
+- Delegated three queue items to engineer agents on disjoint files, due back 12:00 UTC: the
+  sandbox on rootless Docker (src/sciagent/sandbox, tests/sandbox), the rebuilt defect-hunt
+  checks (new scripts and tests), and the fit/5 identifiability recheck of the 20 dev truths
+  (a new script, run nice'd on at most 2 workers).
+
+**Learned.**
+- Lane checkouts do not share git-ignored data with `~/research/sciagent`; each needs its own
+  copy of the dev split, checked by sha256.
+
+**Next.** Verify and record what the three agents return, in a further entry this session.

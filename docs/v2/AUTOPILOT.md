@@ -25,7 +25,8 @@ Check what comes back before you record it; an agent's confidence is not evidenc
 
 ## Each session
 
-1. **Orient.** `git status` and `git pull --rebase origin v2` (if the tree is dirty, find out
+1. **Orient.** Read `docs/v2/INBOX.md` first: the owner's open instructions come before the
+   queue; mark each handled (date, what was done) when done. Then `git status` and `git pull --rebase origin v2` (if the tree is dirty, find out
    why before touching it; never discard someone's work). Read `CLAUDE.md`,
    `docs/v2/QUEUE.md`, the last two entries of `docs/v2/JOURNAL.md`, and any
    `docs/v2/LOG.md` entries newer than them. Check running work: `tmux ls`, the `progress.log`

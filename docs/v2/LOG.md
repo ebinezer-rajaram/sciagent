@@ -1060,8 +1060,14 @@ the first rebuild covered only §6 of hunt B's `store_check.py` and the gap half
 - `KEY_FIELDS` (§6): the key fields each kind of cell needs.
 - `gap_check(truth=...)` (`hunt_gap.py --split`): p3_gap's "BEATS-TRUTH" flag.
 
-The one real decision is that a unit above the truth's own held-out parameters by more than
-the threshold now **fails** the gate when `--split` is given. The original only printed it.
+**Proposal (veto window ends: 2026-10-28T13:00Z).** The one real decision changes a gate criterion
+fixed in HANDOFF-2026-10-06, so it goes under the veto rule rather than being adopted by the
+engineer who wrote it. Under it, a unit above the truth's own held-out parameters by more than
+the threshold **fails** the gate when `--split` is given. The code already does this. If
+vetoed, it reverts to a printed warning; the mini-pilot gate is not judged before the window
+ends. The red-team review the veto rule asks for stalled before reporting (its only note: the
+dev truths' held-out logs hold about 1,800 to 2,330 events). It must be rerun and pass before
+adoption, whatever the window says. The original only printed it.
 ORACLE units are included, though p3_gap skipped them. The reason is that a fitted model
 cannot beat the data-generating process on independent held-out data by 0.01 nats/event except
 by noise far below that, or by a leak. A flag that only prints is one no test can see. The

@@ -49,7 +49,9 @@ Each item says when it is done. Move finished items to the bottom section after 
 
 ## P3 pilot, rerun from scratch on dm-devbox (LOG 2026-10-27)
 
-- [ ] **Smoke** (pilot-runner): `nice -n 10 uv run python scripts/pilot.py --root .cache/smoke
+- [~] **Smoke** (2026-10-27: running since 15:49Z in `tmux -L sciagent` session `sci-smoke`,
+  store `.cache/smoke`, frozen worktree `.claude/worktrees/smoke` at e3fc6f1; see JOURNAL)
+  (pilot-runner): `nice -n 10 uv run python scripts/pilot.py --root .cache/smoke
   --ids dev-000,dev-001 --seeds 1 --llm-limit 4 --workers 2` in tmux, then replay one AG-o and
   one AG-c record offline (`sciagent.investigation.replay_investigation`). Needs
   Docker. Done when every smoke unit is recorded and scored, both replays pass, and wall times

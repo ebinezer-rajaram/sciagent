@@ -201,22 +201,72 @@ follow-ups come before any AG-o run that produces reported numbers.
 - **Next, first:** red-team aea2b90 and the item-3 choice, write the LOG entry, run the owed
   tests, then rebase onto `v2` and merge.
 
-## 2026-10-27: Lane session 3 (14:04 UTC): sandbox follow-ups under review, Linux memory sampler (in progress)
+## 2026-10-27: Lane session 3 (14:04 UTC): sandbox follow-ups merged, beats-truth gate reviewed, smoke running
 
-**Done so far.**
+**Done.**
 - Oriented on `v2` at ef16530 (clean, up to date). INBOX has no entries. `free -g`: 10 GB
-  available; load about 6 (agent-control's `calib` and `claude` tmux sessions are running).
+  available; load about 6 (agent-control's `calib` and `claude` tmux sessions).
 - **Peak worker memory on Linux** (hunt leftover b): `scripts/mem_sampler.py` with
-  `tests/campaign/test_mem_sampler.py` (6 tests, all six seen failing first, then `6 passed`).
-  It walks `/proc` under the pilot's pid every 5 s and records `VmRSS` and `VmHWM` per process
-  (the kernel's peak, so a peak between samples is not missed while the worker lives), marks
-  spawn-pool workers, and writes the store's `STOP` below 2 GB `MemAvailable`. `--summary`
-  prints peak worker `VmHWM` × workers, the gate figure. Live check on the running slow-test
-  tree: rows written, xdist workers classed `other` as they should be.
-- Started (not yet finished): the owed slow tests for the sandbox follow-ups branch (aea2b90)
-  in tmux `sci-owed` (`tests/sandbox tests/investigation tests/campaign -m slow -n 2`, log
-  `.cache/owed_slow.log` in the worktree); a red-team review of aea2b90 and the item-3 choice;
-  a rerun of the beats-truth gate red team with a narrower question.
+  `tests/campaign/test_mem_sampler.py` (6 tests, all seen failing first, then `6 passed`). It
+  records `VmRSS` and `VmHWM` per process under the pilot's pid every 5 s (`VmHWM` is the
+  kernel's own peak), marks spawn-pool workers, and writes the store's `STOP` below 2 GB
+  `MemAvailable`; `--summary` prints peak worker `VmHWM` × workers. Committed 4f57852.
+- **Owed tests for the sandbox follow-ups (aea2b90):** `tests/sandbox tests/investigation
+  tests/campaign -m slow -n 2` gave `1 failed, 31 passed in 1854.30s`. The failure was the dev
+  split missing from the worktree (`test_report_determinism…`, `FileNotFoundError` on
+  `data/v2/truths/dev/truths.json`), not the change. The event-cap and AG-o replay tests passed.
+- **Red team of aea2b90:** merge with follow-ups; no lost-record path, no isolation regression.
+  Two medium findings: an agent-built deep directory chain could exhaust the 256 MB cleanup
+  helper (an agent-caused void), and the sandbox limits and helper code were not in the record.
+- **Engineer on the findings (a8fc7cc):** the deep-chain void was real (GNU `find -delete`
+  still running after 10.5 min on a 910,000-level chain). New breadth-first, flat-memory
+  emptying (278 to 390 s for that chain); handoff timeout 20× wall time; AG-o records carry
+  every `SandboxLimits` field and the helper sha256; typed errors; symlinked roots;
+  process-group kill; four test gaps pinned. Merged into `v2` as a0129ab (aea2b90 rebased plus
+  a8fc7cc). I read the new `empty()`: rename-into-queue, constant open descriptors.
+- **Checks on the merged tree:** ruff format and check clean; `mypy` no issues in 235 files;
+  fast tier `2704 passed, 3 skipped` (QTM); affected slow tiers `1 failed, 37 passed in
+  1028.87s`. The one failure is environmental (Learned); that test passes in an unconfined
+  shell (`1 passed`).
+- **Beats-truth gate red team (rerun, narrower question):** adopt at +0.01. An honest fit beats
+  the truth by c nats with probability at most e^-c, so at most 2e-8 per unit at the smallest
+  dev log (1,767 events). ORACLE sat 0.00003 to 0.0045 nats/event below the truth on seven dev
+  truths. Its conditions, done by an engineer (merged 4677b57): each unit's `truth_digest` must
+  match the split's; `--split` is required; a slow positive control on dev-006 (ORACLE 0.00033
+  below the truth). Merged tree: fast tier `2610 passed, 3 skipped`, audit slow `4 passed`.
+- **LOG:** four entries. The scored-not-voided choice for agents that flood `work/` is a
+  proposal (veto window ends 2026-10-28T15:00Z). The beats-truth review result corrects the
+  earlier reason: the gate does not catch a full leak into a small model. Plus the
+  bounded-memory emptying and the digest check.
+- **Smoke launched** (pilot-runner) from the frozen worktree `.claude/worktrees/smoke`
+  (detached at e3fc6f1, dev split copied, sha256 `604acec5…`), store `.cache/smoke`, tmux server
+  `-L sciagent`, session `sci-smoke` (window `pilot`; window `mem` runs the sampler into
+  `.cache/smoke-mem.csv`). Plan: 12 pool jobs, 8 LLM units. At 15:54 UTC: ORACLE, B-lib and B-np
+  on dev-000 scored (wall 50.7, 14.6, 13.5 s), AG-c-S/named dev-000 submitted (257 s, 33 turns),
+  AG-o-S/named dev-000 launched. Run log `.cache/smoke-run.log`; finished when its last line is
+  `exit: <code>`.
 
-**Next.** Read the owed tests and both reviews; LOG entry for item 3; rebase and merge the
-follow-ups; then the smoke.
+**Learned.**
+- **The default tmux server on dm-devbox is AppArmor-confined.** It was started from an SSM
+  session and runs under `snap.amazon-ssm-agent.amazon-ssm-agent` (complain mode). Complain
+  mode still fails a `mkdirat` deeper than PATH_MAX with ENAMETOOLONG, which broke
+  `test_empty_takes_a_chain_far_deeper_than_open_files_allow` there. The lane's own shell is
+  `unconfined`. Lane jobs now go in `tmux -L sciagent` (checked: `unconfined`, test passes).
+  AUTOPILOT and agent-control's jobs may want the same; the owner decides.
+- An agent's directory shape, not only its file count, can turn a cleanup into a void; one
+  flat measurement did not bound it.
+- A truth id does not identify a truth (two dev splits share the ids), so gate references
+  carry the digest.
+- Worktrees need their own copy of the git-ignored dev split before slow tests.
+
+**Next.**
+1. Read the smoke: `tail .cache/smoke-run.log`, `progress.log`, `timing.jsonl`; then
+   `uv run python scripts/mem_sampler.py --summary .cache/smoke-mem.csv --workers 2`; replay
+   one AG-o and one AG-c record offline; per-unit wall times in the journal. Look at the
+   repeated `Solution may be inaccurate` warning (`glm/fit_solve.py:591`) in baseline fits.
+2. After 2026-10-28T12:00Z, unless vetoed: the `wall_s` move (the sandbox follow-ups landed).
+3. Session keys and the sandbox (new queue item), before AG-o cells that count.
+4. The mini-pilot gate once the smoke passes, with `mem_sampler.py` beside it and
+   `hunt_gap.py --split data/v2/truths/dev`.
+- Left in place: the old worktree `.claude/worktrees/agent-ab762e5af9832a80f` (locked; its
+  branch is merged; it holds the owed-test log) and `.claude/worktrees/smoke` (in use).

@@ -60,6 +60,7 @@ from sciagent.sandbox import (
     SandboxError,
     SandboxLimits,
     ensure_image,
+    image_id,
 )
 
 __all__ = [
@@ -71,6 +72,8 @@ __all__ = [
     "InvestigationOutcome",
     "InvestigationSpec",
     "build_lab",
+    "check_image_id",
+    "investigation_json",
     "layer_factory",
     "leak_terms",
     "out_of_bounds",
@@ -296,11 +299,44 @@ def layer_factory(
 
     def factory(config: Mapping[str, Any]) -> ToolLayer:
         spec = InvestigationSpec.from_json(config["investigation"])
-        return build_lab(
-            spec, env, sandbox_root=sandbox_root, fit_workers=fit_workers
-        ).layer()
+        lab = build_lab(spec, env, sandbox_root=sandbox_root, fit_workers=fit_workers)
+        check_image_id(config["investigation"], lab)
+        return lab.layer()
 
     return factory
+
+
+def investigation_json(spec: InvestigationSpec, lab: Lab) -> dict[str, Any]:
+    """The ``investigation`` section of a run's config: the spec and, for an
+    AG-o run, the ID of the image its sandbox runs (``sandbox_image_id``).
+
+    The ID is recorded, not put in the session's address: the tag hashes the
+    build recipe, and a rebuild of it need not give the same bytes. Replay
+    checks it (:func:`check_image_id`). AG-c records keep their bytes.
+    """
+    out = spec.as_json()
+    if lab.sandbox is not None:
+        out["sandbox_image_id"] = image_id(lab.sandbox.image, docker=lab.sandbox.docker)
+    return out
+
+
+def check_image_id(recorded: Mapping[str, Any], lab: Lab) -> None:
+    """Refuse to replay an AG-o record on an image other than the one it ran.
+
+    Records made before the ID was recorded carry none and are not checked.
+
+    Raises:
+        LabError: the lab's image has another ID than the recorded one.
+    """
+    want = recorded.get("sandbox_image_id")
+    if want is None or lab.sandbox is None:
+        return
+    have = image_id(lab.sandbox.image, docker=lab.sandbox.docker)
+    if have != want:
+        raise LabError(
+            f"the record ran on image {want}; {lab.sandbox.image} here is {have} "
+            "(rebuilt or changed): replay would not be comparable"
+        )
 
 
 def _prompts(lab: Lab) -> tuple[str, str]:
@@ -422,6 +458,12 @@ def run(
     )
     lab = build_lab(spec, env, sandbox_root=sandbox_root, fit_workers=fit_workers)
     system, opening = _prompts(lab)
+    try:
+        investigation = investigation_json(spec, lab)
+    except SandboxError:
+        if lab.sandbox is not None:
+            _discard_sandbox(lab.sandbox, keep=keep_sandbox)
+        raise
     config = InvestigationAgentConfig(
         model=model,
         system_prompt=system,
@@ -429,7 +471,7 @@ def run(
         seed=seed,
         max_turns=max_turns,
         wall_time_s=wall_time_s,
-        investigation=spec.as_json(),
+        investigation=investigation,
     )
     out_dir.mkdir(parents=True, exist_ok=True)
     cleanup_fault: str | None = None

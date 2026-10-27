@@ -38,11 +38,14 @@ from sciagent.investigation.runner import (
     run_sandbox_limits,
     sandbox_json,
 )
+from sciagent.investigation.tools import LabError
 from sciagent.sandbox import (
     HANDOFF_HELPER_SHA256,
+    SandboxImageError,
     SandboxLimits,
     SandboxResult,
     ensure_image,
+    image_id,
     image_tag,
 )
 from sciagent.sandbox import dataset as sandbox_dataset
@@ -332,6 +335,86 @@ def test_the_image_build_lab_uses_is_the_one_the_key_names(
     assert returned == [lab.sandbox.image]
     text = session_text(AG_O, CampaignConfig())
     assert text.endswith(f"; image={lab.sandbox.image}")
+
+
+# --------------------------------------------------------------------------
+# The image ID: recorded, not keyed; replay refuses another (finding 2)
+# --------------------------------------------------------------------------
+
+
+def test_image_id_reads_the_id_docker_reports(tmp_path: Path) -> None:
+    docker = str(_fake_docker(tmp_path))
+    assert image_id("sciagent-sandbox:1", docker=docker) == "sha256:0123"
+
+
+def test_image_id_of_an_absent_image_is_an_image_error(tmp_path: Path) -> None:
+    script = tmp_path / "docker"
+    script.write_text("#!/bin/sh\necho 'no such image' >&2\nexit 1\n")
+    script.chmod(0o755)
+    with pytest.raises(SandboxImageError, match="no such image"):
+        image_id("sciagent-sandbox:1", docker=str(script))
+
+
+def _ag_o_lab(tmp_path: Path) -> Any:
+    spec = InvestigationSpec(
+        environment="pointproc",
+        truth_id="hawkes",
+        arm="AG-o",
+        condition="named",
+        seed=3,
+    )
+    return spec, investigation_runner.build_lab(
+        spec, _env(), sandbox_root=tmp_path / "r", image="img:1"
+    )
+
+
+def test_an_ag_o_record_carries_the_image_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(investigation_runner, "image_id", lambda *a, **k: "sha256:a")
+    spec, lab = _ag_o_lab(tmp_path)
+    recorded = investigation_runner.investigation_json(spec, lab)
+    assert recorded == {**spec.as_json(), "sandbox_image_id": "sha256:a"}
+    # The spec still reads back from it (the ID sits outside "sandbox").
+    assert InvestigationSpec.from_json(recorded) == spec
+
+
+def test_an_ag_c_record_is_unchanged(tmp_path: Path) -> None:
+    spec = InvestigationSpec(
+        environment="pointproc",
+        truth_id="hawkes",
+        arm="AG-c",
+        condition="named",
+        seed=3,
+    )
+    lab = investigation_runner.build_lab(spec, _env(), sandbox_root=tmp_path)
+    assert investigation_runner.investigation_json(spec, lab) == spec.as_json()
+
+
+def test_replay_refuses_another_image(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(investigation_runner, "image_id", lambda *a, **k: "sha256:b")
+    spec, lab = _ag_o_lab(tmp_path)
+    recorded = {**spec.as_json(), "sandbox_image_id": "sha256:a"}
+    with pytest.raises(LabError, match=r"sha256:a.*sha256:b"):
+        investigation_runner.check_image_id(recorded, lab)
+    investigation_runner.check_image_id(
+        {**recorded, "sandbox_image_id": "sha256:b"}, lab
+    )
+    # A record made before the ID was recorded is not checked.
+    investigation_runner.check_image_id(spec.as_json(), lab)
+
+
+def test_the_replay_factory_checks_the_image_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(investigation_runner, "image_id", lambda *a, **k: "sha256:b")
+    monkeypatch.setattr(investigation_runner, "ensure_image", lambda: "img:1")
+    spec, _ = _ag_o_lab(tmp_path)
+    factory = investigation_runner.layer_factory(_env(), sandbox_root=tmp_path / "f")
+    with pytest.raises(LabError, match="image"):
+        factory({"investigation": {**spec.as_json(), "sandbox_image_id": "sha256:a"}})
 
 
 # --------------------------------------------------------------------------

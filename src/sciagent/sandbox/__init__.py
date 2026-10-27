@@ -17,7 +17,7 @@ from sciagent.sandbox.errors import (
     SandboxPlatformError,
     SandboxUnavailableError,
 )
-from sciagent.sandbox.image import check_docker, ensure_image, image_tag
+from sciagent.sandbox.image import check_docker, ensure_image, image_id, image_tag
 from sciagent.sandbox.runner import (
     HANDOFF_HELPER_SHA256,
     TIMEOUT_EXIT_CODE,
@@ -53,6 +53,7 @@ __all__ = [
     "check_docker",
     "ensure_image",
     "handoff_owner",
+    "image_id",
     "image_tag",
     "mount_source",
     "recover",

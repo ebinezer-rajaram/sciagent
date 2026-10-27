@@ -1414,3 +1414,32 @@ every P4 arm carries the frozen variant and fix the report's suffix matching; de
 "tried a non-identity link" reader before preregistering link-choice shares as descriptive
 measures. The owner may prefer `v1` with the factual fix (equally consistent with the evidence)
 or `link-neutral` by the literal count; this is the owner's decision as the STATUS note said.
+
+## 2026-10-27: FSD event cap: the draft's 6,000 is not adopted; a measured choice is needed first (open; no veto clock)
+
+Open decision "FSD cost" (HANDOFF-2026-10-06, decision 3). Draft (engineer,
+`.cache/drafts/fsd-cap-draft.md`, measurements `.cache/drafts/fsd-meas/`): the cost is the
+Wiener–Hopf reference exploding under strong inject designs (`models.py:329` on `origin/p4-deltas`;
+linear in N for stable runs, about quadratic when exploding: 1.65 s at a cap of 3,000, 7.5 to 8.0 s
+at 6,000 for one replicate of dev-002 `inject_sign_high`), so a lower `POLICY_MAX_EVENTS`
+(`policies.py:173`) bounds it. The red team (session 5; `.cache/drafts/fsd-review-probe/`) agreed
+on the cost and that the cap already reaches every key it affects (`FSDPolicy.config`,
+`EIGPolicy.config`, `plan.py:555`, `:571`), but found:
+- the telling unit's cap defaults to the same constant (`plan.py:245`, `scoring/telling.py:122`),
+  so lowering it moves telling too, against the draft's intent;
+- stop-as-undefined makes FSD's pick degenerate on a design where one side always stops (He² = 1 on
+  every diagnostic, `choose` returns that design with diagnostic 0, the failure `telling.py:14-27`
+  documents), and the Wiener–Hopf reference is fitted once, so the degenerate pick repeats at every
+  decision for that truth; this pushes C5 towards null and can weaken control 5;
+- 6,000 rests on one replicate of 5 truths, Wiener–Hopf side only; one of the "exploding" designs
+  (dev-003 `inject_size_high`) is a legitimate 3,074-event run, inject designs reach ~3,000, and the
+  battery's own example averaged 9,662 events; the 15,000 comes from `world.py:62-71`, not the
+  battery's 8× rule (which gave `BATTERY_MAX_EVENTS = 1_000`);
+- truthFSD (control 5) counts stops as undefined while telling drops them, so a cap below 15,000
+  could fail control 5 through the cap alone; `fsd_null` raises rather than marking undefined
+  (`policies.py:886-889`); `make_policy` ignores `PolicyArmSettings.max_events`.
+Next: measure the event-count distribution per design on all 20 dev truths, all 16 replicates, both
+sides (GLM and Wiener–Hopf) at the current cap, with `nice` in tmux, then choose the cap from it;
+give telling and truthFSD their own constant; decide the at-cap rule for FSD's ranking (for
+example, rank by the defined replicates and flag designs whose reference stops) with a positive
+control that FSD's picks are unchanged on decisions where nothing explodes.

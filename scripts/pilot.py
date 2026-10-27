@@ -44,7 +44,7 @@ for _var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
     os.environ[_var] = "1"
 
 if TYPE_CHECKING:
-    from sciagent.campaign.plan import CampaignEnvironment, TruthEntry
+    from sciagent.campaign.plan import CampaignConfig, CampaignEnvironment, TruthEntry
     from sciagent.investigation.world import Truth, TruthSpec
     from sciagent.scenarios.records import TruthRecord
 
@@ -206,6 +206,29 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def campaign_config(args: argparse.Namespace) -> CampaignConfig:
+    """The run's :class:`CampaignConfig` from :func:`build_parser`'s arguments
+    (shared with ``scripts/session_check.py``, which must rebuild exactly the
+    configuration a run used)."""
+    from sciagent.campaign.plan import BASELINES, PILOT_ARMS, CampaignConfig, LLMArm
+
+    seeds = tuple(int(s) for s in args.seeds.split(","))
+    control = tuple(int(s) for s in args.control_seeds.split(",") if int(s) in seeds)
+    baselines = BASELINES if args.systems is None else tuple(args.systems.split(","))
+    arms: tuple[LLMArm, ...] = PILOT_ARMS
+    if args.arms is not None:
+        wanted = args.arms.split(",")
+        arms = tuple(a for a in PILOT_ARMS if f"{a.arm}/{a.condition}" in wanted)
+    return CampaignConfig(
+        seeds=seeds,
+        control_seeds=control,
+        baselines=baselines,
+        llm_arms=arms,
+        max_turns=args.max_turns,
+        control_truths=args.b10f_truths,
+    )
+
+
 def main() -> None:
     reconfigure_stdout()
     parser = build_parser()
@@ -217,32 +240,12 @@ def main() -> None:
     )
     args = parser.parse_args()
     from sciagent.campaign.driver import Campaign, DriverSettings
-    from sciagent.campaign.plan import (
-        BASELINES,
-        PILOT_ARMS,
-        CampaignConfig,
-        LLMArm,
-    )
 
     if args.wait:
         wait_for_split(args.split, args.wait)
     records = select(load_split(args.split), args.truths, args.ids)
     env = pointproc_environment(load_split(args.split))
-    seeds = tuple(int(s) for s in args.seeds.split(","))
-    control = tuple(int(s) for s in args.control_seeds.split(",") if int(s) in seeds)
-    baselines = BASELINES if args.systems is None else tuple(args.systems.split(","))
-    arms: tuple[LLMArm, ...] = PILOT_ARMS
-    if args.arms is not None:
-        wanted = args.arms.split(",")
-        arms = tuple(a for a in PILOT_ARMS if f"{a.arm}/{a.condition}" in wanted)
-    config = CampaignConfig(
-        seeds=seeds,
-        control_seeds=control,
-        baselines=baselines,
-        llm_arms=arms,
-        max_turns=args.max_turns,
-        control_truths=args.b10f_truths,
-    )
+    config = campaign_config(args)
     settings = DriverSettings(
         workers=args.workers,
         llm_concurrency=args.llm_concurrency,

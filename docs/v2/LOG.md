@@ -1046,3 +1046,26 @@ section (`campaign/llm.py:204-205`). The reading's `wall_s` also mixes three mea
 This changes session cell bytes, and no store needs them: the Windows store is gone and the
 Linux smoke has not run. It goes in before the full pilot. The mini-pilot (no LLM units) is
 unaffected. Not to be implemented while the sandbox follow-ups are editing `campaign/llm.py`.
+
+## 2026-10-27: The rebuilt hunt checks cross-checked against the salvaged originals
+
+The Windows hunt scripts (`origin/windows-salvage`, `salvage/windows-2026-10/hunt/`) show that
+the first rebuild covered only §6 of hunt B's `store_check.py` and the gap half of hunt A's
+`p3_gap.py`. Ported, test first, into `sciagent.campaign.audit`:
+- `check_budgets` (§3): each completed session's record must charge exactly the successful
+  budgeted calls, and the cell's counts must match the record's.
+- `check_sessions` (§2, §5; script `scripts/session_check.py`): every stored session must be
+  found by the rescore's own enumeration, with the reason named when it is not. Void-policy
+  disagreements are warnings.
+- `KEY_FIELDS` (§6): the key fields each kind of cell needs.
+- `gap_check(truth=...)` (`hunt_gap.py --split`): p3_gap's "BEATS-TRUTH" flag.
+
+The one real decision is that a unit above the truth's own held-out parameters by more than
+the threshold now **fails** the gate when `--split` is given. The original only printed it.
+ORACLE units are included, though p3_gap skipped them. The reason is that a fitted model
+cannot beat the data-generating process on independent held-out data by 0.01 nats/event except
+by noise far below that, or by a leak. A flag that only prints is one no test can see. The
+reference uses the cells' own held-out log and their default quadrature rule (the original used
+the campaign FitConfig's rule). `pilot.campaign_config` is now shared by `pilot.py` and
+`session_check.py`, so the check rebuilds exactly the run's configuration. No fit or scoring
+output changes, so no version constant moves.

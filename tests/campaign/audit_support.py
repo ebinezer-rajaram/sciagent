@@ -1,6 +1,8 @@
 """Store builders for the defect-hunt check tests: cells written through
 :meth:`ResultStore.put` with the driver's layout (``unit``, ``result``,
-``system_config`` / ``session_config``, ``session.record_dir``)."""
+``system_config`` / ``session_config``, ``session.record_dir``), and session
+records with the harness's layout (a ``config`` entry with ``budgets`` and
+``tools``, one ``tool_call`` entry per layer call)."""
 
 from __future__ import annotations
 
@@ -10,6 +12,7 @@ from typing import Any
 
 from sciagent.campaign.store import ResultStore
 from sciagent.core.types import DataVersion, EnvVersion, FrozenDict, MetricVersion, Seed
+from sciagent.harness.record import SessionRecord
 from sciagent.registry.store import ExperimentKey
 
 FIT5 = "pointproc|sciagent.glm.fit/5"
@@ -103,6 +106,94 @@ def put_baseline(
     return key
 
 
+#: The session records' budgets and tools (``config`` entry of a record).
+BUDGETS: dict[str, int] = {"experiments": 2, "fits": 2, "submit": 1}
+TOOLS: tuple[tuple[str, str | None], ...] = (
+    ("run_experiment", "experiments"),
+    ("fit", "fits"),
+    ("diagnostic", None),
+    ("submit", "submit"),
+)
+
+
+def call(
+    index: int,
+    name: str,
+    charged: str | None,
+    after: tuple[int, int, int],
+    *,
+    is_error: bool = False,
+    record: dict[str, Any] | None = None,
+    text: str = "ok",
+) -> dict[str, Any]:
+    """A ``tool_call`` body; ``after`` is (experiments, fits, submit) used."""
+    return {
+        "call": index,
+        "name": name,
+        "args": {},
+        "text": text,
+        "is_error": is_error,
+        "record": record,
+        "charged": charged,
+        "budgets_after": dict(
+            zip(("experiments", "fits", "submit"), after, strict=True)
+        ),
+    }
+
+
+#: One experiment, a fit, a refused repeat of it, a free diagnostic, a submit.
+CALLS: tuple[dict[str, Any], ...] = (
+    call(0, "run_experiment", "experiments", (1, 0, 0)),
+    call(1, "fit", "fits", (1, 1, 0), record={"fit": 1}),
+    call(
+        2,
+        "fit",
+        None,
+        (1, 1, 0),
+        is_error=True,
+        record={"repeat_of": 1},
+        text="not charged: this structure was already fitted",
+    ),
+    call(3, "diagnostic", None, (1, 1, 0)),
+    call(4, "submit", "submit", (1, 1, 1)),
+)
+
+
+def write_record(path: Path, calls: tuple[dict[str, Any], ...] = CALLS) -> None:
+    record = SessionRecord()
+    record.append(
+        "config",
+        {
+            "budgets": BUDGETS,
+            "tools": [{"name": n, "budget": b} for n, b in TOOLS],
+        },
+    )
+    for body in calls:
+        record.append("tool_call", body)
+    record.save(path)
+
+
+def session_counts(
+    calls: tuple[dict[str, Any], ...],
+) -> tuple[dict[str, float], dict[str, Any]]:
+    """The reading fields and ``session`` detail fields the campaign derives
+    from a record's calls (``campaign.llm.run_session``)."""
+    counts: dict[str, int] = {}
+    for body in calls:
+        counts[body["name"]] = counts.get(body["name"], 0) + 1
+    charged = [body["charged"] for body in calls]
+    reading = {
+        "experiments_used": float(charged.count("experiments")),
+        "fits_used": float(charged.count("fits")),
+        "tool_calls": float(len(calls)),
+    }
+    detail = {
+        "tool_calls": dict(sorted(counts.items())),
+        "fitted": ["Base()"] * charged.count("fits"),
+    }
+    return reading, detail
+
+
 def put_session(
     store: ResultStore,
     system: str,
@@ -110,7 +201,12 @@ def put_session(
     truth: str = "dev-008",
     seed: int = 1,
     make_record: bool = True,
+    calls: tuple[dict[str, Any], ...] = CALLS,
+    reading: dict[str, float] | None = None,
+    session: dict[str, Any] | None = None,
 ) -> ExperimentKey:
+    """One completed session cell and its record; ``reading`` and ``session``
+    override fields of the reading and of the detail's ``session`` block."""
     text = f"session of {system}"
     key = make_key(
         "llm-session",
@@ -123,10 +219,11 @@ def put_session(
     record_dir = f"llm/{str(key.digest)[:16]}"
     if make_record:
         (store.root / record_dir).mkdir(parents=True)
-        (store.root / record_dir / "record.json").write_text("{}", encoding="utf-8")
+        write_record(store.root / record_dir / "record.json", calls)
+    used, counted = session_counts(calls)
     store.put(
         key,
-        {"status": 1.0, "void": 0.0},
+        {"status": 1.0, "void": 0.0, **used, **(reading or {})},
         {
             "unit": unit_json("llm-session", system, truth, seed),
             "session_config": text,
@@ -134,6 +231,8 @@ def put_session(
                 "outcome": "submitted",
                 "record": "record.json",
                 "record_dir": record_dir,
+                **counted,
+                **(session or {}),
             },
         },
     )

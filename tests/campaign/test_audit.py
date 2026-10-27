@@ -38,9 +38,9 @@ from sciagent.campaign.plan import CampaignError
 from sciagent.campaign.store import DETAILS_DIR, LEDGER_FILE, ResultStore
 
 
-def _gap(root: Path, env: str = "fit/5", **kw: float) -> Any:
+def _gap(root: Path, env: str = "fit/5", threshold: float = GAP_THRESHOLD) -> Any:
     with ResultStore(root) as store:
-        return gap_check(store, env, **kw)
+        return gap_check(store, env, threshold=threshold)
 
 
 # --------------------------------------------------------------------------
@@ -292,7 +292,8 @@ def test_address_text_that_does_not_hash_to_the_key_is_found(tmp_path: Path) -> 
 def test_a_unit_block_that_disagrees_with_the_key_is_found(tmp_path: Path) -> None:
     root = tmp_path / "s"
     with ResultStore(root) as store:
-        key = make_key("baseline", "B-lib", "dev-008", 1, {"system_config": sha("t")})
+        fields = {"truth_digest": sha("dev-008"), "system_config": sha("t")}
+        key = make_key("baseline", "B-lib", "dev-008", 1, fields)
         store.put(
             key,
             {"status": 0.0},

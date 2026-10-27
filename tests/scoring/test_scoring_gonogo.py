@@ -377,6 +377,44 @@ def test_signed_rank_matches_scipy_exact_and_ranks_infinities_last() -> None:
         signed_rank_greater([float("nan"), 1.0])
 
 
+def _brute_signed_rank(d: list[float]) -> float:
+    """Exact one-sided p by enumerating every sign flip, zeros dropped and
+    tied magnitudes given their average rank (hunt B's controls_check)."""
+    from fractions import Fraction
+    from itertools import product
+
+    d = [x for x in d if x != 0.0]
+    if not d:
+        return 1.0
+    mags = sorted(abs(x) for x in d)
+    rank = {m: (mags.index(m) + 1 + len(mags) - mags[::-1].index(m)) / 2 for m in mags}
+    ranks = [rank[abs(x)] for x in d]
+    observed = sum(r for r, x in zip(ranks, d, strict=True) if x > 0)
+    tail = sum(
+        1
+        for signs in product((0, 1), repeat=len(d))
+        if sum(r for r, s in zip(ranks, signs, strict=True) if s) >= observed - 1e-12
+    )
+    return float(Fraction(tail, 2 ** len(d)))
+
+
+@pytest.mark.parametrize(
+    "d",
+    [
+        [1.0, 1.0, -1.0, 2.0, 2.0, 0.0, 3.0],
+        [0.5, -0.5, 0.5, -0.5, 1.0, 2.0, 2.0, -3.0],
+        [float("inf"), -1.0, 2.0, 3.0, float("-inf"), 4.0, 5.0],
+        [float("-inf"), float("-inf"), 1.0],
+        [1.0, -2.0, 3.0, 4.0, 5.0, 6.0],
+    ],
+)
+def test_signed_rank_with_ties_matches_full_enumeration(d: list[float]) -> None:
+    """Control 2's p-value under tied magnitudes and infinities (which tie
+    with each other), against enumeration of all 2^n sign flips; scipy's
+    exact method refuses ties, so the tie-free tests above cannot see this."""
+    assert signed_rank_greater(d) == _brute_signed_rank(d)
+
+
 @given(
     st.lists(
         st.floats(-1, 1, allow_nan=False).filter(lambda x: x != 0.0),

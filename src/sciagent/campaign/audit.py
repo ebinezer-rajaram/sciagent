@@ -1,10 +1,13 @@
 """Defect-hunt checks on a campaign store: the gap to ORACLE, store consistency,
-and a cell-by-cell byte comparison of two stores.
+budget accounting, stored sessions against a campaign, and a cell-by-cell byte
+comparison of two stores.
 
 These read the numbers the evaluation reports, so they are instruments (SPEC
 §6.3). They rebuild the hunt scripts of 2026-10-06 (HANDOFF-2026-10-06, LOG
-2026-10-06 "P3.1 fixes after defect hunt B"), which were lost with the Windows
-PC; the scripts under ``scripts/`` are thin command lines over this module.
+2026-10-06 "P3.1 fixes after defect hunt B"), first from their contracts and
+then cross-checked against the originals salvaged from the Windows PC (LOG
+2026-10-27, "The rebuilt hunt checks cross-checked"); the scripts under
+``scripts/`` are thin command lines over this module.
 
 **Gap check** (:func:`gap_check`; the mini-pilot gate's "0 ``oracle_underfit``,
 no gap above +0.01", HANDOFF-2026-10-06 step 5; PILOT-AUDIT §1). Cells are
@@ -24,6 +27,14 @@ restated here. The gate passes only if
   (:func:`sciagent.campaign.analysis.underfit_check`: zero flags, zero
   unrecorded, at least one checked).
 
+With a ``truth`` reference (per (truth, seed), the held-out per-event log L
+of the truth's *own* parameters, computed by the domain's script, since this
+module cannot simulate a truth), the gate also fails when any unit, ORACLE
+included, is above that reference by more than the threshold. A fitted model
+beating the data-generating process on independent held-out data by that much
+is a leakage flag whatever ORACLE does (hunt A's ``p3_gap.py``, "BEATS-TRUTH").
+A scored unit without a reference is refused rather than skipped.
+
 Void LLM sessions are not dropped here: the check is of ORACLE as an upper
 bound, and a void session's score is still a fit through the same fitter.
 
@@ -38,6 +49,7 @@ Issues fail the check; warnings do not.
   give that digest, whose schema is the current one, whose reading equals the
   ledger's bit for bit, and whose bytes are exactly
   :func:`~sciagent.campaign.store.cell_bytes` of its own content (canonical);
+- the key carries every field its kind needs (:data:`KEY_FIELDS`; hunt B §6);
 - the address text is derived: a baseline's ``system_config`` and a session's
   ``session_config`` hash to the key's field, and the ``unit`` block agrees
   with the key (truth, seed, system, kind);
@@ -48,6 +60,37 @@ Issues fail the check; warnings do not.
   writes; :meth:`~sciagent.campaign.store.ResultStore.recover` commits it), a
   stray file in ``details/``, a timing line naming a digest the ledger lacks.
   A timing line that is not JSON is an issue.
+
+**Budget accounting** (:func:`check_budgets`; hunt B ``store_check.py`` §3;
+tool budgets are an instrument, SPEC §6.3). For every completed session cell
+(reading ``status`` 1), its record (``record_dir``/``record``) is loaded and
+verified, and its ``tool_call`` entries, in call order, must show:
+
+- call indices 0, 1, 2, ... with none missing;
+- each call charged exactly when it succeeded and its tool draws on a budget
+  (the record's ``config`` entry names each tool's budget): a refusal is never
+  charged, a successful budgeted call always is;
+- ``budgets_after`` equal to the running count of charges, never above the
+  ``config`` entry's limit, and a "budget exhausted" refusal only at the limit;
+- the charged fits numbered 1, 2, 3, ... in call order (the fit tool's
+  ``record.fit``);
+- the cell's own counts equal to the record's: ``experiments_used`` and
+  ``fits_used`` (:data:`USED_READINGS`) to the charges, ``tool_calls`` to the
+  number of entries, and the detail's ``tool_calls`` (per name) and ``fitted``
+  (one per charged fit) likewise.
+
+**Stored sessions** (:func:`check_sessions`; hunt B ``store_check.py`` §2 and
+§5). Every ``llm-session`` cell must be found by
+:func:`~sciagent.campaign.rescore.stored_sessions` under the campaign's
+configuration and truths: a rescore scores only what that enumeration finds,
+so a session it misses is silently never scored. A missed cell is an issue
+naming the reason (system, truth, truth_digest, seed, session_config); two
+stored sessions for one unit (the enumeration refuses them) are an issue too.
+For each found unit, the void policy
+(:func:`~sciagent.campaign.voids.session_void`) is compared with the stored
+flag: a stored void the policy does not void (``void_reclassified``), or the
+reverse (``void_policy``), is a warning, since sessions recorded under an
+older harness are expected to differ (the pilot's nine reclassified voids).
 
 **Byte comparison** (:func:`compare_stores`; HANDOFF-2026-10-06 step 1,
 "compare its cell bytes with run 1"). The committed digests of two stores are
@@ -63,6 +106,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import sqlite3
 from collections.abc import Mapping, Sequence
@@ -71,7 +115,16 @@ from pathlib import Path
 from typing import Any, Final
 
 from sciagent.campaign.analysis import Row, derive, row_from_cell, underfit_check
-from sciagent.campaign.plan import ORACLE, CampaignError
+from sciagent.campaign.plan import (
+    ORACLE,
+    CampaignConfig,
+    CampaignEnvironment,
+    CampaignError,
+    TruthEntry,
+    session_config_digest,
+    session_key,
+)
+from sciagent.campaign.rescore import stored_sessions
 from sciagent.campaign.store import (
     DETAIL_SCHEMA,
     DETAILS_DIR,
@@ -81,6 +134,9 @@ from sciagent.campaign.store import (
     cell_bytes,
     key_from_json,
 )
+from sciagent.campaign.voids import decoded, session_void
+from sciagent.harness.errors import RecordError, RecordFormatError
+from sciagent.harness.record import SessionRecord
 from sciagent.registry.backing import append_only_triggers
 from sciagent.registry.ledger import LedgerEntry
 from sciagent.registry.store import ExperimentKey
@@ -96,6 +152,32 @@ LEDGER_TABLE: Final = "cells"
 SCORED_KINDS: Final = ("baseline", "llm-score")
 CELL_KINDS: Final = ("baseline", "llm-session", "llm-score")
 _DIGEST: Final = re.compile(r"[0-9a-f]{64}")
+#: The key fields each kind of cell needs (``campaign.plan``'s key builders).
+KEY_FIELDS: Final = {
+    "baseline": (
+        "fit_config",
+        "kind",
+        "system",
+        "truth",
+        "truth_digest",
+        "system_config",
+    ),
+    "llm-session": (
+        "fit_config",
+        "kind",
+        "system",
+        "truth",
+        "truth_digest",
+        "session_config",
+    ),
+    "llm-score": ("fit_config", "kind", "system", "truth", "session"),
+}
+#: The session reading field that counts each budget's charges (``campaign.llm``).
+USED_READINGS: Final = {"experiments": "experiments_used", "fits": "fits_used"}
+#: The budget the fit tool draws on, and its record's fit number field.
+FIT_BUDGET: Final = "fits"
+#: The tool layer's refusal for an exhausted budget (``harness.tools``).
+EXHAUSTED: Final = "budget exhausted"
 
 
 def _ro(path: Path) -> sqlite3.Connection:
@@ -136,6 +218,8 @@ class GapUnit:
     oracle: float | None
     gap: float | None
     oracle_underfit: bool | None
+    truth_ll: float | None = None
+    over_truth: float | None = None
 
 
 @dataclass(frozen=True)
@@ -160,13 +244,33 @@ class GapReport:
         )
 
     @property
+    def beats_truth(self) -> tuple[GapUnit, ...]:
+        """Units above the truth's own parameters by more than the threshold
+        (empty without a ``truth`` reference)."""
+        return tuple(
+            u
+            for u in self.units
+            if u.over_truth is not None and u.over_truth > self.threshold
+        )
+
+    @property
     def passed(self) -> bool:
         return (
             bool(self.units)
             and not self.above
             and not self.unreferenced
+            and not self.beats_truth
             and self.underfit.passed
         )
+
+
+def _margin(value: float | None, reference: float | None) -> float | None:
+    """``value - reference`` when both are finite; None otherwise."""
+    if value is None or reference is None:
+        return None
+    if not (math.isfinite(value) and math.isfinite(reference)):
+        return None
+    return value - reference
 
 
 def _group(key: ExperimentKey) -> tuple[str, str, str, str, str, int]:
@@ -181,9 +285,15 @@ def _group(key: ExperimentKey) -> tuple[str, str, str, str, str, int]:
 
 
 def gap_check(
-    store: ResultStore, env: str, *, threshold: float = GAP_THRESHOLD
+    store: ResultStore,
+    env: str,
+    *,
+    threshold: float = GAP_THRESHOLD,
+    truth: Mapping[tuple[str, int], float] | None = None,
 ) -> GapReport:
-    """Per unit, the gap of each system to ORACLE (module docstring)."""
+    """Per unit, the gap of each system to ORACLE and, given ``truth`` (per
+    (truth id, seed), the truth's own held-out per-event log L), its margin
+    over the truth (module docstring)."""
     groups: dict[tuple[str, str, str, str, str, int], list[Row]] = {}
     for cell in store.cells():
         key = key_from_json(cell["key"])
@@ -207,6 +317,17 @@ def gap_check(
         oracle = next(
             (r.per_event for r in rows if r.system == ORACLE and not r.llm), None
         )
+        reference = None
+        if truth is not None:
+            if (g[4], g[5]) not in truth:
+                raise CampaignError(
+                    f"no truth reference for {g[4]} s{g[5]}, which has scored cells"
+                )
+            reference = truth[(g[4], g[5])]
+            if not math.isfinite(reference):
+                raise CampaignError(
+                    f"truth reference for {g[4]} s{g[5]} is {reference!r}, not finite"
+                )
         units += [
             GapUnit(
                 truth=r.truth,
@@ -218,6 +339,8 @@ def gap_check(
                 oracle=oracle,
                 gap=r.gap,
                 oracle_underfit=r.oracle_underfit,
+                truth_ll=reference,
+                over_truth=_margin(r.per_event, reference),
             )
             for r in rows
         ]
@@ -401,9 +524,14 @@ def _check_cell(
     if not isinstance(body, dict):
         issues.append(Finding("unreadable_detail", digest, "detail is not an object"))
         return
+    kind = key.config.get("kind")
+    missing = [f for f in KEY_FIELDS.get(str(kind), ()) if f not in key.config]
+    if kind not in KEY_FIELDS or missing:
+        issues.append(
+            Finding("missing_field", digest, f"kind {kind!r} key lacks {missing}")
+        )
     _check_unit(digest, key, body, issues)
     _check_address_text(digest, key, body, issues)
-    kind = key.config.get("kind")
     if kind == "llm-session":
         sessions.add(digest)
         _check_session_record(root, digest, body, record_dirs, issues)
@@ -455,6 +583,278 @@ def check_store(root: Path) -> StoreCheck:
                     Finding("timing_digest", f"line {n}", f"{logged} not in ledger")
                 )
     return StoreCheck(len(entries), tuple(sorted(issues)), tuple(sorted(warnings)))
+
+
+# --------------------------------------------------------------------------
+# Budget accounting
+# --------------------------------------------------------------------------
+
+
+def _record_tools(
+    record: SessionRecord,
+) -> tuple[dict[str, int], dict[str, str | None]]:
+    """The budgets and each tool's budget, from the record's ``config`` entry."""
+    configs = record.of_kind("config")
+    if not configs:
+        raise RecordFormatError("the record has no config entry")
+    body = configs[0].body
+    budgets = {str(k): int(v) for k, v in dict(body["budgets"]).items()}
+    tools = {str(t["name"]): t.get("budget") for t in body["tools"]}
+    return budgets, tools
+
+
+def _audit_calls(
+    where: str,
+    calls: Sequence[Mapping[str, Json]],
+    budgets: Mapping[str, int],
+    tools: Mapping[str, str | None],
+    issues: list[Finding],
+) -> dict[str, int]:
+    """Per-call charges against the tool budgets; returns the charge counts."""
+    used = {name: 0 for name in sorted(budgets)}
+    fit_numbers: list[object] = []
+    for position, body in enumerate(calls):
+        name = str(body.get("name"))
+        here = f"call {body.get('call')} {name}"
+        if body.get("call") != position:
+            issues.append(
+                Finding(
+                    "call_index",
+                    where,
+                    f"call {position} has index {body.get('call')!r}",
+                )
+            )
+        budget = tools.get(name)
+        is_error = bool(body.get("is_error"))
+        expected = budget if budget is not None and not is_error else None
+        charged = body.get("charged")
+        if charged != expected:
+            issues.append(
+                Finding(
+                    "budget_charge",
+                    where,
+                    f"{here}: is_error={is_error} charged {charged!r}, "
+                    f"expected {expected!r}",
+                )
+            )
+        if isinstance(charged, str):
+            used[charged] = used.get(charged, 0) + 1
+            if charged == FIT_BUDGET:
+                fit_numbers.append((body.get("record") or {}).get("fit"))
+            if used[charged] > budgets.get(charged, 0):
+                issues.append(
+                    Finding(
+                        "over_budget",
+                        where,
+                        f"{here}: {charged} used {used[charged]} > "
+                        f"{budgets.get(charged, 0)}",
+                    )
+                )
+        after = body.get("budgets_after")
+        if not isinstance(after, dict) or dict(after) != used:
+            issues.append(
+                Finding("budgets_after", where, f"{here}: {after!r} != running {used}")
+            )
+        if (
+            is_error
+            and budget is not None
+            and str(body.get("text", "")).startswith(EXHAUSTED)
+            and used.get(budget, 0) < budgets.get(budget, 0)
+        ):
+            issues.append(
+                Finding(
+                    "early_exhaustion",
+                    where,
+                    f"{here}: refused as exhausted with {budget} used "
+                    f"{used.get(budget, 0)} < {budgets.get(budget, 0)}",
+                )
+            )
+    if fit_numbers != list(range(1, len(fit_numbers) + 1)):
+        issues.append(
+            Finding("fit_numbers", where, f"charged fits numbered {fit_numbers}")
+        )
+    return used
+
+
+def _audit_counts(
+    where: str,
+    calls: Sequence[Mapping[str, Json]],
+    used: Mapping[str, int],
+    reading: Mapping[str, float],
+    session: Mapping[str, Json],
+    issues: list[Finding],
+) -> None:
+    """The cell's own counts against the record's (module docstring)."""
+    for budget, field in sorted(USED_READINGS.items()):
+        if reading.get(field) != float(used.get(budget, 0)):
+            issues.append(
+                Finding(
+                    "reading_used",
+                    where,
+                    f"{field} {reading.get(field)!r} != {used.get(budget, 0)} charged",
+                )
+            )
+    if reading.get("tool_calls") != float(len(calls)):
+        issues.append(
+            Finding(
+                "reading_calls",
+                where,
+                f"tool_calls {reading.get('tool_calls')!r} != {len(calls)} recorded",
+            )
+        )
+    names: dict[str, int] = {}
+    for body in calls:
+        names[str(body.get("name"))] = names.get(str(body.get("name")), 0) + 1
+    if session.get("tool_calls") != dict(sorted(names.items())):
+        issues.append(
+            Finding(
+                "detail_calls",
+                where,
+                f"detail tool_calls {session.get('tool_calls')!r} != {names}",
+            )
+        )
+    fitted = session.get("fitted")
+    if not isinstance(fitted, list) or len(fitted) != used.get(FIT_BUDGET, 0):
+        issues.append(
+            Finding(
+                "detail_fitted",
+                where,
+                f"detail fitted {fitted!r} != {used.get(FIT_BUDGET, 0)} charged fits",
+            )
+        )
+
+
+def check_budgets(root: Path) -> StoreCheck:
+    """Budget accounting of every completed session's record (module docstring).
+    ``cells`` counts the sessions audited."""
+    _require_store(root)
+    issues: list[Finding] = []
+    audited = 0
+    with ResultStore(root) as store:
+        cells = store.cells()
+    for cell in cells:
+        if cell["key"]["config"].get("kind") != "llm-session":
+            continue
+        reading = {k: float.fromhex(v) for k, v in cell["reading"].items()}
+        if reading.get("status") != 1.0:
+            continue
+        audited += 1
+        where = str(cell["digest"])
+        session = cell["detail"].get("session") or {}
+        try:
+            record = SessionRecord.load(
+                root / str(session["record_dir"]) / str(session["record"])
+            )
+            budgets, tools = _record_tools(record)
+        except (KeyError, TypeError, ValueError, RecordError) as error:
+            issues.append(Finding("unreadable_record", where, f"{error!r}"))
+            continue
+        calls = sorted(
+            (dict(e.body) for e in record.of_kind("tool_call")),
+            key=lambda b: (int(b.get("call", -1)), str(b.get("name"))),
+        )
+        used = _audit_calls(where, calls, budgets, tools, issues)
+        _audit_counts(where, calls, used, reading, session, issues)
+    return StoreCheck(audited, tuple(sorted(issues)), ())
+
+
+# --------------------------------------------------------------------------
+# Stored sessions and the void policy
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SessionCheck:
+    """Stored sessions against a campaign: how many cells, how many the
+    rescore's enumeration finds, how many at their current address."""
+
+    sessions: int
+    found: int
+    at_current: int
+    issues: tuple[Finding, ...]
+    warnings: tuple[Finding, ...]
+
+    @property
+    def passed(self) -> bool:
+        return not self.issues
+
+
+def _not_found_reason(
+    key: ExperimentKey,
+    config: CampaignConfig,
+    truths: Mapping[str, TruthEntry],
+    digests: Mapping[str, str],
+) -> str:
+    """Why :func:`~sciagent.campaign.rescore.stored_sessions` skips a session
+    cell: the first of its conditions the cell fails."""
+    fields = key.config
+    system = fields.get("system", "")
+    truth = truths.get(fields.get("truth", ""))
+    if system not in digests:
+        return f"system {system!r} is not one of the campaign's LLM systems"
+    if truth is None:
+        return f"truth {fields.get('truth')!r} is not one of the campaign's truths"
+    if fields.get("truth_digest") != truth.digest:
+        return f"truth_digest of {truth.id} differs from the campaign's"
+    if int(key.seed) not in config.seeds:
+        return f"seed {int(key.seed)} is not one of the campaign's seeds"
+    if fields.get("session_config") != digests[system]:
+        return f"session_config of {system} differs from the campaign's"
+    return "not matched"
+
+
+def check_sessions(
+    store: ResultStore,
+    env: CampaignEnvironment,
+    config: CampaignConfig,
+    truths: Sequence[TruthEntry],
+) -> SessionCheck:
+    """Every stored session found by the rescore's enumeration, and the void
+    policy against each found session's stored flag (module docstring)."""
+    by_id = {t.id: t for t in truths}
+    digests = {
+        s: session_config_digest(config.arm_of(s), config) for s in config.llm_systems()
+    }
+    cells = [
+        c for c in store.cells() if c["key"]["config"].get("kind") == "llm-session"
+    ]
+    issues: list[Finding] = []
+    warnings: list[Finding] = []
+    try:
+        found = stored_sessions(store, env, config, truths)
+    except CampaignError as error:
+        issues.append(Finding("ambiguous", "stored_sessions", str(error)))
+        return SessionCheck(len(cells), 0, 0, tuple(issues), ())
+    hits = {str(key.digest) for key, _ in found.values()}
+    for cell in cells:
+        if cell["digest"] not in hits:
+            key = key_from_json(cell["key"])
+            reason = _not_found_reason(key, config, by_id, digests)
+            issues.append(Finding("not_found", str(cell["digest"]), reason))
+    at_current = 0
+    for unit, (key, cell) in sorted(found.items()):
+        at_current += key == session_key(unit, by_id[unit.truth_id], env, config)
+        status = session_void(
+            store.root, decoded(cell["reading"]), cell["detail"].get("session") or {}
+        )
+        if status.stored_void != status.void:
+            kind = "void_reclassified" if status.reclassified else "void_policy"
+            warnings.append(
+                Finding(
+                    kind,
+                    str(key.digest),
+                    f"{unit.system} {unit.truth_id} s{unit.seed}: stored void "
+                    f"{status.stored_void}, policy {status.void} "
+                    f"{list(status.reasons)}",
+                )
+            )
+    return SessionCheck(
+        len(cells),
+        len(found),
+        at_current,
+        tuple(sorted(issues)),
+        tuple(sorted(warnings)),
+    )
 
 
 # --------------------------------------------------------------------------

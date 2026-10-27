@@ -6,11 +6,9 @@ Each item says when it is done. Move finished items to the bottom section after 
 
 ## Platform (first)
 
-- [!] **Docker on dm-devbox.** Not installed (`docker: command not found`). The AG-o `python`
-  sandbox and its isolation tests (instrument test 8) need it, so no AG-o session and no full
-  slow tier can run without it. Blocked on the owner's OK: it is a system package on the shared
-  machine, and membership of the `docker` group is equivalent to root. Done when
-  `docker version` answers for user `ubuntu`.
+- [x] 2026-10-27 **Docker on dm-devbox.** Rootless Docker 29.9.2 installed by the owner's
+  interactive session (daemon runs as `ubuntu`; no docker group; root daemon disabled). Lanes get
+  `DOCKER_HOST=unix:///run/user/1000/docker.sock`. Checked: `docker run --network none hello-world`.
 - [ ] **Sandbox on native Linux Docker** (engineer, test first; after Docker). Suspected break,
   from reading the code: the container runs as `65534:65534` (`SANDBOX_UID`) while the host
   creates the run's `work/` as uid 1000 with mode 0755, so writes to `/work` (state between
@@ -64,12 +62,16 @@ Each item says when it is done. Move finished items to the bottom section after 
 ## P4 preparation (after a GO)
 
 - [!] **The `p4-deltas` branch** (P4 work packages 1-8 committed, 10 uncommitted; plan in
-  `.cache/p4/PLAN.md`) exists only on the Windows PC. Ask the owner whether it can be pushed;
-  otherwise redo it from P4-PROPOSAL §3 after the pilot. Done when the work is on GitHub or
+  `.cache/p4/PLAN.md`) exists only on the Windows PC. The owner will push it and the `p3-fit4`
+  tag from the PC (2026-10-27); integrate after the Linux pilot. Until it appears on origin,
+  do not redo that work. Done when the work is on GitHub or
   the redo is queued item by item.
-- [!] **Owner decisions open since 2026-10-06** (HANDOFF-2026-10-06): the prompt variant freeze
+- [ ] **Decisions open since 2026-10-06** (HANDOFF-2026-10-06): the prompt variant freeze
   (Δ6), EIG weights (Δ11), an event cap for FSD, hand-written address text (F5), and the
-  review items. Done when each is decided and logged.
+  review items. Owner's rule (2026-10-27): the lane writes a recommendation for each with its
+  reasoning, has the red-team agent review it, records it in LOG.md with `veto window ends:
+  <UTC>` 24 hours ahead, pushes the owner a summary, and adopts it after the window unless a
+  `VETO` line appears in docs/v2/VETO.md. Done when each is adopted or vetoed and logged.
 - [ ] **Remaining P4 work packages** after the branch question: B-sym policy arms (WP9),
   positive controls 4-6 (WP11), LOG entries and gates (WP12). Done when each passes its tests.
 - [ ] **Size P4 from the Linux pilot** (SPEC §7.1, last bullet): LLM calls and wall time per

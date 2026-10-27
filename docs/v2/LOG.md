@@ -956,3 +956,11 @@ before the result, these bytes are now the dev split at `data/v2/truths/dev`
 (a copy of `dev-linux-fit4`, both git-ignored). Caveat: the Windows records
 are gone, so ψ, θ and the calibration numbers could not be compared, only
 what PILOT.md printed.
+
+## 2026-10-27 — Rootless Docker, the P4 branch, and proposals with a veto window
+
+The owner chose rootless Docker for the AG-o sandbox: the daemon runs as the machine user, so
+using it grants no root, and the root daemon is disabled. The `p4-deltas` branch and the
+`p3-fit4` tag will be pushed by the owner from the Windows PC rather than redone. The five
+decisions open since 2026-10-06 are settled by the lane proposing each one (reasoning, red-team
+review, a 24-hour veto window recorded here), adopted unless vetoed in docs/v2/VETO.md.

@@ -41,6 +41,11 @@ Each item says when it is done. Move finished items to the bottom section after 
   sandbox follow-ups land in `campaign/llm.py`: implement (engineer, test first: every cell kind
   byte-identical across two scripted-driver runs; `pilot_report.py` reads session wall times from
   `timing.jsonl`). Must land before the full pilot.
+- [ ] **C1: any ORACLE −inf fails control 1** (review item (c), LOG 2026-10-27; veto window ends
+  2026-10-28T21:45Z; sets a P3 go/no-go rule, owner pushed): replace the drop at
+  `campaign/analysis.py:580-600` with a C1 failure for P3 and P4, and fix the "dropped as not
+  identifiable" label. Engineer, test first (analysis is the go/no-go instrument). Must land
+  before the full pilot.
 - [~] **Code-fingerprint guard on stores** (F5, LOG 2026-10-27; veto window ends
   2026-10-28T19:15Z): the store keeps a sidecar with the git commit, a clean-tree flag and the
   `uv.lock` sha256; a dirty tree refuses to write; a resume under a different fingerprint refuses

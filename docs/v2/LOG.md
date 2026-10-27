@@ -1335,3 +1335,52 @@ change. Recommendation:
    (it reuses the same simulations), never as the arm's choice.
 Not checked: how often stops and floored variances occur in real policy simulations (no policy
 unit has run; one EIG decision takes about 95 to 99 s). Lands with the p4-deltas integration.
+
+## 2026-10-27: Review items (a) to (e) of HANDOFF-2026-10-06; (c) sets a P3 go/no-go rule before the Linux pilot (proposal; veto window ends: 2026-10-28T21:45Z)
+
+Drafted by the analyst (`.cache/drafts/review-items-draft.md`), reviewed by the red team in
+session 5 (probes in `.cache/drafts/review-items-probe/`); the red team's corrections are folded
+in. Branch references are to `origin/p4-deltas` (bff61ec) unless they say v2.
+- **(a) A run with exactly N events counts as truncated** (`simulate.py:1031-1037`): keep,
+  document only. It costs one event-free tail on a run with exactly N = 15,000 events
+  (P(Pois(15000) = 15000) = 0.0033); the alternative would make the likelihood depend on
+  whether a later event arrives. No P3 code is affected (v2 has no truncation).
+- **(b) The runner-up is `rivals[0]` only** (`behaviour.py:112-114, 255-266`; the prompt at
+  `prompts.py:480` says "a rival"): reword the prompt to "your runner-up (the first rival)",
+  which keeps SPEC §4.4 literal, and add a C6 step that predicts under `rivals[1]`. The reword
+  moves the session surface and so every LLM key; bundle it with any other P4 prompt edit so
+  keys change once.
+- **(c) An ORACLE at −inf drops the truth from control 1** (v2 `campaign/analysis.py:580-600`):
+  **change, for P3 and P4: any ORACLE −inf on any (truth, seed) fails C1** ("fix the
+  instrument", SPEC §7.1), the same as an `oracle_underfit` flag. Reasons:
+  - P4-PROPOSAL §2.4, which the owner approved, says C1 passes only with zero `oracle_underfit`
+    flags. The drop rule was set by the orchestrator on 2026-10-06 (LOG line ~808), after the
+    fit/4 pilot, and listed for owner review; it was never preregistered by the owner.
+  - A drop is not harmless: on the 5-truth table of the analysis tests, one ORACLE −inf turned
+    GO into CONTROLS FAIL by shrinking the samples controls 2 and 3 read (planted-hint vs B-rand:
+    Wilcoxon p = 0.0625 on 4 of 4 wins). In the other direction it could hide a failing control.
+  - The drops are not random. Only identity- and exp-link truths can reach −inf (9 of the 20
+    dev truths, 5 of the 10 B-sym@10F truths). On 0 of 28 susceptible units so far, the exact
+    95% upper bound is 10.2% per unit, so a tolerance like the draft's 10% sits inside the
+    uncertainty.
+  - The mechanism is an extrapolation failure, not an underfit: an identity-link fit is held at
+    λ ≥ 0 on the training data only (`fit_bounds.py:3-9`), so it can match the true parameters'
+    training likelihood (no flag, `systems/v2/systems.py:266-269, 327-330`) and still put λ ≤ 0
+    under a held-out event (`likelihood.py:139-142`).
+  - The Linux pilot has not run (`.cache/pilot` does not exist), so setting the rule now is not
+    a reinterpretation after seeing numbers. "Keep the drop but stop if it fires" (the draft)
+    would add owner choice after the numbers, which P4-PROPOSAL §2.4 forbids.
+  - A small defect goes with it: a truth dropped for ORACLE −inf is also reported as "dropped as
+    not identifiable (ORACLE ≤ B-lib)" (`analysis.py:599`). Fix the label in the same change.
+  Engineer, test first (`analysis.py` is the go/no-go instrument), before the full pilot.
+- **(d) Δ12 was folded into WP6**: keep, document only. Δ12 itself was approved (decision 17);
+  only the folding was the orchestrator's. The one loss is that a P3-to-P4 change in stopping
+  cannot be credited to Δ12 alone, and no preregistered contrast makes that comparison.
+- **(e) Belief-gate friction** (31 refusals in 40 Δ6 sessions): not adopted for now; keep the
+  gate and record the friction. An inline belief at `submit` would lose no measured data (the
+  submit is already the final belief; `confidence` is read nowhere), but a refusal forces a
+  reflection step that may change stopping and experiment use, which are measured, and the Δ6
+  records that could show it are lost. If the owner wants it, it needs: the system prompt's gate
+  text changed (`prompts.py:354-355, 490-492`), atomic validation before any state change,
+  canonical rivals (`tools.py:1082` does not canonicalise; `behaviour.py:103-104` would raise),
+  a C6 step on the inline path, and a `HARNESS_VERSION` bump (the record's meaning changes).

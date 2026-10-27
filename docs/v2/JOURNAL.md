@@ -327,3 +327,26 @@ follow-ups come before any AG-o run that produces reported numbers.
    `tests/campaign -m slow`, merge (session keys).
 3. After 2026-10-28T12:00Z: the `wall_s` move (engineer, test first).
 4. Mini-pilot gate (pilot-runner) with `mem_sampler.py` beside it.
+
+
+## 2026-10-27: Lane session 5 (19:03 UTC): checkpoint (smoke's last job running, mini-pilot launched)
+
+**Done so far.**
+- Oriented on `v2` at 4cd2564 (clean, up to date). INBOX has no entries; VETO.md has no vetoes.
+  `free -g`: 8 GB available.
+- **Smoke:** still on its last pool job, B-sym@10F dev-000. From the job durations in
+  `.cache/smoke-run.log`, worker 1 has run it since about 17:33Z; B-sym on dev-000 took 6.2× as
+  long as on dev-001 (772.6 s against 124.3 s), and B-sym@10F dev-001 took 2083.6 s.
+- **Mini-pilot gate launched** (pilot-runner): frozen worktree `.claude/worktrees/mini` at
+  4cd2564 (no src/ or scripts/ commit since the smoke's e3fc6f1). `tmux -L sciagent` session
+  `sci-mini`. Run A goes into `.cache/mini-a` with `--ids dev-008,dev-013,dev-017 --seeds 1
+  --no-llm --systems ORACLE,B-lib,B-np,B-rand,B-sym,B-sparse,planted-hint --workers 1` (log
+  line at 19:06:21: `plan: 15 pool jobs, 0 LLM units`). Run B (`.cache/mini-b`, the same
+  command) is armed to start when the smoke's log ends with `exit:`. That keeps at most 2
+  active pool workers. Each run has `mem_sampler.py` beside it.
+- In progress: a store-level replay check (`scripts/replay_check.py`, engineer, test first,
+  ported from `origin/windows-salvage`), and an F5 proposal (derived address text) under
+  red-team review.
+
+**Next.** Integrate the replay check and the F5 review. Close the smoke when its last job
+ends: memory summary, S3 copy, ledger.

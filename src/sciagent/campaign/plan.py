@@ -37,6 +37,7 @@ its *score* (keyed by the session's address plus :data:`METRIC_VERSION`).
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Final, Literal
@@ -50,12 +51,18 @@ from sciagent.glm.simulate import MarkSampler
 from sciagent.glm.syntax import render
 from sciagent.harness.live import HARNESS_VERSION
 from sciagent.investigation.prompts import Arm
-from sciagent.investigation.runner import EnvironmentSpec
+from sciagent.investigation.runner import (
+    EnvironmentSpec,
+    run_sandbox_limits,
+    sandbox_json,
+)
 from sciagent.investigation.tools import FIT_CONFIG as AGENT_FIT_CONFIG
 from sciagent.investigation.view import Condition
 from sciagent.investigation.world import OBSERVATIONAL_HORIZON, TruthSpec
 from sciagent.nonparam.wiener_hopf import DEFAULT as WIENER_HOPF_DEFAULT
 from sciagent.registry.store import ExperimentKey
+from sciagent.sandbox import HANDOFF_HELPER_SHA256, SandboxLimits, image_tag
+from sciagent.sandbox.image import SANDBOX_CONTEXT
 from sciagent.scoring import battery
 from sciagent.scoring.heldout import HELDOUT_HORIZON
 from sciagent.systems.v2.search import GPConfig, StructureSampler
@@ -367,13 +374,37 @@ def baseline_key(
 
 
 def session_text(arm: LLMArm, config: CampaignConfig) -> str:
-    """The full configuration of an LLM session as text."""
-    return (
+    """The full configuration of an LLM session as text.
+
+    An AG-o session's text ends with its sandbox (:func:`session_sandbox_text`):
+    the limits :func:`~sciagent.investigation.runner.run` gives it, the handoff
+    helper's SHA-256 and the image tag computed from the build context (no
+    Docker call). So a change to any of them moves the session's address and a
+    stored session is not reused across it. AG-c has no sandbox, and its text
+    is unchanged.
+    """
+    text = (
         f"model={config.llm_model}; arm={arm.arm}; condition={arm.condition}; "
         f"experiments={config.experiments}; fits={config.fits}; "
         f"max_turns={config.max_turns}; wall_time_s={config.wall_time_s!r}; "
         f"harness={HARNESS_VERSION}"
     )
+    if arm.arm == "AG-o":
+        sandbox = session_sandbox_text(
+            run_sandbox_limits(), HANDOFF_HELPER_SHA256, image_tag(SANDBOX_CONTEXT)
+        )
+        text = f"{text}; {sandbox}"
+    return text
+
+
+def session_sandbox_text(limits: SandboxLimits, helper_sha256: str, image: str) -> str:
+    """The sandbox an AG-o session's code ran in, as text: every limit and the
+    handoff helper's SHA-256 (as :func:`~sciagent.investigation.runner.sandbox_json`
+    records them, keys sorted), then the image tag."""
+    block = json.dumps(
+        sandbox_json(limits, helper_sha256), sort_keys=True, separators=(",", ":")
+    )
+    return f"sandbox={block}; image={image}"
 
 
 def session_config_digest(arm: LLMArm, config: CampaignConfig) -> str:

@@ -64,6 +64,8 @@ from sciagent.sandbox import (
 
 __all__ = [
     "OUT_OF_BOUNDS",
+    "SANDBOX_MEMORY_MB",
+    "SANDBOX_WALL_SECONDS",
     "EnvironmentSpec",
     "InvestigationAgentConfig",
     "InvestigationOutcome",
@@ -75,6 +77,8 @@ __all__ = [
     "rendered_surface",
     "replay_investigation",
     "run",
+    "run_sandbox_limits",
+    "sandbox_json",
     "submitted_structure",
 ]
 
@@ -95,6 +99,30 @@ OUT_OF_BOUNDS: Final = (
     r"/run/",
     r"\.\./",
 )
+
+
+#: The two sandbox limits an :class:`InvestigationSpec` records and may set
+#: (the others are :class:`~sciagent.sandbox.SandboxLimits`' defaults): the
+#: spec's defaults, and what :func:`run` gives every AG-o run.
+SANDBOX_WALL_SECONDS: Final = 60.0
+SANDBOX_MEMORY_MB: Final = 2048
+
+
+def run_sandbox_limits() -> SandboxLimits:
+    """The limits of every ``python`` call of an AG-o run :func:`run` starts.
+
+    Their one source: :func:`run` builds its spec from them, and an AG-o
+    session's address (:func:`sciagent.campaign.plan.session_text`) names them.
+    """
+    return SandboxLimits(wall_seconds=SANDBOX_WALL_SECONDS, memory_mb=SANDBOX_MEMORY_MB)
+
+
+def sandbox_json(limits: SandboxLimits, helper_sha256: str) -> dict[str, Any]:
+    """What fixes a sandbox's behaviour besides its image (whose tag is
+    recorded with every result): every limit, and the handoff helper's code,
+    which enforces the ``work/`` limits and lives outside the image.
+    """
+    return {"limits": asdict(limits), "handoff_helper_sha256": helper_sha256}
 
 
 @dataclass(frozen=True)
@@ -124,8 +152,8 @@ class InvestigationSpec:
     seed: int
     experiments: int = 8
     fits: int = 40
-    sandbox_wall_seconds: float = 60.0
-    sandbox_memory_mb: int = 2048
+    sandbox_wall_seconds: float = SANDBOX_WALL_SECONDS
+    sandbox_memory_mb: int = SANDBOX_MEMORY_MB
 
     def as_json(self) -> dict[str, Any]:
         return {
@@ -150,14 +178,8 @@ class InvestigationSpec:
         )
 
     def sandbox_json(self) -> dict[str, Any]:
-        """What fixes the sandbox's behaviour besides its image (whose tag is
-        recorded with every result): every limit, and the handoff helper's
-        code, which enforces the ``work/`` limits and lives outside the image.
-        """
-        return {
-            "limits": asdict(self.sandbox_limits()),
-            "handoff_helper_sha256": HANDOFF_HELPER_SHA256,
-        }
+        """:func:`sandbox_json` of this spec's limits and the current helper."""
+        return sandbox_json(self.sandbox_limits(), HANDOFF_HELPER_SHA256)
 
     @staticmethod
     def from_json(data: Mapping[str, Any]) -> InvestigationSpec:
@@ -386,6 +408,7 @@ def run(
     (:func:`_discard_sandbox`); if that fails, the record is still saved and
     the run is void for an infrastructure fault (``sandbox cleanup``).
     """
+    limits = run_sandbox_limits()
     spec = InvestigationSpec(
         environment=env.name,
         truth_id=truth_id,
@@ -394,6 +417,8 @@ def run(
         seed=seed,
         experiments=experiments,
         fits=fits,
+        sandbox_wall_seconds=limits.wall_seconds,
+        sandbox_memory_mb=limits.memory_mb,
     )
     lab = build_lab(spec, env, sandbox_root=sandbox_root, fit_workers=fit_workers)
     system, opening = _prompts(lab)

@@ -1,0 +1,2 @@
+date,item,provider,hours,usd,stage
+2026-10-27,platform check and dev split regeneration (2 CPU workers),dm-devbox,0.55,0,p3

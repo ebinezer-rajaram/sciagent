@@ -58,12 +58,36 @@ file while iterating; read the tail of pytest's output, not the passed count.
   suppress an error: no bare `except`, no `# type: ignore`, no `# noqa`, no
   skipped tests.
 - Never commit unless asked, and never push without asking. `/ship` is the
-  ask for a commit only.
+  ask for a commit only. (Interactive sessions; the unattended lane has its
+  own rule below.)
 
 ## Platform
 
-Local sessions run Windows through Git Bash: use forward slashes, and don't
-assume GNU coreutils flags. Don't prefix commands with `cd <project dir> &&`.
-Windows is the one reference platform for numbers. Cloud sessions
+The reference platform for v2 numbers is `dm-devbox`: Ubuntu 24.04 on AWS,
+Python 3.12, 4 vCPUs, 16 GB (LOG 2026-10-27). Output bytes are per machine
+class (OS, numpy's SIMD dispatch, OpenBLAS's kernel), so reported numbers are
+produced there, and no results store is filled from two machines without a
+byte check. v1's frozen numbers were produced on Windows and stay as
+recorded. The machine is shared with other projects: run long jobs in tmux,
+`nice`d, with at most 2 pool workers unless `docs/v2/QUEUE.md` says
+otherwise. Don't prefix commands with `cd <project dir> &&`. Cloud sessions
 (`CLAUDE_CODE_REMOTE=true`) work on their own branch, never `main`, and edit
 code but never produce reported numbers.
+
+## Money
+
+The monthly AWS cap is $150 (the shared account's brake is $1,000 a month;
+see `~/research/CLAUDE.md`). Every launch states its cost ceiling before it
+starts and is logged in `docs/v2/LEDGER.csv` and the journal afterwards.
+Results go only under `s3://delaymargin-results-482913/sciagent/`. LLM arms
+run under the Max subscription through the Agent SDK: never usage credits or
+API keys, and never Fable.
+
+## Unattended lane
+
+Headless sessions started by `~/bin/lane.sh sciagent` follow
+`docs/v2/AUTOPILOT.md`, at about 25% of the shared Max usage. They work on
+`v2`, commit there after each finished unit (plain message, no attribution
+trailer) and push `v2` only (`git push origin v2`, never force). They never
+commit to or push `main`; merging to `main` stays the owner's `/ship`.
+Interactive sessions keep the commit and push rules above.

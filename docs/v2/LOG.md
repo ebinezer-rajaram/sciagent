@@ -891,3 +891,68 @@ two machine classes without a byte check first; and the determinism child
 (`tests/acceptance/determinism_child.py`) was byte-identical across two runs
 on dm-devbox (sha256 of its output `91ccdcef…`).
 
+## 2026-10-27: The P3 pilot is rerun from scratch on Linux (owner)
+
+The pilot store stayed on the Windows PC, so the P3.1 plan to rescore the 240
+stored LLM sessions under fit/5 (P4-PROPOSAL decision 1) cannot apply. The
+whole pilot is rerun on dm-devbox under fit/5 from v2: every non-LLM unit and
+all 240 LLM sessions live, as SPEC §7 and `scripts/pilot.py` specify. A side
+effect is that the sessions are now conducted under the fixed fitter, which
+removes the declared fit/4 limitation. The order stays as fixed before:
+smoke, the mini-pilot gate (criteria of HANDOFF-2026-10-06, with memory
+judged against dm-devbox), the full run, then the §7.1 read under the rules
+of P4-PROPOSAL §2.4. The dev split is git-ignored, so it is regenerated on
+dm-devbox from the fit/4 code that made it (b5e2b87, seed 2026, n = 20).
+Given the previous entry its sha256 is not expected to equal Windows'
+`1f0fac01…`. The rule, fixed before the result is seen: if the 20 truths
+match PILOT.md's truth table (ids, strata, dictionary membership and DSL
+text), the Linux bytes become the dev split and their sha256 is logged; if
+any truth differs, that is recorded as a new dev population and the pilot
+reads it, since the dev split is not preregistered material (the test split
+is). The P4 check of `check_identifiable` under fit/5 on the dev truths
+still applies.
+
+## 2026-10-27: Money: a $150 monthly cap; pilot baselines on dm-devbox first (owner)
+
+sciagent may spend at most $150 a month on AWS, inside the shared account's
+brake of $1,000 a month (`~/research/CLAUDE.md`). Costs go in
+`docs/v2/LEDGER.csv` (agent-control's columns), results only under
+`s3://delaymargin-results-482913/sciagent/`, and every launch states its
+ceiling first. Recommendation recorded with the decision: run the pilot's CPU
+baselines on dm-devbox itself, nice'd and with at most 2 pool workers (the
+machine also hosts two Claude orchestrators), unless that would exceed about
+48 hours of wall time. The Windows projection for the non-LLM rerun at fit/5
+was 178-221 worker-hours (LOG 2026-10-06), which is 89-110 hours at 2
+workers, so on present evidence it would exceed 48 hours; the Linux
+mini-pilot measures the real per-unit times before that is settled. The
+noted AWS option for later: m6i.xlarge (the only CPU type the launch policy
+allows), 4 vCPUs and 16 GiB, $0.204 an hour on demand in eu-north-1 (pricing
+API, today), so about $9-11 for the whole non-LLM rerun at 4 workers on one
+instance. Before any of it: sciagent has no launch tooling yet, and an
+instance must first reproduce dm-devbox's bytes on the six reference fits and
+the determinism child, because of the per-machine-class finding above.
+
+## 2026-10-27: An unattended lower-priority lane works on v2 (owner)
+
+Headless Claude sessions run sciagent unattended (`~/bin/lane.sh sciagent`)
+at about 25% of the shared Max usage; agent-control has the other 75%. They
+follow `docs/v2/AUTOPILOT.md`, take work from `docs/v2/QUEUE.md`, keep
+`docs/v2/JOURNAL.md`, commit on `v2` and push `v2` only; they never commit to
+or push `main`, and merging to `main` stays the owner's `/ship`. LLM arms run
+under the Max subscription through the Agent SDK: never usage credits or API
+keys, and never Fable. Interactive sessions keep the existing rule: no commit
+unless asked, no push without asking.
+
+## 2026-10-27: Dev split regenerated on dm-devbox: same 20 truths, new bytes
+
+`scripts/sample_truths.py --split dev --n 20 --seed 2026 --workers 2` from
+b5e2b87 (fit/4) ran in 1,882 s on dm-devbox. All 20 truths match PILOT.md's
+truth table in id, stratum, dictionary membership, nearest distance (three
+decimals) and DSL text; strata 7/4/9, links 7 identity, 2 exp, 11 softplus,
+10 out of dictionary, as on Windows. The records' sha256 is
+`604acec5359d9a33b8aedc500de8dff14600041225c386766ec3544b2e8d4420` (Windows:
+`1f0fac01…`), as the per-machine-class finding predicted. By the rule fixed
+before the result, these bytes are now the dev split at `data/v2/truths/dev`
+(a copy of `dev-linux-fit4`, both git-ignored). Caveat: the Windows records
+are gone, so ψ, θ and the calibration numbers could not be compared, only
+what PILOT.md printed.

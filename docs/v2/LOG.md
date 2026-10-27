@@ -1075,3 +1075,39 @@ reference uses the cells' own held-out log and their default quadrature rule (th
 the campaign FitConfig's rule). `pilot.campaign_config` is now shared by `pilot.py` and
 `session_check.py`, so the check rebuilds exactly the run's configuration. No fit or scoring
 output changes, so no version constant moves.
+
+## 2026-10-27: An agent that floods `work/` is scored, not voided (proposal; veto window ends: 2026-10-28T15:00Z)
+
+Sandbox follow-up item 3 asked how to classify a back handoff slowed or broken by the agent's
+own files. Proposed (implemented on the follow-ups branch): past `SandboxLimits.max_work_entries`
+(100,000) or `max_work_path_bytes` (1,024), the back handoff empties `work/`, tells the agent in
+the call's stderr, and the run is **scored**. The handoff timeout is 10 × `wall_seconds` with a
+300 s floor. Why: the outcome is caused by the agent's code, decided by a count, visible to the
+agent, and covered by the call digest; voiding it would select the sample on agent behaviour.
+SPEC (docs/SPEC.md:558) voids only for out-of-bounds access; voids stay for that and for
+infrastructure faults. The red team (2026-10-27) agreed and found no path from `work/` to a
+score, a fitted parameter or held-out data, but showed the "agent cannot cause a handoff
+failure" bound rested on one flat-directory measurement: a directory chain hundreds of
+thousands of levels deep may exhaust the 256 MB cleanup helper and turn back into an
+agent-caused void. That case, and recording the limits and the helper's sha256 in the run's
+record (they are outside the image tag), must be closed before any AG-o run that produces
+reported numbers. Known and not addressed: bytes on disk per call are bounded only per file;
+the existing `hard_timeout` void is also conditioned on agent behaviour. If vetoed: such runs
+are voided as `agent_resource` and reported as a separate count.
+
+## 2026-10-27: Beats-truth gate: red-team review done; adopt at +0.01 with a digest check; the stated reason corrected
+
+The rerun review (narrower question) recommends adopting the hard failure at +0.01 nats/event,
+threshold unchanged. An honest fit on independent held-out data exceeds the truth by c nats
+with probability at most e^-c (Markov on the likelihood ratio, valid for any proper density):
+at 1,767 events (the smallest dev log, dev-007 seed 1; not "about 1,800") the bound is 2e-8 per
+unit, and ORACLE on seven dev truths at seed 1 sat 0.00003 to 0.0045 per event below the truth.
+**Correction to the entry above:** "except by noise far below that, or by a leak" overstates the
+check. A full leak of the held-out log into a k-parameter fit gains about k/2 nats in total,
+0.0008 to 0.0045 per event at k = 3 to 18, so it is caught only for large k (B-np's 24·D+1
+parameters, yes; ORACLE, no). The gate catches gross mismatches and rich-model leaks, not
+small-model leaks. Conditions before adoption, being implemented: compare each unit's
+`truth_digest` with the split given (two byte-different splits share the 20 ids), and stop the
+check being skipped silently when `--split` is missing. Unverified: whether identity-link fits
+(λ ≥ 0 only at training nodes) are proper densities, which the e^-c bound assumes. The veto
+window of the entry above (2026-10-28T13:00Z) is unchanged.

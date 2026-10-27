@@ -1384,3 +1384,33 @@ in. Branch references are to `origin/p4-deltas` (bff61ec) unless they say v2.
   text changed (`prompts.py:354-355, 490-492`), atomic validation before any state change,
   canonical rivals (`tools.py:1082` does not canonicalise; `behaviour.py:103-104` would raise),
   a C6 step on the inline path, and a `HARNESS_VERSION` bump (the record's meaning changes).
+
+## 2026-10-27: Δ6 prompt variant freeze: `link-neutral` is not adopted as drafted; a link-balanced variant is recommended, pending its own red team (no veto clock yet)
+
+Open decision Δ6 / decision 9. Draft (analyst, `.cache/drafts/d6-draft.md`; statistics
+`.cache/drafts/d6-scripts/`) recommended freezing `link-neutral` for P4, since the approved
+rule ("adopt whichever variant tries more links and depth", P4-PROPOSAL:256-257) picks it by
+count. The red team reproduced the statistics byte for byte (tried a non-identity link 12/20 vs
+16/20, pairs 12/4/0/4, McNemar exact p = 0.125, mid-p 0.0625; borderline, not significant under
+exact tests), and found:
+- the rule was not applied mechanically when the data came in: the session that ran the
+  check wrote "Depth is unchanged … Decision 9 (freeze) is the user's" (STATUS-2026-10-05:196-198),
+  and depth ≥ 2 is 12 vs 11, depth 3 is 0 vs 0; "tries more" on a 1-in-20 difference is itself a
+  reading after the data;
+- `link-neutral` is not neutral: its examples are exp, softplus, identity, softplus (p4-deltas
+  `prompts.py:206-212`), against the approved text's rotation across the three links
+  (P4-PROPOSAL:160). On softplus truths at least 3 of its 5 extra correct links came from sessions
+  where v1 also left identity but chose another link, which is what example priming predicts. The
+  dev split is 11 of 20 softplus (all 9 far-stratum truths, 7 of 10 out-of-dictionary), so the
+  choice bears on C4 and on C1's fairness (B-sym draws links uniformly; SPEC §9 asks equal tuning
+  effort);
+- no code guard makes P4 arms use the frozen variant (`PILOT_ARMS` are v1; `pilot_report.py:675-676`
+  matches only `/named` and `/anon` suffixes and would silently drop `+link-neutral` sessions); the
+  "tried a link" read-out code and the 40 records are lost, and commit d6a46d6 no longer exists.
+Lane recommendation (not yet red-teamed, so no veto window starts): freeze a third variant whose
+examples rotate one per link as the approved text says (the depth-3 example's link stated in the
+entry that defines it), on the design argument alone; keep `v1`'s factual fix; add a guard that
+every P4 arm carries the frozen variant and fix the report's suffix matching; define and test the
+"tried a non-identity link" reader before preregistering link-choice shares as descriptive
+measures. The owner may prefer `v1` with the factual fix (equally consistent with the evidence)
+or `link-neutral` by the literal count; this is the owner's decision as the STATUS note said.

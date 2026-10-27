@@ -20,21 +20,18 @@ Each item says when it is done. Move finished items to the bottom section after 
   LOG 2026-10-27) (P4-PROPOSAL §2.2): rerun
   `check_identifiable` on the 20 dev truths with v2's fitter and report any truth that changes
   status. Done when the result is in the journal and LOG.
-- [~] **Sandbox handoff follow-ups, before any AG-o run that produces reported numbers**
-  (2026-10-27: in progress by an engineer in worktree
-  `.claude/worktrees/agent-ab762e5af9832a80f`, branch `worktree-agent-ab762e5af9832a80f`, based
-  on 4a6d780; see JOURNAL for its state. Next session: verify, rebase onto `v2`, merge.)
-  (engineer, test first; red-team review of 2026-10-27, findings in JOURNAL 2026-10-27):
-  (1) before the back handoff, confirm the agent container is gone (`docker inspect`), else
-  raise `SandboxError`; catch `TimeoutExpired` in `_remove`; (2) put both handoffs under one
-  `try/finally`, check `work_dir` is owned by the host uid afterwards, and give cleanup and the
-  session hard-timeout path (`campaign/llm.py:314`) a recovery handoff, so a missed handoff
-  cannot make `investigation/runner.py:364` raise and lose the record; (3) decide how a
-  handoff slowed by millions of agent files is classified (today a void, which selects on
-  agent behaviour); (4) `chmod -R u+rwX,go-w` and strip POSIX ACLs; (5) make wrong platform
-  detection fail loudly; (6) typed errors only; (7) tests for `_probe_handoff_owner` parsing
-  and the fault paths. Done when each has a test seen failing first and the slow sandbox tier
-  passes.
+- [x] 2026-10-27 **Sandbox handoff follow-ups** (merged a0129ab; LOG 2026-10-27, two
+  entries; red-team review in JOURNAL 2026-10-27 session 3). All seven items plus the review's
+  findings: bounded-memory emptying of an over-limit `work/`, the limits and helper sha256 in
+  AG-o records, typed errors, symlinked roots, process-group kill. Not addressed (known):
+  bytes on disk per call bounded only per file; no lock on a `Sandbox` (asyncio abandons tool
+  threads after 300 s). The scored-not-voided choice is a proposal (veto window ends
+  2026-10-28T15:00Z).
+- [ ] **Session keys and the sandbox** (before any AG-o cell that produces reported numbers):
+  `session_text` covers neither `SandboxLimits`, the handoff helper's sha256 nor the image tag,
+  so a stored AG-o session cell would be reused across a change to any of them. Recommend
+  (veto rule) adding them to the AG-o session key, or refusing reuse on mismatch; engineer,
+  test first.
 - [~] **Session cells carry wall time**: proposed 2026-10-27 to move `wall_s`, `duration_api_ms`
   and `total_cost_usd` from the `llm-session` cell to its `timing.jsonl` line (LOG 2026-10-27,
   veto window ends 2026-10-28T12:00Z). After the window, unless VETO.md objects, and after the
@@ -93,9 +90,11 @@ Each item says when it is done. Move finished items to the bottom section after 
   LOG 2026-10-27): ported test-first `check_budgets`, `check_sessions` (`scripts/session_check.py`),
   `KEY_FIELDS` and the beats-truth flag (`hunt_gap.py --split`; making it fail the gate is a
   proposal, veto window ends 2026-10-28T13:00Z). Coverage table in JOURNAL 2026-10-27.
-- [ ] **Hunt-check leftovers** (from the cross-check): (a) re-run the red-team review of the
-  beats-truth gate proposal before adopting it (the first one stalled); (b) ~~peak worker memory~~ done 2026-10-27: `scripts/mem_sampler.py` (`/proc` VmHWM per
-  pool worker, STOP brake below 2 GB available; run it beside the mini-pilot with `--pid`),
+- [ ] **Hunt-check leftovers** (from the cross-check): (a) ~~beats-truth red team~~
+  done 2026-10-27: adopt at +0.01 with a digest check (merged 4677b57; LOG 2026-10-27),
+  adoption after its veto window; (b) ~~peak worker memory~~ done 2026-10-27:
+  `scripts/mem_sampler.py` (`/proc` VmHWM per pool worker, STOP brake below 2 GB available;
+  run it beside the mini-pilot with `--pid`),
   measured slowdown on dm-devbox still to decide;
   (c) store-level replay check (`hunt/B/replay_check.py`), after the sandbox follow-ups land;
   (d) `rescore_guard` extras (strip the CLI from PATH, patch the SDK entry points);

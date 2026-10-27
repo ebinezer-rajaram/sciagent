@@ -1145,3 +1145,20 @@ measured margin of −0.00033 nats/event (an honest ORACLE fit through the pilot
 It is now a slow test.
 
 No fit or scoring output changes, so no version constant moves.
+
+## 2026-10-27: Emptying an over-limit `work/` is bounded in memory; the handoff timeout is 20× the wall time
+
+The red team's deep-chain case was real. A 60 s call nesting directories built a chain about
+910,000 levels deep, and GNU `find -delete` in the 256 MB helper was still running after 10.5
+minutes with its memory growing. That would have voided the run on the agent's account. The
+helper now empties `work/` breadth-first through a queue directory (`_handoff_helper.empty`):
+at most three directories open, memory flat (about 13 MB), time linear in the tree. The same
+chain empties in 278 to 390 s, bound by disk reads. The handoff timeout rises from 10 to 20
+seconds per wall second (1,200 s at 60 s), about 3 times the slowest shape tried. That is a
+measured margin, not a guarantee, and a real harness hang now takes 20 minutes to detect.
+`max_work_path_bytes` is capped at 1,024 (Python 3.12's `shutil.rmtree` recurses per level).
+AG-o records now carry every `SandboxLimits` field and the helper's sha256, and replay refuses
+a mismatch. AG-c record bytes and the result digest are unchanged, and no AG-o record exists
+yet, so no version constant moves. Open: a campaign session's key (`session_text`) covers
+neither the sandbox limits, the helper hash nor the image tag, so stored AG-o session cells
+could be reused across a change to any of them (queued; decide before AG-o cells that count).

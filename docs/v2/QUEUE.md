@@ -41,11 +41,15 @@ Each item says when it is done. Move finished items to the bottom section after 
   sandbox follow-ups land in `campaign/llm.py`: implement (engineer, test first: every cell kind
   byte-identical across two scripted-driver runs; `pilot_report.py` reads session wall times from
   `timing.jsonl`). Must land before the full pilot.
-- [ ] **Code-fingerprint guard on stores** (F5, LOG 2026-10-27; veto window ends
+- [~] **Code-fingerprint guard on stores** (F5, LOG 2026-10-27; veto window ends
   2026-10-28T19:15Z): the store keeps a sidecar with the git commit, a clean-tree flag and the
   `uv.lock` sha256; a dirty tree refuses to write; a resume under a different fingerprint refuses
   to reuse cells unless `--reuse-from <fp>` names it (recorded in the sidecar). Engineer, test
   first. Must land before the full pilot.
+  2026-10-27: built on local branch `fingerprint-guard` (2998821; worktree
+  `.claude/worktrees/agent-ac2f2d04e01ad1a75`), LOG 2026-10-27. Next: after the window, red-team
+  the diff, rebase onto `v2`, fast tier and `tests/campaign -m slow`, merge. Resuming the smoke
+  or mini-pilot stores under it needs `--reuse-from unrecorded`.
 - [x] 2026-10-27 **Slow tier on dm-devbox**: `nice -n 10 uv run pytest -m slow -n 2` at 4a6d780,
   `273 passed, 24 warnings in 5716.76s (1:35:16)`, exit 0 (`.cache/slow/run.log`).
 - [x] 2026-10-27 **Rebuild the defect-hunt checks** (`scripts/hunt_gap.py`, `store_check.py`,

@@ -1282,3 +1282,22 @@ Recommendation:
    on dev seed 1. Hashing source files into addresses is rejected too: a comment edit would
    rerun everything.
 No number is known to have been reused stale; nobody has checked older stores for it.
+
+## 2026-10-27: F5 guard built on branch `fingerprint-guard` (2998821), not merged (veto window of the F5 entry above)
+
+The F5 point-1 guard as built (engineer, test first, 30 new tests; branch cut from 98e3aa4).
+`Campaign(...)` takes a required, opaque `fingerprint` (and optional `reuse_from`); the guard
+runs before the store opens, so a refusal writes and launches nothing; `--rescore-llm` goes
+through the same path. The sidecar `<root>/fingerprint.jsonl` is append-only: first line
+`establish F`, later lines `reuse G from F`, each naming the fingerprint the previous line left;
+a broken chain or malformed line refuses and is never rewritten. `scripts/pilot.py` supplies
+`commit=<sha>,tree=clean,uv.lock=<sha256>`, refuses a dirty tree (ignored files do not count)
+and takes `--reuse-from`. Choices in it, open to the same veto: a store with cells but no
+sidecar (the smoke and mini-pilot stores) is refused unless `--reuse-from unrecorded`, which is
+recorded as such, because nothing shows which commit wrote those cells and an operator-typed
+commit would enter the record as fact; a `--reuse-from` that does not name the store's current
+fingerprint refuses even when the fingerprints match (the operator's picture of the store is
+wrong); a new store refuses any `--reuse-from`. Cost: any commit, docs-only included, changes
+the fingerprint, so resuming from a newer commit needs an explicit, recorded `--reuse-from`.
+Cell bytes are unchanged (`compare_stores` on guarded and bare copies). `store_check.py`
+prints the sidecar history.

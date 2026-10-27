@@ -92,8 +92,9 @@ Each item says when it is done. Move finished items to the bottom section after 
   plan): note any check the rebuild missed, port it test-first. Do not merge that branch; copy
   what is needed. The PC's handoff of 2026-10-09 is now on v2 (a944ed8): read it before the smoke.
 - [ ] **Decisions open since 2026-10-06** (HANDOFF-2026-10-06): the prompt variant freeze
-  (Δ6), EIG weights (Δ11), an event cap for FSD, hand-written address text (F5), and the
-  review items. Owner's rule (2026-10-27): the lane writes a recommendation for each with its
+  (Δ6), EIG weights (Δ11), an event cap for FSD, hand-written address text (F5), the
+  review items, and decision 6 of HANDOFF-2026-10-09 (C5 random-arm seeding: `policy_seed` has
+  no truth id). Owner's rule (2026-10-27): the lane writes a recommendation for each with its
   reasoning, has the red-team agent review it, records it in LOG.md with `veto window ends:
   <UTC>` 24 hours ahead, pushes the owner a summary, and adopts it after the window unless a
   `VETO` line appears in docs/v2/VETO.md. Done when each is adopted or vetoed and logged.

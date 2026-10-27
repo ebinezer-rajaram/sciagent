@@ -125,6 +125,15 @@ def test_an_isolated_session_past_its_hard_deadline_is_killed_and_voided(
     assert not out.retryable
     assert out.detail["outcome"] == "hard_timeout"
     assert out.reading["void"] == 1.0 and out.reading["status"] == 0.0
+    # Its time is the driver's clock, in the timing line, never the cell; the
+    # harness's own time does not exist and says so (LOG 2026-10-27).
+    assert "wall_s" not in out.reading
+    assert out.timing == {
+        "harness_wall_s": None,
+        "duration_api_ms": None,
+        "total_cost_usd": None,
+    }
+    assert out.wall_s >= 0.5
 
 
 def _starts_a_client_and_hangs(
@@ -181,3 +190,46 @@ def test_a_killed_session_takes_the_processes_it_started_with_it(
     finally:
         if _running(pid):
             os.kill(pid, signal.SIGKILL)
+
+
+#: What :func:`_answers_at_once` sends as the session's harness timing.
+_TIMING = {"harness_wall_s": 0.25, "duration_api_ms": 7, "total_cost_usd": 0.5}
+
+
+def _answers_at_once(
+    conn: Connection,
+    unit: Unit,
+    truth: TruthEntry,
+    env: CampaignEnvironment,
+    config: CampaignConfig,
+    out_dir: Path,
+    sandbox_root: Path | None,
+) -> None:
+    """Stands in for a session that ends at once, claiming no time at all."""
+    reading = {"status": 1.0, "void": 0.0}
+    conn.send(
+        llm.SessionOutcome(
+            unit, False, reading, {"outcome": "submitted"}, None, (), 0.0, _TIMING
+        )
+    )
+    conn.close()
+
+
+def test_an_isolated_session_is_timed_by_the_driver_with_its_spawn(
+    tmp_path: Path,
+) -> None:
+    """The unit's wall time is the driver's clock however the session ended
+    (as for a hard timeout); the harness's times pass through untouched."""
+    out = llm._run_isolated(
+        Unit("hawkes", 1, "AG-c-H/named"),
+        entry("hawkes"),
+        environment(),
+        tiny_config(seeds=(1,)),
+        tmp_path,
+        None,
+        60.0,
+        target=_answers_at_once,
+    )
+    assert out.detail["outcome"] == "submitted"
+    assert out.wall_s > 0.0
+    assert out.timing == _TIMING

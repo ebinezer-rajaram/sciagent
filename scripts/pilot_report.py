@@ -44,6 +44,8 @@ NOTES_OPEN: Final = "<!-- notes -->"
 NOTES_CLOSE: Final = "<!-- /notes -->"
 #: Fewer truths than this in a cell of a table: the cell is labelled thin.
 THIN: Final = 5
+#: Session-detail keys only an old-format session cell has (LOG 2026-10-27).
+OLD_SESSION_DETAIL: Final = frozenset({"total_cost_usd", "duration_api_ms"})
 
 
 def fmt(x: float | None, spec: str = ".4f") -> str:
@@ -87,6 +89,43 @@ def timing(root: Path) -> dict[str, list[float]]:
         out.setdefault(f"{rec['kind']}:{rec['system']}", []).append(
             float(rec["wall_s"])
         )
+    return out
+
+
+def session_wall_times(root: Path, sessions: Sequence[Any]) -> dict[str, float]:
+    """The driver's wall time (s) of each session, by cell digest, read from
+    ``timing.jsonl`` (LOG 2026-10-27: times are not in the session cell).
+
+    A session with no timing line (a crash between its cell and its line) is
+    absent from the result, never counted as 0. A session cell that still
+    carries ``wall_s`` in its reading was written in the old format, and two
+    timing lines for one session are ambiguous; either raises.
+    """
+    from sciagent.campaign.plan import CampaignError
+
+    wanted: set[str] = set()
+    for x in sessions:
+        if "wall_s" in x.reading or OLD_SESSION_DETAIL & set(x.detail):
+            raise CampaignError(
+                f"session cell {x.digest} ({x.system} {x.truth} seed {x.seed}) is "
+                "in the old format (times in its reading or detail); this report "
+                "reads session wall times from timing.jsonl only"
+            )
+        wanted.add(x.digest)
+    out: dict[str, float] = {}
+    path = root / "timing.jsonl"
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    for line in lines:
+        rec = json.loads(line)
+        digest = rec.get("digest")
+        if rec.get("kind") != "llm-session" or digest not in wanted:
+            continue
+        if digest in out:
+            raise CampaignError(
+                f"session {digest} has two timing lines in {path}; its wall time "
+                "is ambiguous"
+            )
+        out[digest] = float(rec["wall_s"])
     return out
 
 
@@ -558,6 +597,7 @@ def main() -> None:
 
     # -- LLM ---------------------------------------------------------------
     L += ["## LLM arms: cost and behaviour (under Max)", ""]
+    walls = session_wall_times(args.root, tab.sessions)
     crows = []
     for s in llm_systems:
         sess = [x for x in tab.sessions if x.system == s]
@@ -572,6 +612,10 @@ def main() -> None:
         for x in sess:
             o = str(x.detail.get("outcome"))
             outcomes[o] = outcomes.get(o, 0) + 1
+        wall = [walls[x.digest] for x in sess if x.digest in walls]
+        wall_text = fmt(median(wall), ".0f") + (
+            "" if len(wall) == len(sess) else f" ({len(wall)}/{len(sess)} timed)"
+        )
         evaluated = sum(r.get("predictions_evaluated", 0.0) for r in rd)
         covered = sum(r.get("predictions_covered", 0.0) for r in rd)
         crows.append(
@@ -584,7 +628,7 @@ def main() -> None:
                 med("output_tokens"),
                 med("input_tokens"),
                 med("cache_read_input_tokens"),
-                fmt(median([r.get("wall_s", 0.0) for r in rd]), ".0f"),
+                wall_text,
                 med("fits_used"),
                 med("experiments_used"),
                 pct(sum(r.get("experiments_used", 0.0) == 0.0 for r in rd) / len(rd)),

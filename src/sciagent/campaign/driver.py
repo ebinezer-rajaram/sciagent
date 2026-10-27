@@ -395,6 +395,7 @@ class Campaign:
                 "digest": str(task.key.digest),
                 "wall_s": round(out.wall_s, 3),
                 "attempt": task.attempts,
+                **out.timing,
             }
         )
         r = out.reading

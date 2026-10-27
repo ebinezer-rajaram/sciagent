@@ -280,6 +280,9 @@ def clean_store(root: Path, *, blib: float = -0.80) -> Path:
                 "digest": str(session.digest),
                 "wall_s": 1.5,
                 "attempt": 1,
+                "harness_wall_s": 1.25,
+                "duration_api_ms": 900,
+                "total_cost_usd": 0.01,
             }
         )
     return root

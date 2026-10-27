@@ -30,8 +30,10 @@ from sciagent.sandbox import (
     SandboxPathError,
     SandboxResult,
     SandboxUnavailableError,
+    build_handoff_argv,
     build_run_argv,
     ensure_image,
+    handoff_owner,
     image_tag,
     mount_source,
     result_digest,
@@ -290,6 +292,96 @@ def test_run_argv_environment_is_explicit_and_minimal(tmp_path: Path) -> None:
         "LC_ALL": "C.UTF-8",
     }
     assert "--env-file" not in argv
+
+
+# --------------------------------------------------------------------------
+# Ownership handoff of work/ on native Linux Docker
+# --------------------------------------------------------------------------
+
+
+def _handoff(tmp_path: Path, owner: str = "0:0") -> list[str]:
+    return build_handoff_argv(
+        docker="docker",
+        name="sciagent-sbx-own",
+        image="sciagent-sandbox:abc",
+        work_dir=tmp_path / "work",
+        owner=owner,
+    )
+
+
+def test_handoff_argv_is_isolated_and_runs_only_chown(tmp_path: Path) -> None:
+    argv = _handoff(tmp_path, owner="65534:65534")
+    pairs = _pairs(argv)
+    assert argv[:2] == ["docker", "run"]
+    for flag in ("--rm", "--read-only"):
+        assert flag in argv
+    for pair in [
+        ("--network", "none"),
+        ("--cap-drop", "ALL"),
+        ("--security-opt", "no-new-privileges"),
+        ("--user", "0:0"),
+        ("--pull", "never"),
+        ("--name", "sciagent-sbx-own"),
+        ("--memory", "256m"),
+        ("--pids-limit", "64"),
+    ]:
+        assert pair in pairs, pair
+    # Exactly the three capabilities chown/chmod need, nothing more.
+    added = sorted(b for a, b in pairs if a == "--cap-add")
+    assert added == ["CHOWN", "DAC_OVERRIDE", "FOWNER"]
+    # Only work/, never data/; no environment from the host.
+    mounts = [b for a, b in pairs if a == "--mount"]
+    work = mount_source(tmp_path / "work")
+    assert mounts == [f"type=bind,source={work},target=/work"]
+    assert not any(a in ("-e", "--env", "--env-file") for a in argv)
+    for bad in ("-v", "--volume", "--privileged", "-i"):
+        assert bad not in argv
+    # A fixed command: no symlink is followed (-h, -P; chmod -R skips links).
+    assert argv[-4:] == [
+        "sciagent-sandbox:abc",
+        "sh",
+        "-c",
+        "chown -hRP 65534:65534 /work && chmod -R u+rwX /work",
+    ]
+
+
+@pytest.mark.parametrize("bad", ["root", "0", "0:0 /", "1:2;rm -rf /", "-1:0", ""])
+def test_handoff_argv_refuses_anything_but_numeric_owner(
+    tmp_path: Path, bad: str
+) -> None:
+    with pytest.raises(SandboxConfigError):
+        _handoff(tmp_path, owner=bad)
+
+
+@pytest.mark.parametrize(
+    ("platform", "os_name", "security", "expected"),
+    [
+        # Rootless: container uid 0 is the host user.
+        (
+            "linux",
+            "Ubuntu 24.04.5 LTS",
+            ["name=seccomp,profile=builtin", "name=rootless", "name=cgroupns"],
+            "0:0",
+        ),
+        # Rootful: the host user's own ids (container root would be real root).
+        ("linux", "Ubuntu 24.04.5 LTS", ["name=seccomp,profile=builtin"], "1000:1001"),
+        # Docker Desktop maps file ownership to the host user itself.
+        ("linux", "Docker Desktop", ["name=seccomp,profile=builtin"], None),
+        ("win32", "Docker Desktop", ["name=seccomp,profile=builtin"], None),
+        ("darwin", "Docker Desktop", ["name=rootless"], None),
+    ],
+)
+def test_handoff_owner_follows_the_daemon(
+    platform: str, os_name: str, security: list[str], expected: str | None
+) -> None:
+    got = handoff_owner(
+        platform=platform,
+        operating_system=os_name,
+        security_options=security,
+        uid=1000,
+        gid=1001,
+    )
+    assert got == expected
 
 
 # --------------------------------------------------------------------------

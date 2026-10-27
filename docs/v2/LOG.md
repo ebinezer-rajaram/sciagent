@@ -964,3 +964,56 @@ using it grants no root, and the root daemon is disabled. The `p4-deltas` branch
 `p3-fit4` tag will be pushed by the owner from the Windows PC rather than redone. The five
 decisions open since 2026-10-06 are settled by the lane proposing each one (reasoning, red-team
 review, a 24-hour veto window recorded here), adopted unless vetoed in docs/v2/VETO.md.
+
+## 2026-10-27: Sandbox on native Linux Docker: an ownership handoff around each call
+
+Under rootless Docker the sandbox's uid 65534 maps to host uid 165533 (`/etc/subuid`
+`ubuntu:100000:65536`), so the code could not write the host-created `work/` (uid 1000, 0755)
+and the host could not remove what the code wrote: 4 of 18 slow sandbox tests failed with
+`PermissionError`. The agent container is unchanged (uid 65534, no capabilities, no network,
+read-only root, same limits). Each call is now bracketed by a helper container from the same
+image running a fixed `chown -hRP <owner> /work && chmod -R u+rwX /work` with only CHOWN,
+DAC_OVERRIDE and FOWNER, no network and only `work/` mounted: it gives `work/` to 65534 before
+the call and back to the host user after it (in a `finally`). The owner comes from `docker
+info`: `0:0` under rootless (the host user), the host's `uid:gid` under rootful, no handoff
+under Docker Desktop. Running agent code as container root was rejected: under rootless a
+breakout would land as the host user, who owns the truths and the store, instead of an unowned
+subordinate uid; under rootful it would be real root. Cost about 0.8 s per call. No version
+constant moves and `result_digest` is computed as before (two fresh sandboxes gave identical
+digests), but what code sees between calls changes: modes come back with `u+rwX` (a file set to
+0o040 returns as 0o640), so mode-inspecting code prints differently than under Docker Desktop.
+Not tested: rootful Docker (disabled here) and Docker Desktop (code path unchanged). The red-team
+review (verdict: commit with follow-ups) found the back handoff does not run on every path and
+can run before the agent container is confirmed gone; those are queued to be fixed before any
+AG-o run produces reported numbers.
+
+## 2026-10-27: The defect-hunt checks rebuilt as `sciagent.campaign.audit`
+
+The scripts lost with the Windows PC are rebuilt from the contracts in HANDOFF-2026-10-06,
+STATUS-2026-10-05 and LOG 2026-10-03, not line for line. `scripts/hunt_gap.py` finds cells by
+listing the store, filtered by the fitter named in `env_version`, and pairs a unit with ORACLE
+only within one configuration (env, fit config, data, metric version, truth, seed); a missing
+ORACLE reference or an unrecorded underfit flag fails the gate, as control 1 requires. Report
+determinism (`scripts/report_determinism.py`) means byte identity across hash seeds on one
+store; identity across two runs is checked cell by cell (`scripts/store_compare.py`), because
+the report prints the store path and wall times. `scripts/store_check.py` checks triggers,
+digests, detail bytes and references. Found on the way, not changed: `campaign/llm.py:221`
+writes `wall_s` into the `llm-session` cell's reading, against the store's own rule that wall
+times are never in a cell, so session cells differ between two runs; `store_compare` therefore
+takes `--kinds`. Moving it would change session cell bytes; left for the owner.
+
+## 2026-10-27: The dev truths stay identifiable under fit/5; the dev split is kept
+
+`scripts/recheck_identifiable.py` reruns `check_identifiable` (δ = 0.01 nats/event against the
+five library members) on the 20 dev truths, rebuilding their identifiability data from the
+records with the sampler's own functions. Positive control: from b5e2b87 (fit/4) it reproduces
+every stored margin, log-likelihood, event count and ψ flag exactly on dm-devbox (all
+differences 0), and the split's config digest equals the manifest's (`c2689fe0…`). Under fit/5
+all 20 still pass, so no truth changes status and the dev split is kept (P4-PROPOSAL §2.2).
+Member scores are unchanged; the truth's held-out log L rises on 8 truths, is identical on 11,
+and falls on one (dev-001, by 3.66 nats, where fit/5 fits the training log better at a wrong ψ;
+its margin is 0.106). The smallest margin is 0.0280 (dev-002, unchanged); dev-019, the tightest
+under fit/4 at 0.0244, rises to 0.0698. Note for ORACLE checks: the ψ-recovered flag must allow
+for symmetries such as `Product(Periodic, Gate(Periodic, ·))`, whose two periods can swap with
+an identical likelihood (dev-011: recovered under fit/4, "not recovered" under fit/5 with the
+same held-out log L). Outputs in `.cache/ident/` (git-ignored).

@@ -62,3 +62,42 @@ mini-pilot gate. Ask the owner about the `p4-deltas` branch.
   copy of the dev split, checked by sha256.
 
 **Next.** Verify and record what the three agents return, in a further entry this session.
+
+## 2026-10-27: Sandbox works on rootless Docker; defect-hunt checks rebuilt; dev truths identifiable under fit/5
+
+**Done.**
+- Sandbox (engineer, test first): on unchanged code `nice uv run pytest tests/sandbox -m slow`
+  gave 14 passed, 4 failed (`PermissionError` on `/work`): uid 65534 maps to host uid 165533
+  under rootless Docker. Fixed with an ownership handoff around each call (LOG 2026-10-27);
+  the agent container's flags are unchanged. My rerun: `19 passed, 45 deselected`, no leftover
+  containers.
+- Red-team review of the sandbox change: commit with follow-ups. Medium: the back handoff can
+  run before the agent container is confirmed gone (a failed `docker rm -f` is ignored), and on
+  some paths (forward handoff failing, session hard-timeout kill, back handoff failing) it does
+  not run, which leaves `work/` unremovable so `investigation/runner.py:364` raises and the
+  run's record is lost. Low: an agent writing millions of files can make a handoff time out,
+  which voids the run; agent-set modes and ACLs survive; platform mis-detection fails quietly;
+  one untyped `TimeoutExpired`; fault paths untested. No escape outside `work/` found; two
+  fresh sandboxes gave identical digests. All queued as one item before AG-o reported numbers.
+- Defect-hunt checks rebuilt as `sciagent.campaign.audit` with `scripts/hunt_gap.py`,
+  `store_check.py`, `store_compare.py` and `report_determinism.py`; 43 tests (my rerun: `43
+  passed`), and the engineer's mutation pass caught 12 of 12 injected defects. Run only on
+  synthetic and fake-job driver stores so far. Committed as 5a71d29.
+- Identifiability recheck (`scripts/recheck_identifiable.py`): fit/4 control reproduces all 20
+  records exactly; fit/5 20/20 pass, none changes status, minimum margin 0.0280 (dev-002).
+  fit/5 run 398 s on 2 workers. Slow test: `1 passed in 78.14s`.
+- Checks on the combined tree: ruff format and check clean, `mypy` no issues in 225 files,
+  fast tier `2555 passed, 3 skipped` (the QTM skips).
+
+**Learned.**
+- Rootless Docker changes the sandbox's uid story completely; Docker Desktop had hidden it.
+- `campaign/llm.py:221` puts `wall_s` in the session cell, so session cells are not
+  byte-identical across runs; `store_compare` compares baseline and score cells by default.
+- The ψ-recovered flag reads a period swap in `Product(Periodic, Gate(Periodic, ·))` as a miss
+  (dev-011); ORACLE ψ checks must compare up to such symmetries.
+- Lane checkouts need their own copy of git-ignored data, checked by sha256.
+
+**Next.** The full slow tier was started in tmux `sci-slow` at the end of this session (log in
+`.cache/slow/`): read its tail first and root-cause any failure. Then the sandbox follow-ups
+(engineer, test first, in a worktree if the slow tier is still running), then the smoke. The
+follow-ups come before any AG-o run that produces reported numbers.

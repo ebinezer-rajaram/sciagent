@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import shutil
 import subprocess
+import sys
 import textwrap
 import time
 from pathlib import Path
@@ -148,6 +150,59 @@ def test_dataset_is_readable_and_path_with_space_works(
     assert r.stdout == (
         "[0.5, 1.5] [2.0, 3.0]\n{'time': [0.5, 1.5], 'size': [2.0, 3.0]}\n"
     )
+
+
+def test_host_owns_and_can_remove_everything_the_code_wrote(
+    sandbox: Sandbox, run_dir: Path
+) -> None:
+    """Between calls work/ belongs to the host user, whatever the code did to it.
+
+    Native Linux Docker maps the container's uid 65534 to a uid the host user
+    does not own (a subordinate uid under rootless), so without the handoff
+    the investigation runner's ``shutil.rmtree`` of the run directory fails.
+    The code here makes it as hard as it can: unreadable files, unwritable and
+    untraversable directories, nesting.
+    """
+    (run_dir / "work" / "host.txt").write_text("from host\n", encoding="utf-8")
+    r = _run(
+        sandbox,
+        """
+        import os
+        print(os.getuid(), os.stat("/work/host.txt").st_uid)
+        open("/work/host.txt", "a").write("from sandbox\\n")
+        os.makedirs("/work/a/b/c")
+        for p in ("/work/a/b/c/f", "/work/a/g", "/work/top"):
+            open(p, "w").write("x")
+        os.chmod("/work/a/b/c/f", 0)
+        os.chmod("/work/a/b/c", 0)
+        os.chmod("/work/a/b", 0o500)
+        os.chmod("/work/top", 0)
+        """,
+    )
+    assert r.exit_code == 0, r.stderr
+    # The code ran as 65534 and saw work/ as its own.
+    assert r.stdout == "65534 65534\n"
+    work = run_dir / "work"
+    assert (work / "host.txt").read_text() == "from host\nfrom sandbox\n"
+    paths = sorted(work.rglob("*"))
+    assert [p.relative_to(work).as_posix() for p in paths] == [
+        "a",
+        "a/b",
+        "a/b/c",
+        "a/b/c/f",
+        "a/g",
+        "host.txt",
+        "top",
+    ]
+    if sys.platform == "linux":
+        assert {p.stat().st_uid for p in [work, *paths]} == {os.getuid()}
+    assert (work / "a" / "b" / "c" / "f").read_text() == "x"
+    # The next call may still write everywhere in work/.
+    r = _run(sandbox, "open('/work/a/b/c/f', 'a').write('y')\n")
+    assert r.exit_code == 0, r.stderr
+    assert (work / "a" / "b" / "c" / "f").read_text() == "xy"
+    shutil.rmtree(run_dir)
+    assert not run_dir.exists()
 
 
 # --------------------------------------------------------------------------

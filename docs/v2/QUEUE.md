@@ -9,19 +9,37 @@ Each item says when it is done. Move finished items to the bottom section after 
 - [x] 2026-10-27 **Docker on dm-devbox.** Rootless Docker 29.9.2 installed by the owner's
   interactive session (daemon runs as `ubuntu`; no docker group; root daemon disabled). Lanes get
   `DOCKER_HOST=unix:///run/user/1000/docker.sock`. Checked: `docker run --network none hello-world`.
-- [~] **Sandbox on native Linux Docker** (engineer, test first; after Docker). Suspected break,
+- [x] 2026-10-27 **Sandbox on native Linux Docker** (engineer, test first; after Docker). Fixed
+  with an ownership handoff around each call (LOG 2026-10-27); 19 slow sandbox tests pass. Suspected break,
   from reading the code: the container runs as `65534:65534` (`SANDBOX_UID`) while the host
   creates the run's `work/` as uid 1000 with mode 0755, so writes to `/work` (state between
   calls, `test_state_persists_only_through_work`) probably fail, and files the container
   creates may not be removable by the host. Docker Desktop on Windows hid this. Done when
   `nice uv run pytest tests/sandbox -m slow` passes on dm-devbox with every isolation test kept.
-- [~] **Identifiability of the dev truths under fit/5** (P4-PROPOSAL §2.2): rerun
+- [x] 2026-10-27 **Identifiability of the dev truths under fit/5** (20/20 pass, none changes;
+  LOG 2026-10-27) (P4-PROPOSAL §2.2): rerun
   `check_identifiable` on the 20 dev truths with v2's fitter and report any truth that changes
   status. Done when the result is in the journal and LOG.
+- [ ] **Sandbox handoff follow-ups, before any AG-o run that produces reported numbers**
+  (engineer, test first; red-team review of 2026-10-27, findings in JOURNAL 2026-10-27):
+  (1) before the back handoff, confirm the agent container is gone (`docker inspect`), else
+  raise `SandboxError`; catch `TimeoutExpired` in `_remove`; (2) put both handoffs under one
+  `try/finally`, check `work_dir` is owned by the host uid afterwards, and give cleanup and the
+  session hard-timeout path (`campaign/llm.py:314`) a recovery handoff, so a missed handoff
+  cannot make `investigation/runner.py:364` raise and lose the record; (3) decide how a
+  handoff slowed by millions of agent files is classified (today a void, which selects on
+  agent behaviour); (4) `chmod -R u+rwX,go-w` and strip POSIX ACLs; (5) make wrong platform
+  detection fail loudly; (6) typed errors only; (7) tests for `_probe_handoff_owner` parsing
+  and the fault paths. Done when each has a test seen failing first and the slow sandbox tier
+  passes.
+- [ ] **Session cells carry wall time** (owner decision): `campaign/llm.py:221` writes `wall_s`
+  into the `llm-session` cell's reading, against the store's rule; moving it to `timing.jsonl`
+  changes session cell bytes. Propose under the veto rule or leave as declared.
 - [ ] **Slow tier on dm-devbox** once Docker exists (the split is in place):
   `nice uv run pytest -m slow -n 2`. Done when green, or each failure has a root cause in the
   journal.
-- [~] **Rebuild the defect-hunt checks** lost with the Windows PC (`.cache/hunt/A/p3_gap.py`,
+- [x] 2026-10-27 **Rebuild the defect-hunt checks** (`scripts/hunt_gap.py`, `store_check.py`,
+  `store_compare.py`, `report_determinism.py`; LOG 2026-10-27) lost with the Windows PC (`.cache/hunt/A/p3_gap.py`,
   `B/store_check.py`, `B/report_determinism.py`) as committed scripts with tests (engineer):
   the gap check against ORACLE on a store, store consistency, and a byte comparison of two
   stores. Their contracts are in HANDOFF-2026-10-06 and LOG 2026-10-06. Done when each runs on

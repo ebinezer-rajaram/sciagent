@@ -1017,3 +1017,32 @@ under fit/4 at 0.0244, rises to 0.0698. Note for ORACLE checks: the ψ-recovered
 for symmetries such as `Product(Periodic, Gate(Periodic, ·))`, whose two periods can swap with
 an identical likelihood (dev-011: recovered under fit/4, "not recovered" under fit/5 with the
 same held-out log L). Outputs in `.cache/ident/` (git-ignored).
+
+## 2026-10-27: Session wall time leaves the `llm-session` cell (proposal; veto window ends: 2026-10-28T12:00Z)
+
+Proposed under the veto rule (queue item "Session cells carry wall time"). The lane's first
+draft kept `wall_s` in the session cell's reading and amended the store's rule. The draft argued
+the value is a pure function of the stored record, and that live session cells are not
+reproducible anyway. The red-team review rejected it, and both claims fail on checking:
+- The record's `timing` section is deliberately not hashed (`harness/record.py:20-22`), so two
+  records with the same address give different cells.
+- Under the scripted model driver, `wall_s` is the only difference between two runs' session
+  cells. `tests/campaign/test_audit_driver.py:85-98` asserts exactly that one differing cell.
+
+The cell's detail also copies `duration_api_ms` and `total_cost_usd` from the same unhashed
+section (`campaign/llm.py:204-205`). The reading's `wall_s` also mixes three measurements:
+- the harness's elapsed time, for normal sessions;
+- the driver's clock including process spawn, for hard timeouts (`llm.py:327`);
+- nothing at all, for aborts, which counts as 0 in `pilot_report.py:587`'s median.
+
+**Proposal:**
+- Move `wall_s`, `duration_api_ms` and `total_cost_usd` out of the session cell into its
+  `timing.jsonl` line, which is already keyed by the cell digest. Keep the harness's own time
+  as `harness_wall_s` beside the driver's `wall_s`.
+- Have the pilot report read session wall times from `timing.jsonl`.
+- Make `test_audit_driver` assert that every cell kind is byte-identical across two
+  scripted-driver runs.
+
+This changes session cell bytes, and no store needs them: the Windows store is gone and the
+Linux smoke has not run. It goes in before the full pilot. The mini-pilot (no LLM units) is
+unaffected. Not to be implemented while the sandbox follow-ups are editing `campaign/llm.py`.

@@ -32,9 +32,12 @@ Each item says when it is done. Move finished items to the bottom section after 
   detection fail loudly; (6) typed errors only; (7) tests for `_probe_handoff_owner` parsing
   and the fault paths. Done when each has a test seen failing first and the slow sandbox tier
   passes.
-- [ ] **Session cells carry wall time** (owner decision): `campaign/llm.py:221` writes `wall_s`
-  into the `llm-session` cell's reading, against the store's rule; moving it to `timing.jsonl`
-  changes session cell bytes. Propose under the veto rule or leave as declared.
+- [~] **Session cells carry wall time**: proposed 2026-10-27 to move `wall_s`, `duration_api_ms`
+  and `total_cost_usd` from the `llm-session` cell to its `timing.jsonl` line (LOG 2026-10-27,
+  veto window ends 2026-10-28T12:00Z). After the window, unless VETO.md objects, and after the
+  sandbox follow-ups land in `campaign/llm.py`: implement (engineer, test first: every cell kind
+  byte-identical across two scripted-driver runs; `pilot_report.py` reads session wall times from
+  `timing.jsonl`). Must land before the full pilot.
 - [ ] **Slow tier on dm-devbox** once Docker exists (the split is in place):
   `nice uv run pytest -m slow -n 2`. Done when green, or each failure has a root cause in the
   journal.
@@ -94,8 +97,9 @@ Each item says when it is done. Move finished items to the bottom section after 
   reasoning, has the red-team agent review it, records it in LOG.md with `veto window ends:
   <UTC>` 24 hours ahead, pushes the owner a summary, and adopts it after the window unless a
   `VETO` line appears in docs/v2/VETO.md. Done when each is adopted or vetoed and logged.
-- [ ] **Remaining P4 work packages** after the branch question: B-sym policy arms (WP9),
-  positive controls 4-6 (WP11), LOG entries and gates (WP12). Done when each passes its tests.
+- [ ] **Remaining P4 work packages**: WP9 (1327de9), WP10 (98205b4), WP11 controls 4-6
+  (6ac6142) and WP12 LOG entries (f4a38e0) are committed on `origin/p4-deltas`
+  (HANDOFF-2026-10-09); its slow tier was never run. Folded into the integration item above.
 - [ ] **Size P4 from the Linux pilot** (SPEC §7.1, last bullet): LLM calls and wall time per
   investigation under Max at this lane's share, for Haiku, Sonnet and Opus, named and
   anonymised, on the 40 x 2 test design. Done when the estimate is in the journal.

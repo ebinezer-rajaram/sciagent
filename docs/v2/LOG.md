@@ -853,3 +853,41 @@ better. When the refit is better but uncertified:
   other cell's bytes are unchanged.
 
 **Verification.** The keys and config text are unchanged.
+
+## 2026-10-27: The reference platform for v2 numbers is dm-devbox (owner)
+
+The owner's Windows PC is no longer used. From today every reported v2 number
+is produced on `dm-devbox`: Ubuntu 24.04 on AWS (EC2 m7i-flex.xlarge, Xeon
+Platinum 8488C, 4 vCPUs, 16 GB), Python 3.12.3, numpy 2.5.1 with AVX-512
+dispatch. v1's frozen numbers stay as recorded on Windows. Why: the owner's
+machines changed, and one platform must own the numbers because output bytes
+are not portable (next entry). What the Windows PC held and GitHub does not
+is gone from this project's reach unless the owner recovers it: the pilot
+store `.cache/pilot`, the mini-pilot store, the defect-hunt scripts under
+`.cache/hunt/`, the `p4-deltas` branch (P4 work packages 1-8 committed, 10
+uncommitted), `.cache/p4/PLAN.md`, the anchoring-check worktree, and the
+`p3-fit4` tag (its fitter is the one at 183da42, and b5e2b87 has the same
+fitter).
+
+## 2026-10-27: Fit bytes are per machine class; the fit/4 reference digests are re-pinned
+
+On dm-devbox the fast tier failed only on the six fit/4 reference digests
+(`tests/glm/test_fit_search.py`, also used by `test_fit_memory.py`): 12
+failures, every case different from the Windows bytes. The fit/4 fitter
+(b5e2b87) and fit/5 (v2 at ea055be) give identical digests on dm-devbox for
+all six cases, so the property the test pins (the exhaustive path is fit/4
+bit for bit) holds on Linux. On the same machine the bytes change with numpy's
+SIMD dispatch (`NPY_DISABLE_CPU_FEATURES` removing AVX-512 changes all six)
+and with OpenBLAS's kernel (`OPENBLAS_CORETYPE=Haswell` changes two; SkylakeX,
+Cooperlake and SapphireRapids give the default bytes); no setting tried
+reproduces the Windows bytes. Decision: re-pin the digests to dm-devbox's
+fit/4 values and say in the test that they are per machine class. The
+Windows values, for the record: hawkes-identity `2c9ebbea…`, periodic-exp
+`3abbe355…`, periodic-softplus `93ee8446…`, power-identity `6cb6f6f1…`,
+two-datasets `30762740…`, window-exp `b2ce799d…`. Consequences: the invariant
+"same seed, config and version give the same bytes" holds per machine class,
+which the content address does not record, so no store is ever filled from
+two machine classes without a byte check first; and the determinism child
+(`tests/acceptance/determinism_child.py`) was byte-identical across two runs
+on dm-devbox (sha256 of its output `91ccdcef…`).
+

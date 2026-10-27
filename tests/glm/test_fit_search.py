@@ -180,25 +180,31 @@ def reference_cases() -> dict[str, tuple[Structure, tuple[Dataset, ...]]]:
     }
 
 
-#: ``fit_digest`` of each reference case under fit/4 (git tag ``p3-fit4``),
-#: captured before the search changed.
+#: ``fit_digest`` of each reference case under fit/4, captured before the
+#: search changed. The bytes are per machine class, not portable: on one Linux
+#: machine they change with numpy's SIMD dispatch (AVX-512 or not) and with
+#: OpenBLAS's kernel, and the Windows bytes match no Linux setting tried. These
+#: are the reference platform's (dm-devbox: Ubuntu 24.04, Xeon 8488C, numpy
+#: 2.5.1 with AVX-512 dispatch), captured from the fit/4 code (b5e2b87, whose
+#: fitter is the one tagged ``p3-fit4``) and equal to fit/5's there. The
+#: Windows digests they replace are in LOG 2026-10-27.
 FIT4_DIGESTS: dict[str, str] = {
     "hawkes-identity": (
-        "2c9ebbea97e5d96f199b261edeb81a6663e0d898952e2b57b6ed5c143e84e4c7"
+        "cba7fa62bfdca6bbbbdbb8025f928acd0207ed654e05de20f4c1f444e8038297"
     ),
     "periodic-exp": (
-        "3abbe355e9242a3ba46e8975f613d75f6e2cbf79fe7eeef1e976ae8b089ad6e3"
+        "9304133d8933b5b100d5e356ca7c10e1c85ff6f3fdddced2d6eaebb9504dabf6"
     ),
     "periodic-softplus": (
-        "93ee844698215973baa54b8a57dff23252311f486efa4b59d332e00f8766f7a1"
+        "d87196f7274329dbf77929aea36a0649c646017f03a53ebce1e65054890adf56"
     ),
     "power-identity": (
-        "6cb6f6f1dc0f0f11f185c04be904c4b4acdd669c5eb3da06baba7395c3e4a9bf"
+        "727d28bf0a54217297dd2cec2a36b316d86f05426342ad4f5531f6672f751215"
     ),
     "two-datasets": (
-        "3076274037a3cf6e88c36fa64297879f8caf236a0f9a56308d6859e1fb364b36"
+        "01828b55d6ef5c0048d1a760a3406cd1f5c6a5bed3f2333e5605ba46b0a79a7a"
     ),
-    "window-exp": "b2ce799dd1f61c3fd54a14c8b67db64dee11a5d792318317e9e103818bc0d7a2",
+    "window-exp": "b0fb5d21461347a95d1f47d935f2da8a47244a649a958f479b057a8e576beeae",
 }
 
 

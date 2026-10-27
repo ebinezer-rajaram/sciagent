@@ -1443,3 +1443,24 @@ sides (GLM and Wiener–Hopf) at the current cap, with `nice` in tmux, then choo
 give telling and truthFSD their own constant; decide the at-cap rule for FSD's ranking (for
 example, rank by the defined replicates and flag designs whose reference stops) with a positive
 control that FSD's picks are unchanged on decisions where nothing explodes.
+
+## 2026-10-27: Choices made while fixing the three pilot-blocking branches (open to the same veto windows)
+
+- `fingerprint-guard` 903937e (F5 window): one driver per store, enforced by an exclusive
+  `flock` on `<root>/fingerprint.lock` for the life of a `Campaign`, which drops the two-driver
+  mode (`pilot.py` runs baselines and LLM sessions in one process; re-checking the sidecar per
+  write would still race); the fingerprint is `commit=<sha>,tree=clean` (`uv.lock` is tracked, so
+  the commit covers it); the imported `sciagent` and `environments` must live under the checkout
+  that is fingerprinted, and the checkout must be its own git top level; the fingerprint is taken
+  after `--wait` and again after the run, and a change exits non-zero; a torn final sidecar line
+  is treated as uncommitted and cut before the next append.
+- Session keys f1c5b0f (window 2026-10-28T17:00Z): the AG-o text names the `docker run` argv
+  (placeholders for name, paths, image and seed), a hash of the `/data` file bytes of a fixed
+  sample, and the python tool's caps and output-format hash, each computed from the code that
+  acts; float limits render as floats. The image ID is recorded in the AG-o record
+  (`sandbox_image_id`) and checked on replay, but kept out of the address (rebuilding a recipe does
+  not reproduce its ID). Older records carry no ID and are not checked.
+- `c1-oracle-inf` 285485a (window 2026-10-28T21:45Z): a truth with an ORACLE −inf unit stays
+  kept (its ORACLE-vs-B-lib check reads its finite seeds), as a flagged-underfit truth is; C1 fails
+  naming the units. "Incomplete" still outranks "controls fail" when nothing is checkable yet,
+  the order the underfit case already uses.

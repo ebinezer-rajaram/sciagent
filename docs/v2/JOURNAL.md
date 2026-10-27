@@ -425,3 +425,9 @@ ends: memory summary, S3 copy, ledger.
    `store_check.py`, `replay_check.py` (no LLM records), the report, memory × workers.
 4. Δ6: red-team the link-balanced recommendation. FSD cap: measure the event-count
    distribution (all dev truths, 16 replicates, both sides) in tmux.
+
+**Addendum (22:12).** All helpers have stopped and nothing of theirs is running. Branch states:
+`fingerprint-guard` 903937e, session keys f1c5b0f (three fix commits on 2dbd125),
+`wall-time-move` df0ce40 (fast tier `2720 passed, 3 skipped`), `c1-oracle-inf` 285485a (fast
+tier had 2 unidentified failures before the kill: find them first). None has a confirmed slow
+tier; details are in QUEUE and LOG. The INBOX sprint entry is marked handled.

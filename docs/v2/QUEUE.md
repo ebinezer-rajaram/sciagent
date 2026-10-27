@@ -33,28 +33,42 @@ Each item says when it is done. Move finished items to the bottom section after 
   (veto rule) adding them to the AG-o session key, or refusing reuse on mismatch; engineer,
   test first.
   2026-10-27: implemented on local branch `worktree-agent-a501a8588ae2e77cb` (2dbd125); proposal
-  in LOG (veto window ends 2026-10-28T17:00Z). Next: after the window, rebase onto `v2`, rerun
-  the fast tier and `tests/campaign -m slow`, merge.
+  in LOG (veto window ends 2026-10-28T17:00Z). Red team (session 5): merge with fixes; fixes in
+  90612ca, 7ce500f, f1c5b0f (argv, /data format and tool caps in the key; image ID recorded and
+  checked on replay; only the 240 AG-o addresses move). Fast tier NOT run on f1c5b0f; slow
+  campaign and AG-o replay tests NOT passed (killed for memory). Next: those tests, then after
+  the window rebase onto `v2` and merge.
 - [~] **Session cells carry wall time**: proposed 2026-10-27 to move `wall_s`, `duration_api_ms`
   and `total_cost_usd` from the `llm-session` cell to its `timing.jsonl` line (LOG 2026-10-27,
   veto window ends 2026-10-28T12:00Z). After the window, unless VETO.md objects, and after the
   sandbox follow-ups land in `campaign/llm.py`: implement (engineer, test first: every cell kind
   byte-identical across two scripted-driver runs; `pilot_report.py` reads session wall times from
   `timing.jsonl`). Must land before the full pilot.
+  2026-10-27: implemented on local branch `wall-time-move` (df0ce40; worktree
+  `.claude/worktrees/agent-a9c4be026147be112`): ruff, mypy clean, fast tier `2720 passed, 3
+  skipped`; `tests/campaign -m slow` NOT confirmed (no summary line). Next: that tier, then
+  after the window merge.
 - [ ] **C1: any ORACLE −inf fails control 1** (review item (c), LOG 2026-10-27; veto window ends
   2026-10-28T21:45Z; sets a P3 go/no-go rule, owner pushed): replace the drop at
   `campaign/analysis.py:580-600` with a C1 failure for P3 and P4, and fix the "dropped as not
   identifiable" label. Engineer, test first (analysis is the go/no-go instrument). Must land
   before the full pilot.
+  2026-10-27: on local branch `c1-oracle-inf` (285485a; worktree
+  `.claude/worktrees/agent-a2e38fbd1385fefee`): its 21 analysis tests pass, ruff and mypy clean;
+  the fast tier showed 2 UNIDENTIFIED failures before it was killed for memory. Next: rerun with
+  `-rf`, find them, then the report's slow test, then merge after the window.
 - [~] **Code-fingerprint guard on stores** (F5, LOG 2026-10-27; veto window ends
   2026-10-28T19:15Z): the store keeps a sidecar with the git commit, a clean-tree flag and the
   `uv.lock` sha256; a dirty tree refuses to write; a resume under a different fingerprint refuses
   to reuse cells unless `--reuse-from <fp>` names it (recorded in the sidecar). Engineer, test
   first. Must land before the full pilot.
   2026-10-27: built on local branch `fingerprint-guard` (2998821; worktree
-  `.claude/worktrees/agent-ac2f2d04e01ad1a75`), LOG 2026-10-27. Next: after the window, red-team
-  the diff, rebase onto `v2`, fast tier and `tests/campaign -m slow`, merge. Resuming the smoke
-  or mini-pilot stores under it needs `--reuse-from unrecorded`.
+  `.claude/worktrees/agent-ac2f2d04e01ad1a75`), LOG 2026-10-27. Red-teamed in session 5 (merge
+  with fixes); fixes in checkpoint 903937e (one driver per store via `flock`, `uv.lock` dropped
+  from the fingerprint, imported code must be under the checkout). `tests/campaign` fast `187
+  passed`; full fast tier and campaign slow tier NOT run on 903937e. Next: those, then after the
+  window rebase onto `v2`, merge. Resuming the smoke or mini-pilot stores under it needs
+  `--reuse-from unrecorded`.
 - [x] 2026-10-27 **Slow tier on dm-devbox**: `nice -n 10 uv run pytest -m slow -n 2` at 4a6d780,
   `273 passed, 24 warnings in 5716.76s (1:35:16)`, exit 0 (`.cache/slow/run.log`).
 - [x] 2026-10-27 **Rebuild the defect-hunt checks** (`scripts/hunt_gap.py`, `store_check.py`,

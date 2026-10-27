@@ -166,3 +166,37 @@ follow-ups come before any AG-o run that produces reported numbers.
 3. After 2026-10-28T12:00Z, unless vetoed: implement the `wall_s` move.
 4. Re-run the beats-truth red team.
 5. Decide how to measure peak worker memory on Linux before the mini-pilot.
+
+**Hand-over addendum (14:05 UTC): sandbox follow-ups checkpoint.**
+- The engineer committed aea2b90 ("WIP") on `worktree-agent-ab762e5af9832a80f`, based on
+  4a6d780. It is not merged into `v2`.
+- **What it reports:** all seven items implemented, each with a test seen failing first.
+  - ruff and mypy clean (230 files).
+  - Fast tier `2629 passed, 3 skipped`, run before two late small changes (`Sandbox.recover()`
+    is now a no-op unless `work/` is still handed away; a misplaced logger line).
+  - `tests/sandbox -m slow -n 1`: `24 passed`, also run before those changes.
+- **Owed before merge:**
+  - re-run the slow sandbox tier and the AG-o replay test after the late changes;
+  - finish `tests/campaign/test_campaign_slow.py` (log `.cache/slow_campaign.log` in the
+    worktree);
+  - `test_investigation_event_cap.py::test_an_adversarial_design_on_a_heavy_truth_stops_within_minutes`
+    took 259 s against its 180 s limit at load ~8. It calls none of the changed code, so it
+    needs a re-run on a quiet machine.
+- **Design choice to log and red-team before merging (item 3):**
+  - Past `SandboxLimits.max_work_entries` (100,000) or `max_work_path_bytes` (1,024), the back
+    handoff empties `work/`, tells the agent in stderr, and the run is *scored*, not voided.
+    The reasoning: agent resource use is a result, as with the file-size limit; voids are for
+    out-of-bounds access and infrastructure faults (SPEC §9, the voids policy).
+  - The handoff timeout becomes 10 × `wall_seconds` with a 300 s floor. The engineer measured
+    1.7 M files deleted in 163 s under load.
+  - The engineer flags that the existing `hard_timeout` void is also conditioned on agent
+    behaviour, and left it unchanged.
+- **Also unrequested:**
+  - set-uid and set-gid bits cleared;
+  - the ACL strip is a stdlib Python helper (`sandbox/_handoff_helper.py`), so the image tag
+    does not move;
+  - a sandbox with a failed back handoff refuses further calls;
+  - cleanup failure voids with `infrastructure: sandbox cleanup: <ErrorType>`;
+  - each isolated AG-o session gets its own sandbox root.
+- **Next, first:** red-team aea2b90 and the item-3 choice, write the LOG entry, run the owed
+  tests, then rebase onto `v2` and merge.

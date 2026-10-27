@@ -1229,3 +1229,56 @@ already is to build the image). Checks on the branch: ruff clean, mypy no issues
 fast tier `2731 passed, 3 skipped`, campaign slow tests `10 passed` and the event-cap test
 `1 passed`; 26 new tests seen failing first (import, then 12 failed). Merge into `v2` after the
 window unless VETO.md objects; it must land before AG-o cells that count.
+
+## 2026-10-27: F5, stale-cell reuse: a code-fingerprint guard before the full pilot, derived address text after it (proposal; veto window ends: 2026-10-28T19:15Z)
+
+Open decision F5 (HANDOFF-2026-10-06; LOG 2026-10-06, line 828): parts of a unit's address are
+hand-written, so a behaviour change reuses stored cells unless someone bumps a label by hand.
+Examples: `METRIC_VERSION` (`campaign/plan.py:82`) names 3 of the battery's 14 value constants
+(`scoring/battery.py:136-158`); B-rand's text copies `max_draws_factor=100` (`plan.py:322`) from
+a field default (`systems/v2/search.py:663`); the ORACLE text is a fixed sentence (`plan.py:316`);
+B-lib's out-of-grammar members are keyed by type name (`plan.py:304`). The red-team review
+(session 5) found the gap is wider, and I checked its two main points:
+- The truth digest hashes only the split record (`scripts/pilot.py` `truth_entries`), but the
+  `TruthSpec` adds the domain's `v2.CHANNELS` and `v2.mark_sampler` (`truth_spec`), so the marks
+  feeding the world, held-out and battery data are in no address. Its probe gave identical keys
+  for all eight systems under a changed mark sampler.
+- `DATA_VERSION`'s `world/1` is also hand-written, while `investigation/world.py:65` caps the log
+  (`MAX_EVENTS = 15_000`), and a failed cell counts as done (`store.done` is ledger membership).
+- No code commit is recorded anywhere: `grep -rn "rev-parse\|git_commit"` over `scripts/pilot.py`
+  and `campaign/` finds nothing. A frozen worktree protects one run, not a resume after a fix.
+- Constants on a cell's path outside `scoring/` (`systems/v2/systems.py:263`, the `"search"` tag in
+  `plan.py:239`, `execute.py:95` and `:345`, the library models' starts and boxes, the sparse
+  solver's chunking) would escape a `scoring/`-only rule.
+
+Recommendation:
+1. **Before the full pilot: a code-fingerprint guard.** The store keeps a sidecar file (not in
+   the cell bytes, so byte comparisons of stores are unaffected) with the code fingerprint: the
+   git commit, a clean-tree flag and the `uv.lock` sha256. The fingerprint is opaque to
+   `sciagent`; the pilot script supplies it. A run on a dirty tree refuses to write. A resume
+   whose fingerprint differs from the store's refuses to reuse cells unless the command names
+   the old fingerprint explicitly (`--reuse-from <fp>`), and that permission is appended to the
+   sidecar. That turns silent reuse into a recorded decision, covers every case above including
+   the domain's marks, moves no address, and does not depend on the machine. Engineer, test
+   first (the store boundary is an instrument).
+2. **With the `p4-deltas` integration, after the pilot's numbers:**
+   - the address text is the repr of the object that runs, built by one constructor shared by
+     `plan.py` and `execute.py` (B-rand, B-np, ORACLE, B-lib today agree only because defaults
+     match);
+   - `METRIC_VERSION` and `DATA_VERSION` gain the SHA-256 of a canonical rendering of every value
+     constant on a cell's path, kept complete by a fast AST test over `scoring/`, `systems/v2/`,
+     `library/`, `investigation/world.py`, `campaign/execute.py` and `plan.py`, with an explicit,
+     commented exclusion list for read-time constants (`gonogo.py`, `stats.py:55,57`,
+     `behaviour.py:66`, labels);
+   - the domain supplies its own derived text for channels and the mark sampler to the
+     environment version (`sciagent` still never imports `environments/`);
+   - the new policy arms' and telling unit's prose in `p4-deltas` follows the same rules.
+   This moves every baseline and score address (p4-deltas itself moves only `HARNESS_VERSION`),
+   so `pilot_report.py` at the new code cannot read the Linux pilot store: PILOT.md records the
+   pilot's commit, and the report is regenerated only from that commit.
+3. **Not adopted:** per-machine golden digests of each system's output (my draft's rule 2).
+   They fail off dm-devbox and on any lock bump, cannot tell a code change from a platform
+   change, and would not have caught the ORACLE certified-refit change, whose branch never fired
+   on dev seed 1. Hashing source files into addresses is rejected too: a comment edit would
+   rerun everything.
+No number is known to have been reused stale; nobody has checked older stores for it.

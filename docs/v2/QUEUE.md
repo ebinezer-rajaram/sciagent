@@ -41,6 +41,11 @@ Each item says when it is done. Move finished items to the bottom section after 
   sandbox follow-ups land in `campaign/llm.py`: implement (engineer, test first: every cell kind
   byte-identical across two scripted-driver runs; `pilot_report.py` reads session wall times from
   `timing.jsonl`). Must land before the full pilot.
+- [ ] **Code-fingerprint guard on stores** (F5, LOG 2026-10-27; veto window ends
+  2026-10-28T19:15Z): the store keeps a sidecar with the git commit, a clean-tree flag and the
+  `uv.lock` sha256; a dirty tree refuses to write; a resume under a different fingerprint refuses
+  to reuse cells unless `--reuse-from <fp>` names it (recorded in the sidecar). Engineer, test
+  first. Must land before the full pilot.
 - [x] 2026-10-27 **Slow tier on dm-devbox**: `nice -n 10 uv run pytest -m slow -n 2` at 4a6d780,
   `273 passed, 24 warnings in 5716.76s (1:35:16)`, exit 0 (`.cache/slow/run.log`).
 - [x] 2026-10-27 **Rebuild the defect-hunt checks** (`scripts/hunt_gap.py`, `store_check.py`,
@@ -114,6 +119,9 @@ Each item says when it is done. Move finished items to the bottom section after 
   `VETO` line appears in docs/v2/VETO.md. Done when each is adopted or vetoed and logged.
   Progress: decision 6 (C5 seeding) proposed and red-teamed 2026-10-27 (LOG, veto window ends
   2026-10-28T16:05Z); implement with the p4-deltas integration.
+  F5 (hand-written address text) proposed and red-teamed 2026-10-27 (LOG, veto window ends
+  2026-10-28T19:15Z): the guard above before the pilot; derived address text with the p4-deltas
+  integration.
 - [ ] **Remaining P4 work packages**: WP9 (1327de9), WP10 (98205b4), WP11 controls 4-6
   (6ac6142) and WP12 LOG entries (f4a38e0) are committed on `origin/p4-deltas`
   (HANDOFF-2026-10-09); its slow tier was never run. Folded into the integration item above.

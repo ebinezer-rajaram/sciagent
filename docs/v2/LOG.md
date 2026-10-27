@@ -1111,3 +1111,37 @@ small-model leaks. Conditions before adoption, being implemented: compare each u
 check being skipped silently when `--split` is missing. Unverified: whether identity-link fits
 (λ ≥ 0 only at training nodes) are proper densities, which the e^-c bound assumes. The veto
 window of the entry above (2026-10-28T13:00Z) is unchanged.
+
+## 2026-10-27: The beats-truth reference is tied to the truth record, and `--split` is required
+
+These are red-team conditions on the beats-truth proposal above. They do not adopt it; the
+review and the veto window still decide that.
+
+**Matching the truth record.** A truth id does not identify a truth. The Windows split
+(`1f0fac01…`) and the Linux split (`604acec5…`) share their 20 ids with different records.
+`gap_check`'s `truth` reference is therefore now a `TruthReference(digest, per_event)`. Its
+digest is computed the way `pilot.truth_entries` computes a cell's `truth_digest`. Each unit's
+own record is read from its cell:
+- a baseline: its key;
+- an `llm-score`: its session cell, which must be a committed `llm-session` cell for the same
+  truth and seed.
+
+A unit fails the gate, named in `digest_issues`, when its record:
+- cannot be established, or
+- is not the reference's, or
+- (without a reference) is one of several records within one (truth, seed) group, because
+  that group's gaps would pair different truths.
+
+Such a unit gets no margin over the truth.
+
+**Why `--split` is required.** `hunt_gap.py --split` is now a required argument rather than a
+missing flag that prints "not run" and exits non-zero. The two behave the same, but argparse
+refuses before any work is done, and no output can contain a gate verdict without the
+beats-truth half. The script names no default split because which split the store was run on
+is exactly what the operator must state. It also prints that split's `truths.json` sha256.
+
+**Positive control.** The dev-006 positive control, on the real dev split at seed 1, has a
+measured margin of −0.00033 nats/event (an honest ORACLE fit through the pilot's configuration).
+It is now a slow test.
+
+No fit or scoring output changes, so no version constant moves.

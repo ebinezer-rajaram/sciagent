@@ -75,6 +75,11 @@ def test_the_checks_pass_on_a_store_the_driver_wrote(
         report = gap_check(store, FIT_VERSION.rsplit(".", 1)[-1])
     assert kinds == ["baseline", "llm-score", "llm-session"]
     assert report.passed
+    assert report.digest_issues == ()
+    assert {(u.llm, u.truth_digest is not None) for u in report.units} == {
+        (False, True),
+        (True, True),
+    }
     assert report.underfit.checked == len(TRUTH_IDS)
     gaps = {(u.truth, u.system): u.gap for u in report.units}
     assert gaps[("hawkes", "B-lib")] == -0.80 - -0.70

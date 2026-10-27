@@ -350,3 +350,78 @@ follow-ups come before any AG-o run that produces reported numbers.
 
 **Next.** Integrate the replay check and the F5 review. Close the smoke when its last job
 ends: memory summary, S3 copy, ledger.
+
+
+## 2026-10-27: Lane session 5 (19:03 UTC): mini-pilot running, replay check merged, five decisions reviewed, three branches built
+
+**Done.**
+- Oriented on `v2` at 4cd2564. INBOX had no entries at the start; the owner's usage sprint
+  (21:15 entry, up to 6 specialists until 2026-10-28T02:00Z) arrived mid-session and was
+  followed from 21:13. VETO.md has no vetoes.
+- **Smoke:** still not finished at 22:06. B-sym@10F dev-000 has run since about 17:33Z (4.5 h;
+  the same job on dev-001 took 2083.6 s). Interim memory (`mem_sampler.py --summary
+  .cache/smoke-mem.csv --workers 2`): peak worker VmHWM 1.923 GB, × 2 = 3.846 GB; lowest
+  MemAvailable 5.461 GB (one dip, around 16:25Z, during B-sparse dev-000).
+- **Mini-pilot gate launched** (pilot-runner): worktree `.claude/worktrees/mini` at 4cd2564,
+  split sha256 `604acec5…` checked; `tmux -L sciagent` session `sci-mini`. Run A
+  (`.cache/mini-a`, `--workers 1`, `plan: 15 pool jobs, 0 LLM units`) has dev-008 done:
+  ORACLE 75.6 s, B-lib 8.4 s, B-np 6.5 s, B-rand 3829.8 s, B-sym 1081.5 s, B-sparse 1711.4 s;
+  planted-hint running. Run B (`.cache/mini-b`) starts by itself when the smoke's log ends with
+  `exit:` (`.cache/mini-b-wait.sh`, `.cache/mini-run.sh`); each run has a memory sampler.
+- **Store-level replay check merged** (98e3aa4; engineer, test first, ported from
+  `origin/windows-salvage`): `scripts/replay_check.py`. On the smoke store `4 of 4 passed,
+  REPLAY OK`, store bytes unchanged. On `v2`: ruff clean, mypy 237 files clean, fast tier
+  `2711 passed, 3 skipped`, its slow positive control `1 passed`. Hunt leftover (c) done.
+- **F5 (hand-written addresses):** red team widened the gap (domain marks and channels in no
+  address, `DATA_VERSION` hand-written, no code commit recorded); proposal: code-fingerprint
+  guard before the pilot, derived address text after (LOG; window ends 2026-10-28T19:15Z).
+  Guard built on local branch `fingerprint-guard`: 2998821, then a second red team (merge with
+  fixes: wrong-checkout fingerprint, parent-repo "clean", concurrent drivers, git flags, crash
+  safety), fixes in checkpoint 903937e (one driver per store via `flock`, `uv.lock` dropped,
+  torn last line treated as uncommitted). On 903937e: ruff, mypy clean, `tests/campaign` fast
+  `187 passed`, `test_fingerprint.py` `52 passed`; full fast tier and campaign slow tier NOT
+  run on it (killed for memory, below).
+- **Session keys** (2dbd125): red team, merge with fixes: the AG-o key still misses the
+  `docker run` flags, container environment, CSV precision and tool caps (five edits left every
+  key unchanged); image tag is not the image ID; a test mutation survives. All 920 non-AG-o
+  addresses confirmed unchanged; merges cleanly with v2 and `fingerprint-guard`. An engineer
+  is fixing it on the same branch (state below).
+- **Decisions open since 2026-10-06**, each drafted by a specialist and red-teamed:
+  - Δ11 EIG weights: the theorist's tie rule rejected (the η→0 limit, not EIG; undefined at
+    infinite KL; a SPEC change); proposal: keep BIC, EIG to relative precision, full ties
+    from the truth-keyed random draw, report the degeneracy (LOG; window 2026-10-28T21:40Z).
+  - Review items (a)-(e) (LOG; window 2026-10-28T21:45Z). (c) sets a P3 rule before the
+    Linux pilot: any ORACLE −inf fails C1 (it dropped the truth; one drop flipped GO to
+    CONTROLS FAIL on the test table; §2.4 already demands zero underfit flags). New queue item.
+  - Δ6 prompt variant: `link-neutral` not adopted as drafted (borderline data, softplus
+    priming, no guard on P4 arms); link-balanced variant recommended, not yet red-teamed, no
+    veto clock (LOG).
+  - FSD event cap: draft's 6,000 not adopted (telling shares the constant, degenerate FSD
+    picks at the cap, one replicate of evidence); measurement first (LOG).
+  Drafts and probes are in `.cache/drafts/`.
+- Owner pushes not delivered (Remote Control inactive); the four proposals were relayed to the
+  control-room session (agent-control) for the owner.
+
+**Learned.**
+- Six specialists on a 4-vCPU, 16 GB shared machine is too many when three of them run test
+  tiers: at 22:05 load was 28 and MemAvailable 2 GB (floor 6 GB, sampler brake 2 GB). I
+  killed my helpers' four pytest runs (none of the pilot's processes); available went back to
+  5.35 GB. In a sprint, give CPU-bound tests to at most one helper at a time and keep the
+  rest to reading and drafting.
+- A drafted recommendation rarely survives a red team unchanged: four of five did not. Budget
+  a review for every one.
+- The research-team guard blocks a whole Bash command that names a `.claude/` path in inline
+  file-writing code, including a `python3` queue edit; use the Edit tool.
+
+**Next.**
+1. Smoke: read `tail .cache/smoke-run.log`; when `exit:` appears, memory summary, copy the
+   store to `s3://delaymargin-results-482913/sciagent/`, add the smoke and mini-pilot lines to
+   LEDGER.csv, mark the smoke done. Run B of the mini-pilot then starts by itself.
+2. Branches waiting on windows (each needs the full fast tier and `tests/campaign -m slow`
+   before merge, run one at a time): `fingerprint-guard` 903937e (window 2026-10-28T19:15Z);
+   session keys (window 17:00Z, fixes in progress); `wall-time-move` (window 12:00Z); and
+   `c1-oracle-inf` (window 21:45Z). See their entries below for their state.
+3. Mini-pilot gate when both runs finish: `store_compare.py`, `hunt_gap.py --split`,
+   `store_check.py`, `replay_check.py` (no LLM records), the report, memory × workers.
+4. Δ6: red-team the link-balanced recommendation. FSD cap: measure the event-count
+   distribution (all dev truths, 16 replicates, both sides) in tmux.

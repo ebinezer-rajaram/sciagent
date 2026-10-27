@@ -94,9 +94,9 @@ Each item says when it is done. Move finished items to the bottom section after 
   `KEY_FIELDS` and the beats-truth flag (`hunt_gap.py --split`; making it fail the gate is a
   proposal, veto window ends 2026-10-28T13:00Z). Coverage table in JOURNAL 2026-10-27.
 - [ ] **Hunt-check leftovers** (from the cross-check): (a) re-run the red-team review of the
-  beats-truth gate proposal before adopting it (the first one stalled); (b) peak worker memory
-  and measured slowdown on dm-devbox for the mini-pilot gate (the Windows sampler has no Linux
-  equivalent: decide how to measure, e.g. a `/proc` RSS sampler, before the mini-pilot);
+  beats-truth gate proposal before adopting it (the first one stalled); (b) ~~peak worker memory~~ done 2026-10-27: `scripts/mem_sampler.py` (`/proc` VmHWM per
+  pool worker, STOP brake below 2 GB available; run it beside the mini-pilot with `--pid`),
+  measured slowdown on dm-devbox still to decide;
   (c) store-level replay check (`hunt/B/replay_check.py`), after the sandbox follow-ups land;
   (d) `rescore_guard` extras (strip the CLI from PATH, patch the SDK entry points);
   (e) explicit hash-seed baseline pair and report-on-a-copy (low).

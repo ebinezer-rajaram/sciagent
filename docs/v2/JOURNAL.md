@@ -200,3 +200,23 @@ follow-ups come before any AG-o run that produces reported numbers.
   - each isolated AG-o session gets its own sandbox root.
 - **Next, first:** red-team aea2b90 and the item-3 choice, write the LOG entry, run the owed
   tests, then rebase onto `v2` and merge.
+
+## 2026-10-27: Lane session 3 (14:04 UTC): sandbox follow-ups under review, Linux memory sampler (in progress)
+
+**Done so far.**
+- Oriented on `v2` at ef16530 (clean, up to date). INBOX has no entries. `free -g`: 10 GB
+  available; load about 6 (agent-control's `calib` and `claude` tmux sessions are running).
+- **Peak worker memory on Linux** (hunt leftover b): `scripts/mem_sampler.py` with
+  `tests/campaign/test_mem_sampler.py` (6 tests, all six seen failing first, then `6 passed`).
+  It walks `/proc` under the pilot's pid every 5 s and records `VmRSS` and `VmHWM` per process
+  (the kernel's peak, so a peak between samples is not missed while the worker lives), marks
+  spawn-pool workers, and writes the store's `STOP` below 2 GB `MemAvailable`. `--summary`
+  prints peak worker `VmHWM` × workers, the gate figure. Live check on the running slow-test
+  tree: rows written, xdist workers classed `other` as they should be.
+- Started (not yet finished): the owed slow tests for the sandbox follow-ups branch (aea2b90)
+  in tmux `sci-owed` (`tests/sandbox tests/investigation tests/campaign -m slow -n 2`, log
+  `.cache/owed_slow.log` in the worktree); a red-team review of aea2b90 and the item-3 choice;
+  a rerun of the beats-truth gate red team with a narrower question.
+
+**Next.** Read the owed tests and both reviews; LOG entry for item 3; rebase and merge the
+follow-ups; then the smoke.

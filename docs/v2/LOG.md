@@ -1188,3 +1188,24 @@ variance argument, since world data on a seed is already shared across truths
 (`world.py`, `SeedSequence([seed, stream, index])`). No policy unit has run for real. Implement
 on the `p4-deltas` integration, test first (seeds are an instrument), after the window unless
 VETO.md objects.
+
+## 2026-10-27: Clarabel's `optimal_inaccurate` stays accepted; recording it waits for the next fitter version
+
+The smoke log's repeated `Solution may be inaccurate` (`glm/fit_solve.py:591`) is CVXPY 1.9.3
+reporting Clarabel 0.11.1 `AlmostSolved` on identity-link cutting-plane subproblems, a stall
+(25 to 31 iterations, not the 100 cap; `max_iter=2000` gives identical bytes). It is not from
+ORACLE, B-lib or B-np on dev-000 (softplus link, 0 Clarabel calls when counted); B-rand on
+dev-000 seed 1 reproduces it at 3 of 240 ψ points. All three are certified by the code's own
+duality gap (relative 9.2e-10, 9.9e-10, 3.9e-11 against 1e-8). Against a tight reference solve
+(Clarabel tolerances 1e-12, `optimal`, relative gap ~1e-14) the shipped solves are worse by at
+most 1.4e-6 nats per fit and 8.4e-7 nats per held-out event, about 10^4 below the +0.01 gates,
+and the points are ~25 nats from the chosen one, so selection cannot flip. Same bytes in three
+processes. Decision: keep `ACCEPTED_STATUS = {optimal, optimal_inaccurate}`; the certificate,
+not the solver's label, is the test (Clarabel's default tolerance once reported `optimal` while
+less accurate). Do not tighten now: it would bump `FIT_VERSION` for a 1e-6 change. At the next
+planned bump, record a count of inaccurate ψ solves in `FitResult` and the unit detail (today
+only the chosen point's `solver_status` survives, and the store keeps neither), and consider the
+tighter settings. The number of warning lines in a log means nothing (once per process per line).
+Noted, not acted on: the fitter certifies to 1e-8 relative while `oracle_underfit` flags at
+1e-9 relative; fitted ORACLE log-likelihoods sit 0.1 to 1 nat above the truth's, so not a risk
+on the truths checked (dev-000, dev-004, dev-006). Evidence: `/tmp/inacc/*.log` (session 4).

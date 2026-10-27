@@ -1,0 +1,31 @@
+diff --git a/src/sciagent/investigation/prompts.py b/src/sciagent/investigation/prompts.py
+index 2f16f91..9b20743 100644
+--- a/src/sciagent/investigation/prompts.py
++++ b/src/sciagent/investigation/prompts.py
+@@ -94,8 +94,11 @@ given the past):
+ 
+ You choose the link g and the features phi_k. The framework fits every number:
+ the coefficients theta and each feature's shape parameters psi (profiled over
+-the fixed grids below, globally optimal on the grid, with a convex-optimality
+-certificate). The language has no numeric literals.
++the fixed grids below). When a structure has at most 512 psi combinations, every
++one is tried and the fit is the best on the grid; otherwise a deterministic
++local search is used, which can miss the best grid point. For the chosen psi,
++theta is optimal, with a convex-optimality certificate. The language has no
++numeric literals.
+ 
+     Structure := [link=identity; | link=exp; | link=softplus;] Feature + ...
+                  (0 to {MAX_FEATURES} features; `null` is the intercept-only model)
+diff --git a/src/sciagent/investigation/tools.py b/src/sciagent/investigation/tools.py
+index 8bdea27..e2266a3 100644
+--- a/src/sciagent/investigation/tools.py
++++ b/src/sciagent/investigation/tools.py
+@@ -525,7 +525,7 @@ class Lab:
+         search = (
+             "globally optimal on the grid"
+             if result.psi_search == "exhaustive"
+-            else "coordinate-optimal on the grid"
++            else "from a local search; may not be the best on the grid"
+         )
+         lines.append(
+             f"certified: {'yes' if result.certified else 'NO'} (psi {search}, "

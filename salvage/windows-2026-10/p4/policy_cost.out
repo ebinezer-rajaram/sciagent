@@ -1,0 +1,19 @@
+warning: `VIRTUAL_ENV=c:\dev\products\sciagent\.venv` does not match the project environment path `.venv` and will be ignored; use `--active` to target the active environment instead
+
+dev-008: link=softplus; Gate(Excite(ExpK, Mark(size), sign=-), PhaseWindow) + Gate(Excite(PowerK, Above(size), all), PhaseWindow)  n_obs=2153
+  entertained ['hawkes', 'seasonality', 'null'] w=[1.0, 0.0, 0.0]
+  M=8 D=35
+  library ranking 0.9s; entertained refit 0.9s
+  random       0.0s -> silence_release / mark_mean[size]
+  EIG        116.0s -> censor_marked_burst / next_gap_after_large_mark[size]
+  FSD         86.1s (+ Wiener-Hopf estimate 0.2s) -> inject_size_high / rate_after_mark_slope[size]
+  FSD null, 1 bootstrap     96.8s (max cell 0.731)
+
+dev-013: link=softplus; Gate(Periodic, PhaseWindow) + Gate(Gate(Periodic, PhaseWindow), PhaseWindow)  n_obs=1930
+  entertained ['hawkes', 'seasonality', 'null'] w=[1.0, 0.0, 0.0]
+  M=8 D=35
+  library ranking 0.9s; entertained refit 0.6s
+  random       0.0s -> silence_release / mark_mean[size]
+  EIG         97.3s -> censor_marked_burst / spectral_peak_frequency
+  FSD         81.4s (+ Wiener-Hopf estimate 0.2s) -> inject_sign_high / spectral_peak_prominence
+  FSD null, 1 bootstrap     84.9s (max cell 0.519)

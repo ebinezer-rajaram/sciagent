@@ -1,0 +1,2001 @@
+diff --git a/scripts/pilot.py b/scripts/pilot.py
+index 4787c56..7f7f213 100644
+--- a/scripts/pilot.py
++++ b/scripts/pilot.py
+@@ -7,6 +7,11 @@
+     uv run python scripts/pilot.py --root .cache/pilot --truths 2 --seeds 1 \
+         --llm-limit 4
+ 
++    # P3.1 (P4-PROPOSAL §2.2): rerun the non-LLM units under the current
++    # fitter and rescore the stored LLM sessions; no live session is launched
++    uv run python scripts/pilot.py --root .cache/pilot --truths 20 \
++        --b10f-truths 10 --workers 4 --rescore-llm
++
+ Binds pointproc to the domain-independent campaign driver
+ (``sciagent.campaign``): the dev split's truths (``records.read_split``,
+ hash-verified), channels and marks, B-lib's library, B-sym's seeds (the
+@@ -203,7 +208,14 @@ def build_parser() -> argparse.ArgumentParser:
+ 
+ def main() -> None:
+     reconfigure_stdout()
+-    args = build_parser().parse_args()
++    parser = build_parser()
++    parser.add_argument(
++        "--rescore-llm",
++        action="store_true",
++        help="score the stored LLM sessions under the current versions; never "
++        "launch a live session (P4-PROPOSAL §2.2)",
++    )
++    args = parser.parse_args()
+     from sciagent.campaign.driver import Campaign, DriverSettings
+     from sciagent.campaign.plan import (
+         BASELINES,
+@@ -238,6 +250,7 @@ def main() -> None:
+         run_baselines=not args.no_baselines,
+         run_llm=not args.no_llm,
+         max_heavy=args.max_heavy,
++        rescore_llm=args.rescore_llm,
+     )
+     campaign = Campaign(args.root, env, config, truth_entries(records), settings)
+     try:
+diff --git a/scripts/pilot_report.py b/scripts/pilot_report.py
+index 19a2574..1fcdd3c 100644
+--- a/scripts/pilot_report.py
++++ b/scripts/pilot_report.py
+@@ -9,6 +9,18 @@ per-system tables, efficiency curves, the SPEC §6.4 controls, the §7.1
+ verdict, the LLM cost table and the AG-o transcripts to read. The text between
+ ``<!-- notes -->`` and ``<!-- /notes -->`` in an existing report is
+ hand-written (smoke findings, observations) and is carried over unchanged.
++
++P3.1 (P4-PROPOSAL §2.2, §2.4): every score is read at its *current* address
++(current fitter and metric versions). LLM sessions are found by enumeration
++(``--sessions stored``, the default), so the fit/4 sessions are read and
++scored by their rescore cells; ``--sessions current`` reads only sessions at
++the current address. Void sessions are classified by the Δ8 policy
++(``sciagent.campaign.voids``), dropped from scoring and counted in every
++table; gap closed within its paired noise is shown as "flagged" (T4); control
++1 needs zero ``oracle_underfit`` flags; control 2 is the Δ10 rank rule.
++
++    uv run python scripts/pilot_report.py --root .cache/pilot --interim \
++        --out <scratch>/PILOT.md
+ """
+ 
+ from __future__ import annotations
+@@ -78,6 +90,25 @@ def timing(root: Path) -> dict[str, list[float]]:
+     return out
+ 
+ 
++def closed_text(r: Any) -> str:
++    """A row's gap closed for printing: the ratio, or "flagged" (T4)."""
++    if r is None or r.gap_closed is None:
++        return "-"
++    return "flagged" if r.closed_flagged else f"{r.gap_closed:.2f}"
++
++
++def planted_text(pc: Any) -> str:
++    ci = pc.median_ci
++    return (
++        f"{pc.wins} wins / {pc.ties} ties / {pc.losses} losses over {pc.n} truths; "
++        f"one-sided Wilcoxon signed-rank p = {pc.p_value:.4g}; median difference "
++        f"{fmt(ci.median)}, bootstrap 95% CI [{fmt(ci.low)}, {fmt(ci.high)}] "
++        f"(-inf ranks lowest). Beside them only: mean over the "
++        f"{pc.n - pc.n_infinite} finite truths {fmt(pc.mean_finite)}"
++        f"{f', {pc.n_infinite} infinite' if pc.n_infinite else ''}"
++    )
++
++
+ def interim_controls(tab: Any, resamples: int) -> list[str]:
+     """§6.4 controls on completed units only, without the drop rule (interim)."""
+     import numpy as np
+@@ -116,26 +147,12 @@ def interim_controls(tab: Any, resamples: int) -> list[str]:
+         pc = gonogo.planted_beats_rand(
+             srows, both, rng=np.random.default_rng(20261002), resamples=resamples
+         )
+-        idx = {(r.truth, r.system): r.gap for r in srows}
+-        diffs = sorted(
+-            statistics.fmean(
+-                [g for (t2, sy), g in idx.items() if t2 == t and sy == gonogo.PLANTED]
+-            )
+-            - statistics.fmean(
+-                [g for (t2, sy), g in idx.items() if t2 == t and sy == gonogo.B_RAND]
+-            )
+-            for t in both
+-        )
+         out += [
+             "- Planted hint - B-rand per-truth differences: "
+-            + ", ".join(f"{d:+.3f}" for d in diffs)
+-            + f" (median {statistics.median(diffs):+.4f}); a mean is dominated "
+-            "by any B-rand unit whose best-BIC model predicts held-out data "
+-            "catastrophically.",
+-            f"- Planted hint - B-rand over {len(both)} truths: mean "
+-            f"{fmt(pc.ci.mean)}, bootstrap 95% CI [{fmt(pc.ci.low)}, "
+-            f"{fmt(pc.ci.high)}] (would {'pass' if pc.passed else 'fail'}; "
+-            f"inconclusive at n = {len(both)}).",
++            + ", ".join(f"{d:+.3f}" for d in sorted(pc.differences))
++            + ".",
++            f"- Planted hint - B-rand (rank rule): {planted_text(pc)} (would "
++            f"{'pass' if pc.passed else 'fail'}; inconclusive at n = {len(both)}).",
+         ]
+     c10 = sorted(have.get(gonogo.B_SYM_10F, set()))
+     if c10:
+@@ -157,14 +174,26 @@ def main() -> None:
+     parser.add_argument(
+         "--interim", action="store_true", help="mark the report INTERIM"
+     )
++    parser.add_argument(
++        "--sessions",
++        choices=("stored", "current"),
++        default="stored",
++        help="find LLM sessions by enumeration (rescore) or at the current address",
++    )
+     reconfigure_stdout()
+     args = parser.parse_args()
+ 
+     import numpy as np
+ 
+     from sciagent.campaign import analysis
+-    from sciagent.campaign.plan import B_SYM_10F, BASELINES, CampaignConfig
++    from sciagent.campaign.plan import (
++        B_SYM_10F,
++        BASELINES,
++        METRIC_VERSION,
++        CampaignConfig,
++    )
+     from sciagent.campaign.store import ResultStore
++    from sciagent.glm.fit import FIT_VERSION
+     from sciagent.scoring import gonogo
+ 
+     records = select(load_split(args.split), args.truths, args.ids)
+@@ -180,8 +209,12 @@ def main() -> None:
+     )
+     truths = truth_entries(records)
+     with ResultStore(args.root) as store:
+-        tab = analysis.load_rows(store, env, config, truths)
++        tab = analysis.load_rows(store, env, config, truths, sessions=args.sessions)
+     rows = tab.rows
++    voided = analysis.void_counts(tab)
++    session_versions: dict[str, int] = {}
++    for x in tab.sessions:
++        session_versions[x.env_version] = session_versions.get(x.env_version, 0) + 1
+     llm_systems = config.llm_systems()
+     systems = [*BASELINES, *llm_systems]
+     verdict = analysis.verdict(
+@@ -231,6 +264,25 @@ def main() -> None:
+         "(truth, seed), shared by every system on it. gap = LL - LL(ORACLE); "
+         "gap closed = (LL - LL(B-lib)) / (LL(ORACLE) - LL(B-lib)). Recovery = exact "
+         "canonical match (LOG 2026-10-02).",
++        f"- Scores are read at the current address only (`{METRIC_VERSION}`, "
++        f"`{FIT_VERSION}`). LLM sessions ({args.sessions}): "
++        + (
++            ", ".join(
++                f"{n} conducted under `{v}`"
++                for v, n in sorted(session_versions.items())
++            )
++            or "none found"
++        )
++        + ". Sessions conducted under an older fitter saw that fitter's fits; "
++        "their submissions are refitted and scored under the current one "
++        "(declared, P4-PROPOSAL §2.2).",
++        "- Void policy (P4-PROPOSAL Δ8): a session is void only if a foreign tool "
++        "executed, on server tool use, an out-of-bounds hit or an infrastructure "
++        "fault; a denied unknown tool name is an unknown-tool attempt. Void "
++        "sessions are dropped from scoring and counted in every table.",
++        "- Gap closed is shown as `flagged` when |LL(ORACLE) - LL(B-lib)| on that "
++        "(truth, seed) is within the truth's paired SE of that difference over "
++        "seeds (T4); flagged ratios never enter a median or choose a transcript.",
+         "",
+         "## Coverage",
+         "",
+@@ -239,18 +291,31 @@ def main() -> None:
+     for s in systems:
+         mine = [r for r in rows if r.system == s]
+         sess = [x for x in tab.sessions if x.system == s]
++        llm = s in llm_systems
+         cov_rows.append(
+             [
+                 s,
+                 str(tab.planned.get(s, 0)),
+-                str(len(sess)) if s in llm_systems else "",
++                str(len(sess)) if llm else "",
++                str(voided.get(s, 0)) if llm else "",
++                str(sum(x.void.unknown_tool_attempts for x in sess)) if llm else "",
+                 str(len(mine)),
+                 str(sum(not r.ok for r in mine)),
+                 str(tab.missing.get(s, 0)),
+             ]
+         )
+     L += table(
+-        ["system", "planned", "sessions", "scored", "failed", "not run"], cov_rows
++        [
++            "system",
++            "planned",
++            "sessions",
++            "void (dropped)",
++            "unknown-tool attempts",
++            "scored",
++            "failed",
++            "not run",
++        ],
++        cov_rows,
+     )
+ 
+     L += ["## Notes", "", NOTES_OPEN, old_notes(args.out), NOTES_CLOSE, ""]
+@@ -298,14 +363,39 @@ def main() -> None:
+ 
+     # -- controls ----------------------------------------------------------
+     L += ["## Positive controls (SPEC §6.4)", ""]
++    uf = analysis.underfit_check([r for r in rows if not r.llm])
+     L += [
+         "**1. ORACLE beats B-lib** per truth: mean over seeds of gap(ORACLE) - "
+-        "gap(B-lib) must exceed its paired SE.",
++        "gap(B-lib) must exceed its paired SE, **and** zero `oracle_underfit` "
++        "flags on every ORACLE unit (P4-PROPOSAL §2.4): "
++        + (
++            f"**PASS** (no flag on {uf.checked} units)"
++            if uf.passed
++            else "**FAIL**: " + "; ".join(gonogo.underfit_reason(uf))
++        )
++        + ".",
+         "",
+     ]
+     by_id = {t.id: t for t in truths}
++
++    def underfit_cell(t: str) -> str:
++        flagged = [f"s{s}" for tt, s in uf.flagged if tt == t]
++        unrecorded = sum(tt == t for tt, _ in uf.unrecorded)
++        parts = [f"flagged {', '.join(flagged)}"] if flagged else []
++        if unrecorded:
++            parts.append(f"{unrecorded} unrecorded")
++        return "; ".join(parts) or "none"
++
+     L += table(
+-        ["truth", "stratum", "dict", "margin (nats/event)", "SE", "pass"],
++        [
++            "truth",
++            "stratum",
++            "dict",
++            "margin (nats/event)",
++            "SE",
++            "margin pass",
++            "oracle_underfit",
++        ],
+         [
+             [
+                 c.truth,
+@@ -314,16 +404,17 @@ def main() -> None:
+                 fmt(c.margin),
+                 fmt(c.se),
+                 "PASS" if c.passed else "FAIL",
++                underfit_cell(c.truth),
+             ]
+             for c in verdict.oracle_checks
+         ],
+     )
+     if verdict.planted is not None:
+-        ci = verdict.planted.ci
+         L += [
+-            "**2. Planted hint beats B-rand**: paired bootstrap 95% CI of the "
+-            "per-truth mean gap difference (planted - B-rand) over kept truths: "
+-            f"mean {fmt(ci.mean)}, CI [{fmt(ci.low)}, {fmt(ci.high)}], n = {ci.n} → "
++            "**2. Planted hint beats B-rand** (Δ10 rank rule: one-sided Wilcoxon "
++            f"p < {gonogo.CONTROL_2_ALPHA} **and** the median difference's CI "
++            "lower end > 0), per-truth mean gap difference planted - B-rand over "
++            f"kept truths: {planted_text(verdict.planted)} → "
+             f"**{'PASS' if verdict.planted.passed else 'FAIL'}**.",
+             "",
+         ]
+@@ -357,13 +448,14 @@ def main() -> None:
+     srows = []
+     for s in systems:
+         m = analysis.summarise(rows, s)
+-        if not m.units:
++        if not m.units and not voided.get(s):
+             continue
+         thin = " (thin)" if m.truths < THIN else ""
+         srows.append(
+             [
+                 s + thin,
+                 str(m.units),
++                str(voided.get(s, 0)) if s in llm_systems else "",
+                 str(m.failed),
+                 str(m.nonfinite),
+                 str(m.no_submission),
+@@ -373,6 +465,7 @@ def main() -> None:
+                 fmt(m.gap_mean),
+                 fmt(m.gap_median),
+                 fmt(m.closed_median, ".2f"),
++                str(m.closed_flagged),
+                 fmt(m.similarity_mean, ".3f"),
+                 fmt(m.distance_mean, ".3f"),
+             ]
+@@ -381,6 +474,7 @@ def main() -> None:
+         [
+             "system",
+             "units",
++            "void (excl.)",
+             "failed",
+             "-inf",
+             "no submit",
+@@ -390,6 +484,7 @@ def main() -> None:
+             "mean gap",
+             "median gap",
+             "median closed",
++            "closed flagged",
+             "similarity",
+             "distance",
+         ],
+@@ -399,7 +494,11 @@ def main() -> None:
+     def grouped(title: str, key: Callable[[str], str], groups: Sequence[str]) -> None:
+         nonlocal L
+         L += [f"### By {title}", ""]
+-        header = ["system"] + [f"{g}: recovers / closes / median gap" for g in groups]
++        header = [
++            "system",
++            *[f"{g}: recovers / closes / median gap" for g in groups],
++            "void (excl.)",
++        ]
+         out = []
+         for s in systems:
+             cells = []
+@@ -415,7 +514,8 @@ def main() -> None:
+                     f" (n={m.truths}{thin})"
+                 )
+             if any_rows:
+-                out.append([s, *cells])
++                v = str(voided.get(s, 0)) if s in llm_systems else ""
++                out.append([s, *cells, v])
+         L += table(header, out)
+ 
+     grouped("stratum", lambda t: by_id[t].stratum, ("near", "mid", "far"))
+@@ -452,8 +552,9 @@ def main() -> None:
+                 if s == B_SYM_10F
+                 else [""]
+             )
++            + [str(voided.get(s, 0)) if s in llm_systems else ""]
+         )
+-    L += table(["system", *[f"k={p}" for p in points], "10xF"], erows)
++    L += table(["system", *[f"k={p}" for p in points], "10xF", "void (excl.)"], erows)
+ 
+     # -- LLM ---------------------------------------------------------------
+     L += ["## LLM arms: cost and behaviour (under Max)", ""]
+@@ -488,7 +589,9 @@ def main() -> None:
+                 med("experiments_used"),
+                 pct(sum(r.get("experiments_used", 0.0) == 0.0 for r in rd) / len(rd)),
+                 pct(sum(r.get("predictions", 0.0) > 0.0 for r in rd) / len(rd)),
+-                str(int(sum(r.get("void", 0.0) for r in rd))),
++                str(sum(x.void.void for x in sess)),
++                str(sum(x.void.stored_void for x in sess)),
++                str(sum(x.void.unknown_tool_attempts for x in sess)),
+                 f"{int(covered)}/{int(evaluated)}",
+             ]
+         )
+@@ -507,7 +610,9 @@ def main() -> None:
+             "experiments",
+             "no experiment",
+             "any prediction",
+-            "void",
++            "void (policy)",
++            "void (stored)",
++            "unknown-tool attempts",
+             "predictions covered/evaluated",
+         ],
+         crows,
+@@ -518,12 +623,24 @@ def main() -> None:
+         "the record does not carry explicitly, and are not computed here.",
+         "",
+     ]
+-    voids = [x for x in tab.sessions if x.reading.get("void", 0.0) == 1.0]
+-    L += ["### Void runs", ""]
++    flagged_runs = [x for x in tab.sessions if x.void.void or x.void.stored_void]
++    L += [
++        "### Void runs",
++        "",
++        "Stored = the harness's flag at the time; policy = Δ8, read from the "
++        "record. Reclassified runs are scored; void runs are not.",
++        "",
++    ]
+     L += [
+         f"- {x.system} {x.truth} seed {x.seed}: "
+-        f"{x.detail.get('void_reasons') or x.detail.get('error')}"
+-        for x in voids
++        + (
++            f"**void**: {list(x.void.reasons)}"
++            if x.void.void
++            else f"not void (reclassified; {x.void.unknown_tool_attempts} denied "
++            f"unknown-tool attempt(s)); stored reasons "
++            f"{x.detail.get('void_reasons') or x.detail.get('error')}"
++        )
++        for x in flagged_runs
+     ] or ["- none"]
+     L += [""]
+ 
+@@ -551,8 +668,9 @@ def main() -> None:
+     anon = [x for x in ago if x.system.endswith("/anon")]
+ 
+     def has_closed(x: Any) -> bool:
++        # The corrected rule (T4): a flagged gap closed never chooses a pick.
+         r = scored.get((x.truth, x.seed, x.system))
+-        return r is not None and r.gap_closed is not None
++        return r is not None and r.gap_closed is not None and not r.closed_flagged
+ 
+     pick("best gap closed (named)", [x for x in named if has_closed(x)], closed)
+     pick(
+@@ -573,7 +691,7 @@ def main() -> None:
+         )
+         L += [
+             f"- **{why}**: {x.system} {x.truth} seed {x.seed}, gap closed "
+-            f"{fmt(None if r is None else r.gap_closed, '.2f')}, exact "
++            f"{closed_text(r)}, exact "
+             f"{None if r is None else r.exact}, record `{path}`; submitted "
+             f"`{x.detail.get('submission')}` vs truth `{by_id[x.truth].dsl}`."
+         ]
+diff --git a/src/sciagent/campaign/analysis.py b/src/sciagent/campaign/analysis.py
+index 600cf3b..360a678 100644
+--- a/src/sciagent/campaign/analysis.py
++++ b/src/sciagent/campaign/analysis.py
+@@ -4,13 +4,38 @@
+ addresses (:func:`load_rows`): for every planned unit its key is recomputed
+ and its cell looked up. A cell left by an older configuration has another
+ address and is never read, so a report cannot silently mix configurations
+-(the ledger's own docstring asks the report layer for exactly this).
++(the ledger's own docstring asks the report layer for exactly this). The one
++declared exception is ``sessions="stored"`` (P4-PROPOSAL §2.2, rescore): LLM
++*sessions* are then found by enumeration (:mod:`~sciagent.campaign.rescore`),
++so sessions conducted under an older fitter are read, but their *scores* are
++still read at the current address only (the old session's digest plus the
++current versions). Each :class:`Session` carries the ``env_version`` it ran
++under.
++
++**Void sessions** (P4-PROPOSAL Δ8, :mod:`~sciagent.campaign.voids`). Every
++session is classified by the void policy from its stored detail and record
++(no cell is edited). A void session's score row is dropped from every table
++even if a score cell exists (the pilot scored voids); the session itself stays
++in :attr:`Table.sessions` so reports count it (:func:`void_counts`).
+ 
+ **Non-finite scores.** A model that gives a held-out event zero intensity
+ scores ``-inf`` per event. That is kept as a result: its gap is ``-inf``, its
+-gap closed undefined (so it never closes), it is excluded from means (and
+-counted in ``nonfinite``), and it is left out of the §6.4 control rows, which
+-need finite gaps -- conservative for the planted-vs-B-rand control.
++gap closed undefined (so it never closes), and it is excluded from means (and
++counted in ``nonfinite``). In the §6.4 controls it ranks lowest (control 2 and
++3, by rank; Δ10); control 1 reads finite gaps only.
++
++**Gap closed within noise** (P4-PROPOSAL T4). The denominator
++``LL(ORACLE) - LL(B-lib)`` of one (truth, seed) can be tiny, and the ratio is
++then noise (audit §1: 37.32 on a denominator of 0.0029). The rule, in
++:func:`derive`: for a truth with at least 2 seeds on which both ORACLE and
++B-lib have finite scores, let ``d_s = LL(ORACLE)_s - LL(B-lib)_s`` and
++``noise = sd(d, ddof=1) / sqrt(n)``, the paired standard error control 1 uses
++for the same difference. A row's gap closed on seed ``s`` is **flagged**
++(:attr:`Row.closed_flagged`) when ``|d_s| <= noise``: at control 1's own
++resolution the denominator cannot be told from 0. With fewer than 2 such seeds
++the noise is not estimable and nothing is flagged. A flagged ratio is kept
++(the §7.1 shares read it as preregistered) but is never printed as a ratio,
++never enters a median gap closed, and never chooses a transcript.
+ 
+ **Derived scores** (SPEC §4.3), per (truth, seed), from the stored raw
+ held-out values: ``gap = per_event - per_event[ORACLE]`` and
+@@ -43,7 +68,7 @@ import math
+ import statistics
+ from collections.abc import Mapping, Sequence
+ from dataclasses import dataclass, field, replace
+-from typing import Any, Final
++from typing import Any, Final, Literal
+ 
+ import numpy as np
+ 
+@@ -57,6 +82,7 @@ from sciagent.campaign.plan import (
+     PLANTED,
+     CampaignConfig,
+     CampaignEnvironment,
++    CampaignError,
+     TruthEntry,
+     baseline_key,
+     baseline_units,
+@@ -64,7 +90,9 @@ from sciagent.campaign.plan import (
+     score_key,
+     session_key,
+ )
++from sciagent.campaign.rescore import stored_sessions
+ from sciagent.campaign.store import ResultStore
++from sciagent.campaign.voids import VoidStatus, decoded, session_void
+ from sciagent.core import reductions
+ from sciagent.scoring import gonogo
+ from sciagent.scoring.heldout import gap_closed
+@@ -100,17 +128,25 @@ class Row:
+     gap: float | None = None
+     gap_closed: float | None = None
+     curve_gaps: tuple[tuple[int, float], ...] = ()
++    #: ORACLE rows: the fit/5 ``oracle_underfit`` flag (None: not recorded).
++    oracle_underfit: bool | None = None
++    #: ORACLE rows: where the chosen ψ came from, ``"search"`` or ``"truth"``.
++    oracle_psi_source: str | None = None
++    #: The gap closed's denominator is within its paired noise (docstring).
++    closed_flagged: bool = False
+ 
+ 
+ @dataclass(frozen=True)
+ class Session:
+-    """One stored LLM session (scored or not)."""
++    """One stored LLM session (scored or not), under the void policy."""
+ 
+     truth: str
+     seed: int
+     system: str
+     reading: Mapping[str, float]
+     detail: Mapping[str, Json]
++    void: VoidStatus
++    env_version: str
+ 
+ 
+ @dataclass(frozen=True)
+@@ -129,11 +165,31 @@ def _f(reading: Mapping[str, str], name: str) -> float | None:
+     return None if v is None else float.fromhex(v)
+ 
+ 
+-def _row(
++_PSI_SOURCES: Final = ("search", "truth")
++
++
++def _oracle_fields(
++    system: str, detail: Mapping[str, Json]
++) -> tuple[bool | None, str | None]:
++    """The ORACLE's underfit flag and ψ source; None where a cell predates them."""
++    if system != ORACLE:
++        return None, None
++    flag = detail.get("oracle_underfit")
++    source = detail.get("oracle_psi_source")
++    if flag is not None and not isinstance(flag, bool):
++        raise CampaignError(f"oracle_underfit must be a bool, got {flag!r}")
++    if source is not None and source not in _PSI_SOURCES:
++        raise CampaignError(f"oracle_psi_source must be one of {_PSI_SOURCES}")
++    return flag, source
++
++
++def row_from_cell(
+     unit_truth: str, seed: int, system: str, llm: bool, cell: Mapping[str, Json]
+ ) -> Row:
++    """One stored score cell as a :class:`Row` (gaps not derived yet)."""
+     reading = cell["reading"]
+     detail = cell["detail"]["result"]
++    underfit, psi_source = _oracle_fields(system, detail)
+     status = _f(reading, "status")
+     ok = status is not None and status >= 1.0
+     submitted = status == 1.0
+@@ -155,6 +211,8 @@ def _row(
+         structure=detail.get("structure"),
+         curve=tuple((int(k), float(v)) for k, _, v in detail.get("curve", [])),
+         error=None if ok else str(detail.get("error")),
++        oracle_underfit=underfit,
++        oracle_psi_source=psi_source,
+     )
+ 
+ 
+@@ -163,12 +221,19 @@ def load_rows(
+     env: CampaignEnvironment,
+     config: CampaignConfig,
+     truths: Sequence[TruthEntry],
++    *,
++    sessions: Literal["current", "stored"] = "current",
+ ) -> Table:
+-    """Every planned unit's cell, by address (module docstring)."""
++    """Every planned unit's cell, by address (module docstring).
++
++    ``sessions="stored"`` finds LLM sessions by enumeration (rescore); their
++    scores are still read at the current address only.
++    """
+     by_id = {t.id: t for t in truths}
+     order = [t.id for t in truths]
++    found = stored_sessions(store, env, config, truths) if sessions == "stored" else {}
+     rows: list[Row] = []
+-    sessions: list[Session] = []
++    found_sessions: list[Session] = []
+     planned: dict[str, int] = {}
+     missing: dict[str, int] = {}
+     for u in baseline_units(order, config):
+@@ -177,32 +242,86 @@ def load_rows(
+         if not store.done(key):
+             missing[u.system] = missing.get(u.system, 0) + 1
+             continue
+-        rows.append(_row(u.truth_id, u.seed, u.system, False, store.cell(key.digest)))
++        rows.append(
++            row_from_cell(u.truth_id, u.seed, u.system, False, store.cell(key.digest))
++        )
+     for u in llm_units(order, config):
+         planned[u.system] = planned.get(u.system, 0) + 1
+-        skey = session_key(u, by_id[u.truth_id], env, config)
+-        if not store.done(skey):
++        if sessions == "stored":
++            hit = found.get(u)
++        else:
++            skey = session_key(u, by_id[u.truth_id], env, config)
++            hit = (skey, store.cell(skey.digest)) if store.done(skey) else None
++        if hit is None:
+             missing[u.system] = missing.get(u.system, 0) + 1
+             continue
+-        cell = store.cell(skey.digest)
+-        reading = {k: float.fromhex(v) for k, v in cell["reading"].items()}
+-        sessions.append(
+-            Session(u.truth_id, u.seed, u.system, reading, cell["detail"]["session"])
++        skey, cell = hit
++        reading = decoded(cell["reading"])
++        detail = cell["detail"]["session"]
++        void = session_void(store.root, reading, detail)
++        found_sessions.append(
++            Session(
++                u.truth_id,
++                u.seed,
++                u.system,
++                reading,
++                detail,
++                void,
++                str(skey.env_version),
++            )
+         )
+         ckey = score_key(u, skey, env, config)
+-        if store.done(ckey):
++        if store.done(ckey) and not void.void:
+             rows.append(
+-                _row(u.truth_id, u.seed, u.system, True, store.cell(ckey.digest))
++                row_from_cell(
++                    u.truth_id, u.seed, u.system, True, store.cell(ckey.digest)
++                )
+             )
+-    return Table(by_id, tuple(derive(rows)), tuple(sessions), planned, missing)
++    return Table(by_id, tuple(derive(rows)), tuple(found_sessions), planned, missing)
++
++
++def void_counts(table: Table) -> dict[str, int]:
++    """Void sessions per system (their scores are dropped; module docstring)."""
++    out: dict[str, int] = {}
++    for x in table.sessions:
++        if x.void.void:
++            out[x.system] = out.get(x.system, 0) + 1
++    return dict(sorted(out.items()))
++
++
++def _denominator_noise(
++    ref: Mapping[tuple[str, int, str], float],
++) -> tuple[dict[tuple[str, int], float], dict[str, float]]:
++    """Per (truth, seed) ``LL(ORACLE) - LL(B-lib)`` and per truth its paired SE."""
++    d: dict[tuple[str, int], float] = {}
++    for (t, seed, system), oracle in ref.items():
++        lib = ref.get((t, seed, B_LIB))
++        if (
++            system == ORACLE
++            and lib is not None
++            and math.isfinite(oracle)
++            and math.isfinite(lib)
++        ):
++            d[(t, seed)] = oracle - lib
++    by_truth: dict[str, list[float]] = {}
++    for (t, _), v in sorted(d.items()):
++        by_truth.setdefault(t, []).append(v)
++    noise = {
++        t: reductions.deviation(np.asarray(v, dtype=np.float64)) / math.sqrt(len(v))
++        for t, v in by_truth.items()
++        if len(v) >= 2
++    }
++    return d, noise
+ 
+ 
+ def derive(rows: Sequence[Row]) -> list[Row]:
+-    """Gaps, gaps closed and curve gaps against the same (truth, seed)'s refs."""
++    """Gaps, gaps closed (flagged within noise) and curve gaps against the
++    same (truth, seed)'s references (module docstring)."""
+     ref: dict[tuple[str, int, str], float] = {}
+     for r in rows:
+         if r.system in (ORACLE, B_LIB) and r.per_event is not None:
+             ref[(r.truth, r.seed, r.system)] = r.per_event
++    denominator, noise = _denominator_noise(ref)
+     out: list[Row] = []
+     for r in rows:
+         oracle = ref.get((r.truth, r.seed, ORACLE))
+@@ -216,7 +335,20 @@ def derive(rows: Sequence[Row]) -> list[Row]:
+                 closed = gap_closed(r.per_event, lib, oracle)
+         if oracle is not None:
+             curve = tuple((k, v - oracle) for k, v in r.curve)
+-        out.append(replace(r, gap=gap, gap_closed=closed, curve_gaps=curve))
++        d = denominator.get((r.truth, r.seed))
++        tol = noise.get(r.truth)
++        flagged = (
++            closed is not None and d is not None and tol is not None and abs(d) <= tol
++        )
++        out.append(
++            replace(
++                r,
++                gap=gap,
++                gap_closed=closed,
++                curve_gaps=curve,
++                closed_flagged=flagged,
++            )
++        )
+     return out
+ 
+ 
+@@ -274,12 +406,16 @@ class SystemSummary:
+     closed_median: float | None
+     similarity_mean: float | None
+     distance_mean: float | None
++    #: Units whose gap closed is flagged within noise (left out of the median).
++    closed_flagged: int = 0
+ 
+ 
+ def summarise(rows: Sequence[Row], system: str) -> SystemSummary:
+     mine = [r for r in rows if r.system == system]
+     gaps = [r.gap for r in mine if r.gap is not None and math.isfinite(r.gap)]
+-    closed = [r.gap_closed for r in mine if r.gap_closed is not None]
++    closed = [
++        r.gap_closed for r in mine if r.gap_closed is not None and not r.closed_flagged
++    ]
+     sims = [r.similarity for r in mine if r.ok and r.similarity is not None]
+     dists = [
+         r.distance for r in mine if r.ok and r.has_structure and r.distance is not None
+@@ -300,6 +436,7 @@ def summarise(rows: Sequence[Row], system: str) -> SystemSummary:
+         closed_median=_median(closed),
+         similarity_mean=_mean(sims),
+         distance_mean=_mean(dists),
++        closed_flagged=sum(r.closed_flagged for r in mine),
+     )
+ 
+ 
+@@ -346,12 +483,13 @@ class Verdict:
+     sparse_ood_close: float | None
+     reasons: tuple[str, ...]
+     inconclusive: tuple[str, ...]
++    underfit: gonogo.UnderfitCheck | None = None
+ 
+ 
+ def score_rows(
+     rows: Sequence[Row], truths: Mapping[str, TruthEntry]
+ ) -> list[gonogo.ScoreRow]:
+-    """``gonogo.ScoreRow`` for every non-LLM unit that has a gap."""
++    """``gonogo.ScoreRow`` for every non-LLM unit with a finite or ``-inf`` gap."""
+     return [
+         gonogo.ScoreRow(
+             truth=r.truth,
+@@ -361,23 +499,39 @@ def score_rows(
+             gap_closed=r.gap_closed,
+             exact=r.exact,
+             in_dictionary=truths[r.truth].in_dictionary,
++            oracle_underfit=r.oracle_underfit,
+         )
+         for r in rows
+-        if not r.llm and r.gap is not None and math.isfinite(r.gap)
++        if not r.llm
++        and r.gap is not None
++        and (math.isfinite(r.gap) or r.gap == -math.inf)
+     ]
+ 
+ 
++def underfit_check(rows: Sequence[Row]) -> gonogo.UnderfitCheck:
++    """Control 1's underfit half over every scored ORACLE unit of ``rows``."""
++    return gonogo.oracle_underfit_check(
++        [
++            (r.truth, r.seed, r.oracle_underfit)
++            for r in rows
++            if r.system == ORACLE and not r.llm and r.ok
++        ]
++    )
++
++
+ def verdict(
+     table: Table, rng: np.random.Generator, *, resamples: int = DEFAULT_RESAMPLES
+ ) -> Verdict:
+     """SPEC §7.1 over the non-LLM systems (module docstring)."""
+     rows = [r for r in table.rows if not r.llm]
+     srows = score_rows(rows, table.truths)
++    underfit = underfit_check(rows)
+     reasons: list[str] = []
+     inconclusive: list[str] = []
+     seeds_of: dict[tuple[str, str], set[int]] = {}
+     for r in srows:
+-        seeds_of.setdefault((r.truth, r.system), set()).add(r.seed)
++        if math.isfinite(r.gap):  # control 1 reads finite gaps only
++            seeds_of.setdefault((r.truth, r.system), set()).add(r.seed)
+     truths_with_pairs = [
+         t
+         for t in sorted(table.truths)
+@@ -395,6 +549,7 @@ def verdict(
+         )
+     if dropped:
+         reasons.append(f"dropped as not identifiable (ORACLE ≤ B-lib): {list(dropped)}")
++    reasons += gonogo.underfit_reason(underfit)
+     if not checks:
+         return Verdict(
+             "incomplete",
+@@ -411,6 +566,7 @@ def verdict(
+             None,
+             ("no truth has ORACLE and B-lib on 2 seeds yet",),
+             tuple(inconclusive),
++            underfit,
+         )
+     if not kept:
+         reasons.append("no truth kept: ORACLE never shown to beat B-lib")
+@@ -429,6 +585,7 @@ def verdict(
+             None,
+             tuple(reasons),
+             tuple(inconclusive),
++            underfit,
+         )
+ 
+     def covered(system: str) -> list[str]:
+@@ -440,10 +597,7 @@ def verdict(
+     if len(both) >= 2:
+         planted = gonogo.planted_beats_rand(srows, both, rng=rng, resamples=resamples)
+         if not planted.passed:
+-            reasons.append(
+-                f"planted-hint does not beat B-rand: CI [{planted.ci.low:.4g}, "
+-                f"{planted.ci.high:.4g}]"
+-            )
++            reasons.append(gonogo.planted_reason(planted))
+     else:
+         inconclusive.append("planted-hint vs B-rand: fewer than 2 truths with both")
+     bsym: gonogo.BsymCheck | None = None
+@@ -458,7 +612,11 @@ def verdict(
+     else:
+         inconclusive.append("B-sym@10F: no kept truth has a result")
+     controls = (
+-        planted is not None and planted.passed and bsym is not None and bsym.passed
++        planted is not None
++        and planted.passed
++        and bsym is not None
++        and bsym.passed
++        and underfit.passed
+     )
+ 
+     kept_rows = [r for r in rows if r.truth in kept]
+@@ -486,7 +644,13 @@ def verdict(
+         reasons.append(
+             f"B-sparse closes the gap on {sparse_ood:.0%} of out-of-dictionary truths"
+         )
++    # Too hard (P4-PROPOSAL §2.4, literally): every non-LLM system closes on
++    # < 10% of truths. The ORACLE is the reference the gap is measured from
++    # (it closes by definition), so "every" is every other non-LLM system.
+     present = [s for s in systems if close.get(s) is not None]
++    absent = [s for s in systems if s not in present]
++    if absent:
++        inconclusive.append(f"too hard read without {absent} (no kept rows)")
+     too_hard = bool(present) and all(
+         (close[s] or 0.0) < gonogo.TOO_HARD_SHARE for s in present
+     )
+@@ -518,6 +682,7 @@ def verdict(
+         sparse_ood,
+         tuple(reasons),
+         tuple(inconclusive),
++        underfit,
+     )
+ 
+ 
+diff --git a/src/sciagent/campaign/driver.py b/src/sciagent/campaign/driver.py
+index 4af2ddc..36f2d6d 100644
+--- a/src/sciagent/campaign/driver.py
++++ b/src/sciagent/campaign/driver.py
+@@ -26,7 +26,18 @@ queue.
+ 
+ **Resumable.** A unit whose address is in the store is skipped; nothing is
+ ever overwritten. An LLM unit whose session is stored but whose score is not
+-is scored from the session's stored detail, without calling the model.
++is scored from the session's stored detail, without calling the model. A
++session that is void under the policy of :mod:`~sciagent.campaign.voids`
++(P4-PROPOSAL Δ8) is never scored.
++
++**Rescore mode** (``DriverSettings.rescore_llm``, P4-PROPOSAL §2.2). A
++fitter change gives every session a new address, so the normal plan would
++relaunch every live session. In rescore mode the LLM plan is instead the
++stored sessions (:func:`~sciagent.campaign.rescore.stored_sessions`), each
++scored under the current versions (its score addressed by the stored
++session's digest); no session is ever launched (:meth:`Campaign._launch_llm`
++refuses), and a unit with no stored session is logged, not run. Non-LLM
++units plan and run as usual.
+ 
+ **Failures.** A unit that fails with a framework or numerical error is
+ recorded as a failed result by the worker (``execute``). A job that raises
+@@ -101,7 +112,9 @@ from sciagent.campaign.plan import (
+     session_text,
+     system_config_text,
+ )
++from sciagent.campaign.rescore import stored_sessions
+ from sciagent.campaign.store import ResultStore
++from sciagent.campaign.voids import decoded, session_void
+ from sciagent.core.errors import SciAgentError
+ from sciagent.harness.live import SessionDriver
+ from sciagent.registry.store import ExperimentKey
+@@ -144,6 +157,9 @@ class DriverSettings:
+     isolate_llm: bool = True
+     #: Memory-heavy jobs (B-sparse) allowed in flight at once.
+     max_heavy: int = 2
++    #: Score the stored LLM sessions under the current versions and never
++    #: launch one (module docstring); replaces the LLM plan.
++    rescore_llm: bool = False
+     driver_factory: DriverFactory | None = field(default=None, compare=False)
+ 
+ 
+@@ -272,12 +288,39 @@ class Campaign:
+                 continue
+             self.llm_queue.append(_LLMTask(u, skey))
+ 
++    def _plan_rescore(self) -> None:
++        found = stored_sessions(
++            self.store, self.env, self.config, list(self.truths.values())
++        )
++        absent = 0
++        for u in llm_units(self.order, self.config):
++            hit = found.get(u)
++            if hit is None:
++                absent += 1
++                continue
++            skey, cell = hit
++            if self.store.done(score_key(u, skey, self.env, self.config)):
++                self.skipped_done += 1
++            else:
++                self._queue_score(u, skey, cell)
++        self.log.info(
++            f"rescore: {len(found)} stored sessions; {absent} LLM units have none "
++            f"(not launched in rescore mode)"
++        )
++
+     def _queue_score(
+         self, unit: Unit, skey: ExperimentKey, cell: Mapping[str, Json]
+     ) -> None:
+         detail = cell["detail"]["session"]
+         if cell["reading"].get("status") != (1.0).hex():
+             return  # an aborted session has nothing to score
++        void = session_void(self.root, decoded(cell["reading"]), detail)
++        if void.void:
++            self.log.info(
++                f"llm-score {unit.system} {unit.truth_id} s{unit.seed}: void "
++                f"session, not scored: {list(void.reasons)}"
++            )
++            return
+         job = ScoreJob(
+             self.truths[unit.truth_id],
+             unit.seed,
+@@ -400,6 +443,8 @@ class Campaign:
+             self.skipped_done += 1
+         if (self.root / STOP_LLM_FILE).exists():
+             return False
++        if s.rescore_llm:
++            return False
+         if not s.run_llm or self.llm_stopped or not self.llm_queue:
+             return False
+         if s.llm_limit is not None and self.llm_launched >= s.llm_limit:
+@@ -407,6 +452,8 @@ class Campaign:
+         return time.monotonic() >= self.paused_until
+ 
+     def _launch_llm(self, threads: ThreadPoolExecutor) -> Future[SessionOutcome]:
++        if self.settings.rescore_llm:
++            raise CampaignError("rescore mode never launches an LLM session")
+         task = self.llm_queue.popleft()
+         task.attempts += 1
+         self.llm_launched += 1
+@@ -496,7 +543,9 @@ class Campaign:
+             self.log.info(f"recovered {recovered} cells from detail files")
+         if self.settings.run_baselines:
+             self._plan_baselines()
+-        if self.settings.run_llm:
++        if self.settings.rescore_llm:
++            self._plan_rescore()
++        elif self.settings.run_llm:
+             self._plan_llm()
+         self.log.info(
+             f"plan: {len(self.pool_queue)} pool jobs, {len(self.llm_queue)} LLM "
+diff --git a/src/sciagent/campaign/execute.py b/src/sciagent/campaign/execute.py
+index 93fbefb..10ac64b 100644
+--- a/src/sciagent/campaign/execute.py
++++ b/src/sciagent/campaign/execute.py
+@@ -208,7 +208,14 @@ def _run_system(
+     start = time.perf_counter()
+     match system:
+         case "ORACLE":
+-            result = Oracle(truth.structure, fit_config=fc).run(data)
++            # The truth-ψ check (P4-PROPOSAL Δ1): framework-side, so the
++            # ORACLE may see the truth's ψ and coefficients.
++            result = Oracle(
++                truth.structure,
++                fit_config=fc,
++                truth_psi=truth.spec.psi,
++                truth_coefficients=truth.spec.coef,
++            ).run(data)
+         case "B-lib":
+             result = BLib(env.library, fit_config=fc).run(data)
+         case "B-np":
+@@ -290,6 +297,7 @@ def run_baseline_job(job: BaselineJob) -> tuple[UnitResult, ...]:
+             out.append(_failure(system, error, time.perf_counter() - t0))
+             continue
+         reading["fits_used"] = float(result.fits_used)
++        detail.update(result.details)
+         detail.update(extra)
+         detail.update(
+             {
+diff --git a/src/sciagent/campaign/plan.py b/src/sciagent/campaign/plan.py
+index feee01c..569c4d8 100644
+--- a/src/sciagent/campaign/plan.py
++++ b/src/sciagent/campaign/plan.py
+@@ -74,9 +74,12 @@ B_SYM_10F: Final = "B-sym@10F"
+ BASELINES: Final = (ORACLE, B_LIB, B_NP, B_RAND, B_SYM, B_SPARSE, PLANTED, B_SYM_10F)
+ 
+ #: The scorer's version: held-out gap, structure, battery, efficiency curve.
+-#: Bump when any scoring code or constant changes.
++#: Bump when any scoring code or constant changes. /2 (2026-10-03): the
++#: control-2 rank rule, the gap-closed noise flag and the ORACLE underfit
++#: requirement of control 1 (P4-PROPOSAL Δ10, T4, §2.4) change what is read
++#: from a score, so fit/5 scores are addressed apart from fit/4's.
+ METRIC_VERSION: Final = (
+-    f"sciagent.campaign.score/1|battery:{battery.BATTERY_HORIZON}"
++    f"sciagent.campaign.score/2|battery:{battery.BATTERY_HORIZON}"
+     f"x{battery.REPLICATES}cap{battery.BATTERY_MAX_EVENTS}"
+ )
+ #: The data every unit sees: the world's observational log and the held-out log.
+@@ -362,6 +365,11 @@ def session_text(arm: LLMArm, config: CampaignConfig) -> str:
+     )
+ 
+ 
++def session_config_digest(arm: LLMArm, config: CampaignConfig) -> str:
++    """The SHA-256 of :func:`session_text` (the session key's config field)."""
++    return _sha(session_text(arm, config))
++
++
+ def session_key(
+     unit: Unit, truth: TruthEntry, env: CampaignEnvironment, config: CampaignConfig
+ ) -> ExperimentKey:
+@@ -378,7 +386,7 @@ def session_key(
+             "system": unit.system,
+             "truth": truth.id,
+             "truth_digest": truth.digest,
+-            "session_config": _sha(session_text(arm, config)),
++            "session_config": session_config_digest(arm, config),
+         },
+         "none",
+     )
+diff --git a/src/sciagent/scoring/gonogo.py b/src/sciagent/scoring/gonogo.py
+index e4a9387..2fa54ef 100644
+--- a/src/sciagent/scoring/gonogo.py
++++ b/src/sciagent/scoring/gonogo.py
+@@ -26,17 +26,36 @@ B-sym run is its own system, :data:`B_SYM_10F`.
+ 
+ - :func:`oracle_beats_lib`: per truth, the paired differences
+   ``gap_oracle - gap_lib`` over seeds; it passes when their mean exceeds
+-  their paired standard error (needs ≥ 2 seeds). A truth that fails is not
+-  identifiable and is **dropped** by the preregistered rule before anything
+-  else is read; if every truth is dropped, the controls fail.
+-- :func:`planted_beats_rand`: the paired bootstrap CI (``scoring/stats.py``)
+-  over retained truths of the per-truth mean gap of the planted-hint agent
+-  minus B-rand's; passes when the CI's lower end is above 0.
+-- :func:`bsym_approaches_oracle`: the median over retained truths of B-sym at
+-  10xF's per-truth mean gap is at least ``-BSYM_TOLERANCE`` = -0.01
+-  nats/event: twice the recovery tolerance, since the median must say the
+-  space is searchable, not that B-sym recovers every truth, and a quarter of
+-  the S11 library gap.
++  their paired standard error (needs ≥ 2 seeds with finite gaps). A truth
++  that fails is not identifiable and is **dropped** by the preregistered rule
++  before anything else is read; if every truth is dropped, the controls fail.
++  **And** (P4-PROPOSAL §2.4) the ORACLE must carry zero ``oracle_underfit``
++  flags (:func:`oracle_underfit_check`): an ORACLE fit whose training
++  log-likelihood is below the true parameters' is not an upper bound, so
++  nothing referenced to it can be read. A flag that was never recorded (a cell
++  from before fit/5) is not "zero flags": the check fails and says so.
++- :func:`planted_beats_rand` (Δ10, rank rule): per retained truth, the
++  difference ``d_t`` of the planted-hint agent's and B-rand's per-truth mean
++  gaps (a seed at ``-inf`` makes its truth's mean ``-inf``: it ranks lowest;
++  both at ``-inf`` is a tie, ``d_t = 0``). It passes when **both** the
++  one-sided exact Wilcoxon signed-rank test of ``d`` gives ``p <``
++  :data:`CONTROL_2_ALPHA` **and** the percentile bootstrap CI of the median of
++  ``d`` (``scoring/stats.py``) has its lower end above 0. The win count, the
++  median and, beside them only, the mean over the finite ``d_t`` are
++  reported. The mean is not the statistic: one explosive B-rand model
++  carried it to 6.8 in the pilot (audit §2). The exact test has
++  p >= 2**-n, so the control cannot pass on fewer than 5 truths.
++- :func:`bsym_approaches_oracle`: the median
++  (:func:`~sciagent.scoring.stats.order_median`, so a ``-inf`` truth ranks
++  lowest rather than being dropped) over retained truths of B-sym at 10xF's
++  per-truth mean gap is at least ``-BSYM_TOLERANCE`` = -0.01 nats/event: twice
++  the recovery tolerance, since the median must say the space is searchable,
++  not that B-sym recovers every truth, and a quarter of the S11 library gap.
++
++**Non-finite gaps.** A row's gap may be ``-inf`` (a model that gives a
++held-out event zero intensity); ``nan`` and ``+inf`` are refused. Control 1
++reads finite gaps only (a ``-inf`` B-lib seed carries no SE); controls 2 and 3
++read ``-inf`` by rank.
+ 
+ **Verdict** (SPEC §7.1, in precedence order).
+ 
+@@ -44,8 +63,10 @@ B-sym run is its own system, :data:`B_SYM_10F`.
+ 2. **Too easy** if B-lib or B-rand recovers ≥ 70% of truths, or B-sparse
+    closes the gap on ≥ 70% of the out-of-dictionary truths (not triggered
+    when there are none; the verdict says so).
+-3. **Too hard** if the gap closes for < 10% of truths with *every* system
+-   other than the ORACLE in the table (B-sym at 10xF is required to be there).
++3. **Too hard** if the gap closes for < 10% of truths with *every* non-LLM
++   system in the table (P4-PROPOSAL §2.4), the ORACLE excepted: it is the
++   reference the gap is measured from, so it closes by definition. B-sym at
++   10xF is required to be there.
+ 4. **Go** otherwise, regardless of who wins.
+ 
+ Too easy and too hard are both computed and reported even when a
+@@ -66,9 +87,11 @@ from sciagent.core import reductions
+ from sciagent.scoring.errors import ScoringError
+ from sciagent.scoring.stats import (
+     DEFAULT_RESAMPLES,
+-    BootstrapCI,
+-    paired_bootstrap_ci,
++    MedianCI,
++    bootstrap_median_ci,
++    order_median,
+     paired_mean_se,
++    signed_rank_greater,
+ )
+ 
+ ORACLE: Final = "ORACLE"
+@@ -85,15 +108,19 @@ CLOSE_FRACTION: Final = 0.9
+ BSYM_TOLERANCE: Final = 0.01
+ TOO_EASY_SHARE: Final = 0.7
+ TOO_HARD_SHARE: Final = 0.1
++#: One-sided level of control 2's signed-rank test (SPEC §6.2's 95%).
++CONTROL_2_ALPHA: Final = 0.05
+ 
+ 
+ @dataclass(frozen=True)
+ class ScoreRow:
+     """One system's scores on one (truth, seed).
+ 
+-    ``gap`` is ``LL_sub - LL_oracle`` per event; ``gap_closed`` is None when
+-    undefined; ``in_dictionary`` is the truth's B-sparse dictionary membership
+-    (the same on every row of a truth).
++    ``gap`` is ``LL_sub - LL_oracle`` per event (finite or ``-inf``);
++    ``gap_closed`` is None when undefined; ``in_dictionary`` is the truth's
++    B-sparse dictionary membership (the same on every row of a truth).
++    ``oracle_underfit`` is the ORACLE row's flag (None: not recorded, or not
++    an ORACLE row).
+     """
+ 
+     truth: str
+@@ -103,6 +130,7 @@ class ScoreRow:
+     gap_closed: float | None
+     exact: bool
+     in_dictionary: bool
++    oracle_underfit: bool | None = None
+ 
+ 
+ class Outcome(Enum):
+@@ -140,8 +168,8 @@ def _index(rows: Sequence[ScoreRow]) -> dict[tuple[str, int, str], ScoreRow]:
+         key = (r.truth, r.seed, r.system)
+         if key in out:
+             raise ScoringError(f"duplicate row for {key}")
+-        if not math.isfinite(r.gap):
+-            raise ScoringError(f"non-finite gap in row {key}")
++        if math.isnan(r.gap) or r.gap == math.inf:
++            raise ScoringError(f"gap {r.gap} in row {key}: only -inf is allowed")
+         if r.gap_closed is not None and not math.isfinite(r.gap_closed):
+             raise ScoringError(f"non-finite gap closed in row {key}")
+         if membership.setdefault(r.truth, r.in_dictionary) != r.in_dictionary:
+@@ -188,8 +216,11 @@ class OracleCheck:
+ 
+ 
+ def oracle_beats_lib(rows: Sequence[ScoreRow]) -> tuple[OracleCheck, ...]:
+-    """Per truth: mean ``gap_oracle - gap_lib`` over seeds above its paired SE."""
+-    index = _index(rows)
++    """Per truth: mean ``gap_oracle - gap_lib`` over seeds above its paired SE.
++
++    Finite gaps only (module docstring).
++    """
++    index = _index([r for r in rows if math.isfinite(r.gap)])
+     checks: list[OracleCheck] = []
+     for t in _truths(rows):
+         oracle = {r.seed: r.gap for r in _system_rows(index, ORACLE, t)}
+@@ -204,11 +235,79 @@ def oracle_beats_lib(rows: Sequence[ScoreRow]) -> tuple[OracleCheck, ...]:
+     return tuple(checks)
+ 
+ 
++@dataclass(frozen=True)
++class UnderfitCheck:
++    """ORACLE ``oracle_underfit`` flags: (truth, seed) flagged and unrecorded."""
++
++    flagged: tuple[tuple[str, int], ...]
++    unrecorded: tuple[tuple[str, int], ...]
++    checked: int
++
++    @property
++    def passed(self) -> bool:
++        return not self.flagged and not self.unrecorded and self.checked > 0
++
++
++def oracle_underfit_check(
++    flags: Sequence[tuple[str, int, bool | None]],
++) -> UnderfitCheck:
++    """Control 1's second half: zero flags over ORACLE (truth, seed, flag)."""
++    ordered = sorted(flags, key=lambda f: (f[0], f[1]))
++    return UnderfitCheck(
++        flagged=tuple((t, s) for t, s, f in ordered if f is True),
++        unrecorded=tuple((t, s) for t, s, f in ordered if f is None),
++        checked=len(ordered),
++    )
++
++
++def underfit_reason(check: UnderfitCheck) -> list[str]:
++    """Why control 1's underfit half fails (empty when it passes)."""
++    out: list[str] = []
++    if check.flagged:
++        units = [f"{t} s{s}" for t, s in check.flagged]
++        out.append(
++            f"ORACLE oracle_underfit flagged on {len(check.flagged)} unit(s): {units}"
++        )
++    if check.unrecorded:
++        out.append(
++            f"ORACLE oracle_underfit not recorded on {len(check.unrecorded)} of "
++            f"{check.checked} unit(s) (cells from before fit/5): zero flags "
++            f"cannot be shown"
++        )
++    if check.checked == 0:
++        out.append("no ORACLE unit to check for oracle_underfit")
++    return out
++
++
+ @dataclass(frozen=True)
+ class PlantedCheck:
+-    ci: BootstrapCI
++    """Control 2 by rank (module docstring); ``differences`` per truth."""
++
++    truths: tuple[str, ...]
++    differences: tuple[float, ...]
++    wins: int
++    ties: int
++    losses: int
++    p_value: float
++    median_ci: MedianCI
++    mean_finite: float | None
++    n_infinite: int
+     passed: bool
+ 
++    @property
++    def median(self) -> float:
++        return self.median_ci.median
++
++    @property
++    def n(self) -> int:
++        return len(self.truths)
++
++
++def _difference(planted: float, rand: float) -> float:
++    if planted == rand:  # includes both at -inf: a tie, not nan
++        return 0.0
++    return planted - rand
++
+ 
+ def planted_beats_rand(
+     rows: Sequence[ScoreRow],
+@@ -217,12 +316,40 @@ def planted_beats_rand(
+     rng: np.random.Generator,
+     resamples: int = DEFAULT_RESAMPLES,
+ ) -> PlantedCheck:
+-    """Paired bootstrap of planted-hint minus B-rand per-truth mean gaps."""
++    """Planted-hint minus B-rand per-truth mean gaps, read by rank (docstring)."""
++    if not truths:
++        raise ScoringError("no truths to read control 2 on")
+     index = _index(rows)
+-    planted = [_mean_gap(index, PLANTED, t) for t in truths]
+-    rand = [_mean_gap(index, B_RAND, t) for t in truths]
+-    ci = paired_bootstrap_ci(planted, rand, rng, resamples=resamples)
+-    return PlantedCheck(ci, ci.low > 0.0)
++    d = [
++        _difference(_mean_gap(index, PLANTED, t), _mean_gap(index, B_RAND, t))
++        for t in truths
++    ]
++    p = signed_rank_greater(d)
++    ci = bootstrap_median_ci(d, rng, resamples=resamples)
++    finite = [x for x in d if math.isfinite(x)]
++    return PlantedCheck(
++        truths=tuple(truths),
++        differences=tuple(d),
++        wins=sum(x > 0.0 for x in d),
++        ties=sum(x == 0.0 for x in d),
++        losses=sum(x < 0.0 for x in d),
++        p_value=p,
++        median_ci=ci,
++        mean_finite=_mean(finite) if finite else None,
++        n_infinite=len(d) - len(finite),
++        passed=p < CONTROL_2_ALPHA and ci.low > 0.0,
++    )
++
++
++def planted_reason(check: PlantedCheck) -> str:
++    """Why control 2 fails, in the rank rule's own terms."""
++    ci = check.median_ci
++    return (
++        f"planted-hint does not beat B-rand by the rank rule: Wilcoxon one-sided "
++        f"p = {check.p_value:.4g} (needs < {CONTROL_2_ALPHA}), median difference "
++        f"{ci.median:.4g} with CI [{ci.low:.4g}, {ci.high:.4g}] (lower end must "
++        f"be > 0), wins {check.wins}/{check.n}"
++    )
+ 
+ 
+ @dataclass(frozen=True)
+@@ -239,8 +366,7 @@ def bsym_approaches_oracle(
+     if not truths:
+         raise ScoringError("no truths to read B-sym at 10xF on")
+     index = _index(rows)
+-    gaps = np.array([_mean_gap(index, B_SYM_10F, t) for t in truths], dtype=np.float64)
+-    median = float(np.median(gaps))
++    median = order_median([_mean_gap(index, B_SYM_10F, t) for t in truths])
+     return BsymCheck(median, BSYM_TOLERANCE, median >= -BSYM_TOLERANCE)
+ 
+ 
+@@ -266,6 +392,7 @@ class Verdict:
+     close_share: Mapping[str, float]
+     sparse_out_of_dictionary_close_share: float | None
+     reasons: tuple[str, ...]
++    underfit: UnderfitCheck | None = None
+ 
+ 
+ def _truth_share(
+@@ -309,12 +436,16 @@ def go_no_go(
+     index = _index(rows)
+     _check_complete(index)
+     checks = oracle_beats_lib(rows)
++    underfit = oracle_underfit_check(
++        [(t, n, r.oracle_underfit) for (t, n, s), r in index.items() if s == ORACLE]
++    )
+     dropped = tuple(c.truth for c in checks if not c.passed)
+     kept = tuple(c.truth for c in checks if c.passed)
+     others = sorted({s for _, _, s in index if s != ORACLE})
+     reasons: list[str] = []
+     if dropped:
+         reasons.append(f"dropped as not identifiable (ORACLE ≤ B-lib): {list(dropped)}")
++    reasons += underfit_reason(underfit)
+     if not kept:
+         reasons.append("every truth was dropped: ORACLE never beats B-lib")
+         return Verdict(
+@@ -331,16 +462,14 @@ def go_no_go(
+             {},
+             None,
+             tuple(reasons),
++            underfit,
+         )
+ 
+     planted = planted_beats_rand(rows, kept, rng=rng, resamples=resamples)
+     bsym = bsym_approaches_oracle(rows, kept)
+-    controls = planted.passed and bsym.passed
++    controls = planted.passed and bsym.passed and underfit.passed
+     if not planted.passed:
+-        reasons.append(
+-            f"planted-hint does not beat B-rand: CI [{planted.ci.low:.4g}, "
+-            f"{planted.ci.high:.4g}]"
+-        )
++        reasons.append(planted_reason(planted))
+     if not bsym.passed:
+         reasons.append(
+             f"B-sym at 10xF median gap {bsym.median_gap:.4g} < -{BSYM_TOLERANCE}"
+@@ -395,4 +524,5 @@ def go_no_go(
+         close,
+         sparse_ood,
+         tuple(reasons),
++        underfit,
+     )
+diff --git a/src/sciagent/scoring/stats.py b/src/sciagent/scoring/stats.py
+index 6d5c285..c6ac83b 100644
+--- a/src/sciagent/scoring/stats.py
++++ b/src/sciagent/scoring/stats.py
+@@ -13,6 +13,29 @@ the statistic is the mean of the per-unit differences ``x_i - y_i``.
+   resampled means. Every float fold is exactly rounded
+   (:mod:`sciagent.core.reductions`), so the mean does not depend on summation
+   order.
++
++**Rank statistics** (control 2, P4-PROPOSAL Δ10). A held-out score can be
++``-inf`` (a model that gives a held-out event zero intensity), so a paired
++difference can be ``±inf``; a mean of such differences says nothing, and
++:func:`paired_bootstrap_ci` refuses them. Three functions read the differences
++by order instead, with ``-inf`` the lowest value and ``+inf`` the highest
++(``nan`` is refused: it has no rank):
++
++- :func:`signed_rank_greater`: the one-sided Wilcoxon signed-rank p-value
++  (alternative: the differences are shifted above 0). Zero differences are
++  dropped (Wilcoxon's rule); ties in ``|d|`` take their average rank. The
++  p-value is the *exact* conditional null distribution (every sign flip of the
++  observed ranks equally likely), counted with integers over doubled ranks, so
++  it is exact with ties too and has no platform-dependent arithmetic.
++  ``±inf`` simply holds the largest ``|d|`` rank, with its sign.
++- :func:`order_median`: the median by order statistics. For an even count the
++  two middle values are averaged, except that a middle pair ``(-inf, +inf)``
++  has no midpoint and is read as 0.
++- :func:`bootstrap_median_ci`: the percentile bootstrap of :func:`order_median`
++  over units resampled with replacement (one ``rng.integers`` call). Its ends
++  are order statistics of the resampled medians (numpy's ``lower`` and
++  ``higher`` quantile methods: no interpolation, so an infinite resampled
++  median never meets arithmetic and the interval is never ``nan``).
+ """
+ 
+ from __future__ import annotations
+@@ -20,6 +43,7 @@ from __future__ import annotations
+ import math
+ from collections.abc import Sequence
+ from dataclasses import dataclass
++from fractions import Fraction
+ from typing import Final
+ 
+ import numpy as np
+@@ -94,3 +118,115 @@ def paired_bootstrap_ci(
+         n=int(d.size),
+         resamples=resamples,
+     )
++
++
++# --------------------------------------------------------------------------
++# Rank statistics (module docstring)
++# --------------------------------------------------------------------------
++
++
++def _ordered(values: Sequence[float]) -> np.ndarray:
++    d = np.asarray(values, dtype=np.float64)
++    if d.ndim != 1 or d.size == 0:
++        raise ScoringError("rank statistics need a non-empty 1-D sample")
++    if bool(np.any(np.isnan(d))):
++        raise ScoringError("rank statistics refuse nan: it has no rank")
++    return d
++
++
++def _doubled_ranks(magnitudes: np.ndarray) -> list[int]:
++    """Average ranks (1-based) of ``magnitudes``, doubled so they are integers."""
++    order = np.argsort(magnitudes, kind="stable")
++    ranks = [0] * magnitudes.size
++    i = 0
++    while i < magnitudes.size:
++        j = i
++        while (
++            j + 1 < magnitudes.size and magnitudes[order[j + 1]] == magnitudes[order[i]]
++        ):
++            j += 1
++        for k in range(i, j + 1):
++            ranks[int(order[k])] = (i + 1) + (j + 1)  # twice the average rank
++        i = j + 1
++    return ranks
++
++
++def signed_rank_greater(differences: Sequence[float]) -> float:
++    """One-sided exact Wilcoxon signed-rank p-value (module docstring)."""
++    d = _ordered(differences)
++    d = d[d != 0.0]
++    if d.size == 0:
++        return 1.0
++    ranks = _doubled_ranks(np.abs(d))
++    observed = sum(r for r, x in zip(ranks, d.tolist(), strict=True) if x > 0.0)
++    counts = [0] * (sum(ranks) + 1)
++    counts[0] = 1
++    top = 0
++    for r in ranks:
++        for total in range(top, -1, -1):
++            if counts[total]:
++                counts[total + r] += counts[total]
++        top += r
++    tail = sum(counts[observed:])
++    return float(Fraction(tail, 2 ** len(ranks)))
++
++
++def order_median(values: Sequence[float]) -> float:
++    """The median by order statistics, ``±inf`` allowed (module docstring)."""
++    d = np.sort(_ordered(values))
++    n = d.size
++    if n % 2:
++        return float(d[n // 2])
++    lo, hi = float(d[n // 2 - 1]), float(d[n // 2])
++    if math.isinf(lo) and math.isinf(hi) and lo != hi:
++        return 0.0
++    return (lo + hi) / 2.0
++
++
++@dataclass(frozen=True)
++class MedianCI:
++    """The order median of a sample and its percentile bootstrap interval."""
++
++    median: float
++    low: float
++    high: float
++    level: float
++    n: int
++    resamples: int
++
++
++def bootstrap_median_ci(
++    values: Sequence[float],
++    rng: np.random.Generator,
++    *,
++    resamples: int = DEFAULT_RESAMPLES,
++    level: float = DEFAULT_LEVEL,
++) -> MedianCI:
++    """Percentile bootstrap CI of :func:`order_median` (module docstring)."""
++    d = _ordered(values)
++    if not 0.0 < level < 1.0:
++        raise ScoringError(f"level must be in (0, 1), got {level}")
++    if resamples < 1:
++        raise ScoringError(f"resamples must be positive, got {resamples}")
++    n = d.size
++    index = rng.integers(0, n, size=(resamples, n))
++    samples = np.sort(d[index], axis=1)
++    if n % 2:
++        medians = samples[:, n // 2].copy()
++    else:
++        lo, hi = samples[:, n // 2 - 1], samples[:, n // 2]
++        opposite = np.isinf(lo) & np.isinf(hi) & (lo != hi)
++        medians = np.zeros(resamples, dtype=np.float64)
++        keep = ~opposite
++        medians[keep] = (lo[keep] + hi[keep]) / 2.0
++    alpha = (1.0 - level) / 2.0
++    low = float(np.quantile(medians, alpha, method="lower"))
++    high = float(np.quantile(medians, 1.0 - alpha, method="higher"))
++    return MedianCI(
++        median=order_median(d.tolist()),
++        low=low,
++        high=high,
++        level=level,
++        n=int(n),
++        resamples=resamples,
++    )
+diff --git a/tests/campaign/test_campaign.py b/tests/campaign/test_campaign.py
+index f8ecca3..ae6ab95 100644
+--- a/tests/campaign/test_campaign.py
++++ b/tests/campaign/test_campaign.py
+@@ -415,3 +415,109 @@ def test_a_retryable_session_drops_llm_concurrency_to_one(
+     assert summary.retries == 2 and not summary.recorded
+     lines = (tmp_path / "attempts.jsonl").read_text(encoding="utf-8").splitlines()
+     assert len(lines) == 2
++
++
++# --------------------------------------------------------------------------
++# Rescore mode (P4-PROPOSAL §2.2): score stored sessions, never launch one
++# --------------------------------------------------------------------------
++
++
++def test_rescore_scores_old_sessions_under_the_new_fit_and_launches_nothing(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    """The trap: a FIT_VERSION change gives every session a new address, so the
++    normal plan would relaunch every live session. Rescore enumerates the
++    stored session cells instead, writes new score cells keyed by the old
++    session's digest plus the current versions, and calls no provider."""
++    from concurrent.futures import ThreadPoolExecutor
++
++    from sciagent.campaign import analysis, plan
++    from sciagent.campaign.plan import CampaignError
++    from sciagent.campaign.store import DETAILS_DIR
++
++    clean(monkeypatch)
++    scored: list[ScoreJob] = []
++
++    def fake_score(job: ScoreJob) -> UnitResult:
++        scored.append(job)
++        return UnitResult(
++            job.system, True, {"status": 1.0, "per_event": -0.7}, {"s": 1}, 0.0
++        )
++
++    monkeypatch.setattr(driver_module, "run_score_job", fake_score)
++    config = tiny_config(seeds=(1,), llm_arms=(LLMArm("AG-c", "named"),))
++    truth = entry("size_excitation")
++    unit = Unit("size_excitation", 1, "AG-c-H/named")
++
++    def campaign(**settings: Any) -> Campaign:
++        return Campaign(
++            tmp_path,
++            environment(),
++            config,
++            [truth],
++            DriverSettings(workers=0, poll_s=0.05, run_baselines=False, **settings),
++        )
++
++    with monkeypatch.context() as old:
++        old.setattr(plan, "FIT_VERSION", "sciagent.glm.fit/OLD")
++        first = campaign(driver_factory=lambda u: ScriptedDriver(SCRIPT))
++        first.run()
++        first.close()
++        old_skey = session_key(unit, truth, environment(), config)
++    assert "fit/OLD" in str(old_skey.env_version) and len(scored) == 1
++    before = {p.name: p.read_bytes() for p in (tmp_path / DETAILS_DIR).glob("*.json")}
++
++    # The trap is real: the normal plan would launch the session again.
++    trap = campaign()
++    trap._plan_llm()
++    assert [t.unit for t in trap.llm_queue] == [unit]
++    trap.close()
++
++    def refuse(*args: Any, **kwargs: Any) -> Any:
++        raise AssertionError("rescore mode must never launch a session")
++
++    monkeypatch.setattr(driver_module, "run_session", refuse)
++    monkeypatch.setattr(driver_module, "run_session_isolated", refuse)
++    rescore = campaign(rescore_llm=True, driver_factory=refuse)
++    summary = rescore.run()
++    new_ckey = score_key(unit, old_skey, environment(), config)
++    assert rescore.store.done(new_ckey)
++    assert not rescore.store.done(session_key(unit, truth, environment(), config))
++    with pytest.raises(CampaignError), ThreadPoolExecutor(max_workers=1) as pool:
++        rescore._launch_llm(pool)
++    rescore.close()
++    assert summary.bugs == 0 and len(scored) == 2
++    assert scored[1].submission == scored[0].submission
++    assert "fit/OLD" not in str(new_ckey.env_version)
++    assert new_ckey.config["session"] == str(old_skey.digest)
++
++    # Append-only: every old cell is byte-identical; one new cell was added.
++    after = {p.name: p.read_bytes() for p in (tmp_path / DETAILS_DIR).glob("*.json")}
++    assert {k: after[k] for k in before} == before
++    assert set(after) - set(before) == {f"{new_ckey.digest}.json"}
++
++    again = campaign(rescore_llm=True, driver_factory=refuse)
++    rerun = again.run()
++    again.close()
++    assert len(scored) == 2 and rerun.skipped_done == 1
++
++    with ResultStore(tmp_path) as store:
++        stored = analysis.load_rows(
++            store, environment(), config, [truth], sessions="stored"
++        )
++        current = analysis.load_rows(store, environment(), config, [truth])
++    assert [r.system for r in stored.rows] == [unit.system]
++    (session,) = stored.sessions
++    assert "fit/OLD" in session.env_version
++    assert current.sessions == () and current.missing[unit.system] == 1
++
++
++def test_the_oracle_cell_records_its_underfit_check() -> None:
++    """Control 1 reads ``oracle_underfit`` from the ORACLE cell (P4 §2.4): the
++    job must give the ORACLE the truth's ψ and coefficients and keep the
++    system's details in the cell."""
++    job = BaselineJob(entry("hawkes"), 1, ("ORACLE",), environment(), tiny_config())
++    (result,) = execute.run_baseline_job(job)
++    assert result.ok, result.detail
++    assert result.detail["oracle_underfit"] is False
++    assert result.detail["oracle_psi_source"] in ("search", "truth")
+diff --git a/tests/campaign/test_campaign_analysis.py b/tests/campaign/test_campaign_analysis.py
+index 001af93..9d3e11e 100644
+--- a/tests/campaign/test_campaign_analysis.py
++++ b/tests/campaign/test_campaign_analysis.py
+@@ -2,6 +2,8 @@
+ 
+ from __future__ import annotations
+ 
++from typing import Any
++
+ import numpy as np
+ from campaign_support import entry
+ 
+@@ -43,6 +45,7 @@ def row(
+         structure=None,
+         curve=curve,
+         error=None if ok else "SciAgentError",
++        oracle_underfit=False if system == "ORACLE" else None,
+     )
+ 
+ 
+@@ -77,9 +80,14 @@ def test_shares_weight_truths_equally_and_failures_never_count() -> None:
+     assert n == 3 and share is not None and abs(share - 1 / 3) < 1e-12
+ 
+ 
++#: Five truths: the smallest exact one-sided signed-rank p is 2**-n, so
++#: control 2 cannot pass on fewer than 5 truths (1/32 < 0.05).
++NAMES = ("hawkes", "size_excitation", "null", "t4", "t5")
++
++
+ def _table(planted: float) -> Table:
+     rows: list[Row] = []
+-    for t in ("hawkes", "size_excitation", "null"):
++    for t in NAMES:
+         for seed in (1, 2, 3):
+             noise = 0.001 * seed
+             base = -0.7 - noise
+@@ -95,14 +103,14 @@ def _table(planted: float) -> Table:
+             if seed == 1:
+                 rows.append(row(t, seed, "B-sym@10F", base - 0.002))
+             rows.append(row(t, seed, "AG-c-S/named", base - 0.01, llm=True))
+-    truths = {t: entry("hawkes") for t in ("hawkes", "size_excitation", "null")}
++    truths = {t: entry("hawkes") for t in NAMES}
+     return Table(truths, tuple(derive(rows)), (), {})
+ 
+ 
+ def test_verdict_is_go_when_controls_pass_and_difficulty_is_in_band() -> None:
+     v = verdict(_table(0.0), np.random.default_rng(0), resamples=500)
+     assert v.outcome == "go", v.reasons
+-    assert v.controls_pass and len(v.kept) == 3 and not v.dropped
++    assert v.controls_pass and len(v.kept) == 5 and not v.dropped
+     assert v.bsym is not None and v.bsym.passed
+     assert v.recovery["planted-hint"] == 1.0 and v.recovery["B-lib"] == 0.0
+     assert v.close["planted-hint"] == 1.0
+@@ -155,3 +163,103 @@ def test_a_minus_infinite_score_never_closes_and_stays_out_of_means() -> None:
+     m = summarise(rows, "X")
+     assert m.nonfinite == 1 and m.gap_mean is not None
+     assert abs(m.gap_mean + 0.02) < 1e-12
++
++
++def test_gap_closed_is_flagged_when_the_denominator_is_within_its_paired_noise() -> (
++    None
++):
++    """T4: LL(ORACLE) - LL(B-lib) on a seed within the truth's paired SE of that
++    difference over seeds is not a usable denominator (audit §1: 37.32 on a
++    denominator of 0.0029). The ratio is still computed; it is flagged."""
++    rows = derive(
++        [
++            row("a", 1, "ORACLE", -0.70),
++            row("a", 1, "B-lib", -0.80),
++            row("a", 2, "ORACLE", -0.70),
++            row("a", 2, "B-lib", -0.76),
++            row("a", 3, "ORACLE", -0.70),
++            row("a", 3, "B-lib", -0.703),
++            row("a", 1, "X", -0.72),
++            row("a", 2, "X", -0.72),
++            row("a", 3, "X", -0.60),
++        ]
++    )
++    x = {r.seed: r for r in rows if r.system == "X"}
++    # d = (0.1, 0.06, 0.003): mean 0.0543, paired SE 0.0281.
++    assert not x[1].closed_flagged and not x[2].closed_flagged
++    assert x[3].closed_flagged and x[3].gap_closed is not None
++    from sciagent.campaign.analysis import summarise
++
++    m = summarise(rows, "X")
++    assert m.closed_flagged == 1
++    assert m.closed_median is not None
++    assert abs(m.closed_median - (0.8 + 2 / 3) / 2) < 1e-12  # seed 3 left out
++
++
++def test_gap_closed_is_not_flagged_without_two_seeds_to_estimate_noise() -> None:
++    rows = derive(
++        [
++            row("a", 1, "ORACLE", -0.70),
++            row("a", 1, "B-lib", -0.7001),
++            row("a", 1, "X", -0.70),
++        ]
++    )
++    (x,) = [r for r in rows if r.system == "X"]
++    assert not x.closed_flagged
++
++
++def test_control_1_needs_zero_oracle_underfit_flags() -> None:
++    from dataclasses import replace
++
++    base = _table(0.0)
++    flagged = tuple(
++        replace(r, oracle_underfit=True)
++        if (r.truth, r.seed, r.system) == ("null", 2, "ORACLE")
++        else r
++        for r in base.rows
++    )
++    v = verdict(replace(base, rows=flagged), np.random.default_rng(0), resamples=200)
++    assert v.outcome == "controls fail" and not v.controls_pass
++    assert v.underfit is not None and v.underfit.flagged == (("null", 2),)
++    unrecorded = tuple(
++        replace(r, oracle_underfit=None) if r.system == "ORACLE" else r
++        for r in base.rows
++    )
++    v = verdict(replace(base, rows=unrecorded), np.random.default_rng(0), resamples=200)
++    assert v.outcome == "controls fail"
++    assert any("not recorded" in r for r in v.reasons)
++
++
++def test_control_2_reads_a_minus_infinite_rand_unit_by_rank() -> None:
++    from dataclasses import replace
++
++    base = _table(0.0)
++    rows = derive(
++        [
++            replace(r, per_event=float("-inf"))
++            if (r.truth, r.seed, r.system) == ("hawkes", 1, "B-rand")
++            else r
++            for r in base.rows
++        ]
++    )
++    v = verdict(
++        replace(base, rows=tuple(rows)), np.random.default_rng(0), resamples=200
++    )
++    assert v.planted is not None and v.planted.n_infinite == 1
++    assert v.planted.wins == 5 and v.planted.passed
++
++
++def test_an_oracle_cell_without_the_underfit_key_reads_as_unrecorded() -> None:
++    from sciagent.campaign.analysis import row_from_cell
++
++    cell: dict[str, Any] = {
++        "reading": {"status": (1.0).hex(), "per_event": (-0.7).hex()},
++        "detail": {"result": {"structure": "s"}},
++    }
++    old = row_from_cell("a", 1, "ORACLE", False, cell)
++    assert old.oracle_underfit is None and old.oracle_psi_source is None
++    cell["detail"]["result"].update(
++        {"oracle_underfit": False, "oracle_psi_source": "truth"}
++    )
++    new = row_from_cell("a", 1, "ORACLE", False, cell)
++    assert new.oracle_underfit is False and new.oracle_psi_source == "truth"
+diff --git a/tests/scoring/test_scoring_gonogo.py b/tests/scoring/test_scoring_gonogo.py
+index 8544f2b..93f5cbe 100644
+--- a/tests/scoring/test_scoring_gonogo.py
++++ b/tests/scoring/test_scoring_gonogo.py
+@@ -25,10 +25,17 @@ from sciagent.scoring.gonogo import (
+     closes,
+     go_no_go,
+     oracle_beats_lib,
++    oracle_underfit_check,
+     planted_beats_rand,
+     recovers,
+ )
+-from sciagent.scoring.stats import paired_bootstrap_ci, paired_mean_se
++from sciagent.scoring.stats import (
++    bootstrap_median_ci,
++    order_median,
++    paired_bootstrap_ci,
++    paired_mean_se,
++    signed_rank_greater,
++)
+ 
+ TRUTHS = tuple(f"t{i:02d}" for i in range(10))
+ SEEDS = (0, 1, 2)
+@@ -45,7 +52,8 @@ def _row(
+     in_dictionary: bool = False,
+ ) -> ScoreRow:
+     closed = None if lib_gap >= 0.0 else (gap - lib_gap) / (0.0 - lib_gap)
+-    return ScoreRow(truth, seed, system, gap, closed, exact, in_dictionary)
++    underfit = False if system == ORACLE else None
++    return ScoreRow(truth, seed, system, gap, closed, exact, in_dictionary, underfit)
+ 
+ 
+ def _table(
+@@ -249,7 +257,8 @@ def test_oracle_beats_lib_needs_two_seeds() -> None:
+ def test_planted_and_bsym_controls() -> None:
+     rows = _table(GOOD)
+     planted = planted_beats_rand(rows, TRUTHS, rng=np.random.default_rng(0))
+-    assert planted.passed and planted.ci.low > 0.0
++    assert planted.passed and planted.median_ci.low > 0.0
++    assert planted.wins == len(TRUTHS) and planted.p_value < 0.05
+     bsym = bsym_approaches_oracle(rows, TRUTHS)
+     assert bsym.passed and bsym.median_gap == pytest.approx(-0.002)
+     far = [
+@@ -294,3 +303,153 @@ def test_paired_mean_se_matches_numpy(d: list[float]) -> None:
+     mean, se = paired_mean_se(d, [0.0] * len(d))
+     assert mean == pytest.approx(float(np.mean(d)), abs=1e-12)
+     assert se == pytest.approx(float(np.std(d, ddof=1)) / len(d) ** 0.5, abs=1e-9)
++
++
++# --------------------------------------------------------------------------
++# Control 2 by rank (P4-PROPOSAL Δ10) and the ORACLE underfit flag (Δ1, §2.4)
++# --------------------------------------------------------------------------
++
++
++def _with_gap(
++    rows: list[ScoreRow], truth: str, seed: int, system: str, gap: float
++) -> list[ScoreRow]:
++    return [
++        ScoreRow(r.truth, r.seed, r.system, gap, None, r.exact, r.in_dictionary, None)
++        if (r.truth, r.seed, r.system) == (truth, seed, system)
++        else r
++        for r in rows
++    ]
++
++
++def test_control_2_takes_minus_infinity_and_outliers_by_rank() -> None:
++    """Audit §2 test: one -inf and one -400 B-rand unit give the same verdict
++    and a finite printed CI; -inf ranks lowest instead of crashing the read."""
++    rows = _table(GOOD)
++    clean = planted_beats_rand(rows, TRUTHS, rng=np.random.default_rng(0))
++    wild = _with_gap(rows, "t00", 0, B_RAND, float("-inf"))
++    wild = _with_gap(wild, "t01", 1, B_RAND, -400.0)
++    check = planted_beats_rand(wild, TRUTHS, rng=np.random.default_rng(0))
++    assert check.passed == clean.passed is True
++    assert np.isfinite(check.median_ci.low) and np.isfinite(check.median_ci.high)
++    assert check.wins == len(TRUTHS) and check.n_infinite == 1
++    assert check.mean_finite is not None and check.mean_finite > 10.0  # 133/9 truths
++    v_clean = go_no_go(rows, rng=np.random.default_rng(0))
++    v_wild = go_no_go(wild, rng=np.random.default_rng(0))
++    assert v_wild.outcome is v_clean.outcome is Outcome.GO, v_wild.reasons
++
++
++def test_control_2_fails_when_planted_is_the_one_at_minus_infinity() -> None:
++    rows = _table({**GOOD, PLANTED: -0.04})  # planted ties B-rand
++    for t in TRUTHS[:4]:
++        rows = _with_gap(rows, t, 0, PLANTED, float("-inf"))
++    check = planted_beats_rand(rows, TRUTHS, rng=np.random.default_rng(0))
++    assert not check.passed and check.losses == 4
++
++
++def test_control_2_needs_both_the_rank_test_and_the_median_ci() -> None:
++    # Planted wins narrowly on 6 truths and loses on 4: the median is positive
++    # but the evidence is not.
++    rows = _table(GOOD)
++    out: list[ScoreRow] = []
++    for r in rows:
++        if r.system == PLANTED:
++            i = TRUTHS.index(r.truth)
++            g = -0.039 if i < 6 else -0.041
++            r = ScoreRow(r.truth, r.seed, r.system, g, None, False, False, None)
++        out.append(r)
++    check = planted_beats_rand(out, TRUTHS, rng=np.random.default_rng(0))
++    assert check.median > 0.0 and check.wins == 6
++    assert not check.passed
++
++
++def test_signed_rank_matches_scipy_exact_and_ranks_infinities_last() -> None:
++    from scipy import stats as sps
++
++    d = [0.31, -0.12, 0.05, 0.44, 0.27, -0.03, 0.18, 0.09, 0.51, -0.22]
++    expected = sps.wilcoxon(d, alternative="greater", method="exact").pvalue
++    assert signed_rank_greater(d) == pytest.approx(expected, rel=1e-12)
++    top = [*d[:-1], 1e9]
++    assert signed_rank_greater([*d[:-1], float("inf")]) == signed_rank_greater(top)
++    bottom = [*d[:-1], -1e9]
++    assert signed_rank_greater([*d[:-1], float("-inf")]) == signed_rank_greater(bottom)
++    assert signed_rank_greater([0.0, 0.0]) == 1.0  # no evidence at all
++    with pytest.raises(ScoringError):
++        signed_rank_greater([float("nan"), 1.0])
++
++
++@given(
++    st.lists(
++        st.floats(-1, 1, allow_nan=False).filter(lambda x: x != 0.0),
++        min_size=1,
++        max_size=14,
++        unique=True,
++    )
++)
++def test_signed_rank_agrees_with_scipy_on_tie_free_data(d: list[float]) -> None:
++    from scipy import stats as sps
++
++    if len({abs(x) for x in d}) < len(d):
++        return
++    expected = sps.wilcoxon(d, alternative="greater", method="exact").pvalue
++    assert signed_rank_greater(d) == pytest.approx(expected, rel=1e-9, abs=1e-15)
++
++
++def test_median_ci_is_deterministic_and_tolerates_infinities() -> None:
++    d = [0.02, 0.01, float("-inf"), 0.03, 0.015, 0.025, float("inf"), 0.018]
++    a = bootstrap_median_ci(d, np.random.default_rng(5), resamples=2000)
++    b = bootstrap_median_ci(d, np.random.default_rng(5), resamples=2000)
++    assert a == b
++    assert a.low <= a.median <= a.high
++    assert a.median == order_median(d)
++    assert order_median([float("-inf"), float("inf")]) == 0.0
++    assert order_median([float("-inf"), 1.0]) == float("-inf")
++    assert order_median([1.0, 3.0, 2.0]) == 2.0
++    with pytest.raises(ScoringError):
++        bootstrap_median_ci([float("nan")], np.random.default_rng(0))
++
++
++def test_an_oracle_underfit_flag_fails_the_controls() -> None:
++    rows = [
++        ScoreRow(
++            r.truth,
++            r.seed,
++            r.system,
++            r.gap,
++            r.gap_closed,
++            r.exact,
++            r.in_dictionary,
++            True,
++        )
++        if (r.truth, r.seed, r.system) == ("t03", 1, ORACLE)
++        else r
++        for r in _table(GOOD)
++    ]
++    v = go_no_go(rows, rng=np.random.default_rng(0))
++    assert v.outcome is Outcome.CONTROLS_FAIL
++    assert v.underfit is not None and v.underfit.flagged == (("t03", 1),)
++    assert any("underfit" in r for r in v.reasons)
++
++
++def test_an_unrecorded_underfit_flag_is_not_zero_flags() -> None:
++    """Cells written before fit/5 carry no flag: C1 cannot show zero flags."""
++    rows = [
++        ScoreRow(
++            r.truth,
++            r.seed,
++            r.system,
++            r.gap,
++            r.gap_closed,
++            r.exact,
++            r.in_dictionary,
++            None,
++        )
++        for r in _table(GOOD)
++    ]
++    check = oracle_underfit_check(
++        [(r.truth, r.seed, r.oracle_underfit) for r in rows if r.system == ORACLE]
++    )
++    assert not check.passed and check.flagged == ()
++    assert len(check.unrecorded) == len(TRUTHS) * len(SEEDS)
++    v = go_no_go(rows, rng=np.random.default_rng(0))
++    assert v.outcome is Outcome.CONTROLS_FAIL
++    assert any("not recorded" in r for r in v.reasons)

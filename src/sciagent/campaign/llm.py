@@ -29,7 +29,11 @@ backs off, and gives up on a unit after a fixed number of attempts.
 
 from __future__ import annotations
 
+import dataclasses
+import logging
 import multiprocessing
+import shutil
+import tempfile
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -56,9 +60,11 @@ from sciagent.harness.live import SessionDriver
 from sciagent.harness.record import SessionRecord
 from sciagent.investigation.runner import run
 from sciagent.investigation.view import make_view
-from sciagent.sandbox import SandboxError
+from sciagent.sandbox import SandboxError, image_tag, recover_run_dirs
 
 type Json = Any
+
+_log = logging.getLogger(__name__)
 
 #: Outcomes of a completed session; the reading stores the index.
 OUTCOMES: Final = (
@@ -289,7 +295,71 @@ def run_session_isolated(
     the unit is recorded as ``hard_timeout`` (void, nothing scored, no record
     saved), so one runaway experiment cannot block the campaign. A process
     that dies without an answer is retryable.
+
+    An AG-o session gets a sandbox root of its own (an opaque temporary
+    directory under ``sandbox_root``). A killed process leaves its sandbox
+    behind: the agent's container still running and ``work/`` owned by the
+    container's uid. So once the session has ended, however it ended, this
+    process recovers every run directory left in that root
+    (:func:`~sciagent.sandbox.recover_run_dirs`) and removes the root. If
+    that fails, the root is left in place and logged, and the outcome's
+    detail notes ``sandbox_cleanup``.
     """
+    session_root = _session_root(config, unit, sandbox_root)
+    try:
+        outcome = _run_isolated(
+            unit, truth, env, config, out_dir, session_root, grace_s
+        )
+    finally:
+        fault = None if session_root is None else _release_session_root(session_root)
+    if fault is None:
+        return outcome
+    return dataclasses.replace(
+        outcome, detail={**outcome.detail, "sandbox_cleanup": fault}
+    )
+
+
+def _session_root(
+    config: CampaignConfig, unit: Unit, sandbox_root: Path | None
+) -> Path | None:
+    """A fresh, opaque sandbox root for an AG-o session; ``None`` for AG-c."""
+    if config.arm_of(unit.system).arm != "AG-o":
+        return None
+    if sandbox_root is not None:
+        sandbox_root.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(dir=sandbox_root))
+
+
+def _release_session_root(root: Path) -> str | None:
+    """Recover what a session left under ``root``, then remove ``root``.
+
+    Never raises (it runs in a ``finally``); returns the failing error's type
+    (its message holds random paths, and the detail is stored), or ``None``.
+    """
+    try:
+        recover_run_dirs(root, image=image_tag())
+        shutil.rmtree(root)
+    except (SandboxError, OSError) as error:
+        _log.warning(
+            "sandbox root %s not recovered, left in place: %s: %s",
+            root,
+            type(error).__name__,
+            error,
+        )
+        return type(error).__name__
+    return None
+
+
+def _run_isolated(
+    unit: Unit,
+    truth: TruthEntry,
+    env: CampaignEnvironment,
+    config: CampaignConfig,
+    out_dir: Path,
+    sandbox_root: Path | None,
+    grace_s: float,
+) -> SessionOutcome:
+    """The process part of :func:`run_session_isolated`."""
     ctx = multiprocessing.get_context("spawn")
     receive, send = ctx.Pipe(duplex=False)
     process = ctx.Process(

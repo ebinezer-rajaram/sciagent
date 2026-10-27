@@ -27,6 +27,7 @@ prints its own mount table -- which the out-of-bounds scan flags.
 
 from __future__ import annotations
 
+import logging
 import re
 import shutil
 import tempfile
@@ -53,7 +54,7 @@ from sciagent.investigation.prompts import Arm, opening_prompt, system_prompt
 from sciagent.investigation.tools import FIT_CONFIG, Lab, LabError, PredictionOutcome
 from sciagent.investigation.view import Condition, make_view
 from sciagent.investigation.world import OBSERVATIONAL, Truth, World
-from sciagent.sandbox import Sandbox, SandboxLimits, ensure_image
+from sciagent.sandbox import Sandbox, SandboxError, SandboxLimits, ensure_image
 
 __all__ = [
     "OUT_OF_BOUNDS",
@@ -70,6 +71,8 @@ __all__ = [
     "run",
     "submitted_structure",
 ]
+
+_log = logging.getLogger(__name__)
 
 #: Patterns in ``python`` code that reach outside the analysis (SPEC §9). A
 #: hit voids the run and is reported; it is a scan, not the isolation itself
@@ -305,6 +308,31 @@ def out_of_bounds(record: SessionRecord) -> tuple[str, ...]:
     return tuple(hits)
 
 
+def _discard_sandbox(sandbox: Sandbox, *, keep: bool) -> str | None:
+    """Recover the sandbox's ``work/`` and remove its run directory.
+
+    Never raises: it runs while the run's record is still unsaved (and in
+    the ``finally`` of an aborted run, whose own error must propagate). A
+    failure is returned as a short reason -- the error's type only, since
+    its message holds the random run-directory path and the reason goes into
+    the session cell -- and logged in full with the path, which is left in
+    place for the operator. ``keep`` keeps the directory (still recovered).
+    """
+    try:
+        sandbox.recover()
+        if not keep:
+            shutil.rmtree(sandbox.run_dir)
+    except (SandboxError, OSError) as error:
+        _log.warning(
+            "sandbox cleanup of %s failed, directory left in place: %s: %s",
+            sandbox.run_dir,
+            type(error).__name__,
+            error,
+        )
+        return type(error).__name__
+    return None
+
+
 def run(
     env: EnvironmentSpec,
     truth_id: str,
@@ -327,7 +355,9 @@ def run(
 
     A run aborted by the harness (hermeticity, served model, session failure,
     a tool bug) saves its partial record as ``aborted-<head>.json`` and
-    re-raises.
+    re-raises. An AG-o sandbox is recovered and removed afterwards
+    (:func:`_discard_sandbox`); if that fails, the record is still saved and
+    the run is void for an infrastructure fault (``sandbox cleanup``).
     """
     spec = InvestigationSpec(
         environment=env.name,
@@ -350,6 +380,7 @@ def run(
         investigation=spec.as_json(),
     )
     out_dir.mkdir(parents=True, exist_ok=True)
+    cleanup_fault: str | None = None
     try:
         result = run_investigation(config, lab.layer(), driver=driver)
     except (
@@ -361,13 +392,15 @@ def run(
         error.record.save(out_dir / f"aborted-{error.record.head[:16]}.json")
         raise
     finally:
-        if lab.sandbox is not None and not keep_sandbox:
-            shutil.rmtree(lab.sandbox.run_dir, ignore_errors=False)
+        if lab.sandbox is not None:
+            cleanup_fault = _discard_sandbox(lab.sandbox, keep=keep_sandbox)
     record = result.record
     path = out_dir / f"investigation-{record.head[:16]}.json"
     record.save(path)
     reasons = [f"foreign tool: {name}" for name in result.foreign_tool_uses]
     reasons += [f"infrastructure: {f}" for f in lab.infrastructure_faults]
+    if cleanup_fault is not None:
+        reasons.append(f"infrastructure: sandbox cleanup: {cleanup_fault}")
     reasons += [f"out of bounds: {h}" for h in out_of_bounds(record)]
     results = record.of_kind("result")
     usage = results[-1].body.get("usage") if results else None

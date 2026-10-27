@@ -30,12 +30,40 @@ rootless Docker, the host's ``nobody`` under rootful. Without help the code
 could not write to the host-created ``work/``, and the host could not sweep
 or remove what the code wrote. So on native Linux every call is bracketed by
 an *ownership handoff* (:func:`build_handoff_argv`): a short helper container
-from the same image, running no agent code, chowns ``work/`` to 65534 before
-the call and back to the host user (with ``u+rwX``) after it. The agent's own
-container is unchanged -- same flags, uid 65534, no capability -- and the
-host user owns every file of ``work/`` between calls, whatever modes the code
-set. Docker Desktop (Windows, macOS) maps ownership to the host user itself
-and gets no handoff (:func:`handoff_owner`).
+from the same image, running no agent code, gives ``work/`` to 65534 before
+the call and back to the host user after it (:mod:`._handoff_helper`:
+``lchown``, ``chmod u+rwX,go-w``, no set-id file, no POSIX ACL). The agent's
+own container is unchanged -- same flags, uid 65534, no capability -- and the
+host user owns every file of ``work/`` between calls, whatever modes or ACLs
+the code set. Docker Desktop (Windows, macOS) maps ownership to the host user
+itself and gets no handoff (:func:`handoff_owner`).
+
+The handoff is part of the boundary, so it is strict about order and
+outcome. Both handoffs sit in one ``try``/``finally``, so ``work/`` is handed
+back whatever failed in between. The back handoff starts only after
+``docker inspect`` has confirmed the agent's container gone; if it cannot be,
+nothing is handed back and the call raises. Afterwards ``work/`` must be the
+host user's, or the call raises. A sandbox whose back handoff failed refuses
+further calls; :func:`recover` (and :meth:`Sandbox.recover`) removes any
+container still mounting ``work/`` and hands it back, for cleanup and for a
+session killed mid-call.
+
+The platform detection behind the handoff (``docker info``) is checked once
+per sandbox against what the daemon does: a container running as uid 65534
+writes a file, and the file's owner on the host must be the one the detected
+platform implies (:func:`_check_platform`); otherwise
+:class:`~sciagent.sandbox.errors.SandboxPlatformError`. Without the check, a
+wrong answer would surface only as ``PermissionError`` in the agent's code --
+recorded as the agent's own result.
+
+**What the code may leave in ``work/``.** At most ``max_work_entries``
+entries, none with a path longer than ``max_work_path_bytes``
+(:class:`SandboxLimits`); past either, the back handoff empties ``work/`` and
+the call's stderr says so. Files are the code's doing, like its time and
+memory, so this is a result of the call, recorded and replayed, never a
+harness fault; and it is a count, not a time, so replay reproduces it and
+the handoff's own time stays bounded (LOG 2026-10-27). Enforced only where
+there is a handoff (native Linux).
 
 Everything else of the run -- the truth, its seed, the held-out data, the
 scorer -- lives outside ``data/`` and ``work/`` and so is simply not in the
@@ -82,11 +110,14 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePath
 from typing import IO, Final
 
+from sciagent.sandbox._handoff_helper import EMPTIED as HELPER_EMPTIED
+from sciagent.sandbox._handoff_helper import OK as HELPER_OK
 from sciagent.sandbox.errors import (
     SandboxConfigError,
     SandboxError,
     SandboxImageError,
     SandboxPathError,
+    SandboxPlatformError,
     SandboxUnavailableError,
 )
 from sciagent.sandbox.image import check_docker
@@ -98,9 +129,12 @@ __all__ = [
     "SandboxLimits",
     "SandboxResult",
     "build_handoff_argv",
+    "build_probe_argv",
     "build_run_argv",
     "handoff_owner",
     "mount_source",
+    "recover",
+    "recover_run_dirs",
     "result_digest",
 ]
 
@@ -118,12 +152,39 @@ _TMPFS: Final = "/tmp:rw,noexec,nosuid,nodev,size=64m"
 #: Grace for the Docker client to exit after its container was removed.
 _REAP_TIMEOUT_S: Final = 30.0
 
-#: Upper bound on one ownership handoff (a chown/chmod of ``work/``).
-_HANDOFF_TIMEOUT_S: Final = 120.0
+#: Least time allowed for one ownership handoff (:func:`_handoff_timeout`).
+_HANDOFF_TIMEOUT_S: Final = 300.0
+
+#: Handoff time allowed per second of ``wall_seconds``. A back handoff walks
+#: at most the entry limit, unless the call just wrote more, which it then
+#: deletes; what one call can write grows with its wall time. Measured on
+#: dm-devbox under load (2026-10-27): a 60 s call created 1.7 million files
+#: and the back handoff took 163 s to delete them, so 10 s per second leaves
+#: a margin of about 3.7. Reaching the bound is then a harness fault, not
+#: something the agent's code can cause.
+_HANDOFF_SECONDS_PER_WALL_SECOND: Final = 10.0
+
+#: Upper bound on a recovery handoff (:func:`recover`): after a session was
+#: killed, the agent's container may have run far past ``wall_seconds``.
+_RECOVERY_TIMEOUT_S: Final = 1800.0
+
+#: How long a removed container may take to disappear, and the polling step.
+_GONE_TIMEOUT_S = 30.0
+_GONE_POLL_S = 0.5
 
 #: The only capabilities the handoff helper holds: chown, and chmod/traverse
-#: whatever modes the code left.
+#: whatever modes the code left, and strip the code's ACLs.
 _HANDOFF_CAPS: Final = ("CHOWN", "DAC_OVERRIDE", "FOWNER")
+
+#: The helper program's source, run by ``python -I -B -c`` in the helper.
+_HELPER_SOURCE: Final = (
+    Path(__file__).with_name("_handoff_helper.py").read_text(encoding="utf-8")
+)
+
+#: Longest ``max_work_path_bytes``: the host walks ``work/`` by path, and a
+#: path must stay well inside ``PATH_MAX`` (4096) with the run directory
+#: in front of it.
+_MAX_WORK_PATH_BYTES: Final = 2048
 
 _OWNER_RE: Final = re.compile(r"[0-9]+:[0-9]+")
 
@@ -144,6 +205,10 @@ class SandboxLimits:
     Desktop). ``output_bytes`` caps stdout and stderr *each*; the excess is
     drained and discarded, and a marker line is appended. ``max_file_mb`` is
     ``RLIMIT_FSIZE``: the largest single file the code may write.
+    ``max_work_entries`` and ``max_work_path_bytes`` bound what ``work/`` may
+    hold after a call (entries, and the longest path relative to ``work/``);
+    past either, the back handoff empties ``work/`` and stderr says so
+    (module docstring).
     """
 
     wall_seconds: float = 60
@@ -152,6 +217,8 @@ class SandboxLimits:
     pids: int = 256
     output_bytes: int = 20_000
     max_file_mb: int = 256
+    max_work_entries: int = 100_000
+    max_work_path_bytes: int = 1024
 
     def __post_init__(self) -> None:
         if not (math.isfinite(self.wall_seconds) and self.wall_seconds > 0):
@@ -172,6 +239,15 @@ class SandboxLimits:
         if self.max_file_mb < 1:
             raise SandboxConfigError(
                 f"max_file_mb must be >= 1, got {self.max_file_mb}"
+            )
+        if self.max_work_entries < 1:
+            raise SandboxConfigError(
+                f"max_work_entries must be >= 1, got {self.max_work_entries}"
+            )
+        if not 1 <= self.max_work_path_bytes <= _MAX_WORK_PATH_BYTES:
+            raise SandboxConfigError(
+                f"max_work_path_bytes must be in [1, {_MAX_WORK_PATH_BYTES}], "
+                f"got {self.max_work_path_bytes}"
             )
 
 
@@ -259,17 +335,26 @@ def handoff_owner(
 
 
 def build_handoff_argv(
-    *, docker: str, name: str, image: str, work_dir: Path, owner: str
+    *,
+    docker: str,
+    name: str,
+    image: str,
+    work_dir: Path,
+    owner: str,
+    limits: SandboxLimits,
 ) -> list[str]:
     """Return the ``docker run`` command that hands ``work/`` to ``owner``.
 
-    The helper runs a fixed ``chown -hRP owner /work && chmod -R u+rwX /work``
-    as container root holding only ``CHOWN``, ``DAC_OVERRIDE`` and ``FOWNER``,
-    with no network, a read-only root, ``no-new-privileges`` and only
-    ``work/`` mounted. No agent code runs in it, and it starts only after the
-    agent's container has been removed, so nothing can swap a path under it;
-    ``-h``/``-P`` (and ``chmod -R``, which skips links) never follow a symbolic
-    link. Hard links cannot reach outside ``work/``: it is a mount of its own.
+    The helper runs a fixed program (:mod:`._handoff_helper`, passed to
+    ``python -I -B -c``) as container root holding only ``CHOWN``,
+    ``DAC_OVERRIDE`` and ``FOWNER``, with no network, a read-only root,
+    ``no-new-privileges``, ``/`` as working directory and only ``work/``
+    mounted. It applies the entry and path limits of ``limits``, then gives
+    everything to ``owner`` (``lchown``), strips POSIX ACLs and sets
+    ``u+rwX,go-w``. No agent code runs in it, and it starts only after the
+    agent's container is confirmed gone, so nothing can swap a path under it;
+    no symbolic link is followed. Hard links cannot reach outside ``work/``:
+    it is a mount of its own. ``-I`` keeps ``/work`` off ``sys.path``.
 
     Raises:
         SandboxConfigError: ``owner`` is not numeric ``uid:gid``.
@@ -296,6 +381,9 @@ def build_handoff_argv(
         "1.0",
         "--pids-limit",
         "64",
+        # One directory per path level stays open while counting.
+        "--ulimit",
+        "nofile=4096:4096",
         "--cap-drop",
         "ALL",
     ]
@@ -306,53 +394,442 @@ def build_handoff_argv(
         "no-new-privileges",
         "--user",
         "0:0",
+        "--workdir",
+        "/",
         "--mount",
         f"type=bind,source={mount_source(work_dir)},target=/work",
         image,
-        "sh",
+        "python",
+        "-I",
+        "-B",
         "-c",
-        f"chown -hRP {owner} /work && chmod -R u+rwX /work",
+        _HELPER_SOURCE,
+        owner,
+        str(limits.max_work_entries),
+        str(limits.max_work_path_bytes),
+        "/work",
     ]
     return argv
 
 
-def _probe_handoff_owner(docker: str) -> str | None:
-    """Ask the daemon which handoff, if any, this host needs."""
-    if sys.platform != "linux":
-        return None
+def build_probe_argv(
+    *, docker: str, name: str, image: str, probe_dir: Path
+) -> list[str]:
+    """Return the ``docker run`` command of the platform probe.
+
+    The probe runs as the agent does (uid 65534, no capability, no network, a
+    read-only root) and only creates ``/probe/p`` in ``probe_dir``, so the
+    file's owner on the host shows how this daemon maps container uid 65534
+    (:func:`_check_platform`).
+
+    Raises:
+        SandboxPathError: ``probe_dir`` cannot be mounted (:func:`mount_source`).
+    """
+    return [
+        docker,
+        "run",
+        "--rm",
+        "--name",
+        name,
+        "--pull",
+        "never",
+        "--network",
+        "none",
+        "--read-only",
+        "--memory",
+        "64m",
+        "--memory-swap",
+        "64m",
+        "--cpus",
+        "1.0",
+        "--pids-limit",
+        "16",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+        "--user",
+        SANDBOX_UID,
+        "--workdir",
+        "/",
+        "--mount",
+        f"type=bind,source={mount_source(probe_dir)},target=/probe",
+        image,
+        "touch",
+        "/probe/p",
+    ]
+
+
+def _handoff_timeout(limits: SandboxLimits) -> float:
+    """Time allowed for one handoff of a call under ``limits``."""
+    return max(
+        _HANDOFF_TIMEOUT_S, _HANDOFF_SECONDS_PER_WALL_SECOND * limits.wall_seconds
+    )
+
+
+def _host_uid() -> int:
+    """The host user's uid, which owns ``work/`` between calls (native Linux)."""
+    return os.getuid()
+
+
+def _docker(
+    docker: str, args: list[str], *, timeout: float
+) -> subprocess.CompletedProcess[bytes]:
+    """Run one Docker CLI command and capture its output.
+
+    Raises:
+        SandboxUnavailableError: the CLI is not on PATH.
+        subprocess.TimeoutExpired: left to the caller, which knows what a
+            timeout means for its command.
+    """
     try:
-        proc = subprocess.run(
-            [docker, "info", "--format", "{{json .}}"],
-            capture_output=True,
-            timeout=_REAP_TIMEOUT_S,
-            check=False,
+        return subprocess.run(
+            [docker, *args], capture_output=True, timeout=timeout, check=False
         )
     except FileNotFoundError as exc:
         raise SandboxUnavailableError(
             f"Docker CLI {docker!r} not found on PATH; the python sandbox needs Docker"
         ) from exc
+
+
+def _stderr(proc: subprocess.CompletedProcess[bytes]) -> str:
+    return proc.stderr.decode("utf-8", "replace").strip()
+
+
+def _probe_handoff_owner(docker: str) -> str | None:
+    """Ask the daemon which handoff, if any, this host needs.
+
+    Raises:
+        SandboxUnavailableError: Docker cannot be reached.
+        SandboxPlatformError: the daemon is not one the sandbox knows how to
+            hand ``work/`` around on (not running Linux containers, or an
+            answer that cannot tell rootless from rootful).
+        SandboxError: ``docker info`` failed or is unreadable.
+    """
+    if sys.platform != "linux":
+        return None
+    try:
+        proc = _docker(
+            docker, ["info", "--format", "{{json .}}"], timeout=_REAP_TIMEOUT_S
+        )
     except subprocess.TimeoutExpired as exc:
         raise SandboxUnavailableError("docker info did not answer") from exc
     if proc.returncode != 0:
         check_docker(docker)  # raises SandboxUnavailableError if the daemon is down
-        raise SandboxError(
-            f"docker info failed: {proc.stderr.decode('utf-8', 'replace').strip()}"
-        )
+        raise SandboxError(f"docker info failed: {_stderr(proc)}")
     try:
         info = json.loads(proc.stdout)
-        operating_system = info["OperatingSystem"]
-        security_options = info["SecurityOptions"]
-    except (ValueError, KeyError, TypeError) as exc:
+    except ValueError as exc:
         raise SandboxError(f"cannot read docker info: {exc}") from exc
+    if not isinstance(info, dict):
+        raise SandboxError("docker info is not a JSON object")
+    os_type = info.get("OSType")
+    if os_type != "linux":
+        raise SandboxPlatformError(
+            f"the Docker daemon runs {os_type!r} containers; the sandbox image "
+            "needs a daemon running linux containers"
+        )
+    operating_system = info.get("OperatingSystem")
+    security_options = info.get("SecurityOptions")
     if not isinstance(operating_system, str) or not isinstance(security_options, list):
-        raise SandboxError("docker info has an unexpected shape")
+        raise SandboxError(
+            "docker info lacks OperatingSystem (a string) or SecurityOptions (a list)"
+        )
+    options: list[str] = []
+    for option in security_options:
+        if not isinstance(option, str):
+            raise SandboxPlatformError(
+                f"docker info's SecurityOptions holds a non-string entry "
+                f"{option!r}: cannot tell rootless from rootful Docker"
+            )
+        options.append(option)
     return handoff_owner(
         platform=sys.platform,
         operating_system=operating_system,
-        security_options=[str(o) for o in security_options],
+        security_options=options,
         uid=os.getuid(),
         gid=os.getgid(),
     )
+
+
+def _check_platform(owner: str | None, *, file_uid: int, host_uid: int) -> None:
+    """Check detection against the probe: who owns what uid 65534 wrote.
+
+    ``owner`` is :func:`handoff_owner`'s answer and ``file_uid`` the host
+    owner of a file a container wrote as uid 65534 (:func:`build_probe_argv`).
+    Docker Desktop (``None``) shows it as the host user; rootless Docker
+    (``"0:0"`` for a non-root host user) as a subordinate uid -- not the host
+    user, root or 65534; rootful Docker as 65534 itself.
+
+    Raises:
+        SandboxPlatformError: ``file_uid`` contradicts ``owner``.
+    """
+    nobody = int(SANDBOX_UID.split(":")[0])
+    if owner is None:
+        kind, ok = "Docker Desktop", file_uid == host_uid
+        expected = f"the host user (uid {host_uid})"
+    elif owner == "0:0" and host_uid != 0:
+        kind, ok = "rootless Docker", file_uid not in (host_uid, 0, nobody)
+        expected = "a subordinate uid"
+    else:
+        kind, ok = "rootful Docker", file_uid == nobody
+        expected = f"uid {nobody} itself"
+    if not ok:
+        raise SandboxPlatformError(
+            f"docker info points to {kind}, under which a file written by "
+            f"container uid {nobody} is owned by {expected}; this daemon gave it "
+            f"to host uid {file_uid}, so the ownership handoff would be wrong"
+        )
+
+
+def _verify_platform(docker: str, image: str, run_dir: Path, owner: str | None) -> None:
+    """Run the platform probe in a scratch directory of ``run_dir``.
+
+    The scratch directory is neither ``data/`` nor ``work/``, so no agent
+    container ever sees it, and it is removed before this returns.
+
+    Raises:
+        SandboxPlatformError: the probe contradicts ``owner``, failed, or its
+            file never reached the host (a daemon that does not share this
+            host's filesystem, such as a remote ``DOCKER_HOST``).
+        SandboxImageError: the image is not present.
+        SandboxUnavailableError: Docker cannot be reached.
+    """
+    probe = Path(tempfile.mkdtemp(prefix="probe-", dir=run_dir))
+    try:
+        probe.chmod(0o777)  # uid 65534 must be able to create the file
+        name = f"sciagent-probe-{uuid.uuid4().hex[:20]}"
+        argv = build_probe_argv(docker=docker, name=name, image=image, probe_dir=probe)
+        try:
+            proc = _docker(docker, argv[1:], timeout=_REAP_TIMEOUT_S)
+        except subprocess.TimeoutExpired as exc:
+            _remove(docker, name)
+            _confirm_gone(docker, name)
+            raise SandboxPlatformError("the platform probe did not finish") from exc
+        if proc.returncode != 0:
+            stderr = _stderr(proc)
+            if "No such image" in stderr:
+                raise SandboxImageError(
+                    f"sandbox image {image} is not present; call ensure_image() "
+                    f"first:\n{stderr}"
+                )
+            check_docker(docker)
+            raise SandboxPlatformError(
+                f"the platform probe failed (exit {proc.returncode}):\n{stderr}"
+            )
+        try:
+            file_uid = (probe / "p").lstat().st_uid
+        except FileNotFoundError as exc:
+            raise SandboxPlatformError(
+                "the platform probe ran but its file did not reach the host: "
+                "the daemon does not share this host's filesystem"
+            ) from exc
+        _check_platform(owner, file_uid=file_uid, host_uid=_host_uid())
+    finally:
+        try:
+            (probe / "p").unlink(missing_ok=True)
+            probe.rmdir()
+        except OSError as exc:
+            raise SandboxError(f"cannot remove the platform probe: {exc}") from exc
+
+
+def _remove(docker: str, name: str) -> None:
+    """Force-remove a container (kill, then delete); best effort.
+
+    A ``docker rm -f`` that times out is not an error here: whether the
+    container is gone is what :func:`_confirm_gone` establishes, and only it
+    raises.
+    """
+    try:
+        _docker(docker, ["rm", "-f", name], timeout=_REAP_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        return
+
+
+def _exists(docker: str, name: str) -> bool:
+    """Whether a container of this name or id exists (``docker inspect``).
+
+    Raises:
+        SandboxUnavailableError: the daemon is down.
+        SandboxError: ``docker inspect`` gave no clear answer.
+    """
+    try:
+        proc = _docker(
+            docker,
+            ["inspect", "--type", "container", "--format", "{{.Id}}", name],
+            timeout=_REAP_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise SandboxError(f"docker inspect {name} did not answer") from exc
+    if proc.returncode == 0:
+        return True
+    stderr = _stderr(proc)
+    if "No such container" in stderr or "No such object" in stderr:
+        return False
+    check_docker(docker)
+    raise SandboxError(f"cannot tell whether container {name} is gone: {stderr}")
+
+
+def _confirm_gone(docker: str, name: str) -> None:
+    """Return once ``docker inspect`` shows the container gone; else raise.
+
+    A container that still exists is removed again (``docker rm -f``) and
+    polled for up to ``_GONE_TIMEOUT_S``: ``--rm`` deletes a container shortly
+    after its client returns, not necessarily before.
+
+    Raises:
+        SandboxError: the container is still there after the deadline.
+    """
+    deadline = time.monotonic() + _GONE_TIMEOUT_S
+    while _exists(docker, name):
+        _remove(docker, name)
+        if not _exists(docker, name):
+            return
+        if time.monotonic() >= deadline:
+            raise SandboxError(
+                f"container {name} is still there after docker rm -f; work/ "
+                "was not handed back, since its code may still be running"
+            )
+        time.sleep(_GONE_POLL_S)
+
+
+def _containers_mounting(docker: str, path: Path) -> list[str]:
+    """Ids of every container, running or not, with ``path`` as a mount source."""
+    try:
+        proc = _docker(
+            docker,
+            ["ps", "-aq", "--no-trunc", "--filter", f"volume={mount_source(path)}"],
+            timeout=_REAP_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise SandboxError("docker ps did not answer") from exc
+    if proc.returncode != 0:
+        check_docker(docker)
+        raise SandboxError(f"docker ps failed: {_stderr(proc)}")
+    return sorted(proc.stdout.decode("utf-8", "replace").split())
+
+
+def _handoff(
+    docker: str,
+    image: str,
+    work_dir: Path,
+    owner: str,
+    limits: SandboxLimits,
+    *,
+    timeout: float,
+) -> bool:
+    """Hand ``work_dir`` to ``owner`` in a helper container.
+
+    Returns whether the helper emptied ``work/`` for exceeding ``limits``.
+
+    Raises:
+        SandboxImageError: the image is not present.
+        SandboxUnavailableError: Docker cannot be reached.
+        SandboxError: the helper failed, timed out, or printed something other
+            than its status.
+    """
+    name = f"sciagent-own-{uuid.uuid4().hex[:20]}"
+    argv = build_handoff_argv(
+        docker=docker,
+        name=name,
+        image=image,
+        work_dir=work_dir,
+        owner=owner,
+        limits=limits,
+    )
+    try:
+        proc = _docker(docker, argv[1:], timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        _remove(docker, name)
+        _confirm_gone(docker, name)
+        raise SandboxError(
+            f"handing work/ to {owner} took longer than {timeout:.0f} s"
+        ) from exc
+    if proc.returncode != 0:
+        stderr = _stderr(proc)
+        if "No such image" in stderr:
+            raise SandboxImageError(
+                f"sandbox image {image} is not present; call "
+                f"ensure_image() first:\n{stderr}"
+            )
+        check_docker(docker)
+        raise SandboxError(
+            f"handing work/ to {owner} failed (exit {proc.returncode}):\n{stderr}"
+        )
+    status = proc.stdout.decode("utf-8", "replace").strip()
+    if status not in (HELPER_OK, HELPER_EMPTIED):
+        raise SandboxError(
+            f"the handoff helper printed {status[:200]!r}, not "
+            f"{HELPER_OK!r} or {HELPER_EMPTIED!r}"
+        )
+    return status == HELPER_EMPTIED
+
+
+def _check_owned(work_dir: Path) -> None:
+    """Raise unless ``work_dir`` belongs to the host user (after a back handoff)."""
+    uid = work_dir.lstat().st_uid
+    if uid != _host_uid():
+        raise SandboxError(
+            f"work/ is owned by uid {uid}, not by the host user (uid "
+            f"{_host_uid()}), after handing it back"
+        )
+
+
+def recover(
+    run_dir: Path,
+    *,
+    image: str,
+    docker: str = "docker",
+    limits: SandboxLimits | None = None,
+) -> None:
+    """Make a run directory's ``work/`` the host user's again, after any failure.
+
+    For cleanup and for a session killed mid-call. Removes every container
+    still mounting ``work/`` (an agent container whose client was killed runs
+    on, past any wall time) and confirms each gone; then, where there is a
+    handoff, hands ``work/`` back with the usual helper (``limits``, default
+    :class:`SandboxLimits`, within ``_RECOVERY_TIMEOUT_S``) and checks it.
+
+    Raises:
+        SandboxError: a container could not be removed or the handoff failed;
+            and whatever :func:`_probe_handoff_owner` raises.
+    """
+    work = run_dir / "work"
+    for container in _containers_mounting(docker, work):
+        _confirm_gone(docker, container)
+    left = _containers_mounting(docker, work)
+    if left:
+        raise SandboxError(f"containers still mount {work}: {', '.join(left)}")
+    owner = _probe_handoff_owner(docker)
+    if owner is None:
+        return
+    _handoff(
+        docker,
+        image,
+        work,
+        owner,
+        SandboxLimits() if limits is None else limits,
+        timeout=_RECOVERY_TIMEOUT_S,
+    )
+    _check_owned(work)
+
+
+def recover_run_dirs(root: Path, *, image: str, docker: str = "docker") -> None:
+    """:func:`recover` every run directory (one holding ``work/``) under ``root``.
+
+    Tries them all before raising.
+
+    Raises:
+        SandboxError: one or more could not be recovered (all are named).
+    """
+    failures: list[str] = []
+    for run_dir in sorted(p for p in root.iterdir() if (p / "work").is_dir()):
+        try:
+            recover(run_dir, image=image, docker=docker)
+        except SandboxError as error:
+            failures.append(f"{run_dir}: {type(error).__name__}: {error}")
+    if failures:
+        raise SandboxError("cannot recover " + "; ".join(failures))
 
 
 def _environment(seed: int) -> list[tuple[str, str]]:
@@ -487,10 +964,13 @@ class _Feeder(threading.Thread):
             return
 
 
-def _sweep_special_files(work_dir: Path) -> list[str]:
+def _sweep_special_files(work_dir: Path, owner_uid: int | None = None) -> list[str]:
     """Delete every entry under ``work_dir`` that is not a regular file or directory.
 
-    Returns the removed paths, relative and POSIX-style, in sorted order.
+    Returns the removed paths, relative and POSIX-style, in sorted order. With
+    ``owner_uid`` (after a back handoff), every entry must belong to it, or
+    :class:`~sciagent.sandbox.errors.SandboxError` is raised before anything
+    is removed from that directory.
 
     The container can create symbolic links and FIFOs in ``/work``. Inside it
     they lead nowhere (its mount namespace holds no host path), but the host
@@ -509,6 +989,11 @@ def _sweep_special_files(work_dir: Path) -> list[str]:
             entries = sorted(it, key=lambda e: e.name)
         for e in entries:
             st = os.lstat(e.path)
+            if owner_uid is not None and st.st_uid != owner_uid:
+                raise SandboxError(
+                    f"work/{rel}{e.name} is owned by uid {st.st_uid}, not by the "
+                    f"host user (uid {owner_uid}), after handing work/ back"
+                )
             attrs = getattr(st, "st_file_attributes", 0)
             reparse = bool(attrs & _FILE_ATTRIBUTE_REPARSE_POINT)
             name = f"{rel}{e.name}"
@@ -566,6 +1051,11 @@ class Sandbox:
         # Probed on the first call, so constructing a Sandbox needs no Docker.
         self._owner: str | None = None
         self._owner_probed = False
+        # Why the sandbox refuses calls, once a back handoff has failed.
+        self._broken: str | None = None
+        # Whether work/ may be out of the host user's hands: set before the
+        # forward handoff, cleared once a back handoff is confirmed.
+        self._handed_away = False
 
     @property
     def last_container_name(self) -> str | None:
@@ -578,34 +1068,91 @@ class Sandbox:
         Raises:
             SandboxUnavailableError: Docker cannot be reached.
             SandboxImageError: ``image`` is not present locally (runs never pull).
-            SandboxError: Docker failed to create the container for another reason.
+            SandboxPlatformError: platform detection is contradicted by the
+                daemon (module docstring; checked on the first call).
+            SandboxError: Docker failed to create the container for another
+                reason; a handoff failed, or the agent's container could not
+                be confirmed gone before the back handoff; or an earlier call
+                left the sandbox unusable.
         """
-        if not self._owner_probed:
-            self._owner = _probe_handoff_owner(self.docker)
-            self._owner_probed = True
-        if self._owner is None:
-            result = self._run(code)
-        else:
-            self._handoff(SANDBOX_UID)
-            try:
-                result = self._run(code)
-            finally:
-                # Also after a harness fault, so the run directory stays
-                # removable by the host.
-                self._handoff(self._owner)
-        # After the handoff back: the host may now unlink anywhere in work/.
-        removed = _sweep_special_files(self.work_dir)
-        notes = "".join(
-            f"[sciagent sandbox: removed non-regular file work/{r}]\n" for r in removed
-        )
-        return dataclasses.replace(result, stderr=result.stderr + notes)
-
-    def _run(self, code: str) -> SandboxResult:
-        """One container call, without the ownership handoff or the sweep."""
+        if self._broken is not None:
+            raise SandboxError(
+                f"the sandbox is unusable since an earlier call: {self._broken}"
+            )
+        owner = self._platform_owner()
         # A unique name so a timed-out container can be removed by name. The
         # name never reaches the result, so its randomness cannot move output.
         name = f"sciagent-sbx-{uuid.uuid4().hex[:20]}"
         self._last_container_name = name
+        emptied = False
+        if owner is None:
+            result = self._run(code, name)
+        else:
+            # One try for both handoffs: a forward handoff that failed part
+            # way, or a harness fault in the call, still hands work/ back.
+            try:
+                self._handed_away = True
+                emptied = self._handoff(SANDBOX_UID)
+                result = self._run(code, name)
+            finally:
+                emptied = self._hand_back(owner, name) or emptied
+        # After the handoff back: the host may now unlink anywhere in work/.
+        removed = _sweep_special_files(
+            self.work_dir, None if owner is None else _host_uid()
+        )
+        notes = "".join(
+            f"[sciagent sandbox: removed non-regular file work/{r}]\n" for r in removed
+        )
+        if emptied:
+            notes += (
+                f"[sciagent sandbox: work/ was emptied: more than "
+                f"{self.limits.max_work_entries} entries, or a path longer than "
+                f"{self.limits.max_work_path_bytes} bytes]\n"
+            )
+        return dataclasses.replace(result, stderr=result.stderr + notes)
+
+    def recover(self) -> None:
+        """Make ``work/`` the host user's again after any failure (:func:`recover`).
+
+        For the investigation runner's cleanup. A no-op, asking nothing of
+        Docker, unless a call left ``work/`` handed away (its back handoff
+        failed or never ran); a clean run's cleanup then cannot fail on a
+        Docker hiccup. It does not make a sandbox whose back handoff failed
+        usable again.
+        """
+        if not self._handed_away:
+            return
+        recover(self.run_dir, image=self.image, docker=self.docker, limits=self.limits)
+        self._handed_away = False
+
+    def _platform_owner(self) -> str | None:
+        """The handoff owner, probed and checked against the daemon on first use."""
+        if not self._owner_probed:
+            owner = _probe_handoff_owner(self.docker)
+            if sys.platform == "linux":
+                _verify_platform(self.docker, self.image, self.run_dir, owner)
+            self._owner = owner
+            self._owner_probed = True
+        return self._owner
+
+    def _hand_back(self, owner: str, name: str) -> bool:
+        """Confirm the agent's container gone, hand ``work/`` back, check it.
+
+        Returns whether the helper emptied ``work/``. Any failure leaves the
+        sandbox unusable for further calls.
+        """
+        try:
+            _confirm_gone(self.docker, name)
+            emptied = self._handoff(owner)
+            _check_owned(self.work_dir)
+        except SandboxError as error:
+            self._broken = f"{type(error).__name__}: {error}"
+            raise
+        self._handed_away = False
+        return emptied
+
+    def _run(self, code: str, name: str) -> SandboxResult:
+        """One container call, without the ownership handoff or the sweep."""
         with tempfile.TemporaryDirectory(prefix="sciagent-sbx-") as tmp:
             cidfile = Path(tmp) / "cid"
             argv = build_run_argv(
@@ -644,7 +1191,7 @@ class Sandbox:
                 rc = proc.wait(timeout=self.limits.wall_seconds)
             except subprocess.TimeoutExpired:
                 timed_out = True
-                self._remove(name)
+                _remove(self.docker, name)
                 try:
                     rc = proc.wait(timeout=_REAP_TIMEOUT_S)
                 except subprocess.TimeoutExpired:
@@ -667,49 +1214,15 @@ class Sandbox:
             duration_s=duration,
         )
 
-    def _handoff(self, owner: str) -> None:
-        """Chown ``work/`` to ``owner`` in a helper container; raise on failure."""
-        name = f"sciagent-own-{uuid.uuid4().hex[:20]}"
-        argv = build_handoff_argv(
-            docker=self.docker,
-            name=name,
-            image=self.image,
-            work_dir=self.work_dir,
-            owner=owner,
-        )
-        try:
-            proc = subprocess.run(
-                argv, capture_output=True, timeout=_HANDOFF_TIMEOUT_S, check=False
-            )
-        except FileNotFoundError as exc:
-            raise SandboxUnavailableError(
-                f"Docker CLI {self.docker!r} not found on PATH"
-            ) from exc
-        except subprocess.TimeoutExpired as exc:
-            self._remove(name)
-            raise SandboxError(
-                f"handing work/ to {owner} took longer than {_HANDOFF_TIMEOUT_S:.0f} s"
-            ) from exc
-        if proc.returncode != 0:
-            stderr = proc.stderr.decode("utf-8", "replace")
-            if "No such image" in stderr:
-                raise SandboxImageError(
-                    f"sandbox image {self.image} is not present; call "
-                    f"ensure_image() first:\n{stderr.strip()}"
-                )
-            check_docker(self.docker)
-            raise SandboxError(
-                f"handing work/ to {owner} failed (exit {proc.returncode}):\n"
-                f"{stderr.strip()}"
-            )
-
-    def _remove(self, name: str) -> None:
-        """Force-remove a container by name (kill, then delete)."""
-        subprocess.run(
-            [self.docker, "rm", "-f", name],
-            capture_output=True,
-            timeout=_REAP_TIMEOUT_S,
-            check=False,
+    def _handoff(self, owner: str) -> bool:
+        """Hand ``work/`` to ``owner``; return whether it was emptied."""
+        return _handoff(
+            self.docker,
+            self.image,
+            self.work_dir,
+            owner,
+            self.limits,
+            timeout=_handoff_timeout(self.limits),
         )
 
     def _raise_docker_failure(self, rc: int, stderr: str) -> None:

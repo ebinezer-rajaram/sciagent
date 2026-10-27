@@ -29,6 +29,7 @@ from sciagent.sandbox import (
     Sandbox,
     SandboxLimits,
     SandboxResult,
+    build_run_argv,
     result_digest,
     write_dataset,
 )
@@ -639,3 +640,149 @@ def test_disk_file_size_is_bounded(sandbox: Sandbox, run_dir: Path) -> None:
     # the signal disposition; either way the file stays bounded.
     assert "LEAK" not in r.stdout
     assert (run_dir / "work" / "big.bin").stat().st_size <= 8 * (1 << 20)
+
+
+# --------------------------------------------------------------------------
+# The ownership handoff's follow-ups (JOURNAL 2026-10-27, red-team review)
+# --------------------------------------------------------------------------
+
+_SET_ACLS = """
+import os, struct
+UNDEF = 0xFFFFFFFF
+# user::rwx user:12345:rwx group::r-x mask::rwx other::r-x
+acl = struct.pack("<I", 2) + b"".join(
+    struct.pack("<HHI", tag, perm, uid)
+    for tag, perm, uid in [
+        (0x01, 7, UNDEF), (0x02, 7, 12345), (0x04, 5, UNDEF),
+        (0x10, 7, UNDEF), (0x20, 5, UNDEF),
+    ]
+)
+open("/work/w", "w").write("x")
+os.chmod("/work/w", 0o777)
+os.mkdir("/work/d")
+os.chmod("/work/d", 0o777)
+os.setxattr("/work/w", "system.posix_acl_access", acl)
+os.setxattr("/work/d", "system.posix_acl_access", acl)
+os.setxattr("/work/d", "system.posix_acl_default", acl)
+print(sorted(os.listxattr("/work/w")), sorted(os.listxattr("/work/d")))
+"""
+
+
+def test_handoff_strips_group_and_other_write_and_acls(
+    sandbox: Sandbox, run_dir: Path
+) -> None:
+    """Modes and ACLs the code set must not survive into host-owned files: a
+    group- or world-writable file, or an ACL naming another uid, would give
+    whoever holds that uid on the host a way into the run directory."""
+    r = _run(sandbox, _SET_ACLS)
+    assert r.exit_code == 0, r.stderr
+    assert r.stdout == (
+        "['system.posix_acl_access'] "
+        "['system.posix_acl_access', 'system.posix_acl_default']\n"
+    ), "the code could not set the ACLs this test needs"
+    work = run_dir / "work"
+    for name in ("w", "d"):
+        assert os.listxattr(work / name, follow_symlinks=False) == [], name
+    assert (work / "w").stat().st_mode & 0o777 == 0o755
+    assert (work / "d").stat().st_mode & 0o777 == 0o755
+    assert work.stat().st_mode & 0o022 == 0
+
+
+def test_too_many_files_empty_work_and_the_run_goes_on(
+    sandbox: Sandbox, run_dir: Path
+) -> None:
+    """Classification (LOG 2026-10-27): files the code writes are the code's
+    own doing, like its time and memory, so a work/ past the entry limit is a
+    recorded result -- emptied, and the code told -- never a harness fault."""
+    limit = 100_000  # the default; the directory makes it limit + 1 entries
+    r = _run(
+        sandbox,
+        f"""
+        import os
+        os.mkdir("/work/spam")
+        for i in range({limit}):
+            open(f"/work/spam/{{i}}", "w").close()
+        print("made")
+        """,
+    )
+    assert r.exit_code == 0, r.stderr
+    assert r.stdout == "made\n"
+    assert f"work/ was emptied: more than {limit} entries" in r.stderr
+    assert list((run_dir / "work").iterdir()) == []
+    again = _run(sandbox, "open('/work/f', 'w').write('ok'); print('fine')")
+    assert again.stdout == "fine\n" and again.exit_code == 0, again.stderr
+    assert (run_dir / "work" / "f").read_text() == "ok"
+    assert sandbox.limits.max_work_entries == limit
+
+
+@pytest.mark.parametrize("wrong", [None, f"{os.getuid()}:{os.getgid()}"])
+def test_wrong_platform_detection_fails_loudly(
+    sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch, wrong: str | None
+) -> None:
+    """Detection forced to Docker Desktop (no handoff) or to rootful Docker on
+    this rootless daemon: the first call raises instead of the code meeting a
+    ``PermissionError`` that would be recorded as its own result."""
+    from sciagent.sandbox import SandboxPlatformError, runner
+
+    if sys.platform != "linux":
+        pytest.fail("this check is about native Linux Docker")
+    monkeypatch.setattr(runner, "_probe_handoff_owner", lambda docker: wrong)
+    with pytest.raises(SandboxPlatformError):
+        _run(sandbox, "open('/work/f', 'w').write('x')")
+    assert list((sandbox.run_dir / "work").iterdir()) == []
+
+
+def test_recovery_after_a_killed_session_removes_the_container_and_hands_back(
+    sandbox: Sandbox, run_dir: Path
+) -> None:
+    """A session killed mid-call (the hard timeout) leaves its agent container
+    running and ``work/`` owned by the container's uid. Recovery removes the
+    container, hands ``work/`` back, and the run directory can be removed."""
+    from sciagent.sandbox import build_handoff_argv, recover
+
+    work = run_dir / "work"
+    give = build_handoff_argv(
+        docker="docker",
+        name=f"sciagent-own-test-recover-{os.getpid()}",
+        image=sandbox.image,
+        work_dir=work,
+        owner="65534:65534",
+        limits=sandbox.limits,
+    )
+    assert subprocess.run(give, capture_output=True, check=False).returncode == 0
+    name = f"sciagent-sbx-test-recover-{os.getpid()}"
+    argv = build_run_argv(
+        docker="docker",
+        name=name,
+        image=sandbox.image,
+        data_dir=run_dir / "data",
+        work_dir=work,
+        limits=sandbox.limits,
+        seed=sandbox.seed,
+        cidfile=run_dir / "cid",
+    )
+    orphan = subprocess.Popen(
+        argv,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    assert orphan.stdin is not None
+    orphan.stdin.write(
+        b"import os, time\nos.makedirs('/work/a')\nos.chmod('/work/a', 0)\n"
+        b"open('/work/up', 'w').close()\ntime.sleep(600)\n"
+    )
+    orphan.stdin.close()
+    try:
+        deadline = time.monotonic() + 30
+        while _leftover(name) == "" or not os.path.lexists(work / "up"):
+            assert time.monotonic() < deadline, "the orphan never started"
+            time.sleep(0.2)
+        assert work.stat().st_uid != os.getuid()
+        recover(run_dir, image=sandbox.image)
+        assert _leftover(name) == ""
+        assert {p.lstat().st_uid for p in [work, *work.rglob("*")]} == {os.getuid()}
+        shutil.rmtree(run_dir)
+    finally:
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False)
+        orphan.wait(timeout=30)

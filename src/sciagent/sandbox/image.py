@@ -106,12 +106,17 @@ def ensure_image(context: Path = SANDBOX_CONTEXT, *, docker: str = "docker") -> 
     """
     tag = image_tag(context)
     check_docker(docker)
-    present = subprocess.run(
-        [docker, "image", "inspect", "--format", "{{.Id}}", tag],
-        capture_output=True,
-        timeout=_PROBE_TIMEOUT_S,
-        check=False,
-    )
+    try:
+        present = subprocess.run(
+            [docker, "image", "inspect", "--format", "{{.Id}}", tag],
+            capture_output=True,
+            timeout=_PROBE_TIMEOUT_S,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise SandboxUnavailableError(
+            f"docker image inspect did not answer within {_PROBE_TIMEOUT_S:.0f} s"
+        ) from exc
     if present.returncode == 0:
         return tag
     try:

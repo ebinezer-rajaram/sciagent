@@ -14,6 +14,7 @@ from sciagent.sandbox.errors import (
     SandboxError,
     SandboxImageError,
     SandboxPathError,
+    SandboxPlatformError,
     SandboxUnavailableError,
 )
 from sciagent.sandbox.image import check_docker, ensure_image, image_tag
@@ -23,9 +24,12 @@ from sciagent.sandbox.runner import (
     SandboxLimits,
     SandboxResult,
     build_handoff_argv,
+    build_probe_argv,
     build_run_argv,
     handoff_owner,
     mount_source,
+    recover,
+    recover_run_dirs,
     result_digest,
 )
 
@@ -38,15 +42,19 @@ __all__ = [
     "SandboxImageError",
     "SandboxLimits",
     "SandboxPathError",
+    "SandboxPlatformError",
     "SandboxResult",
     "SandboxUnavailableError",
     "build_handoff_argv",
+    "build_probe_argv",
     "build_run_argv",
     "check_docker",
     "ensure_image",
     "handoff_owner",
     "image_tag",
     "mount_source",
+    "recover",
+    "recover_run_dirs",
     "result_digest",
     "write_dataset",
 ]

@@ -534,3 +534,27 @@ tier; details are in QUEUE and LOG. The INBOX sprint entry is marked handled.
    (`resource.getrusage` in the worker) beside `wall_s` in `timing.jsonl` (engineer, test first,
    in a worktree, not while a run uses it), or project from uncontended units only; say which.
 4. Owner decisions waiting: Δ6 (A/B/C); the brake and pilot-unit question (QUEUE).
+
+
+## 2026-10-28: Lane session 7 (02:47 UTC), checkpoint: mini-pilot interim gate checks, CPU time in progress
+
+**Done.**
+- Inbox: no open entries (the usage sprint ended 02:00Z). VETO.md: no vetoes. No veto window
+  ends this session (earliest wall-time-move, 12:00Z), so no merges.
+- **Mini-pilot interim gate checks** on the units finished so far (both runs still running,
+  read-only, main checkout c02f819). Not the gate: run B has 5 of run A's 13 cells.
+  - `store_compare.py .cache/mini-a .cache/mini-b`: `identical cells: 5; only in a: 8; only in
+    b: 0; differing: 0` (exit 1 only because of the 8 cells run B has not reached). This
+    settles session 6's open question for those 5: cell bytes, not just the timing digest, match.
+  - `hunt_gap.py --store .cache/mini-a --env fit/5 --split data/v2/truths/dev`: `units: 13 under
+    fit/5`, `gap above +0.01: 0`, `above the truth's own parameters by > +0.01: 0`,
+    `oracle_underfit: 0 flagged, 0 unrecorded, of 2 ORACLE units`, `GATE PASS`. Largest gap to
+    ORACLE: B-sparse dev-008 −0.0018.
+  - `store_check.py`: run A `cells: 13; issues: 0; warnings: 0`, STORE OK; run B `cells: 5`,
+    STORE OK.
+- In progress: engineer building per-job CPU time (`cpu_s`, `cpu_children_s` from
+  `resource.getrusage` deltas in the worker) in `timing.jsonl` on a new branch `cpu-time`
+  stacked on `wall-time-move` (both change the same timing lines; wall-time-move merges first).
+  Session keys' two long campaign slow tests running in `tmux -L sciagent` `sci-longslow`
+  (nice 19, one process, log `.claude/worktrees/agent-a501a8588ae2e77cb/.cache/long-slow-s7.log`,
+  started 02:49:21Z, killed by a guard if MemAvailable < 2.5 GB).

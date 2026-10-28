@@ -1112,3 +1112,47 @@ will run slowly.
 **Next.** After 17:00Z: check VETO.md again, merge 7bf2e0a, run ruff, mypy and the fast tier, then
 push. After 19:15Z: merge up to 76a70ef the same way, before this session's 19:48Z deadline.
 c1-oracle-inf and c1-label (21:45Z) go to the next session.
+
+## 2026-10-28: Lane session 12 (16:08 UTC) hand-over: by-link costing and session keys merged, fingerprint and rescore guards merged, far B-sym@10F measurement running
+
+**Done.**
+- `--by-link` and `--assume-link` in `scripts/project_runtime.py` (engineer, test first; e2d46bc,
+  merged 5aff197; LOG). I reran its tests (`18 passed`, exit 0). Its `--by-stratum` output matches
+  `.cache/s11/projection-strata.txt` apart from the echoed store paths. With `--assume-link
+  exp=softplus` it prints 44.7 h CPU and 41.5 h uncontended, the red team's lower ends; plain
+  `--by-link` gives 43.4 h and 40.3 h. The upper ends (49.5 and 46.3 h) come from guesses about
+  B-sym@10F on far truths, not from link.
+- Session keys and the sandbox (7bf2e0a) merged at 17:01Z with VETO.md empty (87b406f). On v2 with
+  both merges: ruff clean, mypy `243 source files` clean; fast tier `2815 passed, 3 skipped` in
+  84.5 s, exit 0; `tests/campaign -m slow` `12 passed` in 1631 s, exit 0
+  (`.cache/s12/fast-keys.log`, `.cache/s12/campaign-slow-keys.log`).
+- The 19:15Z merge was verified in advance on a scratch worktree (`premerge-fp`, bf6d448 merged with
+  76a70ef as 25c4bb0): ruff clean, mypy `246 source files` clean; fast tier `2885 passed, 3
+  skipped`, exit 0; `tests/campaign -m slow` `12 passed` in 2567 s, exit 0 (`.cache/s12/premerge-*.log`).
+  At 19:16Z, with VETO.md empty and no new upstream commits, v2 merged 76a70ef as de2e8a3. Its tree
+  `5b000185…` equals 25c4bb0's, so the tiers above apply to it unchanged. On v2: ruff clean, mypy
+  `246 source files` clean. A repeat fast tier on v2 was stopped at 9% after 10 min (load 16 from
+  the other lane) as redundant with the identical tree.
+- A far B-sym@10F measurement is running: `.cache/far10f` (tmux `far10f`, worktree `far10f` at
+  87b406f, dev-000 and dev-003 seed 1, `--systems B-sym@10F --no-llm --workers 2`, started
+  17:30:36Z, `nice -n 10`, mem sampler beside it). It is the largest open term in the stop point's
+  projection. CPU only: no LLM and no AWS spend. The other lane pushed load to about 11 at 18:05Z,
+  so its CPU figures will carry some contention. Report the min(CPU, wall) basis beside them.
+
+**Learned.**
+- On a quiet machine the fast tier takes 85 s at `-n 2` (11 min in session 11 under load). The
+  campaign slow tier takes 27 to 48 min, which is too long to fit between a veto window and a
+  session deadline. Verifying the identical merge tree in a scratch worktree beforehand works,
+  provided v2's tree then differs from it only in docs (checked with `git diff --stat`).
+- A background Bash job is killed at its timeout (at most 10 min here), so long test tiers go in
+  tmux.
+
+**Next.**
+1. c1-oracle-inf (eb48450) and c1-label (abb4059) from `rehearsal2` after 21:45Z, with VETO.md
+   checked; then the fast tier and `tests/campaign -m slow` on v2.
+2. far10f: when it ends (the smoke store's dev-000 unit took 17411.8 s wall, so roughly 22:30Z or
+   later), run `store_check.py` and `project_runtime.py` on mini-cpu, strata and far10f (with
+   `--by-link`). Copy the store to S3 and add a ledger line. If the figure moves, update the stop
+   point entry.
+3. Owner decisions still waiting: the stop point (option 1 dm-devbox or option 2 AWS), Δ6
+   (A/B/C), and the brake and pilot-unit question.

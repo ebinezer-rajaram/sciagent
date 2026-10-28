@@ -39,6 +39,10 @@ Each item says when it is done. Move finished items to the bottom section after 
   2026-10-28 (session 12): session keys 7bf2e0a merged at 17:01Z with VETO.md empty (87b406f,
   after by-link 5aff197); on v2 ruff and mypy (243 files) clean, fast tier `2815 passed, 3 skipped`
   exit 0, `tests/campaign -m slow` `12 passed` exit 0 (`.cache/s12/*-keys.log`).
+  Fingerprint guard and rescore guard (up to 76a70ef) merged at 19:16Z with VETO.md empty
+  (de2e8a3; tree identical to the pre-verified 25c4bb0: fast `2885 passed, 3 skipped`, campaign
+  slow `12 passed`, `.cache/s12/premerge-*.log`). Left: c1-oracle-inf eb48450 and c1-label
+  abb4059 after 21:45Z, then the fast tier and campaign slow tier on v2.
 - [x] 2026-10-28 **Session keys and the sandbox** (merged 87b406f at 17:01Z, no veto) (before any AG-o cell that produces reported numbers):
   `session_text` covers neither `SandboxLimits`, the handoff helper's sha256 nor the image tag,
   so a stored AG-o session cell would be reused across a change to any of them. Recommend
@@ -86,7 +90,7 @@ Each item says when it is done. Move finished items to the bottom section after 
   treats them; no rule changes). Tests first: `tests/campaign/test_pilot_report_control_1.py` 6
   of 7 failed before, `7 passed` after (my rerun too); `tests/campaign -m "not slow" -n 1` `272
   passed`; ruff, mypy (244 files) clean. Merge right after c1-oracle-inf.
-- [~] **Code-fingerprint guard on stores** (F5, LOG 2026-10-27; veto window ends
+- [x] 2026-10-28 **Code-fingerprint guard on stores** (merged de2e8a3 at 19:16Z, no veto; resuming far10f or older stores on new code needs `--reuse-from`) (F5, LOG 2026-10-27; veto window ends
   2026-10-28T19:15Z): the store keeps a sidecar with the git commit, a clean-tree flag and the
   `uv.lock` sha256; a dirty tree refuses to write; a resume under a different fingerprint refuses
   to reuse cells unless `--reuse-from <fp>` names it (recorded in the sidecar). Engineer, test
@@ -263,7 +267,7 @@ Each item says when it is done. Move finished items to the bottom section after 
   measured slowdown on dm-devbox still to decide;
   (c) ~~store-level replay check~~ done 2026-10-27: `scripts/replay_check.py` (98e3aa4;
   smoke store 4 of 4 PASS);
-  (d) `rescore_guard` extras (strip the CLI from PATH, patch the SDK entry points);
+  (d) ~~`rescore_guard` extras~~ merged de2e8a3 2026-10-28 (session 12) (strip the CLI from PATH, patch the SDK entry points);
   2026-10-28 (session 9): built as `tests/campaign/test_rescore_guard.py` (test only; LOG
   2026-10-28): local branch `rescore-guard` fcc45df on v2 (10 passed), and `guard-on-rehearsal`
   5ef1db7 = the same on `merge-rehearsal` plus `fingerprint=FINGERPRINT` (10 passed, mypy clean).

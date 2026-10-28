@@ -41,7 +41,7 @@ from typing import Any, Final
 import anyio
 import claude_agent_sdk
 import pytest
-from campaign_support import entry, environment, tiny_config
+from campaign_support import FINGERPRINT, entry, environment, tiny_config
 from test_campaign import SCRIPT, clean
 
 from sciagent.campaign import driver as driver_module
@@ -145,6 +145,7 @@ def _campaign(root: Path, **settings: Any) -> Campaign:
         config,
         [entry(TRUTH)],
         DriverSettings(workers=0, poll_s=0.05, run_baselines=False, **settings),
+        fingerprint=FINGERPRINT,
     )
 
 

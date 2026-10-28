@@ -988,3 +988,25 @@ cost ceiling approved).
 
 **Learned.** The lane's guard hook blocks inline shell code that writes files when the text names
 `.claude` (worktree paths included). Use the Edit tool for those edits.
+
+## 2026-10-28: Lane session 11 (13:05 UTC), progress: projection2 merged; interim strata figures (not a result)
+
+**Done.**
+- Engineer: `projection2` 1b267e0 adds repeatable `--store`, `--by-stratum` and `--wall-from`
+  (LOG 2026-10-28). I reran it in its worktree:
+  - `13 passed`; ruff clean; mypy `Success: no issues found in 242 source files`.
+  - The single-store command differs from `.cache/s10/projection.txt` only in the path prefix and
+    the corrected caveat.
+  - The engineer's fast tier there: exit 0, 2759 passed, 3 skipped.
+- Merged into v2 as e474a6b (script and tests only; no veto window applies). On v2: ruff and mypy
+  clean, the file's `13 passed`. The full fast tier on v2 was still running at this commit
+  (`.cache/s11/fast-v2.log`).
+- Interim, from `.cache/strata` with 14 of 15 lines (planted-hint dev-010 still running), pooled
+  with mini-cpu and walls from mini-a and mini-b:
+  - unit mean CPU 45.5 h;
+  - stratum mean CPU 40.2 h;
+  - uncontended min(CPU, walls): 42.1 h unit mean, 37.5 h stratum mean.
+
+  Strata rest on n = 1 per non-far stratum, and B-sym@10F on one near unit (2121.5 s CPU), so the
+  far B-sym@10F units are probably understated. Not recorded as the answer until the run ends and
+  the red team has read it.

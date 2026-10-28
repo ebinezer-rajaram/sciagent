@@ -1577,3 +1577,24 @@ The call therefore does hinge on contention. The method stays CPU time, with thi
 The script's caveat line is corrected (text only, no figure changes). The figures stand, but the
 reading changes: on a quiet machine the non-LLM plan sits at about the 48-hour line, and
 B-sym@10F (unmeasured) and the near and mid strata decide which side.
+
+## 2026-10-28: `project_runtime.py` pools stores, costs by stratum and adds a min(CPU, wall) line (merged e474a6b)
+
+The projection's figures stand on a single far-stratum store. Session 11 extends it without
+changing the single-store output: apart from the corrected caveat, that output is byte-identical
+(a golden test pins it).
+- `--store` is repeatable. A unit with CPU figures in several stores is one measurement at the
+  mean of its lines, and the output counts them. A unit repeated within one store keeps every
+  line, which preserves the old output.
+- `--by-stratum` costs each planned unit by its system's mean in its truth's stratum. The table
+  names the source of each cost; an unmeasured stratum falls back to the system's all-strata mean,
+  named as such. B-sym@10F, once measured, is costed like any other system, and `--assume` stays
+  for unmeasured ones.
+- `--wall-from` adds "uncontended" lines that cost each unit at min(its CPU, every `wall_s` it
+  has in any given store). These are an upper bound on uncontended cost under the hyperthreading
+  bias in the correction above. A `one run` column counts units with a wall in one store only,
+  whose figure keeps that run's contention.
+
+Why the extension: the two biases found by the red team (far-only truths and load-inflated CPU)
+push in the same direction. Each needs its own printed line, so the owner sees both versions
+rather than one number.

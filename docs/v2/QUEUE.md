@@ -241,6 +241,10 @@ Each item says when it is done. Move finished items to the bottom section after 
   the smoke store's dev-000 unit took 17411.8 s wall). Resume: `bash .cache/far10f-run.sh 2`.
   Next session: when it ends, run `store_check.py`, rerun `project_runtime.py` on all three stores,
   copy the store to S3 and add the ledger line.
+  2026-10-28 (session 13): far10f done (2 recorded, STORE OK; S3 `p3-linux/far10f-87b406f/`).
+  Far B-sym@10F costs 14255.4 s CPU per unit (near 2121.5 s). Red-teamed figure: quiet machine,
+  whole pool with LLM scoring, about 51 h (45-58 h), just over the line; this week's load about
+  85-95 h (floor 78 h). `.cache/s13/projection-*.txt`, JOURNAL session 13. Still the owner's choice.
 - [ ] **Full pilot** (pilot-runner): `nice -n 10 uv run python scripts/pilot.py --root
   .cache/pilot --truths 20 --seeds 1,2,3 --b10f-truths 10 --workers 2 --llm-concurrency 1` in
   tmux, exactly the SPEC §7 P3 plan: 20 dev truths x 3 seeds; AG-c-S and AG-o-S, named and
@@ -294,7 +298,7 @@ Each item says when it is done. Move finished items to the bottom section after 
   2026-10-28T19:15Z): the guard above before the pilot; derived address text with the p4-deltas
   integration. Δ11 (EIG weights) proposed 2026-10-27 after the red team rejected the first
   draft's tie rule (LOG, veto window ends 2026-10-28T21:40Z). Drafts of the FSD event cap and the
-  five review items are in `.cache/drafts/`; review items proposed (LOG, window ends 2026-10-28T21:45Z); Δ6: `link-neutral` not adopted, a link-balanced variant recommended pending its own red team (LOG); 2026-10-28: link-balanced red-teamed, **needs the owner's explicit choice** (A/B/C; no veto window, since (C) sets aside rule (A) after the numbers; LOG 2026-10-28); FSD cap: draft not adopted, measurement first (LOG).
+  five review items are in `.cache/drafts/`; review items proposed (LOG, window ends 2026-10-28T21:45Z); Δ6: `link-neutral` not adopted, a link-balanced variant recommended pending its own red team (LOG); 2026-10-28: link-balanced red-teamed, **needs the owner's explicit choice** (A/B/C; no veto window, since (C) sets aside rule (A) after the numbers; LOG 2026-10-28); FSD cap: draft not adopted, measurement first (LOG). 2026-10-28 (session 13): measurement prepared (LOG 2026-10-28); pass 1 running in `tmux -L sciagent` `fsd-dist`, output `.cache/drafts/fsd-dist/dist-s1-d0.jsonl`; then summary, pass 2, a cap draft and its red team.
 - [ ] **Remaining P4 work packages**: WP9 (1327de9), WP10 (98205b4), WP11 controls 4-6
   (6ac6142) and WP12 LOG entries (f4a38e0) are committed on `origin/p4-deltas`
   (HANDOFF-2026-10-09); its slow tier was never run. Folded into the integration item above.

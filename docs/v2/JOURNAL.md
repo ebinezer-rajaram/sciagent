@@ -1181,3 +1181,53 @@ merge tree, but merge commits should be pushed after `git fetch` shows nothing u
 **Next.** When dev-003 ends: `store_check.py` on far10f, `project_runtime.py --by-link` on
 mini-cpu, strata and far10f, S3 copy and ledger line, and update the stop point if the figure
 moves. Read the slow tier's tail.
+
+## 2026-10-28: Lane session 13 (21:49 UTC) hand-over: C1 branches merged, far B-sym@10F measured, stop point figure corrected upwards, FSD cap measurement running
+
+**Done.**
+- c1-oracle-inf and c1-label merged at 21:49Z with VETO.md empty (on v2 as bed7454 and 1c8160a;
+  tree `48699bb…` equals the tested merge). On v2: ruff clean, mypy `247 source files` clean, fast
+  tier `2897 passed, 3 skipped`, exit 0; `tests/campaign -m slow -n 1` `12 passed, 1 warning in
+  4289.30s`, exit 0 (`.cache/s13/`). All five `rehearsal2` branches are now on v2. LOG: Δ11 and
+  review items (a) to (e) adopted after their windows; C1's −inf rule is in force for P3 and P4.
+- far10f finished 23:04:21Z: `recorded={'B-sym@10F': 2}, failed={}, bugs=0`; STORE OK. dev-000
+  CPU 12091.8 s, wall 14262.5 s; dev-003 CPU 16419.0 s, wall 20021.2 s. dev-000's digest matches
+  the smoke store's. S3 `p3-linux/far10f-87b406f/` (13 objects); ledger lines added.
+- Projection rerun on mini-cpu, strata and far10f (`.cache/s13/projection-*.txt`). Non-LLM units
+  only, uncontended (min(CPU, walls)): 43.8 h by stratum, 48.8 h by link, 49.9 h by link with exp
+  as softplus (session 12: 40.3 to 41.5 h). The far B-sym@10F cell is 14255.4 s per unit against
+  2121.5 s near; the move is exactly (14255.4 − 2121.5) × 5 / 2 / 3600 = 8.4 h.
+- Red team (fresh context, reran everything; scratch in `/tmp/rev13/`): arithmetic right,
+  independent reimplementation within 0.05 h, no double counting. Two framings corrected, and I
+  checked both numbers: (1) the 240 LLM scoring jobs share the pool, 240 × 131.07 s / 2 = 4.37 h
+  from the smoke store, so the **whole pool on a quiet machine is about 51 h (45 to 58 h)**, just
+  over the 48 h line, not under it; (2) the ×1.50 wall/CPU is CPU-weighted and dominated by
+  far10f (per store: mini-cpu 2.001, strata 1.371, far10f 1.202), so at this week's load, costing
+  each unit at its own wall, the run is **about 85 to 95 h, floor about 78 h**. Session 11's "about
+  90 h" stands; its "about 48 h quiet" moves to about 51 h.
+- FSD event-cap measurement (LOG 2026-10-28): engineer prepared `.cache/drafts/fsd-dist/` on a
+  worktree of `origin/p4-deltas` bff61ec; I checked the smoke (64 lines; only stops are dev-002
+  `inject_sign_high` WH at the 15,000 cap, 43.9 and 41.9 CPU s). Pass 1 (`--replicates 0-3`, all
+  20 truths, wh and glm) runs in `tmux -L sciagent` session `fsd-dist` since 23:05Z, one process,
+  nice 10, projected 2 to 3.5 CPU h for the full run; 274 lines at 23:15Z.
+
+**Learned.**
+- The far B-sym@10F units are about 7 times the near one, and they decide whether the plan
+  crosses 48 h. Contention inflation on them is not bounded by any quiet measurement; correcting
+  for steal alone (about 10%) gives 47.7 h before scoring, so it does not take the whole pool
+  under 48 h.
+- dm-devbox (m7i-flex.xlarge) shows steal only when all 4 vCPUs are busy (mean 12.3% at 80 to 90%
+  busy, capped at 20%), so keeping total demand under 4 vCPUs during the pilot matters, including
+  the lane's own test tiers.
+- After a local merge, `git pull --rebase` flattens it; fetch and push directly when nothing is
+  upstream.
+
+**Next.**
+1. Owner: the stop point (dm-devbox about 51 h quiet, 85 to 95 h at this week's load; or AWS
+   m6i.xlarge about $9 to 11, which needs launch tooling and a byte check). The run is resumable,
+   so starting on dm-devbox and moving later stays cheap. Also open: Δ6 (A/B/C) and the brake and
+   pilot-unit question.
+2. FSD pass 1: when `.cache/drafts/fsd-dist/dist-s1-d0.log` shows `exit:`, run the summary mode
+   (README there), then pass 2 (the same command without `--replicates 0-3`). If more than 20% of
+   cells explode, re-plan (README ceiling 8 CPU h). Then draft the cap choice for red team.
+3. Keep the machine quiet before the pilot: no slow tiers while a measurement runs.

@@ -1629,3 +1629,16 @@ are adopted as "keep, document only" or "not adopted for now"; (b)'s reword wait
 prompt edit so LLM keys move once. (c) is in force for P3 and P4: any ORACLE −inf on any (truth,
 seed) fails control 1, merged into v2 with its label fix at 21:49Z (as bed7454 and 1c8160a, from `rehearsal2`
 eb48450 and abb4059). The Linux pilot has not run, so no stored verdict changes.
+
+## 2026-10-28: The FSD event-cap measurement: B-lib's pick stands in for the GLM side, at seed 1 and decision 0
+
+The measurement the FSD cap needs (LOG 2026-10-27) is prepared, not run: `.cache/drafts/fsd-dist/measure_dist.py`
+on a worktree of `origin/p4-deltas` bff61ec, one line per (truth, design, side, replicate). The WH side is
+exactly FSD's reference stream. The GLM side uses B-lib's pick on truthFSD's parametric stream, because
+FSD's real parametric side (B-sym's first-epoch top fit, refitted at each decision) would mean running
+B-sym. Fixed at seed 1 and decision 0: WH is fitted once, so only its stream moves across decisions.
+The smoke (dev-000 and dev-002, 2 replicates) found the predicted degenerate cell: the WH side of dev-002
+`inject_sign_high` stops at 15,000 on both replicates (about 43 CPU s each), and the GLM side completes
+(about 1,850 events). B-lib's mark-blind `hawkes` pick makes the GLM side identical on all four inject
+designs. Also found: `investigation/policy.py:make_policy` builds `FSDPolicy` with the default cap, so a
+cap set through `PolicyArmSettings` alone would not reach AG-c-S. Projected full run: 2 to 3.5 CPU h.

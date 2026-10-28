@@ -51,7 +51,9 @@ def _check(
     out, err = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         code = module.main([str(a) for a in args])
-    return subprocess.CompletedProcess("replay_check.py", code, out.getvalue(), "")
+    return subprocess.CompletedProcess(
+        "replay_check.py", code, out.getvalue(), err.getvalue()
+    )
 
 
 def _config_only(path: Path, truth_id: str) -> SessionRecord:
@@ -82,7 +84,7 @@ def test_replay_check_fails_when_no_record_is_found(
         "{}", encoding="utf-8"
     )
     done = _check(monkeypatch, "--root", tmp_path / "s", "--split", SPLIT)
-    assert done.returncode == 1, done.stdout
+    assert done.returncode == 1, done.stdout + done.stderr
     assert "no investigation records" in done.stdout
     assert done.stdout.rstrip().endswith("REPLAY FAILED")
 
@@ -96,6 +98,11 @@ def test_replay_check_refuses_bad_arguments(
     (tmp_path / "s").mkdir()
     nosplit = _check(monkeypatch, "--root", tmp_path / "s", "--split", tmp_path)
     assert nosplit.returncode == 2
+    assert f"{tmp_path}: no truths.json" in nosplit.stderr
+    absent = _check(monkeypatch, "--root", tmp_path / "s", "--split", tmp_path / "dev")
+    assert absent.returncode == 2
+    assert f"{tmp_path / 'dev'}: the split is missing" in absent.stderr
+    assert "git-ignored" in absent.stderr and "sample_truths.py" in absent.stderr
     with pytest.raises(SystemExit) as stopped:
         _check(monkeypatch, "--root", tmp_path / "s", "--limit", "0")
     assert stopped.value.code == 2
@@ -120,7 +127,7 @@ def test_replay_check_fails_records_it_cannot_replay(
     foreign = root / "llm" / "3333333333333333" / "investigation-0000000000000003.json"
     _config_only(foreign, "dev-999")
     done = _check(monkeypatch, "--root", root, "--split", SPLIT)
-    assert done.returncode == 1, done.stdout
+    assert done.returncode == 1, done.stdout + done.stderr
     lines = [ln for ln in done.stdout.splitlines() if ln.startswith(("PASS", "FAIL"))]
     assert [ln.split(" ")[1].rstrip(":") for ln in lines] == [
         str(p.relative_to(root)) for p in (garbage, edited, foreign)
@@ -194,7 +201,7 @@ def test_replay_check_passes_a_recorded_session_and_names_a_forged_one(
     forged.save(forged_path)
 
     done = _check(monkeypatch, "--root", root, "--split", SPLIT)
-    assert done.returncode == 1, done.stdout
+    assert done.returncode == 1, done.stdout + done.stderr
     honest = f"PASS {outcome.record_path.relative_to(root)} AG-c named dev-006 s1: "
     assert honest + "steps=2 budgets={'experiments': 0, 'fits': 1, 'submit': 1}" in (
         done.stdout
@@ -207,11 +214,11 @@ def test_replay_check_passes_a_recorded_session_and_names_a_forged_one(
     assert done.stdout.rstrip().endswith("REPLAY FAILED")
 
     first = _check(monkeypatch, "--root", root, "--split", SPLIT, "--limit", "1")
-    assert first.returncode == 0, first.stdout
+    assert first.returncode == 0, first.stdout + first.stderr
     assert honest in first.stdout and "FAIL" not in first.stdout
     assert "replayed: 1 of 2; passed: 1; failed: 0" in first.stdout
     assert first.stdout.rstrip().endswith("REPLAY OK")
 
     other = _check(monkeypatch, "--root", root, "--split", SPLIT, "--arm", "AG-o")
-    assert other.returncode == 1, other.stdout
+    assert other.returncode == 1, other.stdout + other.stderr
     assert "no investigation records" in other.stdout

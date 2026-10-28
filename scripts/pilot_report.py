@@ -29,7 +29,7 @@ import json
 import statistics
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, NamedTuple
 
 from pilot import (
     ROOT,
@@ -79,22 +79,112 @@ def old_notes(path: Path) -> str:
     return "_No notes yet._"
 
 
-def timing(root: Path) -> dict[str, list[float]]:
+def timing_lines(root: Path) -> list[dict[str, Any]]:
     path = root / "timing.jsonl"
-    out: dict[str, list[float]] = {}
     if not path.exists():
-        return out
-    for line in path.read_text(encoding="utf-8").splitlines():
-        rec = json.loads(line)
-        out.setdefault(f"{rec['kind']}:{rec['system']}", []).append(
-            float(rec["wall_s"])
-        )
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def _cpu(rec: Mapping[str, Any], field: str) -> float | None:
+    """A CPU figure of a timing line; ``None`` where the line predates CPU
+    time (LOG 2026-10-28) or states it absent, never 0."""
+    value = rec.get(field)
+    return None if value is None else float(value)
+
+
+class Times(NamedTuple):
+    """One kind:system's wall times and, where recorded, its CPU times (s)."""
+
+    wall: list[float]
+    cpu: list[float]
+    children: list[float]
+
+
+def timing(root: Path) -> dict[str, Times]:
+    """Wall and CPU time per unit, by ``kind:system``, from ``timing.jsonl``.
+
+    A line without ``cpu_s`` (written before CPU time was recorded, or with
+    nothing measured) adds to the wall times only.
+    """
+    out: dict[str, Times] = {}
+    for rec in timing_lines(root):
+        t = out.setdefault(f"{rec['kind']}:{rec['system']}", Times([], [], []))
+        t.wall.append(float(rec["wall_s"]))
+        own, children = _cpu(rec, "cpu_s"), _cpu(rec, "cpu_children_s")
+        if own is not None:
+            t.cpu.append(own)
+        if children is not None:
+            t.children.append(children)
     return out
 
 
+def timing_rows(times: Mapping[str, Times]) -> list[list[str]]:
+    """The wall-time table's rows: wall, then CPU of the lines that have it."""
+    return [
+        [
+            k,
+            str(len(t.wall)),
+            fmt(median(t.wall), ".0f"),
+            fmt(max(t.wall), ".0f"),
+            f"{len(t.cpu)}/{len(t.wall)}",
+            fmt(median(t.cpu), ".0f"),
+            fmt(max(t.cpu) if t.cpu else None, ".0f"),
+            fmt(median(t.children), ".0f"),
+        ]
+        for k, t in sorted(times.items())
+    ]
+
+
+class PoolCpu(NamedTuple):
+    """Pool jobs' CPU in total (s), over the ``of`` lines that carry it."""
+
+    cpu_s: float
+    children_s: float
+    lines: int
+    of: int
+
+
+def pool_cpu(root: Path) -> PoolCpu:
+    """Total CPU of the pool jobs, from their lines' whole-job figures.
+
+    A multi-unit job's figures are on each of its ``job_units`` lines, so each
+    line contributes ``job_cpu_s / job_units``. Counts only lines that carry
+    ``job_cpu_s``; ``of`` is every pool-job line.
+    """
+    own = children = 0.0
+    lines = of = 0
+    for rec in timing_lines(root):
+        if rec.get("kind") not in ("baseline", "llm-score"):
+            continue
+        of += 1
+        job = _cpu(rec, "job_cpu_s")
+        if job is None:
+            continue
+        lines += 1
+        share = int(rec["job_units"])
+        own += job / share
+        children += (_cpu(rec, "job_cpu_children_s") or 0.0) / share
+    return PoolCpu(own, children, lines, of)
+
+
+def timed_text(values: Sequence[float | None], total: int) -> str:
+    """The median of the measured ``values``, and how many of ``total`` it has."""
+    have = [v for v in values if v is not None]
+    return fmt(median(have), ".0f") + (
+        "" if len(have) == total else f" ({len(have)}/{total} timed)"
+    )
+
+
 def session_wall_times(root: Path, sessions: Sequence[Any]) -> dict[str, float]:
-    """The driver's wall time (s) of each session, by cell digest, read from
-    ``timing.jsonl`` (LOG 2026-10-27: times are not in the session cell).
+    """The driver's wall time (s) of each session, by cell digest
+    (:func:`session_times`)."""
+    return {d: float(rec["wall_s"]) for d, rec in session_times(root, sessions).items()}
+
+
+def session_times(root: Path, sessions: Sequence[Any]) -> dict[str, dict[str, Any]]:
+    """Each session's ``timing.jsonl`` line, by cell digest (LOG 2026-10-27:
+    times are not in the session cell): its wall time and, if recorded, CPU.
 
     A session with no timing line (a crash between its cell and its line) is
     absent from the result, never counted as 0. A session cell that still
@@ -112,20 +202,17 @@ def session_wall_times(root: Path, sessions: Sequence[Any]) -> dict[str, float]:
                 "reads session wall times from timing.jsonl only"
             )
         wanted.add(x.digest)
-    out: dict[str, float] = {}
-    path = root / "timing.jsonl"
-    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
-    for line in lines:
-        rec = json.loads(line)
+    out: dict[str, dict[str, Any]] = {}
+    for rec in timing_lines(root):
         digest = rec.get("digest")
         if rec.get("kind") != "llm-session" or digest not in wanted:
             continue
         if digest in out:
             raise CampaignError(
-                f"session {digest} has two timing lines in {path}; its wall time "
-                "is ambiguous"
+                f"session {digest} has two timing lines in "
+                f"{root / 'timing.jsonl'}; its wall time is ambiguous"
             )
-        out[digest] = float(rec["wall_s"])
+        out[digest] = rec
     return out
 
 
@@ -597,7 +684,7 @@ def main() -> None:
 
     # -- LLM ---------------------------------------------------------------
     L += ["## LLM arms: cost and behaviour (under Max)", ""]
-    walls = session_wall_times(args.root, tab.sessions)
+    stimes = session_times(args.root, tab.sessions)
     crows = []
     for s in llm_systems:
         sess = [x for x in tab.sessions if x.system == s]
@@ -612,9 +699,11 @@ def main() -> None:
         for x in sess:
             o = str(x.detail.get("outcome"))
             outcomes[o] = outcomes.get(o, 0) + 1
-        wall = [walls[x.digest] for x in sess if x.digest in walls]
-        wall_text = fmt(median(wall), ".0f") + (
-            "" if len(wall) == len(sess) else f" ({len(wall)}/{len(sess)} timed)"
+        lines = [stimes.get(x.digest, {}) for x in sess]
+        wall_text = timed_text([line.get("wall_s") for line in lines], len(sess))
+        cpu_text = timed_text([_cpu(line, "cpu_s") for line in lines], len(sess))
+        child_text = timed_text(
+            [_cpu(line, "cpu_children_s") for line in lines], len(sess)
         )
         evaluated = sum(r.get("predictions_evaluated", 0.0) for r in rd)
         covered = sum(r.get("predictions_covered", 0.0) for r in rd)
@@ -629,6 +718,8 @@ def main() -> None:
                 med("input_tokens"),
                 med("cache_read_input_tokens"),
                 wall_text,
+                cpu_text,
+                child_text,
                 med("fits_used"),
                 med("experiments_used"),
                 pct(sum(r.get("experiments_used", 0.0) == 0.0 for r in rd) / len(rd)),
@@ -650,6 +741,8 @@ def main() -> None:
             "in tokens",
             "cache read",
             "wall s",
+            "cpu s",
+            "child cpu s",
             "fits",
             "experiments",
             "no experiment",
@@ -744,15 +837,33 @@ def main() -> None:
     L += [""]
 
     # -- wall time ------------------------------------------------------------
-    L += ["## Wall time per unit (this machine, one BLAS thread per process)", ""]
-    tm = timing(args.root)
+    L += [
+        "## Wall and CPU time per unit (this machine, one BLAS thread per process)",
+        "",
+    ]
     L += table(
-        ["unit", "n", "median s", "max s"],
         [
-            [k, str(len(v)), fmt(median(v), ".0f"), fmt(max(v), ".0f")]
-            for k, v in sorted(tm.items())
+            "unit",
+            "n",
+            "median s",
+            "max s",
+            "with cpu",
+            "median cpu s",
+            "max cpu s",
+            "median child cpu s",
         ],
+        timing_rows(timing(args.root)),
     )
+    pool = pool_cpu(args.root)
+    L += [
+        "CPU s is the worker's own CPU over the unit's wall-time interval "
+        "(`cpu_s`); child cpu s is that of its reaped child processes "
+        "(`cpu_children_s`; not the processes inside a Docker container). Lines "
+        "written before CPU time was recorded count in n only. Pool jobs in "
+        f"total, data simulation included: {pool.cpu_s:.0f} CPU s (children "
+        f"{pool.children_s:.0f} s) over {pool.lines} of {pool.of} unit lines.",
+        "",
+    ]
 
     L += ["## Truths", ""]
     L += table(

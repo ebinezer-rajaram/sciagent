@@ -52,6 +52,7 @@ from multiprocessing.connection import Connection
 from pathlib import Path
 from typing import Any, Final
 
+from sciagent.campaign import cpu
 from sciagent.campaign.plan import (
     CampaignConfig,
     CampaignEnvironment,
@@ -122,7 +123,8 @@ class SessionOutcome:
     #: unit. Written to the cell's ``timing.jsonl`` line, never to the cell.
     wall_s: float
     #: :data:`SESSION_TIMING_FIELDS`, each present (``None`` when absent), for
-    #: the same line; empty for a retryable attempt, which is not recorded.
+    #: the same line, then an isolated session's CPU time (:func:`_child`);
+    #: empty for a retryable attempt, which is not recorded.
     timing: Mapping[str, Json]
 
 
@@ -310,8 +312,21 @@ def _child(
     out_dir: Path,
     sandbox_root: Path | None,
 ) -> None:
-    """Entry point of an isolated session's process: run it, send the outcome."""
-    conn.send(run_session(unit, truth, env, config, out_dir, sandbox_root=sandbox_root))
+    """Entry point of an isolated session's process: run it, send the outcome.
+
+    A recorded outcome's timing also carries the session's CPU time,
+    :data:`~sciagent.campaign.cpu.CPU_FIELDS`, measured here, in the
+    session's own process: its threads (tool calls, simulations, fits) in
+    ``cpu_s``, and in ``cpu_children_s`` the children it reaped (the
+    ``claude`` CLI, ``docker`` clients; not the containers' processes, see
+    :mod:`sciagent.campaign.cpu`). A retryable attempt keeps its empty timing.
+    """
+    mark = cpu.cpu_mark()
+    outcome = run_session(unit, truth, env, config, out_dir, sandbox_root=sandbox_root)
+    if not outcome.retryable:
+        timing = {**outcome.timing, **cpu.cpu_since(mark)}
+        outcome = dataclasses.replace(outcome, timing=timing)
+    conn.send(outcome)
     conn.close()
 
 

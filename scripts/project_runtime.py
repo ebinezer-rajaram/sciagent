@@ -39,7 +39,11 @@ unit measured in one store keeps every line, as with a single store. A store
 without CPU figures contributes no CPU. ``--by-stratum`` adds a per-stratum
 basis: a unit costs the mean of its system's measured units in its truth's
 stratum (from the split), else its system's all-strata mean, and a table says
-which, with n, for every planned (system, stratum). ``--wall-from`` (repeatable)
+which, with n, for every planned (system, stratum). ``--by-link`` does the
+same by the truth's link function (in the dev split stratum is confounded
+with link, and cost tracks link: LOG 2026-10-28); ``--assume-link
+exp=softplus`` costs an unmeasured link's units as a measured link's, printed
+as an assumption. ``--wall-from`` (repeatable)
 adds an uncontended estimate: each measured unit costs the minimum of its CPU
 and every ``wall_s`` of it in any store given, an upper bound on its
 uncontended cost under the hyperthreading bias (LOG 2026-10-28, "Correction:
@@ -71,9 +75,9 @@ BASES: Final = ("unit mean", "unit max", "+overhead mean", "+overhead max")
 JobKey = tuple[str, int, float, float, int]
 #: (system, truth, seed): one planned or measured unit.
 UnitKey = tuple[str, str, int]
-#: The per-stratum bases (``--by-stratum``) and the uncontended estimate
-#: (``--wall-from``), by the per-unit figure each averages.
-STRATUM_BASES: Final = (("stratum mean", "cpu"), ("+overhead stratum mean", "full"))
+#: The per-group bases (``--by-stratum``, ``--by-link``; ``{}`` is the
+#: group's name) and the per-unit figure each averages.
+GROUP_BASES: Final = (("{} mean", "cpu"), ("+overhead {} mean", "full"))
 UNCONTENDED: Final = "min(CPU, walls)"
 
 
@@ -326,6 +330,40 @@ def parse_assumption(text: str) -> Assumption:
     return Assumption(system, value, other)
 
 
+def parse_link_assumption(text: str) -> tuple[str, str]:
+    """``LINK=OTHER`` of ``--assume-link``: cost LINK's units as OTHER's."""
+    link, eq, other = text.partition("=")
+    if not (eq and link and other):
+        raise ValueError(f"--assume-link {text!r}: want LINK=OTHER")
+    if link == other:
+        raise ValueError(f"--assume-link {text!r}: a link cannot be costed by itself")
+    return link, other
+
+
+def check_link_assumptions(
+    pairs: Sequence[tuple[str, str]], planned: Sequence[str], measured: Sequence[str]
+) -> None:
+    """Refuse an ``--assume-link`` whose link is not planned or is measured
+    (a measured link is never overridden), or whose other link is not
+    measured."""
+    seen: set[str] = set()
+    for link, other in pairs:
+        if link in seen:
+            raise ValueError(f"--assume-link: {link} is assumed twice")
+        seen.add(link)
+        if link not in planned:
+            raise ValueError(f"--assume-link: {link} has no units in this plan")
+        if link in measured:
+            raise ValueError(
+                f"--assume-link: {link} is measured in the store; a measured "
+                "link is never overridden"
+            )
+        if other not in measured:
+            raise ValueError(
+                f"--assume-link: {other} has no measured units in the store"
+            )
+
+
 def check_assumptions(
     assumptions: Sequence[Assumption],
     planned: Sequence[str],
@@ -398,12 +436,30 @@ def wall_runs(
 
 @dataclass(frozen=True)
 class Cell:
-    """The cost of one (system, stratum) under ``--by-stratum``: per figure
-    (``cpu``, ``full``, ``min``) its per-unit mean, None where unknown."""
+    """The cost of one (system, key) under ``--by-stratum`` or ``--by-link``:
+    per figure (``cpu``, ``full``, ``min``) its per-unit mean, None where
+    unknown."""
 
     n: int
     costs: Mapping[str, float | None]
     source: str
+
+
+@dataclass(frozen=True)
+class Grouping:
+    """A property of a truth that units are costed by: its stratum
+    (``--by-stratum``) or its link (``--by-link``), read from the split."""
+
+    #: "stratum" or "link": the table's column, the bases' names.
+    name: str
+    #: "strata" or "links": the fallback's name.
+    plural: str
+    #: Truth id -> its key.
+    of: Mapping[str, str]
+    #: The table's heading.
+    heading: str
+    #: Key -> the other key whose measured units cost it (``--assume-link``).
+    alias: Mapping[str, str]
 
 
 def _mean(values: Sequence[float | None]) -> float | None:
@@ -411,39 +467,46 @@ def _mean(values: Sequence[float | None]) -> float | None:
     return sum(known) / len(known) if known else None
 
 
-def stratum_cells(
+def group_cells(
     measured: Sequence[Measured],
     figures: Mapping[str, Sequence[float | None]],
-    stratum_of: Mapping[str, str],
+    group: Grouping,
     cells: Sequence[tuple[str, str]],
     assumptions: Sequence[Assumption],
 ) -> dict[tuple[str, str], Cell]:
-    """Per planned (system, stratum): the mean of each figure over the
-    system's measured units in that stratum; where the system has none
-    there, its all-strata mean (said in ``source``); an assumed system is
-    FACTOR times its other system's cell; an unmeasured one has no costs."""
+    """Per planned (system, key): the mean of each figure over the system's
+    measured units whose truth has that key; where the system has none
+    there, its mean over all keys (said in ``source``). A key in
+    ``group.alias`` is costed as its other key, said as ASSUMED. An assumed
+    system is FACTOR times its other system's cell; an unmeasured one has no
+    costs."""
 
-    def own(system: str, stratum: str) -> Cell | None:
+    def own(system: str, key: str) -> Cell | None:
         index = [i for i, m in enumerate(measured) if m.system == system]
         if not index:
             return None
-        here = [i for i in index if stratum_of.get(measured[i].truth) == stratum]
+        target = group.alias.get(key, key)
+        here = [i for i in index if group.of.get(measured[i].truth) == target]
         use = here or index
         costs = {k: _mean([v[i] for i in use]) for k, v in figures.items()}
         source = (
-            "this stratum"
+            f"this {group.name}"
             if here
-            else f"all strata, n {len(index)} ({stratum} not measured)"
+            else f"all {group.plural}, n {len(index)} ({target} not measured)"
         )
+        if target != key:
+            return Cell(
+                0, costs, f"ASSUMED {group.name} {key} = {target} ({target}: {source})"
+            )
         return Cell(len(here), costs, source)
 
     assumed = {a.system: a for a in assumptions}
     out: dict[tuple[str, str], Cell] = {}
-    for system, stratum in cells:
-        cell = own(system, stratum)
+    for system, key in cells:
+        cell = own(system, key)
         if cell is None and system in assumed:
             a = assumed[system]
-            other = own(a.other, stratum)
+            other = own(a.other, key)
             if other is None:
                 raise ValueError(f"--assume: {a.other} has no CPU figure")
             cell = Cell(
@@ -460,7 +523,7 @@ def stratum_cells(
                 dict.fromkeys(figures),
                 "not measured; left out of the projection",
             )
-        out[(system, stratum)] = cell
+        out[(system, key)] = cell
     return out
 
 
@@ -505,6 +568,7 @@ def report(args: argparse.Namespace, assumptions: Sequence[Assumption]) -> list[
     split = load_split(args.split)
     records = select(split, args.truths, args.ids)
     stratum = {r.id: r.stratum for r in split}
+    link = {r.id: r.link for r in split}
     config = campaign_config(args)
     ids = tuple(r.id for r in records)
     plan = baseline_units(ids, config)
@@ -521,6 +585,41 @@ def report(args: argparse.Namespace, assumptions: Sequence[Assumption]) -> list[
     per_system = Counter(u.system for u in plan)
     planned = tuple(s for s in config.baselines if per_system[s])
     check_assumptions(assumptions, planned, stats)
+    link_assumptions = [parse_link_assumption(a) for a in args.assume_link]
+    if link_assumptions and not args.by_link:
+        raise ValueError("--assume-link needs --by-link")
+    check_link_assumptions(
+        link_assumptions,
+        sorted({link[t] for t in ids}),
+        sorted({link[m.truth] for m in measured if m.truth in link}),
+    )
+    groupings: list[Grouping] = []
+    if args.by_stratum:
+        groupings.append(
+            Grouping(
+                "stratum",
+                "strata",
+                stratum,
+                "by stratum (--by-stratum): a planned unit costs the mean of its "
+                "system's measured units in its truth's stratum (from the split); "
+                "where there are none, the system's all-strata mean, as the source "
+                "says (s)",
+                {},
+            )
+        )
+    if args.by_link:
+        groupings.append(
+            Grouping(
+                "link",
+                "links",
+                link,
+                "by link (--by-link): a planned unit costs the mean of its "
+                "system's measured units on truths of its truth's link (from the "
+                "split); where there are none, the system's all-links mean, as the "
+                "source says (s)",
+                dict(link_assumptions),
+            )
+        )
     per_llm = Counter(u.system for u in llm)
     out: list[str] = []
 
@@ -633,6 +732,10 @@ def report(args: argparse.Namespace, assumptions: Sequence[Assumption]) -> list[
     )
     for a in assumptions:
         out.append(f"ASSUMPTION (not measured): {a.text()} per unit")
+    for from_link, to_link in link_assumptions:
+        out.append(
+            f"ASSUMPTION (not measured): link {from_link} costed as link {to_link}"
+        )
 
     costs = unit_costs(stats, assumptions)
     left_out = {s: per_system[s] for s in planned if s not in costs}
@@ -649,23 +752,20 @@ def report(args: argparse.Namespace, assumptions: Sequence[Assumption]) -> list[
     if mins is not None:
         figures["min"] = mins
 
-    cells: dict[tuple[str, str], Cell] = {}
-    if args.by_stratum:
+    #: Per grouping (by name): the cost of each planned (system, key).
+    grouped: dict[str, dict[tuple[str, str], Cell]] = {}
+    for group in groupings:
         wanted = sorted(
-            {(u.system, stratum[u.truth_id]) for u in plan},
+            {(u.system, group.of[u.truth_id]) for u in plan},
             key=lambda c: (planned.index(c[0]), c[1]),
         )
-        cells = stratum_cells(measured, figures, stratum, wanted, assumptions)
-        per_cell = Counter((u.system, stratum[u.truth_id]) for u in plan)
+        cells = group_cells(measured, figures, group, wanted, assumptions)
+        grouped[group.name] = cells
+        per_cell = Counter((u.system, group.of[u.truth_id]) for u in plan)
         out.append("")
+        out.append(group.heading)
         out.append(
-            "by stratum (--by-stratum): a planned unit costs the mean of its "
-            "system's measured units in its truth's stratum (from the split); "
-            "where there are none, the system's all-strata mean, as the source "
-            "says (s)"
-        )
-        out.append(
-            f"  {'system':<13}{'stratum':<9}{'plan':>4}{'n':>4}{'mean':>10}"
+            f"  {'system':<13}{group.name:<9}{'plan':>4}{'n':>4}{'mean':>10}"
             f"{'+ovh mean':>11}  source"
         )
         for key in wanted:
@@ -743,15 +843,17 @@ def report(args: argparse.Namespace, assumptions: Sequence[Assumption]) -> list[
                 basis, [costs[u.system][basis] for u in costed], args.workers, ratio
             )
         )
-    if args.by_stratum:
-        for basis, figure in STRATUM_BASES:
+    for group in groupings:
+        cells = grouped[group.name]
+        for name, figure in GROUP_BASES:
+            basis = name.format(group.name)
             per_unit = [
-                cells[(u.system, stratum[u.truth_id])].costs[figure] for u in costed
+                cells[(u.system, group.of[u.truth_id])].costs[figure] for u in costed
             ]
             known = [c for c in per_unit if c is not None]
             if len(known) != len(per_unit):
                 out.append(
-                    f"  {basis}: no job figures for every costed (system, stratum)"
+                    f"  {basis}: no job figures for every costed (system, {group.name})"
                 )
                 continue
             ratio = measured_ratio["unit" if figure == "cpu" else "job"]
@@ -760,12 +862,13 @@ def report(args: argparse.Namespace, assumptions: Sequence[Assumption]) -> list[
         bases: list[tuple[str, list[float | None]]] = [
             ("uncontended unit mean", [min_costs[u.system] for u in costed])
         ]
-        if args.by_stratum:
+        for group in groupings:
+            cells = grouped[group.name]
             bases.append(
                 (
-                    "uncontended stratum mean",
+                    f"uncontended {group.name} mean",
                     [
-                        cells[(u.system, stratum[u.truth_id])].costs["min"]
+                        cells[(u.system, group.of[u.truth_id])].costs["min"]
                         for u in costed
                     ],
                 )
@@ -792,6 +895,15 @@ def report(args: argparse.Namespace, assumptions: Sequence[Assumption]) -> list[
         f"strata are {plan_strata}. Costs measured on far truths may overstate "
         "the near and mid ones (LOG 2026-10-28)."
     )
+    if args.by_link:
+        store_links = ", ".join(f"{t} ({link.get(t, 'not in split')})" for t in truths)
+        plan_links = ", ".join(
+            f"{k} {v}" for k, v in sorted(Counter(link[t] for t in ids).items())
+        )
+        out.append(
+            f"caveat: the {whose} truths' links are {store_links or 'none'}; the "
+            f"plan's links are {plan_links}."
+        )
     out.append(
         "caveat: units are scheduled one by one; the driver runs ORACLE, B-lib "
         "and B-np of a (truth, seed) as one job and at most "
@@ -827,6 +939,19 @@ def main(argv: list[str] | None = None) -> int:
         "--by-stratum",
         action="store_true",
         help="also cost each unit by its system's mean in its truth's stratum",
+    )
+    parser.add_argument(
+        "--by-link",
+        action="store_true",
+        help="also cost each unit by its system's mean on truths of its truth's link",
+    )
+    parser.add_argument(
+        "--assume-link",
+        action="append",
+        default=[],
+        metavar="LINK=OTHER",
+        help="with --by-link, cost an unmeasured link's units as another "
+        "link's (printed as an assumption), e.g. exp=softplus",
     )
     parser.add_argument(
         "--assume",

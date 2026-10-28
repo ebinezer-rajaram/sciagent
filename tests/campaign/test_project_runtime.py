@@ -547,3 +547,169 @@ def test_wall_from_gives_an_uncontended_estimate(
     code, out, err = runs(script, "--store", str(a), "--wall-from", str(a), *TINY)
     assert (code, out) == (2, "")
     assert "given twice" in err
+
+
+#: dev-000 softplus (far), dev-001 identity (near), dev-014 exp (near).
+LINK_PLAN = (
+    "--ids",
+    "dev-000,dev-001,dev-014",
+    "--seeds",
+    "1",
+    "--arms",
+    "",
+    "--systems",
+    "B-sym,B-rand",
+)
+
+
+def link_store(root: Path) -> Path:
+    """B-sym and B-rand measured on dev-008 (softplus, far) and dev-010
+    (identity, mid): no exp truth, and no near one."""
+    return store(
+        root,
+        line("B-sym", 3600.0, 3600.0, truth="dev-008"),
+        line("B-sym", 7200.0, 7200.0, truth="dev-010"),
+        line("B-rand", 36000.0, 36000.0, truth="dev-008"),
+        line("B-rand", 72000.0, 72000.0, truth="dev-010"),
+    )
+
+
+def test_by_link_costs_a_unit_from_its_link_and_names_the_fallback(
+    script: ModuleType, tmp_path: Path
+) -> None:
+    """dev-001 (identity, near) costs dev-010's figures (identity, mid) and
+    dev-000 dev-008's; exp falls back to each system's all-links mean (5400 s,
+    54000 s). LPT on 2 workers: 72000 | 54000 + 36000 -> 90000 s, 25 h."""
+    root = link_store(tmp_path / "s")
+    code, out, err = run(script, root, *LINK_PLAN, "--by-link")
+    assert (code, err) == (0, ""), err
+    assert (
+        "by link (--by-link): a planned unit costs the mean of its system's "
+        "measured units on truths of its truth's link (from the split); where "
+        "there are none, the system's all-links mean, as the source says (s)"
+    ) in out
+    assert "  system       link     plan   n      mean  +ovh mean  source" in out, out
+    assert (
+        "  B-sym        exp         1   0    5400.0     5400.0  all links, n 2 "
+        "(exp not measured)"
+    ) in out
+    assert "  B-sym        identity    1   1    7200.0     7200.0  this link" in out
+    assert "  B-sym        softplus    1   1    3600.0     3600.0  this link" in out
+    assert (
+        "  B-rand       exp         1   0   54000.0    54000.0  all links, n 2 "
+        "(exp not measured)"
+    ) in out
+    assert (
+        "  link mean: CPU 25.0 h <= 48 h (dm-devbox); x 1.00 wall/CPU 25.0 h "
+        "<= 48 h (dm-devbox)"
+    ) in out
+    assert (
+        "  +overhead link mean: CPU 25.0 h <= 48 h (dm-devbox); x 1.00 wall/CPU "
+        "25.0 h <= 48 h (dm-devbox)"
+    ) in out
+    assert (
+        "caveat: the store's truths' links are dev-008 (softplus), dev-010 "
+        "(identity); the plan's links are exp 1, identity 1, softplus 1."
+    ) in out
+    assert "stratum mean" not in out
+
+    # by stratum the same store says something else: dev-001 is near, and no
+    # near truth is measured
+    code, out, err = run(script, root, *LINK_PLAN, "--by-stratum")
+    assert (code, err) == (0, ""), err
+    assert "link mean" not in out
+    assert "by link" not in out
+    assert "links are" not in out
+
+
+def test_by_link_with_wall_from_adds_an_uncontended_link_line(
+    script: ModuleType, tmp_path: Path
+) -> None:
+    """B-rand on dev-008 has a wall of 18000 s: softplus 18000, exp the
+    all-links mean (18000 + 72000) / 2 = 45000. With B-sym 3600, 7200, 5400:
+    LPT 72000 | 45000 + 18000 + 7200 + 5400 -> 75600 s, 21 h."""
+    root = link_store(tmp_path / "s")
+    wall = store(tmp_path / "w", line("B-rand", None, 18000.0, truth="dev-008"))
+    code, out, err = run(
+        script, root, *LINK_PLAN, "--by-link", "--wall-from", str(wall)
+    )
+    assert (code, err) == (0, ""), err
+    assert (
+        "  uncontended link mean, min(CPU, walls): 21.0 h <= 48 h (dm-devbox); "
+        "an upper bound on uncontended cost"
+    ) in out
+    assert "uncontended stratum mean" not in out
+
+
+def test_assume_link_costs_an_unmeasured_link_as_another_and_says_so(
+    script: ModuleType, tmp_path: Path
+) -> None:
+    """--assume-link exp=softplus: exp units cost the softplus figures (3600
+    s, 36000 s). LPT: 72000 | 36000 + 36000 + 3600 + 3600, w0 + 7200 ->
+    79200 s, 22 h."""
+    root = link_store(tmp_path / "s")
+    args = (*LINK_PLAN, "--by-link", "--assume-link", "exp=softplus")
+    code, out, err = run(script, root, *args)
+    assert (code, err) == (0, ""), err
+    assert "ASSUMPTION (not measured): link exp costed as link softplus" in out
+    assert (
+        "  B-sym        exp         1   0    3600.0     3600.0  ASSUMED link exp "
+        "= softplus (softplus: this link)"
+    ) in out
+    assert (
+        "  B-rand       exp         1   0   36000.0    36000.0  ASSUMED link exp "
+        "= softplus (softplus: this link)"
+    ) in out
+    assert "  link mean: CPU 22.0 h <= 48 h (dm-devbox)" in out
+
+    for bad, why in (
+        ("identity=softplus", "identity is measured in the store"),
+        ("exp=probit", "probit has no measured units"),
+        ("exp", "want LINK=OTHER"),
+        ("exp=exp", "cannot be costed by itself"),
+        ("logit=softplus", "logit has no units in this plan"),
+    ):
+        code, out, err = run(
+            script, root, *LINK_PLAN, "--by-link", "--assume-link", bad
+        )
+        assert (code, out) == (2, ""), bad
+        assert why in err, (bad, err)
+    code, out, err = run(script, root, *LINK_PLAN, "--assume-link", "exp=softplus")
+    assert (code, out) == (2, "")
+    assert "--assume-link needs --by-link" in err
+
+
+def test_by_link_with_an_assumed_and_an_unmeasured_system(
+    script: ModuleType, tmp_path: Path
+) -> None:
+    root = store(tmp_path / "s", line("B-sym", 3600.0, 3600.0))
+    plan = (*TINY, "--systems", "B-sym,B-sym@10F,B-rand", "--by-link")
+    code, out, err = run(script, root, *plan, "--assume", "B-sym@10F=10xB-sym")
+    assert (code, err) == (0, ""), err
+    assert (
+        "  B-sym@10F    softplus    1   0   36000.0    36000.0  ASSUMED B-sym@10F "
+        "= 10 x B-sym (B-sym: this link)"
+    ) in out
+    assert (
+        "  B-rand       softplus    1   0         -          -  not measured; "
+        "left out of the projection"
+    ) in out
+    assert "  link mean: CPU 10.0 h <= 48 h (dm-devbox)" in out
+
+
+def test_by_link_leaves_the_by_stratum_output_in_place(
+    script: ModuleType, tmp_path: Path
+) -> None:
+    """Every line --by-stratum prints is printed, in order, with --by-link
+    added: the link lines only interleave."""
+    root = link_store(tmp_path / "s")
+    wall = store(tmp_path / "w", line("B-rand", None, 18000.0, truth="dev-008"))
+    common = (*LINK_PLAN, "--wall-from", str(wall), "--by-stratum")
+    code, alone, err = run(script, root, *common)
+    assert (code, err) == (0, ""), err
+    code, both, err = run(script, root, *common, "--by-link")
+    assert (code, err) == (0, ""), err
+    rest = iter(both.splitlines())
+    for want in alone.splitlines():
+        assert any(got == want for got in rest), want
+    assert len(both.splitlines()) > len(alone.splitlines())

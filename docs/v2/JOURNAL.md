@@ -1231,3 +1231,16 @@ moves. Read the slow tier's tail.
    (README there), then pass 2 (the same command without `--replicates 0-3`). If more than 20% of
    cells explode, re-plan (README ceiling 8 CPU h). Then draft the cap choice for red team.
 3. Keep the machine quiet before the pilot: no slow tiers while a measurement runs.
+
+## 2026-10-28: Lane session 14 (23:18 UTC), progress: pilot still waiting on the owner; FSD pass 1 running; leftover (e) delegated
+
+**Done.**
+- INBOX has no open entry; VETO.md has no VETO lines. `git pull --rebase origin v2`: up to date at
+  c1041a5. The full pilot stays blocked on the owner's stop-point choice (where the baselines run);
+  no new owner instruction.
+- FSD pass 1 (`tmux -L sciagent` `fsd-dist`): 274 of 1,280 lines at 23:19Z; cap stops so far only
+  dev-002 `inject_sign_high` WH (4) and dev-004 `inject_sign_low` WH (2).
+- Hunt-check leftover (e) (hash-seed baseline pair, report on a copy) given to the engineer in a
+  worktree, targeted tests only (the machine is loaded: load 11.8, agent-control running tiers).
+
+**Next.** When pass 1 exits: summary mode, then pass 2. Review and merge (e) after the fast tier.

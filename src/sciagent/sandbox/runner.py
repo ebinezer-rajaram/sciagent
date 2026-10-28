@@ -132,6 +132,7 @@ __all__ = [
     "build_handoff_argv",
     "build_probe_argv",
     "build_run_argv",
+    "canonical_run_argv",
     "handoff_owner",
     "mount_source",
     "recover",
@@ -943,6 +944,26 @@ def build_run_argv(
         argv += ["-e", f"{key}={value}"]
     argv += [image, "python", "-B", "-"]
     return argv
+
+
+def canonical_run_argv(limits: SandboxLimits) -> list[str]:
+    """:func:`build_run_argv` for ``limits`` with placeholder Docker binary,
+    container name, image, paths and seed (``0``): every flag, mount option
+    and environment variable a call runs under, and nothing that varies from
+    call to call. An AG-o session's address names it
+    (:func:`sciagent.campaign.plan.session_text`); the image is named there
+    by its tag.
+    """
+    return build_run_argv(
+        docker="docker",
+        name="<name>",
+        image="<image>",
+        data_dir=Path("/<run>/data"),
+        work_dir=Path("/<run>/work"),
+        limits=limits,
+        seed=0,
+        cidfile=Path("/<run>/cid"),
+    )
 
 
 class _CappedReader(threading.Thread):

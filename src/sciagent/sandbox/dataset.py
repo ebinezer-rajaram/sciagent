@@ -15,11 +15,13 @@ re-executes against identical files:
 
 from __future__ import annotations
 
+import hashlib
 import io
 import re
 import zipfile
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Final
 
 import numpy as np
 import numpy.typing as npt
@@ -30,7 +32,7 @@ from sciagent.sandbox.errors import (
     SandboxPathError,
 )
 
-__all__ = ["write_dataset"]
+__all__ = ["format_sha256", "write_dataset"]
 
 _NAME = re.compile(r"[A-Za-z0-9_]+")
 _ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)
@@ -58,6 +60,24 @@ def _csv_bytes(columns: list[tuple[str, npt.NDArray[np.float64]]]) -> bytes:
     for i in range(n):
         lines.append(",".join(repr(float(col[i])) for _, col in columns))
     return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+#: Values whose rendering :func:`format_sha256` samples: ones a change of
+#: precision, exponent form or sign handling would render differently.
+_FORMAT_SAMPLE: Final = (0.0, 0.1, 1.0 / 3.0, -2.5, 1e-300, 1.2345678901234567e20)
+
+
+def format_sha256() -> str:
+    """The SHA-256 of a fixed sample dataset as ``/data`` holds it (``.npz``
+    bytes, then ``.csv`` bytes): a change to either format changes it. An AG-o
+    session's address names it (:func:`sciagent.campaign.plan.session_text`).
+    """
+    t = np.array(_FORMAT_SAMPLE, dtype=np.float64)
+    m = t[::-1].copy()
+    h = hashlib.sha256()
+    h.update(_npz_bytes([("times", t), ("mark_m", m)]))
+    h.update(_csv_bytes([("time", t), ("m", m)]))
+    return h.hexdigest()
 
 
 def _write_once(path: Path, data: bytes) -> None:

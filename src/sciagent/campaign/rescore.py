@@ -13,7 +13,8 @@ defines the *investigation*:
 - the seed is one of the campaign's seeds;
 - the session configuration digest equals this campaign's
   (:func:`~sciagent.campaign.plan.session_config_digest`: model, arm,
-  condition, budgets, turns, wall time, harness version).
+  condition, budgets, turns, wall time, harness version and, for AG-o, the
+  sandbox's limits, handoff helper and image tag).
 
 What may differ is the environment version (``FIT_VERSION``) and the fit
 configuration the session ran under: that is what a rescore re-references. The

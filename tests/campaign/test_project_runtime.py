@@ -237,3 +237,313 @@ def test_output_does_not_depend_on_line_order(
     # the first line names the store's path; everything after it must match
     assert a[1].split("\n", 1)[1] == b[1].split("\n", 1)[1]
     assert "dev-008 (far), dev-013 (far)" in a[1]
+
+
+#: A single store exercising every part of the original output: a multi-unit
+#: job, a repeated unit, a line without CPU figures, another kind, a store
+#: system not in the plan, and an assumption.
+GOLDEN_LINES = (
+    line("ORACLE", 5.0, 6.0, job=(30.0, 2)),
+    line("B-lib", 7.0, 6.0, job=(30.0, 2)),
+    line("B-sym", 900.0, 1800.0),
+    line("B-sym", 1000.0, 1200.0),
+    line("B-rand", None, 999.0, truth="dev-001", seed=2),
+    line("B-sparse", 50.0, 70.0, truth="dev-001"),
+    line("ORACLE", 1.0, kind="llm-score"),
+)
+GOLDEN_ARGS = (
+    "--ids",
+    "dev-000,dev-001",
+    "--seeds",
+    "1,2",
+    "--arms",
+    "",
+    "--systems",
+    "ORACLE,B-lib,B-sym,B-rand,B-sym@10F",
+    "--assume",
+    "B-sym@10F=3xB-sym",
+)
+
+#: The script's output on :data:`GOLDEN_LINES` with :data:`GOLDEN_ARGS`, as
+#: the single-store script of v2 3e8bf91 printed it, after the first line
+#: (which names the store path). One ``--store`` and none of the new options
+#: must keep giving these bytes.
+GOLDEN_OUTPUT = (
+    "plan: 2 truths x seeds 1,2; B-sym@10F on control seeds 1, truths: all",
+    "planned units: 18; non-LLM (projected): 18; LLM (excluded): 0",
+    "store: 6 baseline lines (5 with CPU figures, 1 without); other kinds, "
+    "not used: llm-score 1",
+    "  repeated units in the store (every line counted): 1",
+    "  store systems not in this plan: B-sparse",
+    "",
+    "per-unit CPU, cpu_s + cpu_children_s (s); +overhead adds an equal share "
+    "of the job's CPU beyond its units' (data simulation)",
+    "  system         plan   n      mean       max  wall/CPU  +ovh mean  +ovh max",
+    "  ORACLE            4   1       5.0       5.0      1.20       14.0      14.0",
+    "  B-lib             4   1       7.0       7.0      0.86       16.0      16.0",
+    "  B-sym             4   2     950.0    1000.0      1.58      950.0    1000.0",
+    "  B-rand            4  not measured (1 lines without CPU figures); left "
+    "out of the projection",
+    "  B-sym@10F         2  not measured; ASSUMED B-sym@10F = 3 x B-sym",
+    "store totals: unit CPU 1962.0 s over 5 lines; pool CPU (sum of job CPU / "
+    "job_units) 1980.0 s over 5 lines",
+    "measured wall/CPU over the store: unit 1.57; job 1.56",
+    "ASSUMPTION (not measured): B-sym@10F = 3 x B-sym per unit",
+    "",
+    "projection: makespan of longest-first list scheduling of 14 units onto 2 "
+    "workers; 48-hour line",
+    "  NOT MEASURED, left out: B-rand (4 units); every figure is a lower bound",
+    "  unit mean: CPU 1.3 h <= 48 h (dm-devbox); x 1.57 wall/CPU 2.1 h <= 48 h "
+    "(dm-devbox)",
+    "  unit max: CPU 1.4 h <= 48 h (dm-devbox); x 1.57 wall/CPU 2.2 h <= 48 h "
+    "(dm-devbox)",
+    "  +overhead mean: CPU 1.3 h <= 48 h (dm-devbox); x 1.56 wall/CPU 2.1 h "
+    "<= 48 h (dm-devbox)",
+    "  +overhead max: CPU 1.4 h <= 48 h (dm-devbox); x 1.56 wall/CPU 2.2 h "
+    "<= 48 h (dm-devbox)",
+    "",
+    "caveat: the store's truths are dev-000 (far), dev-001 (near); the plan's "
+    "strata are far 1, near 1. Costs measured on far truths may overstate the "
+    "near and mid ones (LOG 2026-10-28).",
+    "caveat: units are scheduled one by one; the driver runs ORACLE, B-lib and "
+    "B-np of a (truth, seed) as one job and at most --max-heavy=2 B-sparse jobs "
+    "at once, neither modelled. CPU time measured under load is not a lower "
+    "bound on uncontended wall time: on a hyperthreaded host a contended unit "
+    "accrues more CPU seconds for the same work (LOG 2026-10-28).",
+)
+
+
+def test_single_store_output_is_unchanged(script: ModuleType, tmp_path: Path) -> None:
+    root = store(tmp_path / "s", *GOLDEN_LINES)
+    code, out, err = run(script, root, *GOLDEN_ARGS)
+    assert (code, err) == (0, "")
+    first, rest = out.split("\n", 1)
+    assert first == (
+        "Run-time projection of the P3 non-LLM plan at 2 workers, from "
+        f"{root / 'timing.jsonl'}"
+    )
+    assert rest == "\n".join(GOLDEN_OUTPUT) + "\n"
+
+
+def runs(module: ModuleType, *args: str) -> tuple[int, str, str]:
+    """``main`` with the arguments as given (stores included)."""
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = module.main(list(args))
+    return code, out.getvalue(), err.getvalue()
+
+
+def test_stores_pool_and_a_unit_in_two_stores_is_their_mean(
+    script: ModuleType, tmp_path: Path
+) -> None:
+    """B-sym dev-000 is in stores a (1000 s CPU, 2000 s wall) and b (1400 s,
+    1400 s): one unit of 1200 s CPU and 1700 s wall. Store c has no CPU
+    figures: it adds nothing to CPU, and its B-rand dev-001 is no unit."""
+    a = store(
+        tmp_path / "a", line("B-sym", 1000.0, 2000.0), line("B-rand", 3000.0, 3000.0)
+    )
+    b = store(
+        tmp_path / "b",
+        line("B-sym", 1400.0, 1400.0),
+        line("B-sym", 600.0, 900.0, truth="dev-001"),
+    )
+    c = store(
+        tmp_path / "c",
+        line("B-sym", None, 100.0, truth="dev-001"),
+        line("B-rand", None, 50.0, truth="dev-001"),
+    )
+    timings = [script.read_timing(s / "timing.jsonl").lines for s in (a, b, c)]
+    measured, duplicates = script.pool(timings)
+    assert duplicates == 1
+    merged = [m for m in measured if (m.system, m.truth) == ("B-sym", "dev-000")]
+    assert [(m.cpu_s, m.wall_s, m.stores) for m in merged] == [(1200.0, 1700.0, 2)]
+    assert sorted((m.system, m.truth) for m in measured) == [
+        ("B-rand", "dev-000"),
+        ("B-sym", "dev-000"),
+        ("B-sym", "dev-001"),
+    ]
+
+    stores = ("--store", str(a), "--store", str(b), "--store", str(c))
+    code, out, err = runs(script, *stores, *TINY, "--systems", "B-sym,B-rand")
+    assert (code, err) == (0, ""), err
+    assert out.startswith(
+        "Run-time projection of the P3 non-LLM plan at 2 workers, from "
+        f"{a / 'timing.jsonl'}, {b / 'timing.jsonl'}, {c / 'timing.jsonl'}\n"
+    )
+    assert (
+        f"store {c / 'timing.jsonl'}: 2 baseline lines (0 with CPU figures, 2 "
+        "without); other kinds, not used: none; contributes no CPU"
+    ) in out
+    assert (
+        "pooled CPU: 3 measured units from 4 lines with CPU figures; units "
+        "measured in more than one store: 1, each one unit at the mean of its "
+        "lines' CPU and wall"
+    ) in out
+    assert "  B-sym             1   2     900.0    1200.0      1.44" in out
+    assert "  B-rand            1   1    3000.0    3000.0      1.00" in out
+    # 3000 s and 900 s on 2 workers; wall/CPU over the CPU lines 7300/6000
+    assert (
+        "  unit mean: CPU 0.8 h <= 48 h (dm-devbox); x 1.22 wall/CPU 1.0 h "
+        "<= 48 h (dm-devbox)"
+    ) in out
+    assert "uncontended estimate" not in out
+
+    code, out, err = runs(script, "--store", str(a), "--store", str(a), *TINY)
+    assert (code, out) == (2, "")
+    assert "given twice" in err
+
+
+def test_a_measured_b10f_is_costed_like_any_system(
+    script: ModuleType, tmp_path: Path
+) -> None:
+    """B-sym@10F measured in a second store is costed from it, no --assume:
+    36000 s and 3600 s on 2 workers is 10 h; --assume for it is refused."""
+    a = store(tmp_path / "a", line("B-sym", 3600.0, 3600.0))
+    b = store(tmp_path / "b", line("B-sym@10F", 36000.0, 36000.0))
+    args = ("--store", str(a), "--store", str(b), *TINY)
+    plan = ("--systems", "B-sym,B-sym@10F")
+    code, out, err = runs(script, *args, *plan)
+    assert (code, err) == (0, ""), err
+    assert "  B-sym@10F         1   1   36000.0   36000.0      1.00" in out
+    assert "NOT MEASURED" not in out
+    assert "  unit mean: CPU 10.0 h <= 48 h (dm-devbox)" in out
+    code, out, err = runs(script, *args, *plan, "--assume", "B-sym@10F=10xB-sym")
+    assert (code, out) == (2, "")
+    assert "B-sym@10F is measured in the store" in err
+
+
+def test_by_stratum_costs_a_unit_from_its_stratum_and_names_the_fallback(
+    script: ModuleType, tmp_path: Path
+) -> None:
+    """Plan: dev-000 (far), dev-001 (near), dev-010 (mid), seed 1. Measured:
+    B-sym far 3600 s and near 7200 s, B-rand far 36000 s and near 72000 s;
+    mid falls back to each system's all-strata mean (5400 s, 54000 s).
+    By stratum, LPT on 2 workers: 72000 | 54000 + 36000 -> 90000 s, 25 h.
+    All-strata means: 54000 x 3 and 5400 x 3 -> 108000 s, 30 h."""
+    root = store(
+        tmp_path / "s",
+        line("B-sym", 3600.0, 3600.0),
+        line("B-sym", 7200.0, 7200.0, truth="dev-002"),
+        line("B-rand", 36000.0, 36000.0),
+        line("B-rand", 72000.0, 72000.0, truth="dev-002"),
+    )
+    ids = ("--ids", "dev-000,dev-001,dev-010", "--seeds", "1", "--arms", "")
+    plan = (*ids, "--systems", "B-sym,B-rand")
+    code, out, err = run(script, root, *plan, "--by-stratum")
+    assert (code, err) == (0, ""), err
+    assert "  system       stratum  plan   n      mean  +ovh mean  source" in out, out
+    assert "  B-sym        far         1   1    3600.0     3600.0  this stratum" in out
+    assert "  B-sym        near        1   1    7200.0     7200.0  this stratum" in out
+    assert (
+        "  B-sym        mid         1   0    5400.0     5400.0  all strata, n 2 "
+        "(mid not measured)"
+    ) in out
+    assert (
+        "  B-rand       mid         1   0   54000.0    54000.0  all strata, n 2 "
+        "(mid not measured)"
+    ) in out
+    assert "  unit mean: CPU 30.0 h <= 48 h (dm-devbox); x 1.00 wall/CPU" in out
+    assert (
+        "  stratum mean: CPU 25.0 h <= 48 h (dm-devbox); x 1.00 wall/CPU 25.0 h "
+        "<= 48 h (dm-devbox)"
+    ) in out
+    assert (
+        "  +overhead stratum mean: CPU 25.0 h <= 48 h (dm-devbox); x 1.00 "
+        "wall/CPU 25.0 h <= 48 h (dm-devbox)"
+    ) in out
+
+    code, out, _ = run(script, root, *plan)
+    assert "stratum mean" not in out
+
+
+def test_by_stratum_with_an_assumption_and_an_unmeasured_system(
+    script: ModuleType, tmp_path: Path
+) -> None:
+    root = store(tmp_path / "s", line("B-sym", 3600.0, 3600.0))
+    plan = (*TINY, "--systems", "B-sym,B-sym@10F,B-rand", "--by-stratum")
+    code, out, err = run(script, root, *plan, "--assume", "B-sym@10F=10xB-sym")
+    assert (code, err) == (0, ""), err
+    assert (
+        "  B-sym@10F    far         1   0   36000.0    36000.0  ASSUMED B-sym@10F "
+        "= 10 x B-sym (B-sym: this stratum)"
+    ) in out
+    assert (
+        "  B-rand       far         1   0         -          -  not measured; "
+        "left out of the projection"
+    ) in out
+    assert "  stratum mean: CPU 10.0 h <= 48 h (dm-devbox)" in out
+
+    # with --wall-from: B-sym min(3600, 3600, 1800) = 1800 s, so 18000 s
+    wall = store(tmp_path / "w", line("B-sym", None, 1800.0))
+    code, out, err = run(
+        script, root, *plan, "--assume", "B-sym@10F=10xB-sym", "--wall-from", str(wall)
+    )
+    assert (code, err) == (0, ""), err
+    assert (
+        "  B-sym@10F      not measured; ASSUMED B-sym@10F = 10 x B-sym: min mean "
+        "18000.0 s"
+    ) in out
+    assert "  uncontended stratum mean, min(CPU, walls): 5.0 h" in out
+
+
+def test_wall_from_gives_an_uncontended_estimate(
+    script: ModuleType, tmp_path: Path
+) -> None:
+    """Each measured unit costs min(its CPU, every wall of it in any store):
+    B-sym min(3600, 7200, 1800) = 1800 s, B-rand min(36000, 40000, 50000,
+    18000) = 18000 s, so 5 h on 2 workers against 10 h of CPU. B-sym dev-001
+    is only in the wall-only store and is not a unit. B-sym dev-002 has no
+    wall but its own: min(1800, 1800), counted under "one run"."""
+    a = store(
+        tmp_path / "a",
+        line("B-sym", 3600.0, 7200.0),
+        line("B-rand", 36000.0, 40000.0),
+        line("B-sym", 1800.0, 1800.0, truth="dev-002"),
+    )
+    c = store(tmp_path / "c", line("B-rand", None, 18000.0))
+    w = store(
+        tmp_path / "w",
+        line("B-sym", None, 1800.0),
+        line("B-rand", None, 50000.0),
+        line("B-sym", None, 10.0, truth="dev-001"),
+    )
+    args = ("--store", str(a), "--store", str(c), "--wall-from", str(w), *TINY)
+    plan = ("--systems", "B-sym,B-rand")
+    code, out, err = runs(script, *args, *plan)
+    assert (code, err) == (0, ""), err
+    assert (
+        f"wall only (--wall-from) {w / 'timing.jsonl'}: 3 baseline lines; "
+        "its CPU figures are not used"
+    ) in out
+    assert "  B-sym             1   2    2700.0    3600.0      1.67" in out
+    assert (
+        "uncontended estimate: each measured unit costs min(its CPU, its wall_s "
+        "in every store that has it); an upper bound on its uncontended cost "
+        "under the hyperthreading bias (LOG 2026-10-28 correction)"
+    ) in out
+    assert (
+        "  system          n  CPU mean  min mean   min/CPU  wall<CPU   one run"
+    ) in out
+    assert (
+        "  B-sym           2    2700.0    1800.0      0.67         1         1" in out
+    )
+    assert (
+        "  B-rand          1   36000.0   18000.0      0.50         1         0" in out
+    )
+    assert "  unit mean: CPU 10.0 h <= 48 h (dm-devbox)" in out
+    assert (
+        "  uncontended unit mean, min(CPU, walls): 5.0 h <= 48 h (dm-devbox); "
+        "an upper bound on uncontended cost"
+    ) in out
+    assert "uncontended stratum mean" not in out
+
+    code, out, err = runs(script, *args, *plan, "--by-stratum")
+    assert (code, err) == (0, ""), err
+    assert (
+        "  uncontended stratum mean, min(CPU, walls): 5.0 h <= 48 h (dm-devbox); "
+        "an upper bound on uncontended cost"
+    ) in out
+
+    code, out, err = runs(script, "--store", str(a), "--wall-from", str(a), *TINY)
+    assert (code, out) == (2, "")
+    assert "given twice" in err

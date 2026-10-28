@@ -26,6 +26,26 @@ planned system with no CPU figure in the store is printed as not measured and
 left out (the projection is then a lower bound), unless ``--assume
 SYSTEM=FACTORxOTHER`` costs it as FACTOR times a measured system, which is
 printed as an assumption. Read-only; the output is deterministic.
+
+    uv run python scripts/project_runtime.py --store .cache/mini-cpu \
+        --store .cache/strata --wall-from .cache/mini-a \
+        --wall-from .cache/mini-b --by-stratum \
+        --workers 2 --truths 20 --seeds 1,2,3 --b10f-truths 10
+
+``--store`` may be repeated: the stores' ``baseline`` lines are pooled
+(:func:`pool`). A unit measured (CPU and wall) in two or more stores is one
+measurement, the mean of all its lines there, and the output counts them; a
+unit measured in one store keeps every line, as with a single store. A store
+without CPU figures contributes no CPU. ``--by-stratum`` adds a per-stratum
+basis: a unit costs the mean of its system's measured units in its truth's
+stratum (from the split), else its system's all-strata mean, and a table says
+which, with n, for every planned (system, stratum). ``--wall-from`` (repeatable)
+adds an uncontended estimate: each measured unit costs the minimum of its CPU
+and every ``wall_s`` of it in any store given, an upper bound on its
+uncontended cost under the hyperthreading bias (LOG 2026-10-28, "Correction:
+CPU time under load is not a lower bound ..."); a unit that is only in a
+``--wall-from`` store is not a measurement. With one ``--store`` and no
+``--wall-from`` the output is the single-store script's, line for line.
 """
 
 from __future__ import annotations
@@ -49,6 +69,12 @@ LINE_HOURS: Final = 48.0
 BASES: Final = ("unit mean", "unit max", "+overhead mean", "+overhead max")
 
 JobKey = tuple[str, int, float, float, int]
+#: (system, truth, seed): one planned or measured unit.
+UnitKey = tuple[str, str, int]
+#: The per-stratum bases (``--by-stratum``) and the uncontended estimate
+#: (``--wall-from``), by the per-unit figure each averages.
+STRATUM_BASES: Final = (("stratum mean", "cpu"), ("+overhead stratum mean", "full"))
+UNCONTENDED: Final = "min(CPU, walls)"
 
 
 @dataclass(frozen=True)
@@ -183,18 +209,82 @@ def with_overhead(lines: Sequence[TimingLine]) -> list[float | None]:
     return out
 
 
+@dataclass(frozen=True)
+class Measured:
+    """One measurement of a unit: a line with CPU and wall figures, or, for a
+    unit with such lines in more than one store, the mean of all of them."""
+
+    truth: str
+    seed: int
+    system: str
+    cpu_s: float
+    wall_s: float
+    #: Unit CPU plus its share of its job's overhead (:func:`with_overhead`);
+    #: for a pooled unit the mean over its lines that have it; else None.
+    full_s: float | None
+    #: How many stores with CPU figures measured the unit.
+    stores: int
+
+
+def _key(line: TimingLine) -> UnitKey:
+    return (line.system, line.truth, line.seed)
+
+
+def pool(stores: Sequence[Sequence[TimingLine]]) -> tuple[list[Measured], int]:
+    """The measurements of the lines of several stores, and how many units
+    were measured (with CPU and wall figures) in more than one store.
+
+    A unit with such lines in one store only keeps every line as its own
+    measurement, as the single-store script did with a repeated unit. A unit
+    with such lines in two or more stores is one measurement: the mean of all
+    of its lines' CPU, wall and (where known) +overhead figures. A store
+    without CPU figures contributes nothing. Order: stores as given, then
+    file order, a pooled unit at its first line."""
+    entries: list[tuple[int, TimingLine, float, float, float | None]] = []
+    for index, lines in enumerate(stores):
+        for x, full in zip(lines, with_overhead(lines), strict=True):
+            if x.cpu_s is not None and x.wall_s is not None:
+                entries.append((index, x, x.cpu_s, x.wall_s, full))
+    where: dict[UnitKey, set[int]] = {}
+    for index, x, _, _, _ in entries:
+        where.setdefault(_key(x), set()).add(index)
+    out: list[Measured] = []
+    done: set[UnitKey] = set()
+    for _, x, cpu, wall, full in entries:
+        key = _key(x)
+        n = len(where[key])
+        if n == 1:
+            out.append(Measured(x.truth, x.seed, x.system, cpu, wall, full, 1))
+            continue
+        if key in done:
+            continue
+        done.add(key)
+        group = [(c, w, f) for _, y, c, w, f in entries if _key(y) == key]
+        fulls = [f for _, _, f in group if f is not None]
+        out.append(
+            Measured(
+                x.truth,
+                x.seed,
+                x.system,
+                sum(c for c, _, _ in group) / len(group),
+                sum(w for _, w, _ in group) / len(group),
+                sum(fulls) / len(fulls) if fulls else None,
+                n,
+            )
+        )
+    return out, sum(1 for s in where.values() if len(s) > 1)
+
+
 def system_stats(lines: Sequence[TimingLine]) -> dict[str, Stats]:
     """Per system with at least one CPU figure: its cost statistics."""
-    full = with_overhead(lines)
+    return stats_of(pool([lines])[0])
+
+
+def stats_of(measured: Sequence[Measured]) -> dict[str, Stats]:
+    """Per system of ``measured``: its cost statistics."""
     out: dict[str, Stats] = {}
-    for system in sorted({x.system for x in lines}):
-        timed = [
-            (x.cpu_s, x.wall_s, f)
-            for x, f in zip(lines, full, strict=True)
-            if x.system == system and x.cpu_s is not None and x.wall_s is not None
-        ]
-        if not timed:
-            continue
+    for system in sorted({m.system for m in measured}):
+        timed = [(m.cpu_s, m.wall_s, m.full_s) for m in measured if m.system == system]
         cpu = [c for c, _, _ in timed]
         known = [f for _, _, f in timed if f is not None]
         out[system] = Stats(
@@ -276,6 +366,104 @@ def unit_costs(
     return costs
 
 
+def uncontended(
+    measured: Sequence[Measured], walls: Sequence[Sequence[TimingLine]]
+) -> list[float]:
+    """Per measured unit: the minimum of its CPU and every ``wall_s`` of the
+    same unit in ``walls`` (all stores, with or without CPU figures). A unit
+    that is only in ``walls`` is not a measurement and is not added."""
+    seen: dict[UnitKey, list[float]] = {}
+    for lines in walls:
+        for x in lines:
+            if x.wall_s is not None:
+                seen.setdefault(_key(x), []).append(x.wall_s)
+    return [
+        min([m.cpu_s, *seen.get((m.system, m.truth, m.seed), [])]) for m in measured
+    ]
+
+
+def wall_runs(
+    measured: Sequence[Measured], walls: Sequence[Sequence[TimingLine]]
+) -> list[int]:
+    """Per measured unit: how many of the stores ``walls`` hold a ``wall_s``
+    for it. At 1 its uncontended figure is min(CPU, the wall of the same run
+    or runs of one store), which carries that store's contention."""
+    seen: dict[UnitKey, set[int]] = {}
+    for index, lines in enumerate(walls):
+        for x in lines:
+            if x.wall_s is not None:
+                seen.setdefault(_key(x), set()).add(index)
+    return [len(seen.get((m.system, m.truth, m.seed), set())) for m in measured]
+
+
+@dataclass(frozen=True)
+class Cell:
+    """The cost of one (system, stratum) under ``--by-stratum``: per figure
+    (``cpu``, ``full``, ``min``) its per-unit mean, None where unknown."""
+
+    n: int
+    costs: Mapping[str, float | None]
+    source: str
+
+
+def _mean(values: Sequence[float | None]) -> float | None:
+    known = [v for v in values if v is not None]
+    return sum(known) / len(known) if known else None
+
+
+def stratum_cells(
+    measured: Sequence[Measured],
+    figures: Mapping[str, Sequence[float | None]],
+    stratum_of: Mapping[str, str],
+    cells: Sequence[tuple[str, str]],
+    assumptions: Sequence[Assumption],
+) -> dict[tuple[str, str], Cell]:
+    """Per planned (system, stratum): the mean of each figure over the
+    system's measured units in that stratum; where the system has none
+    there, its all-strata mean (said in ``source``); an assumed system is
+    FACTOR times its other system's cell; an unmeasured one has no costs."""
+
+    def own(system: str, stratum: str) -> Cell | None:
+        index = [i for i, m in enumerate(measured) if m.system == system]
+        if not index:
+            return None
+        here = [i for i in index if stratum_of.get(measured[i].truth) == stratum]
+        use = here or index
+        costs = {k: _mean([v[i] for i in use]) for k, v in figures.items()}
+        source = (
+            "this stratum"
+            if here
+            else f"all strata, n {len(index)} ({stratum} not measured)"
+        )
+        return Cell(len(here), costs, source)
+
+    assumed = {a.system: a for a in assumptions}
+    out: dict[tuple[str, str], Cell] = {}
+    for system, stratum in cells:
+        cell = own(system, stratum)
+        if cell is None and system in assumed:
+            a = assumed[system]
+            other = own(a.other, stratum)
+            if other is None:
+                raise ValueError(f"--assume: {a.other} has no CPU figure")
+            cell = Cell(
+                0,
+                {
+                    k: None if v is None else a.factor * v
+                    for k, v in other.costs.items()
+                },
+                f"ASSUMED {a.text()} ({a.other}: {other.source})",
+            )
+        if cell is None:
+            cell = Cell(
+                0,
+                dict.fromkeys(figures),
+                "not measured; left out of the projection",
+            )
+        out[(system, stratum)] = cell
+    return out
+
+
 def ratios(lines: Sequence[TimingLine]) -> dict[str, float | None]:
     """Measured wall/CPU: of the units (``wall_s`` over unit CPU) and of the
     pool jobs (``job_wall_s`` over job CPU, each job once)."""
@@ -299,6 +487,18 @@ def _verdict(seconds: float) -> str:
     return f"{hours:.1f} h {side}"
 
 
+def _projection_line(
+    basis: str, costs: Sequence[float], workers: int, ratio: float | None
+) -> str:
+    span = lpt_makespan(costs, workers)
+    wall = (
+        "no wall/CPU ratio"
+        if ratio is None
+        else f"x {ratio:.2f} wall/CPU {_verdict(span * ratio)}"
+    )
+    return f"  {basis}: CPU {_verdict(span)}; {wall}"
+
+
 def report(args: argparse.Namespace, assumptions: Sequence[Assumption]) -> list[str]:
     from sciagent.campaign.plan import baseline_units, llm_units
 
@@ -309,9 +509,15 @@ def report(args: argparse.Namespace, assumptions: Sequence[Assumption]) -> list[
     ids = tuple(r.id for r in records)
     plan = baseline_units(ids, config)
     llm = llm_units(ids, config)
-    timing = read_timing(args.store / TIMING_FILE)
-    lines = timing.lines
-    stats = system_stats(lines)
+    paths: list[Path] = args.store
+    wall_paths: list[Path] = args.wall_from
+    #: One store and no --wall-from: the original output, line for line.
+    single = len(paths) == 1 and not wall_paths
+    timings = [read_timing(p / TIMING_FILE) for p in paths]
+    wall_timings = [read_timing(p / TIMING_FILE) for p in wall_paths]
+    lines = tuple(x for t in timings for x in t.lines)
+    measured, duplicates = pool([t.lines for t in timings])
+    stats = stats_of(measured)
     per_system = Counter(u.system for u in plan)
     planned = tuple(s for s in config.baselines if per_system[s])
     check_assumptions(assumptions, planned, stats)
@@ -320,7 +526,7 @@ def report(args: argparse.Namespace, assumptions: Sequence[Assumption]) -> list[
 
     out.append(
         f"Run-time projection of the P3 non-LLM plan at {args.workers} workers, "
-        f"from {args.store / TIMING_FILE}"
+        f"from {', '.join(str(p / TIMING_FILE) for p in paths)}"
     )
     b10f = "all" if config.control_truths is None else config.control_truths
     out.append(
@@ -335,16 +541,44 @@ def report(args: argparse.Namespace, assumptions: Sequence[Assumption]) -> list[
     for system in config.llm_systems():
         out.append(f"  excluded LLM arm {system}: {per_llm[system]} units")
     timed = sum(1 for x in lines if x.cpu_s is not None)
-    others = ", ".join(f"{k} {v}" for k, v in timing.other_kinds) or "none"
-    out.append(
-        f"store: {len(lines)} baseline lines ({timed} with CPU figures, "
-        f"{len(lines) - timed} without); other kinds, not used: {others}"
-    )
-    repeats = sum(
-        n - 1 for n in Counter((x.truth, x.seed, x.system) for x in lines).values()
-    )
-    if repeats:
-        out.append(f"  repeated units in the store (every line counted): {repeats}")
+    if single:
+        others = ", ".join(f"{k} {v}" for k, v in timings[0].other_kinds) or "none"
+        out.append(
+            f"store: {len(lines)} baseline lines ({timed} with CPU figures, "
+            f"{len(lines) - timed} without); other kinds, not used: {others}"
+        )
+        repeats = sum(
+            n - 1 for n in Counter((x.truth, x.seed, x.system) for x in lines).values()
+        )
+        if repeats:
+            out.append(f"  repeated units in the store (every line counted): {repeats}")
+    else:
+        for path, timing in zip(paths, timings, strict=True):
+            with_cpu = sum(1 for x in timing.lines if x.cpu_s is not None)
+            others = ", ".join(f"{k} {v}" for k, v in timing.other_kinds) or "none"
+            out.append(
+                f"store {path / TIMING_FILE}: {len(timing.lines)} baseline lines "
+                f"({with_cpu} with CPU figures, "
+                f"{len(timing.lines) - with_cpu} without); "
+                f"other kinds, not used: {others}"
+                + ("; contributes no CPU" if with_cpu == 0 else "")
+            )
+            repeats = sum(n - 1 for n in Counter(map(_key, timing.lines)).values())
+            if repeats:
+                out.append(
+                    f"  repeated units in this store: {repeats} (every line "
+                    "counted, unless the unit is also in another store)"
+                )
+        for path, timing in zip(wall_paths, wall_timings, strict=True):
+            out.append(
+                f"wall only (--wall-from) {path / TIMING_FILE}: "
+                f"{len(timing.lines)} baseline lines; its CPU figures are not used"
+            )
+        out.append(
+            f"pooled CPU: {len(measured)} measured units from {timed} lines with "
+            f"CPU figures; units measured in more than one store: {duplicates}, "
+            "each one unit at the mean of its lines' CPU and wall"
+        )
     extra = sorted({x.system for x in lines} - set(planned))
     if extra:
         out.append(f"  store systems not in this plan: {', '.join(extra)}")
@@ -385,14 +619,16 @@ def report(args: argparse.Namespace, assumptions: Sequence[Assumption]) -> list[
         if x.job_cpu_s is not None and x.job_units
     ]
     out.append(
-        f"store totals: unit CPU {unit_total:.1f} s over {timed} lines; pool CPU "
+        f"{'store' if single else 'stores (every line, before pooling)'} totals: "
+        f"unit CPU {unit_total:.1f} s over {timed} lines; pool CPU "
         f"(sum of job CPU / job_units) {sum(shares):.1f} s over {len(shares)} lines"
     )
-    measured = ratios(lines)
+    measured_ratio = ratios(lines)
     out.append(
-        "measured wall/CPU over the store: "
+        f"measured wall/CPU over the {'store' if single else 'stores'}"
+        f"{'' if single else ' (every CPU line, before pooling)'}: "
         + "; ".join(
-            f"{k} {'-' if r is None else f'{r:.2f}'}" for k, r in measured.items()
+            f"{k} {'-' if r is None else f'{r:.2f}'}" for k, r in measured_ratio.items()
         )
     )
     for a in assumptions:
@@ -401,6 +637,92 @@ def report(args: argparse.Namespace, assumptions: Sequence[Assumption]) -> list[
     costs = unit_costs(stats, assumptions)
     left_out = {s: per_system[s] for s in planned if s not in costs}
     costed = sorted(u for u in plan if u.system in costs)
+    mins = (
+        uncontended(measured, [t.lines for t in (*timings, *wall_timings)])
+        if wall_paths
+        else None
+    )
+    figures: dict[str, Sequence[float | None]] = {
+        "cpu": [m.cpu_s for m in measured],
+        "full": [m.full_s for m in measured],
+    }
+    if mins is not None:
+        figures["min"] = mins
+
+    cells: dict[tuple[str, str], Cell] = {}
+    if args.by_stratum:
+        wanted = sorted(
+            {(u.system, stratum[u.truth_id]) for u in plan},
+            key=lambda c: (planned.index(c[0]), c[1]),
+        )
+        cells = stratum_cells(measured, figures, stratum, wanted, assumptions)
+        per_cell = Counter((u.system, stratum[u.truth_id]) for u in plan)
+        out.append("")
+        out.append(
+            "by stratum (--by-stratum): a planned unit costs the mean of its "
+            "system's measured units in its truth's stratum (from the split); "
+            "where there are none, the system's all-strata mean, as the source "
+            "says (s)"
+        )
+        out.append(
+            f"  {'system':<13}{'stratum':<9}{'plan':>4}{'n':>4}{'mean':>10}"
+            f"{'+ovh mean':>11}  source"
+        )
+        for key in wanted:
+            cell = cells[key]
+            cell_cpu, cell_full = cell.costs["cpu"], cell.costs["full"]
+            out.append(
+                f"  {key[0]:<13}{key[1]:<9}{per_cell[key]:>4}{cell.n:>4}"
+                f"{'-' if cell_cpu is None else f'{cell_cpu:.1f}':>10}"
+                f"{'-' if cell_full is None else f'{cell_full:.1f}':>11}  {cell.source}"
+            )
+
+    min_costs: dict[str, float] = {}
+    if mins is not None:
+        runs = wall_runs(measured, [t.lines for t in (*timings, *wall_timings)])
+        out.append("")
+        out.append(
+            "uncontended estimate: each measured unit costs min(its CPU, its "
+            "wall_s in every store that has it); an upper bound on its "
+            "uncontended cost under the hyperthreading bias (LOG 2026-10-28 "
+            "correction)"
+        )
+        out.append(
+            "  wall<CPU: units with a wall below their CPU; one run: units with "
+            "a wall in one store only, whose figure is min(CPU, a wall of that "
+            "store's run), so it keeps that run's contention"
+        )
+        out.append(
+            f"  {'system':<13}{'n':>4}{'CPU mean':>10}{'min mean':>10}"
+            f"{'min/CPU':>10}{'wall<CPU':>10}{'one run':>10}"
+        )
+        pairs: dict[str, list[tuple[float, float, int]]] = {}
+        for m, low, n in zip(measured, mins, runs, strict=True):
+            pairs.setdefault(m.system, []).append((m.cpu_s, low, n))
+        for system in sorted(pairs):
+            own = pairs[system]
+            min_costs[system] = sum(v for _, v, _ in own) / len(own)
+        for a in assumptions:
+            min_costs[a.system] = a.factor * min_costs[a.other]
+        for system in planned:
+            own = pairs.get(system, [])
+            if own:
+                cpu = sum(c for c, _, _ in own) / len(own)
+                low = min_costs[system]
+                below = sum(1 for c, v, _ in own if v < c)
+                single_run = sum(1 for _, _, n in own if n == 1)
+                out.append(
+                    f"  {system:<13}{len(own):>4}{cpu:>10.1f}{low:>10.1f}"
+                    f"{low / cpu:>10.2f}{below:>10}{single_run:>10}"
+                )
+            elif system in assumed:
+                out.append(
+                    f"  {system:<13}  not measured; ASSUMED "
+                    f"{assumed[system].text()}: min mean {min_costs[system]:.1f} s"
+                )
+            else:
+                out.append(f"  {system:<13}  not measured; left out of the projection")
+
     out.append("")
     out.append(
         f"projection: makespan of longest-first list scheduling of "
@@ -415,14 +737,48 @@ def report(args: argparse.Namespace, assumptions: Sequence[Assumption]) -> list[
         if any(basis not in costs[u.system] for u in costed):
             out.append(f"  {basis}: no job figures for every costed system")
             continue
-        span = lpt_makespan([costs[u.system][basis] for u in costed], args.workers)
-        ratio = measured["unit" if basis.startswith("unit") else "job"]
-        wall = (
-            "no wall/CPU ratio"
-            if ratio is None
-            else f"x {ratio:.2f} wall/CPU {_verdict(span * ratio)}"
+        ratio = measured_ratio["unit" if basis.startswith("unit") else "job"]
+        out.append(
+            _projection_line(
+                basis, [costs[u.system][basis] for u in costed], args.workers, ratio
+            )
         )
-        out.append(f"  {basis}: CPU {_verdict(span)}; {wall}")
+    if args.by_stratum:
+        for basis, figure in STRATUM_BASES:
+            per_unit = [
+                cells[(u.system, stratum[u.truth_id])].costs[figure] for u in costed
+            ]
+            known = [c for c in per_unit if c is not None]
+            if len(known) != len(per_unit):
+                out.append(
+                    f"  {basis}: no job figures for every costed (system, stratum)"
+                )
+                continue
+            ratio = measured_ratio["unit" if figure == "cpu" else "job"]
+            out.append(_projection_line(basis, known, args.workers, ratio))
+    if mins is not None:
+        bases: list[tuple[str, list[float | None]]] = [
+            ("uncontended unit mean", [min_costs[u.system] for u in costed])
+        ]
+        if args.by_stratum:
+            bases.append(
+                (
+                    "uncontended stratum mean",
+                    [
+                        cells[(u.system, stratum[u.truth_id])].costs["min"]
+                        for u in costed
+                    ],
+                )
+            )
+        for basis, per_unit in bases:
+            known = [c for c in per_unit if c is not None]
+            if len(known) != len(per_unit):
+                raise ValueError(f"{basis}: a costed unit has no {UNCONTENDED} figure")
+            span = lpt_makespan(known, args.workers)
+            out.append(
+                f"  {basis}, {UNCONTENDED}: {_verdict(span)}; an upper bound on "
+                "uncontended cost"
+            )
 
     out.append("")
     truths = sorted({x.truth for x in lines if x.cpu_s is not None})
@@ -430,8 +786,9 @@ def report(args: argparse.Namespace, assumptions: Sequence[Assumption]) -> list[
     plan_strata = ", ".join(
         f"{k} {v}" for k, v in sorted(Counter(stratum[t] for t in ids).items())
     )
+    whose = "store's" if single else "stores'"
     out.append(
-        f"caveat: the store's truths are {store_strata or 'none'}; the plan's "
+        f"caveat: the {whose} truths are {store_strata or 'none'}; the plan's "
         f"strata are {plan_strata}. Costs measured on far truths may overstate "
         "the near and mid ones (LOG 2026-10-28)."
     )
@@ -450,7 +807,27 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     parser.description = __doc__.split("\n\n")[0]
     parser.set_defaults(workers=2)
-    parser.add_argument("--store", type=Path, required=True, help="a campaign root")
+    parser.add_argument(
+        "--store",
+        type=Path,
+        action="append",
+        required=True,
+        help="a campaign root; repeat to pool several stores' baseline lines",
+    )
+    parser.add_argument(
+        "--wall-from",
+        type=Path,
+        action="append",
+        default=[],
+        metavar="STORE",
+        help="a campaign root whose wall times (only) enter the uncontended "
+        "estimate; adds that estimate",
+    )
+    parser.add_argument(
+        "--by-stratum",
+        action="store_true",
+        help="also cost each unit by its system's mean in its truth's stratum",
+    )
     parser.add_argument(
         "--assume",
         action="append",
@@ -462,9 +839,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.workers < 1:
         parser.error("--workers must be ≥ 1")
-    if not (args.store / TIMING_FILE).is_file():
-        print(f"{args.store}: no {TIMING_FILE}", file=sys.stderr)
-        return 2
+    roots = [*args.store, *args.wall_from]
+    resolved = Counter(p.resolve() for p in roots)
+    for root in roots:
+        if resolved[root.resolve()] > 1:
+            print(f"{root}: given twice (--store, --wall-from)", file=sys.stderr)
+            return 2
+        if not (root / TIMING_FILE).is_file():
+            print(f"{root}: no {TIMING_FILE}", file=sys.stderr)
+            return 2
     try:
         assumptions = [parse_assumption(a) for a in args.assume]
         out = report(args, assumptions)

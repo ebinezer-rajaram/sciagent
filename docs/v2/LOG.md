@@ -1464,3 +1464,32 @@ control that FSD's picks are unchanged on decisions where nothing explodes.
   kept (its ORACLE-vs-B-lib check reads its finite seeds), as a flagged-underfit truth is; C1 fails
   naming the units. "Incomplete" still outranks "controls fail" when nothing is checkable yet,
   the order the underfit case already uses.
+
+## 2026-10-28: Δ6 link-balanced variant red-teamed: the owner's explicit choice, not a veto window (decision 9 stays open)
+
+Draft (analyst, `.cache/drafts/d6-balanced-draft.md`, diff and checks in
+`.cache/drafts/d6-balanced-scripts/`): `link-balanced` differs from `link-neutral` (p4-deltas
+bff61ec) only in its example block: three examples, one per link in the order exp, softplus,
+identity, the depth-3 structure on exp (the 10 depth-3 dev truths are the 10 out-of-dictionary
+ones, links softplus 7, identity 2, exp 1, so a softplus depth-3 example hints at the dev
+majority), v1's factual fix kept. The red team reproduced the diff, the example links and depths
+[3, 1, 2], and that every v1 and `link-neutral` render is byte-identical before and after the edit
+(80 renders; all 8 pinned `PRE_POLICY_DIGESTS`), so no session key moves. Its verdict: adopt
+with fixes, but not by the lapse of a veto window. Decision 9 was approved as rule (A), "adopt
+whichever variant tries more links and depth" (P4-PROPOSAL:256-257), and (A) picks `link-neutral`;
+choosing `link-balanced` sets that rule aside after the dev check's numbers were seen, partly on a
+post-hoc subgroup pattern, so it takes effect only on the owner's explicit choice; if a default is
+unavoidable it is (A). Other findings: P3 agents opened with v1's first example verbatim in 103/240
+sessions (TRANSCRIPTS.md:45-46), so whichever example is first will be copied (an exp and depth-3
+prime under `link-balanced`), and any link-choice share must be reported with and without fits
+identical to a prompt example; the guard must also pin each arm's surface digest at launch, thread
+the truth's `split` through to the campaign, enumerate every stored llm-session cell (not only
+planned keys), and refuse unknown `--arms` names; the "tried a non-identity link" reader must say
+that a structure with no features adds no link (depth 0), count only charged fits ("fitted", not
+"tried"), and state how refused and harness-fault sessions enter the denominator; its positive
+control (reproduce TRANSCRIPTS.md:53-54) cannot run while the P3 store stays on Windows.
+Correction to the 2026-10-27 Δ6 entry: "at least 3 of its 5 extra correct links" is at least 2 of
+5, the minimum consistent with the STATUS margins (red team, enumeration of all assignments).
+Owner's choice, unchanged in substance: (A) `link-neutral` by the literal rule; (B) v1 with the
+factual fix; (C) `link-balanced`. The guard, the report's arm matching and the reader are needed
+under any of them, and are P4 work after the choice.

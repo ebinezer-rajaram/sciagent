@@ -24,6 +24,7 @@ __all__ = [
     "SANDBOX_CONTEXT",
     "check_docker",
     "ensure_image",
+    "image_id",
     "image_tag",
 ]
 
@@ -95,6 +96,35 @@ def check_docker(docker: str = "docker") -> str:
             f"Docker daemon is not reachable (is Docker Desktop running?): {detail}"
         )
     return proc.stdout.decode("utf-8", "replace").strip()
+
+
+def image_id(tag: str, *, docker: str = "docker") -> str:
+    """Return the ID (``sha256:...``) of the local image ``tag``.
+
+    The tag hashes the build recipe; the ID names the built bytes, which a
+    rebuild of the same recipe need not reproduce. So the ID is recorded with
+    an AG-o session and checked on replay, not put in its address.
+
+    Raises:
+        SandboxUnavailableError: Docker did not answer in time.
+        SandboxImageError: there is no image ``tag``.
+    """
+    try:
+        proc = subprocess.run(
+            [docker, "image", "inspect", "--format", "{{.Id}}", tag],
+            capture_output=True,
+            timeout=_PROBE_TIMEOUT_S,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise SandboxUnavailableError(
+            f"docker image inspect did not answer within {_PROBE_TIMEOUT_S:.0f} s"
+        ) from exc
+    found = proc.stdout.decode("utf-8", "replace").strip()
+    if proc.returncode != 0 or not found:
+        detail = proc.stderr.decode("utf-8", "replace").strip()
+        raise SandboxImageError(f"no image {tag}: {detail}")
+    return found
 
 
 def ensure_image(context: Path = SANDBOX_CONTEXT, *, docker: str = "docker") -> str:

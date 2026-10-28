@@ -60,21 +60,28 @@ from sciagent.sandbox import (
     SandboxError,
     SandboxLimits,
     ensure_image,
+    image_id,
 )
 
 __all__ = [
     "OUT_OF_BOUNDS",
+    "SANDBOX_MEMORY_MB",
+    "SANDBOX_WALL_SECONDS",
     "EnvironmentSpec",
     "InvestigationAgentConfig",
     "InvestigationOutcome",
     "InvestigationSpec",
     "build_lab",
+    "check_image_id",
+    "investigation_json",
     "layer_factory",
     "leak_terms",
     "out_of_bounds",
     "rendered_surface",
     "replay_investigation",
     "run",
+    "run_sandbox_limits",
+    "sandbox_json",
     "submitted_structure",
 ]
 
@@ -95,6 +102,30 @@ OUT_OF_BOUNDS: Final = (
     r"/run/",
     r"\.\./",
 )
+
+
+#: The two sandbox limits an :class:`InvestigationSpec` records and may set
+#: (the others are :class:`~sciagent.sandbox.SandboxLimits`' defaults): the
+#: spec's defaults, and what :func:`run` gives every AG-o run.
+SANDBOX_WALL_SECONDS: Final = 60.0
+SANDBOX_MEMORY_MB: Final = 2048
+
+
+def run_sandbox_limits() -> SandboxLimits:
+    """The limits of every ``python`` call of an AG-o run :func:`run` starts.
+
+    Their one source: :func:`run` builds its spec from them, and an AG-o
+    session's address (:func:`sciagent.campaign.plan.session_text`) names them.
+    """
+    return SandboxLimits(wall_seconds=SANDBOX_WALL_SECONDS, memory_mb=SANDBOX_MEMORY_MB)
+
+
+def sandbox_json(limits: SandboxLimits, helper_sha256: str) -> dict[str, Any]:
+    """What fixes a sandbox's behaviour besides its image (whose tag is
+    recorded with every result): every limit, and the handoff helper's code,
+    which enforces the ``work/`` limits and lives outside the image.
+    """
+    return {"limits": asdict(limits), "handoff_helper_sha256": helper_sha256}
 
 
 @dataclass(frozen=True)
@@ -124,8 +155,8 @@ class InvestigationSpec:
     seed: int
     experiments: int = 8
     fits: int = 40
-    sandbox_wall_seconds: float = 60.0
-    sandbox_memory_mb: int = 2048
+    sandbox_wall_seconds: float = SANDBOX_WALL_SECONDS
+    sandbox_memory_mb: int = SANDBOX_MEMORY_MB
 
     def as_json(self) -> dict[str, Any]:
         return {
@@ -150,14 +181,8 @@ class InvestigationSpec:
         )
 
     def sandbox_json(self) -> dict[str, Any]:
-        """What fixes the sandbox's behaviour besides its image (whose tag is
-        recorded with every result): every limit, and the handoff helper's
-        code, which enforces the ``work/`` limits and lives outside the image.
-        """
-        return {
-            "limits": asdict(self.sandbox_limits()),
-            "handoff_helper_sha256": HANDOFF_HELPER_SHA256,
-        }
+        """:func:`sandbox_json` of this spec's limits and the current helper."""
+        return sandbox_json(self.sandbox_limits(), HANDOFF_HELPER_SHA256)
 
     @staticmethod
     def from_json(data: Mapping[str, Any]) -> InvestigationSpec:
@@ -274,11 +299,44 @@ def layer_factory(
 
     def factory(config: Mapping[str, Any]) -> ToolLayer:
         spec = InvestigationSpec.from_json(config["investigation"])
-        return build_lab(
-            spec, env, sandbox_root=sandbox_root, fit_workers=fit_workers
-        ).layer()
+        lab = build_lab(spec, env, sandbox_root=sandbox_root, fit_workers=fit_workers)
+        check_image_id(config["investigation"], lab)
+        return lab.layer()
 
     return factory
+
+
+def investigation_json(spec: InvestigationSpec, lab: Lab) -> dict[str, Any]:
+    """The ``investigation`` section of a run's config: the spec and, for an
+    AG-o run, the ID of the image its sandbox runs (``sandbox_image_id``).
+
+    The ID is recorded, not put in the session's address: the tag hashes the
+    build recipe, and a rebuild of it need not give the same bytes. Replay
+    checks it (:func:`check_image_id`). AG-c records keep their bytes.
+    """
+    out = spec.as_json()
+    if lab.sandbox is not None:
+        out["sandbox_image_id"] = image_id(lab.sandbox.image, docker=lab.sandbox.docker)
+    return out
+
+
+def check_image_id(recorded: Mapping[str, Any], lab: Lab) -> None:
+    """Refuse to replay an AG-o record on an image other than the one it ran.
+
+    Records made before the ID was recorded carry none and are not checked.
+
+    Raises:
+        LabError: the lab's image has another ID than the recorded one.
+    """
+    want = recorded.get("sandbox_image_id")
+    if want is None or lab.sandbox is None:
+        return
+    have = image_id(lab.sandbox.image, docker=lab.sandbox.docker)
+    if have != want:
+        raise LabError(
+            f"the record ran on image {want}; {lab.sandbox.image} here is {have} "
+            "(rebuilt or changed): replay would not be comparable"
+        )
 
 
 def _prompts(lab: Lab) -> tuple[str, str]:
@@ -386,6 +444,7 @@ def run(
     (:func:`_discard_sandbox`); if that fails, the record is still saved and
     the run is void for an infrastructure fault (``sandbox cleanup``).
     """
+    limits = run_sandbox_limits()
     spec = InvestigationSpec(
         environment=env.name,
         truth_id=truth_id,
@@ -394,9 +453,17 @@ def run(
         seed=seed,
         experiments=experiments,
         fits=fits,
+        sandbox_wall_seconds=limits.wall_seconds,
+        sandbox_memory_mb=limits.memory_mb,
     )
     lab = build_lab(spec, env, sandbox_root=sandbox_root, fit_workers=fit_workers)
     system, opening = _prompts(lab)
+    try:
+        investigation = investigation_json(spec, lab)
+    except SandboxError:
+        if lab.sandbox is not None:
+            _discard_sandbox(lab.sandbox, keep=keep_sandbox)
+        raise
     config = InvestigationAgentConfig(
         model=model,
         system_prompt=system,
@@ -404,7 +471,7 @@ def run(
         seed=seed,
         max_turns=max_turns,
         wall_time_s=wall_time_s,
-        investigation=spec.as_json(),
+        investigation=investigation,
     )
     out_dir.mkdir(parents=True, exist_ok=True)
     cleanup_fault: str | None = None

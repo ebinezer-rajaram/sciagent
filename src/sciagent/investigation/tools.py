@@ -35,6 +35,7 @@ has no field for one, and ``predict``'s schema has none either.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -73,7 +74,13 @@ from sciagent.investigation.world import (
     experiment_id,
 )
 from sciagent.nonparam.wiener_hopf import ARRIVAL, estimate_kernels
-from sciagent.sandbox import Sandbox, SandboxError, result_digest, write_dataset
+from sciagent.sandbox import (
+    Sandbox,
+    SandboxError,
+    SandboxResult,
+    result_digest,
+    write_dataset,
+)
 
 __all__ = [
     "BUDGET_EXPERIMENTS",
@@ -85,6 +92,8 @@ __all__ = [
     "Lab",
     "LabError",
     "PredictionOutcome",
+    "python_tool_json",
+    "python_tool_text",
 ]
 
 #: The one fit configuration every ``fit`` call uses (``workers`` aside, which
@@ -109,6 +118,38 @@ SUMMARY_DIAGNOSTICS: Final = (
 _MAX_NOTEBOOK_APPEND: Final = 20_000
 _MAX_CODE: Final = 50_000
 _DATA_ID: Final = re.compile(r"^(obs|e(0|[1-9][0-9]*))$")
+
+
+def python_tool_text(result: SandboxResult) -> str:
+    """What the ``python`` tool shows the agent for one sandbox result."""
+    status = f"exit code {result.exit_code}"
+    if result.timed_out:
+        status += " (stopped: time limit)"
+    text = f"{status}\n--- stdout ---\n{result.stdout}"
+    if result.stderr:
+        text += f"\n--- stderr ---\n{result.stderr}"
+    return text
+
+
+#: Sandbox results whose rendering :func:`python_tool_json` samples: with and
+#: without stderr, timed out or not.
+_PYTHON_SAMPLES: Final = (
+    SandboxResult("out\n", "err\n", 1, True, False, 0.0),
+    SandboxResult("out", "", 0, False, True, 0.0),
+)
+
+
+def python_tool_json() -> dict[str, Any]:
+    """What fixes the open agent's ``python`` and notebook tools besides the
+    sandbox: the code and notebook caps, and the SHA-256 of the output format
+    (:func:`python_tool_text` of fixed samples). An AG-o session's address
+    names it (:func:`sciagent.campaign.plan.session_text`)."""
+    rendered = "\x00".join(python_tool_text(r) for r in _PYTHON_SAMPLES)
+    return {
+        "max_code": _MAX_CODE,
+        "max_notebook_append": _MAX_NOTEBOOK_APPEND,
+        "output_format_sha256": hashlib.sha256(rendered.encode()).hexdigest(),
+    }
 
 
 class LabError(SciAgentError):
@@ -634,14 +675,8 @@ class Lab:
             return ToolOutput(
                 "the sandbox is unavailable; this call did not run", is_error=True
             )
-        status = f"exit code {result.exit_code}"
-        if result.timed_out:
-            status += " (stopped: time limit)"
-        text = f"{status}\n--- stdout ---\n{result.stdout}"
-        if result.stderr:
-            text += f"\n--- stderr ---\n{result.stderr}"
         return ToolOutput(
-            text,
+            python_tool_text(result),
             record={
                 "sandbox_digest": result_digest(result),
                 "image": self.sandbox.image,

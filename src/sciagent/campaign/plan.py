@@ -37,8 +37,9 @@ its *score* (keyed by the session's address plus :data:`METRIC_VERSION`).
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Final, Literal
 
 from sciagent.core.errors import SciAgentError
@@ -50,12 +51,26 @@ from sciagent.glm.simulate import MarkSampler
 from sciagent.glm.syntax import render
 from sciagent.harness.live import HARNESS_VERSION
 from sciagent.investigation.prompts import Arm
-from sciagent.investigation.runner import EnvironmentSpec
+from sciagent.investigation.runner import (
+    EnvironmentSpec,
+    run_sandbox_limits,
+    sandbox_json,
+)
 from sciagent.investigation.tools import FIT_CONFIG as AGENT_FIT_CONFIG
+from sciagent.investigation.tools import python_tool_json
 from sciagent.investigation.view import Condition
 from sciagent.investigation.world import OBSERVATIONAL_HORIZON, TruthSpec
 from sciagent.nonparam.wiener_hopf import DEFAULT as WIENER_HOPF_DEFAULT
 from sciagent.registry.store import ExperimentKey
+from sciagent.sandbox import (
+    HANDOFF_HELPER_SHA256,
+    SandboxImageError,
+    SandboxLimits,
+    image_tag,
+)
+from sciagent.sandbox.dataset import format_sha256 as dataset_format_sha256
+from sciagent.sandbox.image import SANDBOX_CONTEXT
+from sciagent.sandbox.runner import canonical_run_argv
 from sciagent.scoring import battery
 from sciagent.scoring.heldout import HELDOUT_HORIZON
 from sciagent.systems.v2.search import GPConfig, StructureSampler
@@ -367,13 +382,66 @@ def baseline_key(
 
 
 def session_text(arm: LLMArm, config: CampaignConfig) -> str:
-    """The full configuration of an LLM session as text."""
-    return (
+    """The full configuration of an LLM session as text.
+
+    An AG-o session's text ends with its sandbox (:func:`session_sandbox_text`):
+    the limits :func:`~sciagent.investigation.runner.run` gives it, the handoff
+    helper's SHA-256 and the image tag computed from the build context (no
+    Docker call). So a change to any of them moves the session's address and a
+    stored session is not reused across it. AG-c has no sandbox, and its text
+    is unchanged.
+    """
+    text = (
         f"model={config.llm_model}; arm={arm.arm}; condition={arm.condition}; "
         f"experiments={config.experiments}; fits={config.fits}; "
         f"max_turns={config.max_turns}; wall_time_s={config.wall_time_s!r}; "
         f"harness={HARNESS_VERSION}"
     )
+    if arm.arm == "AG-o":
+        try:
+            image = image_tag(SANDBOX_CONTEXT)
+        except SandboxImageError as error:
+            raise CampaignError(
+                f"cannot name the sandbox image of an AG-o session: {error}"
+            ) from error
+        sandbox = session_sandbox_text(
+            run_sandbox_limits(), HANDOFF_HELPER_SHA256, image
+        )
+        text = f"{text}; {sandbox}"
+    return text
+
+
+def session_sandbox_text(limits: SandboxLimits, helper_sha256: str, image: str) -> str:
+    """The sandbox and tools an AG-o session's code ran under, as text.
+
+    One JSON object, keys sorted: every limit and the handoff helper's SHA-256
+    (as :func:`~sciagent.investigation.runner.sandbox_json` records them; a
+    limit typed ``float`` is rendered as a float, so ``60`` and ``60.0`` give
+    the same text); the ``docker run`` command line of a call
+    (:func:`~sciagent.sandbox.runner.canonical_run_argv`: flags, ``/tmp``,
+    ulimits, network, environment); the SHA-256 of the ``/data`` formats
+    (:func:`~sciagent.sandbox.dataset.format_sha256`); and the ``python`` and
+    notebook tools' caps and output format
+    (:func:`~sciagent.investigation.tools.python_tool_json`). Then the image
+    tag. Each is computed from the code that acts, not copied from it.
+    """
+    block = sandbox_json(limits, helper_sha256)
+    block["limits"] = _float_fields(limits)
+    block["run_argv"] = canonical_run_argv(limits)
+    block["data_format_sha256"] = dataset_format_sha256()
+    block["python_tool"] = python_tool_json()
+    rendered = json.dumps(block, sort_keys=True, separators=(",", ":"))
+    return f"sandbox={rendered}; image={image}"
+
+
+def _float_fields(limits: SandboxLimits) -> dict[str, int | float]:
+    """``limits`` as a dict, its ``float`` fields as floats (an ``int`` passed
+    for one would otherwise render without the ``.0``)."""
+    out: dict[str, int | float] = {}
+    for f in fields(limits):
+        value = getattr(limits, f.name)
+        out[f.name] = float(value) if f.type in ("float", float) else int(value)
+    return out
 
 
 def session_config_digest(arm: LLMArm, config: CampaignConfig) -> str:

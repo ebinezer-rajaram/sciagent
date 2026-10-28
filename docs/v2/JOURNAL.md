@@ -817,3 +817,47 @@ tier; details are in QUEUE and LOG. The INBOX sprint entry is marked handled.
 1. After 12:00Z with VETO.md empty: merge wall-time-move, then cpu-time; ruff, mypy, fast tier.
 2. After 13:00Z: record the mini-pilot gate verdict (JOURNAL session 9, Next 1).
 3. Check the engineer's projection branch.
+
+## 2026-10-28: Lane session 10 (09:55 UTC): mini-pilot gate PASS recorded, wall-time-move, cpu-time and the projection script merged, interim projection above 48 hours
+
+**Done.**
+- **Mini-pilot gate verdict: PASS** as restated in the queue (f3323f6), recorded at 13:00:37Z
+  after the beats-truth window (LOG 2026-10-27), with VETO.md empty. The numbers are in JOURNAL
+  session 9. The caveats from the session 9 red team stand: wall times are measured but
+  contended; both runs used `--workers 1`, so the memory figure (2.045 GiB x 2 = 4.09 GiB) is the
+  2-worker setting, not what ran; run A's lowest MemAvailable was 2.124 GiB. The byte check at 2
+  workers is not done yet (Next 1).
+- **Merged into v2** at 12:00:30Z, VETO.md empty: wall-time-move (4f3adb8), cpu-time (0bb8b41),
+  `projection` (39d088f). On v2: `ruff format --check` `253 files already formatted`, `ruff
+  check` `All checks passed!`, mypy `Success: no issues found in 242 source files`; `pytest -m
+  "not slow" -n 2` exit 0 (2753 passed, 3 skipped, counted from the progress dots: the project's
+  `-q` in addopts plus mine suppressed the summary line; `.cache/s10/fast.log`); `pytest
+  tests/campaign -m slow -n 2` exit 0 at 12:42:59Z (12 passed; `.cache/s10/slow.log`). Pushed.
+- **Projection script** (engineer, `scripts/project_runtime.py` and
+  `tests/campaign/test_project_runtime.py`, 7 tests). I reran its tests and its output in the
+  worktree and got the same figures; its method choices are in LOG 2026-10-28. Interim, on 20 of
+  21 cells of `.cache/mini-cpu` (planted-hint dev-017 was still running at 13:00Z):
+  `unit mean: CPU 53.8 h > 48 h`, `unit max: CPU 65.1 h`, `x 2.06 wall/CPU 110.6 h`. B-sym@10F is
+  not measured and is left out, so these are lower bounds; with `--assume B-sym@10F=10xB-sym`,
+  61.8 h of CPU. Per-unit mean CPU: B-rand 2733 s, planted-hint 2171 s (n=2), B-sparse 862 s,
+  B-sym 577 s, ORACLE 87 s. Not recorded as the answer: the last unit can move the planted-hint
+  mean, and if it took 0 CPU the mean case would fall to about 47.8 h. All three truths are in the
+  far stratum.
+
+**Learned.**
+- `pytest -q` on top of addopts' `-q` drops the summary line. Run the tiers without the extra `-q`,
+  so the tail shows the counts.
+- A background wait timer can be stopped before its target (this one stopped at 11:57Z, short
+  of 12:00:30Z). Recheck the clock before acting on a veto window.
+
+**Next.**
+1. When `.cache/mini-cpu` exits: `store_compare.py .cache/mini-a .cache/mini-cpu` (the 2-worker
+   byte check; want 21 identical), `hunt_gap.py` and `store_check.py` on it, then
+   `project_runtime.py --store .cache/mini-cpu --workers 2 --truths 20 --seeds 1,2,3
+   --b10f-truths 10`. If it is still above 48 h, that is the stop point: push the owner (longer
+   dm-devbox run against the AWS m6i.xlarge option, LOG 2026-10-27), with the far-stratum caveat
+   and B-sym@10F unmeasured.
+2. Merges, each after its window and a VETO.md check: session keys (17:00Z), fingerprint-guard
+   (19:15Z), the rescore guard test (`guard-on-rehearsal` d7705b5 and 5ef1db7), c1-oracle-inf
+   (21:45Z), c1-label 66f7d7d. Then the full fast tier and `tests/campaign -m slow` on v2.
+3. Owner decisions still waiting: Δ6 (A/B/C); the brake and pilot-unit question (QUEUE).

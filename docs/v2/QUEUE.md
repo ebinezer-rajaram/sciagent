@@ -41,7 +41,7 @@ Each item says when it is done. Move finished items to the bottom section after 
   `37 passed` (AG-o replay included). 2026-10-28 (session 7): its two longest campaign slow
   tests passed (exit 0, 03:36Z; JOURNAL session 7). Next: merge after the window (second, after
   wall-time-move).
-- [~] **Session cells carry wall time**: proposed 2026-10-27 to move `wall_s`, `duration_api_ms`
+- [x] 2026-10-28 **Session cells carry wall time** (merged 4f3adb8 after the window, no veto): proposed 2026-10-27 to move `wall_s`, `duration_api_ms`
   and `total_cost_usd` from the `llm-session` cell to its `timing.jsonl` line (LOG 2026-10-27,
   veto window ends 2026-10-28T12:00Z). After the window, unless VETO.md objects, and after the
   sandbox follow-ups land in `campaign/llm.py`: implement (engineer, test first: every cell kind
@@ -50,8 +50,10 @@ Each item says when it is done. Move finished items to the bottom section after 
   2026-10-27: implemented on local branch `wall-time-move` (df0ce40; worktree
   `.claude/worktrees/agent-a9c4be026147be112`): ruff, mypy clean, fast tier `2720 passed, 3
   skipped`; `tests/campaign -m slow` NOT confirmed (no summary line).
-  2026-10-28: rebased, 3f0274b: `tests/campaign -m slow` `12 passed`. Next: merge after the
-  window (first of the four).
+  2026-10-28: rebased, 3f0274b: `tests/campaign -m slow` `12 passed`. 2026-10-28 (session 10):
+  merged into v2 at 12:00:30Z with VETO.md empty (4f3adb8), then cpu-time (0bb8b41) and
+  `projection` (39d088f); on v2 ruff, mypy (242 files) clean, fast tier exit 0 (2753 passed, 3
+  skipped; `.cache/s10/fast.log`).
 - [~] **C1: any ORACLE −inf fails control 1** (review item (c), LOG 2026-10-27; veto window ends
   2026-10-28T21:45Z; sets a P3 go/no-go rule, owner pushed): replace the drop at
   `campaign/analysis.py:580-600` with a C1 failure for P3 and P4, and fix the "dropped as not
@@ -114,7 +116,7 @@ Each item says when it is done. Move finished items to the bottom section after 
   one AG-c record offline (`sciagent.investigation.replay_investigation`). Needs
   Docker. Done when every smoke unit is recorded and scored, both replays pass, and wall times
   per unit are in the journal.
-- [ ] **Mini-pilot gate**, criteria fixed before running (HANDOFF-2026-10-06): dev-008, dev-013
+- [x] 2026-10-28 **Mini-pilot gate** (verdict PASS with caveats, JOURNAL session 10), criteria fixed before running (HANDOFF-2026-10-06): dev-008, dev-013
   and dev-017 at seed 1, every non-LLM system except B-sym@10F, run twice into two stores.
   Pass needs 0 `oracle_underfit`, no gap above +0.01, byte-identical cells across the two
   runs, measured wall time per unit on dm-devbox, the report rendering, and peak memory per
@@ -146,7 +148,11 @@ Each item says when it is done. Move finished items to the bottom section after 
   workers (the full pilot's setting); `store_compare.py .cache/mini-a .cache/mini-cpu` covers it
   once mini-cpu has run on 2 workers. Stores and logs at
   `s3://delaymargin-results-482913/sciagent/p3-linux/mini-4cd2564/`.
-- [~] **CPU time per unit** (found 2026-10-28, JOURNAL session 6): wall times on dm-devbox swing
+  2026-10-28 (session 10, 13:00:37Z, VETO.md empty, beats-truth window over): **verdict PASS** as
+  restated, with caveats: wall time per unit measured but contended; both runs at `--workers 1`
+  (the 6 GB memory figure is x 2 workers, not what ran); run A's lowest MemAvailable 2.124 GiB.
+  The 2-worker byte check is still to come from `.cache/mini-cpu` (Where the baselines run).
+- [x] 2026-10-28 **CPU time per unit** (merged 0bb8b41; found 2026-10-28, JOURNAL session 6): wall times on dm-devbox swing
   more than 10× with the other lane's load (run B's ORACLE dev-008 860.5 s against run A's
   75.6 s). Record the worker's CPU time per job (`resource.getrusage`) beside `wall_s` in
   `timing.jsonl` (engineer, test first, in a worktree; not while a run uses that checkout), so the
@@ -184,6 +190,11 @@ Each item says when it is done. Move finished items to the bottom section after 
   MemAvailable ≥ 8 GiB at that moment, else 1; it logs `to2: relaunch with N workers` in
   `.cache/mini-cpu-run.log`. Next session: check that line and that the run is going. A 2-worker
   run also gives the 2-worker byte check against run A (`store_compare.py`).
+  2026-10-28 (session 10): relaunched on 2 workers 09:51:54Z. `scripts/project_runtime.py`
+  merged (39d088f; LOG 2026-10-28). Interim on 20 of 21 cells (planted-hint dev-017 still running
+  at 13:00Z): CPU-only lower bound 53.8 h at mean unit cost, 65.1 h at max, B-sym@10F not
+  measured and left out; x 2.06 measured wall/CPU, 110.6 h. Above 48 h, so this is heading for the
+  stop point; record it only from the finished store (JOURNAL session 10).
 - [ ] **Full pilot** (pilot-runner): `nice -n 10 uv run python scripts/pilot.py --root
   .cache/pilot --truths 20 --seeds 1,2,3 --b10f-truths 10 --workers 2 --llm-concurrency 1` in
   tmux, exactly the SPEC §7 P3 plan: 20 dev truths x 3 seeds; AG-c-S and AG-o-S, named and

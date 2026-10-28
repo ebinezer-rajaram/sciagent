@@ -1542,3 +1542,19 @@ per-layer positive controls early. Each layer has a positive control (the normal
 outer layers real, is stopped by that layer and no other), and breaking the driver's rescore
 refusal made the main test fail (engineer, in its worktree, reverted). Test only; no instrument
 changes.
+
+## 2026-10-28: How `scripts/project_runtime.py` turns a CPU-timed store into the 48-hour call
+
+The projection script (branch `projection`, merged 39d088f) takes the plan from the driver's own
+planner (`sciagent.campaign.plan.baseline_units`/`llm_units` through `pilot.py`'s parser,
+`select` and `campaign_config`), not a hand count: 430 non-LLM units (7 systems x 60 + B-sym@10F
+x 10) and 240 LLM units, which it lists as excluded. A unit's cost is its own `cpu_s +
+cpu_children_s`. The shared overhead of a multi-unit job (job CPU minus its units' CPU, i.e. data
+simulation) is spread equally over its units, in a separate column. A plain `job_cpu_s /
+job_units` split was rejected because it gave ORACLE less than its own unit CPU. Units are
+scheduled one by one, longest first, onto the workers. The driver's job bundling (ORACLE, B-lib
+and B-np as one job) and its `--max-heavy` limit are not modelled; the output says so. A planned
+system with no timing in the store is printed as not measured and left out, so every figure is a
+lower bound. `--assume SYSTEM=FxOTHER` adds it as a printed assumption, and is refused for a
+system the store has measured. Why: the result feeds a stop point (the owner chooses where the
+baselines run), so it should understate rather than guess.

@@ -63,6 +63,15 @@ Each item says when it is done. Move finished items to the bottom section after 
   2026-10-28: rebased, 9db6d8e: the 2 were `test_replay_check` failing on the worktree's missing
   (gitignored) dev split, not the branch; report slow tests `4 passed`; clean fast tier
   `2715 passed, 3 skipped`. Next: merge after the window (last of the four).
+  2026-10-28 (session 9): the report's control-1 headline printed **PASS** whenever the underfit
+  and -inf parts passed, even with the margin part not checkable (mini-b: PASS over an empty
+  margin table, while `Controls pass: False`; red team). Fixed as a label only on local branch
+  `c1-label` 66f7d7d, stacked on `merge-rehearsal`: `control_1_headline` reads the verdict's own
+  `oracle_checks`/`kept`/`dropped`; NOT CHECKABLE when no truth has 2 paired finite seeds, FAIL on
+  any failing part, PASS otherwise naming dropped and uncheckable truths (as `analysis.verdict`
+  treats them; no rule changes). Tests first: `tests/campaign/test_pilot_report_control_1.py` 6
+  of 7 failed before, `7 passed` after (my rerun too); `tests/campaign -m "not slow" -n 1` `272
+  passed`; ruff, mypy (244 files) clean. Merge right after c1-oracle-inf.
 - [~] **Code-fingerprint guard on stores** (F5, LOG 2026-10-27; veto window ends
   2026-10-28T19:15Z): the store keeps a sidecar with the git commit, a clean-tree flag and the
   `uv.lock` sha256; a dirty tree refuses to write; a resume under a different fingerprint refuses

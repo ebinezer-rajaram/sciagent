@@ -721,3 +721,83 @@ tier; details are in QUEUE and LOG. The INBOX sprint entry is marked handled.
   the import and its use in one edit.
 - Wall/CPU on this machine can reach ~20× while agent-control runs nice-0 workers. The baselines'
   projection must quote that ratio beside the CPU total when it makes the 48-hour call.
+
+## 2026-10-28: Lane session 9 (07:54 UTC): mini-pilot run B done and every gate criterion measured (verdict after 13:00Z), slow tier green on the combined tree, two test-first fixes on local branches
+
+**Done.**
+- Checkpoint entry above (rescore guard test; run B starved by load).
+- **Mini-pilot run B** finished 2026-10-28T09:33:38Z, exit 0: `recorded={'B-lib': 3, 'B-np': 3,
+  'B-rand': 3, 'B-sparse': 3, 'B-sym': 3, 'ORACLE': 3, 'planted-hint': 3}, failed={}, bugs=0`
+  (planted-hint dev-017 took 8723.2 s wall, against 1495.9 s in run A). Gate checks from the main
+  checkout at 61e56c9:
+  - `store_compare.py .cache/mini-a .cache/mini-b`: `identical cells: 21; only in a: 0; only in b:
+    0; differing: 0`, `IDENTICAL`.
+  - `hunt_gap.py --store .cache/mini-b --env fit/5 --split data/v2/truths/dev`: `units: 21 under
+    fit/5`, `gap above +0.01: 0`, `above the truth's own parameters by > +0.01: 0`,
+    `oracle_underfit: 0 flagged, 0 unrecorded, of 3 ORACLE units`, `GATE PASS`.
+  - `store_check.py --store .cache/mini-b`: `cells: 21; issues: 0; warnings: 0`, STORE OK.
+  - `mem_sampler.py --summary .cache/mini-b-mem.csv --workers 2`: `peak worker VmHWM 2.045 GB`,
+    `x 2 workers = 4.090 GB`, `lowest MemAvailable 4.179 GB`.
+  - `pilot_report.py` renders (to `/tmp/sci-s9/PILOT-mini-b.md`, outside the repo; "verdict
+    incomplete" because its planned set has the LLM arms). Wall time per unit (median / max s):
+    B-lib 11/88, B-np 11/126, ORACLE 95/861, B-sym 415/1212, B-sparse 1250/2063, B-rand
+    5074/7163, planted-hint 2378/8723.
+- **Red team on the gate claim** (fresh context): PASS with caveats. It reran store_compare and
+  hunt_gap on run A (no disagreement), `sha256sum` over both `details/` dirs (no diff), and the
+  instrument tests (`47 passed`). I checked each of its points against the files:
+  1. LOG 2026-10-27 (beats-truth proposal): "the mini-pilot gate is not judged before the window
+     ends" (2026-10-28T13:00Z). So **no verdict is recorded this session**; the result would not
+     change (0 beats-truth units, VETO.md empty).
+  2. HANDOFF-2026-10-06's criterion was "a measured slowdown"; the queue restated it as "measured
+     wall time per unit" in f3323f6, before the runs. The gate passes as restated.
+  3. Both runs used `--workers 1` (`cmd:` lines); the x 2 memory figure is the full pilot's
+     setting, not what ran, and no byte check at 2 workers exists yet. Session 8's journal and my
+     first ledger lines said "2 workers"; the ledger is corrected.
+  4. Run A's lowest MemAvailable was 2.124 GiB (machine-wide; the sampler's STOP brake is 2).
+  5. The report's control-1 headline printed **PASS** over an empty margin table (fixed, below).
+- **Stores and logs to S3**: `s3://delaymargin-results-482913/sciagent/p3-linux/mini-4cd2564/`,
+  59 objects, 8.7 MB (both stores, run/mem/pid logs, `mini-run.sh`, both rendered reports).
+  Ledger lines added for the copy and the two runs (9.89 h and 9.71 h, $0).
+- **Slow tier on the combined tree** (`merge-rehearsal` 9dcb2cd, v2 plus the five pending
+  branches): `tests/campaign tests/investigation tests/sandbox -m slow -n 1` `40 passed, 1 warning
+  in 6762.88s (1:52:42)`, exit 0 09:47:56Z. The warning is cvxpy's "Solution may be inaccurate"
+  from `glm/fit_solve.py:591` in `test_every_non_llm_system_runs_and_scores_one_real_unit`.
+- **Control-1 label fix** (engineer, test first, checked by me): local branch `c1-label` 66f7d7d
+  on `merge-rehearsal`, `scripts/pilot_report.py` plus `tests/campaign/test_pilot_report_control_1.py`.
+  Six of the seven tests failed before the fix, and all 7 pass after it (my rerun: `7 passed in
+  2.08s`). Engineer: `tests/campaign -m "not slow" -n 1` `272 passed`; ruff clean; mypy
+  `Success: no issues found in 244 source files`. Mini-b now reads `**NOT CHECKABLE**
+  (inconclusive): margin not checkable (< 2 paired finite seeds of ORACLE and B-lib) for
+  ['dev-008', 'dev-013', 'dev-017']`. The label follows `analysis.verdict`. A truth without
+  paired seeds does not block PASS when other truths are kept, but the label names it. This is
+  the existing rule, not a new one.
+- **CPU-timed rerun on 2 workers**: `.cache/mini-cpu-to2.sh` wrote STOP 09:48:24Z. The unit in
+  flight ended at `exit: 0 at 09:51:27Z`, and the script relaunched `to2: relaunch with 2 workers
+  (MemAvailable 10 GiB) 09:51:54Z` (`plan: 10 pool jobs, 0 LLM units, 7 units already done`).
+- Nothing on a tracked code path changed on v2 this session (docs, queue, ledger only), so no
+  test tier ran on v2. The checks above ran on the branches' worktrees.
+
+**Learned.**
+- At nice 10, our pilot workers get almost nothing while agent-control runs nice-0 workers.
+  Run B's last unit took 5.8 times run A's wall time. This is why the projection uses CPU time.
+- The gate's own records can carry a judging rule (the LOG's "not judged before the window
+  ends"). Read the veto-window proposals that touch a gate before recording a verdict.
+
+**Next.**
+1. After 13:00Z, with VETO.md empty, record the mini-pilot gate verdict: PASS as restated, with
+   red-team caveats 2 to 4 above. The numbers are already in this entry.
+2. Merges into v2, each after its veto window and a VETO.md check, in this order:
+   - wall-time-move (12:00Z);
+   - cpu-time;
+   - session keys (17:00Z);
+   - fingerprint-guard (19:15Z);
+   - the rescore guard test (cherry-pick `guard-on-rehearsal`'s two commits d7705b5 and 5ef1db7;
+     the v2 version fcc45df fails after fingerprint-guard);
+   - c1-oracle-inf (21:45Z);
+   - c1-label 66f7d7d.
+   `merge-rehearsal` shows the one conflict resolved. After the merges, run the full fast tier
+   and `tests/campaign -m slow` on v2.
+3. Check `.cache/mini-cpu-run.log` and the run's progress. When it finishes, run `store_compare.py
+   .cache/mini-a .cache/mini-cpu` (the 2-worker byte check), then the projection (QUEUE "Where
+   the baselines run").
+4. Owner decisions still waiting: Δ6 (A/B/C); the brake and pilot-unit question (QUEUE).

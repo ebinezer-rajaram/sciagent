@@ -898,7 +898,7 @@ veto windows (QUEUE).
 **Decision needed.** Option 1 or option 2. If option 2, also approve the AWS launch and its cost
 ceiling (AUTOPILOT stop point 3).
 
-Hand-over note (13:08Z): the push to the owner went as a desktop notification only ("Mobile
+Hand-over note (13:03Z): the push to the owner went as a desktop notification only ("Mobile
 push not sent (Remote Control inactive)"). `.cache/mini-cpu`, its logs and the projection output
 are copied to `s3://delaymargin-results-482913/sciagent/p3-linux/mini-cpu-21e7947/` (31 objects,
 4.4 MB). The ledger has lines for the run (7.97 h) and the copy. Next session: red-team the

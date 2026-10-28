@@ -21,6 +21,16 @@ environment the LLM runner resolves truths from. Results go to ``--root``
 (git-ignored) and are resumable: rerun the same command to continue; create
 ``<root>/STOP`` to stop launching new units (running ones finish).
 
+Every run is guarded by the checkout's code fingerprint (:func:`code_fingerprint`:
+the commit and a clean-tree flag; LOG 2026-10-27, F5), taken after ``--wait``
+and checked again after the run (a change during the run exits non-zero). A
+dirty tree, a copy that is not its own checkout, or packages imported from
+another checkout refuse to run. A store written under another fingerprint
+refuses before any unit is launched, unless ``--reuse-from`` names the store's
+fingerprint exactly, which is recorded in ``<root>/fingerprint.jsonl``
+(``--reuse-from unrecorded`` for a store with cells and no fingerprint). One
+driver per store: a second ``pilot.py`` on the same ``--root`` is refused.
+
 A live LLM run uses the logged-in Claude subscription (do not set
 ANTHROPIC_API_KEY; the harness refuses it).
 """
@@ -31,11 +41,15 @@ import argparse
 import hashlib
 import io
 import os
+import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 # One BLAS thread per process, set before numpy loads (everything numpy-backed
 # is imported inside functions below); the campaign's spawned workers inherit
@@ -74,6 +88,85 @@ def wait_for_split(directory: Path, timeout_s: float, poll_s: float = 60.0) -> N
             raise SystemExit(f"no manifest.json in {directory} after {timeout_s}s")
         print(f"waiting for {directory / 'manifest.json'} ...", flush=True)
         time.sleep(poll_s)
+
+
+def _git(repo: Path, *args: str) -> str:
+    from sciagent.campaign.plan import CampaignError
+
+    try:
+        done = subprocess.run(
+            ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        detail = getattr(error, "stderr", None) or error
+        raise CampaignError(
+            f"cannot read the code fingerprint: git {' '.join(args)} in {repo} "
+            f"failed: {str(detail).strip()}"
+        ) from error
+    return done.stdout
+
+
+def _running_packages() -> tuple[Path, Path]:
+    """Where this process imported ``sciagent`` and ``environments`` from."""
+    import environments
+    import sciagent
+
+    return (Path(sciagent.__file__), Path(environments.__file__))
+
+
+def code_fingerprint(repo: Path = ROOT, packages: Sequence[Path] | None = None) -> str:
+    """The checkout's code fingerprint, ``commit=<sha>,tree=clean``.
+
+    Refuses (:class:`~sciagent.campaign.plan.CampaignError`) unless the commit
+    describes the code that runs:
+
+    - ``packages`` (default: where ``sciagent`` and ``environments`` were
+      imported from) lie under ``repo/src``: ``uv run`` may have picked another
+      checkout's environment;
+    - ``repo`` is the top of its own git checkout, not a copy inside another
+      (which would get the parent's HEAD);
+    - the tree is clean: ``git status --porcelain --untracked-files=all`` lists
+      nothing, whatever ``status.showUntrackedFiles`` says, and no file is
+      flagged assume-unchanged or skip-worktree (``git ls-files -v``), which
+      would hide an edit. Ignored files (the copied split under ``data/``,
+      ``.venv``, ``.cache``) do not count.
+
+    ``uv.lock`` is tracked, so the commit and the clean tree cover it.
+    """
+    from sciagent.campaign.plan import CampaignError
+
+    top = repo.resolve()
+    src = top / "src"
+    for package in packages if packages is not None else _running_packages():
+        if not package.resolve().is_relative_to(src):
+            raise CampaignError(
+                f"code fingerprint: {package} is imported from outside {src}; the "
+                f"commit of {top} would not describe the code that runs (run "
+                f"`uv run` from {top})"
+            )
+    toplevel = _git(repo, "rev-parse", "--show-toplevel").strip()
+    if Path(toplevel).resolve() != top:
+        raise CampaignError(
+            f"{top} is not its own git checkout (its repository's top is "
+            f"{toplevel}); the fingerprint would describe other code"
+        )
+    head = _git(repo, "rev-parse", "HEAD").strip()
+    dirty = _git(repo, "status", "--porcelain", "--untracked-files=all").splitlines()
+    hidden = [
+        line
+        for line in _git(repo, "ls-files", "-v").splitlines()
+        if line[:1].islower() or line[:1] == "S"
+    ]
+    if dirty or hidden:
+        paths = dirty + [f"flagged {line}" for line in hidden]
+        shown = "; ".join(paths[:5]) + ("; ..." if len(paths) > 5 else "")
+        raise CampaignError(
+            f"the working tree at {top} is not clean ({len(paths)} paths: "
+            f"{shown}); commit or remove the changes (and clear assume-unchanged "
+            f"or skip-worktree flags) first, so the store records the code that "
+            f"wrote it"
+        )
+    return f"commit={head},tree=clean"
 
 
 def truth_spec(record: TruthRecord) -> TruthSpec:
@@ -203,6 +296,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--arms", default=None, help="comma-separated LLM arms, e.g. AG-o/anon"
     )
     p.add_argument("--wait", type=float, default=0.0, help="wait for the split (s)")
+    p.add_argument(
+        "--reuse-from",
+        default=None,
+        help="the store's code fingerprint, exactly, to keep its cells under this "
+        "checkout's (recorded in the store); 'unrecorded' for a store written "
+        "before fingerprints were kept",
+    )
     return p
 
 
@@ -240,9 +340,16 @@ def main() -> None:
     )
     args = parser.parse_args()
     from sciagent.campaign.driver import Campaign, DriverSettings
+    from sciagent.campaign.plan import CampaignError
 
     if args.wait:
         wait_for_split(args.split, args.wait)
+    # After the wait: the code that runs is the code on disk from here on.
+    try:
+        fingerprint = code_fingerprint()
+    except CampaignError as error:
+        raise SystemExit(f"refused: {error}") from error
+    print(f"code fingerprint: {fingerprint}", flush=True)
     records = select(load_split(args.split), args.truths, args.ids)
     env = pointproc_environment(load_split(args.split))
     config = campaign_config(args)
@@ -255,12 +362,34 @@ def main() -> None:
         max_heavy=args.max_heavy,
         rescore_llm=args.rescore_llm,
     )
-    campaign = Campaign(args.root, env, config, truth_entries(records), settings)
+    try:
+        campaign = Campaign(
+            args.root,
+            env,
+            config,
+            truth_entries(records),
+            settings,
+            fingerprint=fingerprint,
+            reuse_from=args.reuse_from,
+        )
+    except CampaignError as error:
+        raise SystemExit(f"refused: {error}") from error
     try:
         summary = campaign.run()
     finally:
         campaign.close()
     print(summary)
+    # Workers and LLM sessions import from disk during the run: the run is
+    # attributable to ``fingerprint`` only if the checkout still is it.
+    try:
+        after = code_fingerprint()
+    except CampaignError as error:
+        after = f"unavailable ({error})"
+    if after != fingerprint:
+        raise SystemExit(
+            f"the code changed during the run: started under {fingerprint}, "
+            f"ended under {after}; cells written in this run may come from either"
+        )
 
 
 if __name__ == "__main__":

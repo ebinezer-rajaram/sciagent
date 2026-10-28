@@ -13,12 +13,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from campaign_support import entry, environment, tiny_config
+from campaign_support import FINGERPRINT, entry, environment, tiny_config
 
 from sciagent.campaign import analysis
 from sciagent.campaign import driver as driver_module
 from sciagent.campaign.driver import Campaign, DriverSettings
 from sciagent.campaign.execute import ScoreJob, UnitResult
+from sciagent.campaign.fingerprint import UNRECORDED
 from sciagent.campaign.plan import LLMArm, Unit, score_key, session_key
 from sciagent.campaign.store import ResultStore
 from sciagent.campaign.voids import (
@@ -160,6 +161,7 @@ def test_a_session_with_a_denied_bare_name_is_scored_and_counted(
             run_baselines=False,
             driver_factory=lambda u: ScriptedDriver(BARE_PYTHON),
         ),
+        fingerprint=FINGERPRINT,
     )
     c.run()
     unit = Unit("hawkes", 1, "AG-c-H/named")
@@ -220,6 +222,8 @@ def test_a_void_session_is_not_scored_and_the_analysis_drops_it(
         DriverSettings(
             workers=0, poll_s=0.05, run_baselines=False, driver_factory=refuse
         ),
+        fingerprint=FINGERPRINT,
+        reuse_from=UNRECORDED,  # the session above was planted without one
     )
     c.run()
     c.close()

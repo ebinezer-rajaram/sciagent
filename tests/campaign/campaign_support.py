@@ -20,6 +20,8 @@ from sciagent.systems.v2.systems import GrammarMember
 ANON_CHANNELS: Final = {"size": "m1", "sign": "m2"}
 TRUTH_IDS: Final = ("hawkes", "size_excitation")
 MODEL: Final = "claude-haiku-4-5-20251001"
+#: The code fingerprint the tests' campaigns run under (opaque to the driver).
+FINGERPRINT: Final = "commit=test,tree=clean,uv.lock=test"
 
 
 def spec(truth_id: str) -> TruthSpec:

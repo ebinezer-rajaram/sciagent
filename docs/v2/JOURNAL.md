@@ -801,3 +801,19 @@ tier; details are in QUEUE and LOG. The INBOX sprint entry is marked handled.
    .cache/mini-a .cache/mini-cpu` (the 2-worker byte check), then the projection (QUEUE "Where
    the baselines run").
 4. Owner decisions still waiting: Δ6 (A/B/C); the brake and pilot-unit question (QUEUE).
+
+## 2026-10-28: Lane session 10 (09:55 UTC), checkpoint: waiting on the 12:00Z and 13:00Z windows, projection script delegated
+
+**Done.**
+- Oriented: INBOX has no open entries; VETO.md has no veto lines; tree clean at 15e2e39.
+- CPU-timed rerun (`.cache/mini-cpu`) relaunched on 2 workers at 09:51:54Z (`to2: relaunch with 2
+  workers (MemAvailable 10 GiB)`); 11 of 21 timing lines at 09:57Z, no STOP file.
+- Delegated to the engineer: `scripts/project_runtime.py` with tests on a new local branch
+  `projection` (worktree `.claude/worktrees/projection`): projects the full P3 baseline plan at 2
+  workers from the store's CPU times (plan taken from `pilot.py`'s planner; unmeasured systems
+  such as B-sym@10F printed as not measured unless an explicit `--assume` names a factor).
+
+**Next (this session).**
+1. After 12:00Z with VETO.md empty: merge wall-time-move, then cpu-time; ruff, mypy, fast tier.
+2. After 13:00Z: record the mini-pilot gate verdict (JOURNAL session 9, Next 1).
+3. Check the engineer's projection branch.

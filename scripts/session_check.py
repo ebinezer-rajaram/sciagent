@@ -44,7 +44,7 @@ def main(argv: list[str] | None = None) -> int:
     records = select(load_split(args.split), args.truths, args.ids)
     env = pointproc_environment(load_split(args.split))
     config = campaign_config(args)
-    with ResultStore(args.root) as store:
+    with ResultStore(args.root, read_only=True) as store:
         check = check_sessions(store, env, config, truth_entries(records))
     for f in check.issues:
         print(f"ISSUE {f.kind} {f.where}: {f.message}")

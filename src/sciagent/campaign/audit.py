@@ -652,7 +652,7 @@ def check_store(root: Path) -> StoreCheck:
     warnings: list[Finding] = []
     _check_triggers(ledger_path, issues)
     raw = _raw_digests(ledger_path)
-    with ResultStore(root) as store:
+    with ResultStore(root, read_only=True) as store:
         entries = store.ledger.entries()
     committed = {str(e.digest) for e in entries}
     record_dirs: dict[str, str] = {}
@@ -836,7 +836,7 @@ def check_budgets(root: Path) -> StoreCheck:
     _require_store(root)
     issues: list[Finding] = []
     audited = 0
-    with ResultStore(root) as store:
+    with ResultStore(root, read_only=True) as store:
         cells = store.cells()
     for cell in cells:
         if cell["key"]["config"].get("kind") != "llm-session":

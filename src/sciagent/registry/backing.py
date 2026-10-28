@@ -43,6 +43,7 @@ __all__ = [
     "append_only_triggers",
     "authorizer",
     "connect",
+    "connect_read_only",
     "digest_of_bytes",
     "encode_mapping",
     "field",
@@ -181,6 +182,24 @@ def connect(target: Path | str) -> sqlite3.Connection:
     widens the append window to anything another thread can issue.
     """
     return sqlite3.connect(target, cached_statements=0, check_same_thread=True)
+
+
+def connect_read_only(path: Path) -> sqlite3.Connection:
+    """Return a connection to the existing database at ``path`` that cannot
+    write it, with :func:`connect`'s statement-cache and thread settings.
+
+    ``mode=ro`` is sqlite's own refusal, not a convention: the file is never
+    created, and no statement on this connection -- a schema ``CREATE ... IF
+    NOT EXISTS`` included -- can change it. A reader that opened the store
+    read-write would repair a ledger that lost a trigger instead of leaving it
+    for the audit to report (LOG 2026-10-28).
+    """
+    return sqlite3.connect(
+        f"{path.resolve().as_uri()}?mode=ro",
+        uri=True,
+        cached_statements=0,
+        check_same_thread=True,
+    )
 
 
 def is_append_only_refusal(error: sqlite3.Error) -> bool:

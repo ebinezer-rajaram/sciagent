@@ -101,6 +101,7 @@ from sciagent.registry.backing import (
     append_only_triggers,
     authorizer,
     connect,
+    connect_read_only,
     digest_of_bytes,
     encode_mapping,
     is_append_only_refusal,
@@ -186,12 +187,15 @@ class CampaignLedger:
     than merely argued."""
 
     def __init__(self, connection: sqlite3.Connection, path: Path | None) -> None:
-        """Wrap a prepared connection. Use :meth:`open` or :meth:`in_memory`.
+        """Wrap a prepared connection. Use :meth:`open`, :meth:`open_read_only`
+        or :meth:`in_memory`.
 
         **Not the way to build a ledger.** This installs no schema, no triggers
-        and no authorizer. Both classmethods below go through :meth:`_prepare`,
-        and nothing in the repository calls this constructor -- it is public
-        only because the classmethods have to reach it.
+        and no authorizer. :meth:`open` and :meth:`in_memory` go through
+        :meth:`_prepare`; :meth:`open_read_only` installs the authorizer on a
+        connection that cannot write. Nothing else in the repository calls this
+        constructor -- it is public only because the classmethods have to reach
+        it.
         """
         self._connection = connection
         self._path = path
@@ -206,6 +210,23 @@ class CampaignLedger:
         """Open (creating if absent) the ledger stored at ``path``."""
         path.parent.mkdir(parents=True, exist_ok=True)
         return cls._prepare(connect(path), path)
+
+    @classmethod
+    def open_read_only(cls, path: Path) -> CampaignLedger:
+        """Open the existing ledger at ``path`` for reading only.
+
+        For readers (the report, the audit checks): nothing is created, and no
+        schema statement runs, so a ledger that lost a trigger stays as found
+        for the audit to report. sqlite refuses every write on the connection
+        (:func:`~sciagent.registry.backing.connect_read_only`), so
+        :meth:`append` raises :class:`~sciagent.core.errors.RegistryError`.
+        """
+        if not path.is_file():
+            raise RegistryError(f"{path}: no ledger to open read-only")
+        connection = connect_read_only(path)
+        ledger = cls(connection, path)
+        connection.set_authorizer(authorizer(ledger._grant))
+        return ledger
 
     @classmethod
     def in_memory(cls) -> CampaignLedger:

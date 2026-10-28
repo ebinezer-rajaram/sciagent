@@ -102,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{args.split}: no truths.json", file=sys.stderr)
         return 2
     split_sha = hashlib.sha256((args.split / "truths.json").read_bytes()).hexdigest()
-    with ResultStore(args.store) as store:
+    with ResultStore(args.store, read_only=True) as store:
         units = gap_check(store, args.env, threshold=args.threshold).units
         truth = truth_reference(((u.truth, u.seed) for u in units), args.split)
         report = gap_check(store, args.env, threshold=args.threshold, truth=truth)

@@ -38,7 +38,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any, Final
 
-from sciagent.core.errors import RegistryConflictError
+from sciagent.core.errors import RegistryConflictError, RegistryError
 from sciagent.core.types import (
     DataVersion,
     Digest,
@@ -108,10 +108,23 @@ def json_safe(value: Json) -> Json:
 
 
 class ResultStore:
-    """The ledger plus the detail files under one root directory."""
+    """The ledger plus the detail files under one root directory.
 
-    def __init__(self, root: Path) -> None:
+    ``read_only=True`` is how a reader (the report, the audit checks) opens a
+    store: the store must exist, nothing is created, the ledger is opened
+    read-only (:meth:`CampaignLedger.open_read_only`, so no schema statement
+    runs) and every writing method raises
+    :class:`~sciagent.core.errors.RegistryError` before it touches a file.
+    """
+
+    def __init__(self, root: Path, *, read_only: bool = False) -> None:
         self.root = root
+        self.read_only = read_only
+        if read_only:
+            if not (root / LEDGER_FILE).is_file():
+                raise RegistryError(f"{root} is not a campaign store: no {LEDGER_FILE}")
+            self.ledger = CampaignLedger.open_read_only(root / LEDGER_FILE)
+            return
         root.mkdir(parents=True, exist_ok=True)
         (root / DETAILS_DIR).mkdir(exist_ok=True)
         self.ledger = CampaignLedger.open(root / LEDGER_FILE)
@@ -130,6 +143,12 @@ class ResultStore:
     def close(self) -> None:
         self.ledger.close()
 
+    def _writable(self, method: str) -> None:
+        if self.read_only:
+            raise RegistryError(
+                f"{self.root}: the store is open read-only; {method} refused"
+            )
+
     def detail_path(self, digest: Digest | str) -> Path:
         return self.root / DETAILS_DIR / f"{digest}.json"
 
@@ -139,6 +158,7 @@ class ResultStore:
         self, key: ExperimentKey, reading: Mapping[str, float], detail: Json
     ) -> LedgerEntry:
         """Write the cell's detail (exclusively), then commit its ledger row."""
+        self._writable("put")
         data = cell_bytes(key, reading, detail)
         path = self.detail_path(key.digest)
         try:
@@ -154,12 +174,14 @@ class ResultStore:
 
     def log_timing(self, record: Mapping[str, Json]) -> None:
         """Append one line to the (unaddressed) timing log."""
+        self._writable("log_timing")
         line = json.dumps(dict(record), sort_keys=True, ensure_ascii=False)
         with (self.root / TIMING_FILE).open("a", encoding="utf-8", newline="\n") as f:
             f.write(line + "\n")
 
     def recover(self) -> int:
         """Commit ledger rows for detail files whose row is missing; count them."""
+        self._writable("recover")
         added = 0
         for path in sorted((self.root / DETAILS_DIR).glob("*.json")):
             cell = json.loads(path.read_text(encoding="utf-8"))

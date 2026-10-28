@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import statistics
+import sys
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final, NamedTuple
@@ -359,6 +360,10 @@ def main() -> None:
     )
     reconfigure_stdout()
     args = parser.parse_args()
+    if not (args.root / "ledger.sqlite").is_file():
+        # A reader: the store is opened read-only below and never created.
+        print(f"{args.root}: not a campaign store", file=sys.stderr)
+        raise SystemExit(2)
 
     import numpy as np
 
@@ -385,7 +390,7 @@ def main() -> None:
         control_truths=args.b10f_truths,
     )
     truths = truth_entries(records)
-    with ResultStore(args.root) as store:
+    with ResultStore(args.root, read_only=True) as store:
         tab = analysis.load_rows(store, env, config, truths, sessions=args.sessions)
     rows = tab.rows
     voided = analysis.void_counts(tab)

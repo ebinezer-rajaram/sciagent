@@ -691,3 +691,33 @@ tier; details are in QUEUE and LOG. The INBOX sprint entry is marked handled.
    12:00Z; `merge-rehearsal` 9dcb2cd shows the resolution of the one conflict. Then
    `tests/campaign -m slow` and the full fast tier on v2.
 4. Owner decisions waiting: Δ6 (A/B/C); the brake and pilot-unit question (QUEUE).
+
+## 2026-10-28: Lane session 9 (07:54 UTC), checkpoint: rescore guard test built, run B on its last unit
+
+**Done.**
+- Inbox: no open entries. VETO.md: no vetoes. The earliest veto window (wall-time-move) ends
+  12:00Z, after this session's deadline (11:34Z), so no merges into v2.
+- **Rescore guard test** (queue: hunt-check leftovers (d); engineer, checked by me; LOG
+  2026-10-28): new file `tests/campaign/test_rescore_guard.py` only, local branch `rescore-guard`
+  fcc45df (from v2 e8711a7). My run there: `10 passed in 26.16s`. On `merge-rehearsal` it failed
+  (`TypeError: Campaign.__init__() missing 1 required keyword-only argument: 'fingerprint'`, from
+  fingerprint-guard), so I adapted it on local branch `guard-on-rehearsal` 5ef1db7 (one import,
+  `fingerprint=FINGERPRINT`): `10 passed in 66.55s`, ruff clean, mypy `Success: no issues found in
+  244 source files`. Engineer's checks on fcc45df: ruff and mypy (238 files) clean; `tests/campaign
+  -m "not slow" -n 1` `2 failed, 142 passed`, the two being `test_replay_check` on the worktree's
+  missing dev split (known, QUEUE CPU-time item). Positive control: with the driver's rescore
+  refusal broken, `assert calls == []` failed (`['driver.run_...ion_isolated']`).
+- **Slow tier on the combined tree** started 07:55:10Z: `tests/campaign tests/investigation
+  tests/sandbox -m slow -n 1` in `.claude/worktrees/merge-rehearsal` at 9dcb2cd, `tmux -L sciagent`
+  `sci-slowreh`, log `.cache/slow-rehearsal/run.log` (an `exit:` line at the end). 4 tests done at
+  08:51Z.
+- **Mini-pilot run B** still on its last unit (planted-hint dev-017; 20 of 21 cells at 07:08:09Z).
+  Its worker accrued 1 s of CPU in 20 s of wall at 08:52Z (`ps -o time`: 04:54:37 then 04:54:38):
+  at nice 10 it is starved by agent-control's simulation workers, about ten processes, several at
+  nice 0 (load 17.8 on 4 vCPUs at 08:32Z). Same for the CPU-timed rerun (35% CPU, 6 of 21 cells).
+
+**Learned.**
+- The format hook (ruff `--fix`) removes an import that is unused at the moment of the edit; add
+  the import and its use in one edit.
+- Wall/CPU on this machine can reach ~20× while agent-control runs nice-0 workers. The baselines'
+  projection must quote that ratio beside the CPU total when it makes the 48-hour call.

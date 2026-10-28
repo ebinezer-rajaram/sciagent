@@ -1527,3 +1527,18 @@ CPU time does not accrue while a process is frozen or descheduled. It is a lower
 uncontended wall time per worker, so the projection reports CPU totals and the measured wall/CPU
 ratio of the same units, and states which drives the 48-hour call. Residual bias: all three mini
 truths are in the far stratum, so the projection may overstate the near and mid truths.
+
+## 2026-10-28: A test that "nothing launches" blocks the process start and redirects HOME; a PATH strip is not enough
+
+The rescore guard test (`tests/campaign/test_rescore_guard.py`, branch `rescore-guard`) replaces
+every layer a live session passes through with a recorder raising a `BaseException` subclass (the
+harness has an `except Exception` at its SDK seam, which would turn an attempt into a retryable
+`session_failed`), down to `anyio.open_process` (in-thread path) and `SpawnProcess.start`
+(isolated path), and points `HOME` at an empty directory. Why not the salvaged script's PATH strip
+alone: claude-agent-sdk 0.2.139 runs the CLI bundled in its wheel before it searches `PATH`, then
+falls back to `~/.local/bin/claude`, which exists on dm-devbox. No API key is set, not even an
+invalid one: the harness refuses the variable before the SDK, so it adds nothing and would stop the
+per-layer positive controls early. Each layer has a positive control (the normal plan, with the
+outer layers real, is stopped by that layer and no other), and breaking the driver's rescore
+refusal made the main test fail (engineer, in its worktree, reverted). Test only; no instrument
+changes.

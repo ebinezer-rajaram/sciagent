@@ -190,6 +190,11 @@ Each item says when it is done. Move finished items to the bottom section after 
   (c) ~~store-level replay check~~ done 2026-10-27: `scripts/replay_check.py` (98e3aa4;
   smoke store 4 of 4 PASS);
   (d) `rescore_guard` extras (strip the CLI from PATH, patch the SDK entry points);
+  2026-10-28 (session 9): built as `tests/campaign/test_rescore_guard.py` (test only; LOG
+  2026-10-28): local branch `rescore-guard` fcc45df on v2 (10 passed), and `guard-on-rehearsal`
+  5ef1db7 = the same on `merge-rehearsal` plus `fingerprint=FINGERPRINT` (10 passed, mypy clean).
+  Next: merge sixth, after fingerprint-guard, from `guard-on-rehearsal`'s two commits (the v2
+  version fails on top of fingerprint-guard: `Campaign` needs `fingerprint`);
   (e) explicit hash-seed baseline pair and report-on-a-copy (low).
 - [ ] **Decisions open since 2026-10-06** (HANDOFF-2026-10-06): the prompt variant freeze
   (Δ6), EIG weights (Δ11), an event cap for FSD, hand-written address text (F5), the

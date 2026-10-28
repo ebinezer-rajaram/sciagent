@@ -284,7 +284,10 @@ Each item says when it is done. Move finished items to the bottom section after 
   5ef1db7 = the same on `merge-rehearsal` plus `fingerprint=FINGERPRINT` (10 passed, mypy clean).
   Next: merge sixth, after fingerprint-guard, from `guard-on-rehearsal`'s two commits (the v2
   version fails on top of fingerprint-guard: `Campaign` needs `fingerprint`);
-  (e) explicit hash-seed baseline pair and report-on-a-copy (low).
+  (e) ~~explicit hash-seed baseline pair and report-on-a-copy~~ done 2026-10-28 on branch
+  `hunt-e-hashseed-report` (not merged; LOG 2026-10-28): the pair passed at once; report-on-a-copy
+  found readers opening the store read-write (a lost trigger was put back), fixed with
+  `ResultStore(root, read_only=True)`.
 - [ ] **Decisions open since 2026-10-06** (HANDOFF-2026-10-06): the prompt variant freeze
   (Δ6), EIG weights (Δ11), an event cap for FSD, hand-written address text (F5), the
   review items, and decision 6 of HANDOFF-2026-10-09 (C5 random-arm seeding: `policy_seed` has

@@ -1642,3 +1642,20 @@ The smoke (dev-000 and dev-002, 2 replicates) found the predicted degenerate cel
 (about 1,850 events). B-lib's mark-blind `hawkes` pick makes the GLM side identical on all four inject
 designs. Also found: `investigation/policy.py:make_policy` builds `FSDPolicy` with the default cap, so a
 cap set through `PolicyArmSettings` alone would not reach AG-c-S. Projected full run: 2 to 3.5 CPU h.
+
+## 2026-10-28: Readers open the store read-only; cells hold across hash seeds (hunt leftover (e))
+
+Every reader opened the store read-write (`ResultStore(root)`), which runs the ledger's
+`CREATE ... IF NOT EXISTS` schema and makes the directory. On an intact store the bytes did not
+change, but on a ledger that lost an append-only trigger `pilot_report.py`, `store_check`
+(`audit.check_store`) and `session_check.py` were measured putting it back, so the audit reported the
+tamper once and then passed; a report on a mistyped `--root` would have created an empty store.
+Decided: a reader opens with `ResultStore(root, read_only=True)` (sqlite `mode=ro` through
+`backing.connect_read_only`, no schema statement, writing methods refused before any file is
+touched; a missing store raises), used by `pilot_report.py`, `session_check.py`, `hunt_gap.py`,
+`check_store` and `check_budgets`. The driver keeps the read-write open. Read path only: no content
+address, FIT_VERSION or METRIC_VERSION moves. Tests: `tests/campaign/test_store_readers.py`
+(snapshot of every file under the root before and after each reader; control: the snapshot sees a
+timing line and the read-write repair). The hash-seed pair (`test_hash_seed_pair.py`) runs B-lib on
+`hawkes` seed 1 through the driver under `PYTHONHASHSEED` 0, 1 and random: cells byte-identical by
+`compare_stores`, passed at once.

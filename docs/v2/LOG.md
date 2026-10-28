@@ -1493,3 +1493,24 @@ Correction to the 2026-10-27 Δ6 entry: "at least 3 of its 5 extra correct links
 Owner's choice, unchanged in substance: (A) `link-neutral` by the literal rule; (B) v1 with the
 factual fix; (C) `link-balanced`. The guard, the report's arm matching and the reader are needed
 under any of them, and are P4 work after the choice.
+
+## 2026-10-28: CPU time per job goes beside wall time in `timing.jsonl` (branch `cpu-time`; timing only, no cell moves)
+
+Wall times on dm-devbox swing more than 10× with the other lane's load (JOURNAL session 6), so the
+full-plan projection needs a measure that load inflates less. Decided: the process that does the
+work records `getrusage` deltas around it (pool workers are reused across jobs, so absolute
+figures would carry earlier jobs). `cpu_s` is RUSAGE_SELF user+sys, all threads (BLAS and solver
+threads included), over the same interval as the unit's `wall_s`; `cpu_children_s` is
+RUSAGE_CHILDREN user+sys, which counts only children that exited **and were reaped** inside the
+interval (the agent CLI of a session, `docker` clients), not a still-running or unreaped child,
+not orphans reaped by init, and not processes inside a container: an AG-o agent's sandboxed code
+is in neither figure. A pool job's lines also carry `job_wall_s`, `job_cpu_s`,
+`job_cpu_children_s`, `job_units` (data simulation included, shared by the units of a multi-unit
+job, so the pool total is the sum of `job_cpu_s / job_units`). Absent figures are `None`, never
+0: in-thread sessions (they share the driver's process), hard timeouts, Windows. An isolated
+session's `cpu_*` exclude its process spawn and imports, which its `wall_s` includes. These are
+timing, not results: they never enter a cell, reading, detail or address, so no version constant
+moves; a test pins byte-identical stores across two runs whose CPU figures differ, and a positive
+control (copying `job_cpu_s` into a detail) made it fail. CPU time is not load-free either (cache
+and SMT sharing inflate it somewhat), so the projection reports both wall and CPU figures and says
+which it uses. Stacked on `wall-time-move` because both edit the same timing lines; merges after it.

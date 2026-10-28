@@ -116,12 +116,21 @@ Each item says when it is done. Move finished items to the bottom section after 
   the lane unit 2026-10-27T22:13:59Z-23:50:49Z (`~/logs/usage/brake.log`) and run A's processes
   are in it, so run A's planted-hint dev-008 wall time includes about 97 min frozen; take wall
   times from units that overlap no freeze interval in brake.log (JOURNAL session 6).
-- [ ] **CPU time per unit** (found 2026-10-28, JOURNAL session 6): wall times on dm-devbox swing
+  2026-10-28 (session 7): interim checks on finished units pass (cells identical, 0 differing;
+  `hunt_gap.py` GATE PASS on run A; both stores STORE OK; JOURNAL session 7). Not the gate.
+- [~] **CPU time per unit** (found 2026-10-28, JOURNAL session 6): wall times on dm-devbox swing
   more than 10× with the other lane's load (run B's ORACLE dev-008 860.5 s against run A's
   75.6 s). Record the worker's CPU time per job (`resource.getrusage`) beside `wall_s` in
   `timing.jsonl` (engineer, test first, in a worktree; not while a run uses that checkout), so the
   projection below can use it. Small follow-up in the same change: `test_replay_check`'s `_check`
   helper passes stderr through, and a missing dev split fails with a clear message.
+  2026-10-28 (session 7): built on local branch `cpu-time` 21e7947 (worktree
+  `.claude/worktrees/cpu-time`), stacked on `wall-time-move` 3f0274b; LOG 2026-10-28. ruff, mypy
+  clean; fast `2742 passed, 3 skipped`; slow `tests/campaign/test_campaign_slow.py
+  tests/campaign/test_replay_check.py` without `test_every_non_llm_system_runs_and_scores_one_real_unit`
+  `7 passed` (engineer). Next: merge right after wall-time-move (rebase onto v2 then), run that
+  one slow test, then the full fast tier and `tests/campaign -m slow` on v2. The mini-pilot
+  stores (4cd2564) have no CPU figures; `pilot_report.py` reads their lines as wall-only.
 - [ ] **Where the baselines run.** From the mini-pilot's per-unit times, project the full plan
   at 2 workers. At about 48 hours or less, run on dm-devbox. Above that, stop point: the owner
   chooses between the longer dm-devbox run and the AWS CPU option (LOG 2026-10-27: m6i.xlarge,

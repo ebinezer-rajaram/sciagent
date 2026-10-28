@@ -558,3 +558,54 @@ tier; details are in QUEUE and LOG. The INBOX sprint entry is marked handled.
   Session keys' two long campaign slow tests running in `tmux -L sciagent` `sci-longslow`
   (nice 19, one process, log `.claude/worktrees/agent-a501a8588ae2e77cb/.cache/long-slow-s7.log`,
   started 02:49:21Z, killed by a guard if MemAvailable < 2.5 GB).
+
+
+## 2026-10-28: Lane session 7 (02:47 UTC): CPU time per job built, mini-pilot interim checks pass
+
+**Done.**
+- Checkpoint entry above (interim gate checks at 02:48Z).
+- **Interim checks refreshed at 03:32Z** (run A 17 cells, run B 10; both still running):
+  `store_compare.py .cache/mini-a .cache/mini-b` `identical cells: 10; only in a: 7; only in b:
+  0; differing: 0`; `hunt_gap.py --env fit/5 --split data/v2/truths/dev` GATE PASS on both
+  stores (run A `units: 17`, `oracle_underfit: 0 flagged, 0 unrecorded, of 3 ORACLE units`; run B
+  `units: 10`, 0 of 2), `gap above +0.01: 0` and `above the truth's own parameters by > +0.01: 0`
+  on both; `store_check.py` STORE OK on both (17 and 10 cells, 0 issues). Still not the gate.
+- **CPU time per job** (engineer, test first): local branch `cpu-time` 21e7947 in worktree
+  `.claude/worktrees/cpu-time`, stacked on `wall-time-move` 3f0274b, not pushed or merged. New
+  `campaign/cpu.py`; each `timing.jsonl` line gets `cpu_s` and `cpu_children_s` (`getrusage`
+  deltas in the worker over the unit's `wall_s` interval) and the whole job's `job_wall_s`,
+  `job_cpu_s`, `job_cpu_children_s`, `job_units`; `None` where not measured, never 0.
+  `pilot_report.py` shows CPU beside wall time and reads old lines as wall-only (checked
+  read-only on both mini-pilot stores, sha256 unchanged). Follow-up done: `_check` passes stderr
+  through, `replay_check.py` names a missing dev split. What it covers and does not (unreaped
+  children, container processes) is in LOG 2026-10-28.
+  Evidence: tests first failed (`ImportError` on the missing module; the replay test's stderr
+  said only `no truths.json`); positive control (copying `job_cpu_s` into a detail) failed both
+  determinism tests, then reverted. Engineer: ruff, mypy (240 files) clean; fast `2742 passed, 3
+  skipped, 3 warnings in 195.89s`; slow `test_campaign_slow.py test_replay_check.py` without
+  `test_every_non_llm_system_runs_and_scores_one_real_unit` `7 passed in 1047.71s` (includes the
+  spawn-pool test with its new `cpu_s <= wall_s*1.05 + 0.2` check, which would fail on absolute
+  figures). My rerun in the worktree: ruff `251 files already formatted`, `All checks passed!`,
+  mypy `Success: no issues found in 240 source files`, `test_cpu_time.py test_replay_check.py -m
+  "not slow"` `17 passed in 13.76s`. I read `cpu.py` and the driver and execute diffs.
+- **Session keys' two long slow tests** (`sci-longslow`, e9a3ce7): at 03:33Z one
+  progress dot (one test passed), the second still running; not a pass until the log's `exit`
+  line. Log `.claude/worktrees/agent-a501a8588ae2e77cb/.cache/long-slow-s7.log`.
+
+**Learned.**
+- CPU figures cannot be added to the running mini-pilot (frozen at 4cd2564), so its projection
+  still has wall times only: the "Where the baselines run" item needs either one uncontended
+  rerun of the slow units on the `cpu-time` code or wall times from units that overlap no brake
+  freeze, with the contention caveat.
+- The research-team guard rejects a Bash heredoc that mentions the agent CLI by name (it reads it
+  as a nested session); write such text with the Edit tool.
+
+**Next.**
+1. After each veto window (VETO.md first): merge wall-time-move (12:00Z), then `cpu-time` on top
+   (rebase onto v2 first; run `test_every_non_llm_system_runs_and_scores_one_real_unit`), session
+   keys (17:00Z), fingerprint-guard (19:15Z), c1-oracle-inf (21:45Z); then the full fast tier and
+   `tests/campaign -m slow` on v2.
+2. Mini-pilot gate when both runs end (run A 17 of 21 cells, run B 10, at 03:32Z): the full
+   check list in session 6's Next 2, plus `mem_sampler.py --summary` for both runs.
+3. "Where the baselines run": decide its timing source as in Learned, before the full pilot.
+4. Owner decisions waiting: Δ6 (A/B/C); the brake and pilot-unit question (QUEUE).

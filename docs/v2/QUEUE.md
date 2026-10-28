@@ -48,7 +48,8 @@ Each item says when it is done. Move finished items to the bottom section after 
   1c8160a's tree `48699bb…` equals `git merge-tree` of v2 and abb4059, which differs from
   abb4059 only in docs and the by-link script and its tests). On v2: ruff clean, mypy `247 source
   files` clean, fast tier `2897 passed, 3 skipped`, exit 0 (`.cache/s13/fast-c1.log`);
-  `tests/campaign -m slow` rerun in tmux `s13-slow` (`.cache/s13/campaign-slow-c1.log`).
+  `tests/campaign -m slow -n 1` `12 passed, 1 warning in 4289.30s`, exit 0
+  (`.cache/s13/campaign-slow-c1.log`).
 - [x] 2026-10-28 **Session keys and the sandbox** (merged 87b406f at 17:01Z, no veto) (before any AG-o cell that produces reported numbers):
   `session_text` covers neither `SandboxLimits`, the handoff helper's sha256 nor the image tag,
   so a stored AG-o session cell would be reused across a change to any of them. Recommend

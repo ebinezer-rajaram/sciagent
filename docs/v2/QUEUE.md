@@ -126,6 +126,17 @@ Each item says when it is done. Move finished items to the bottom section after 
   `store_compare.py .cache/mini-a .cache/mini-b` (want 21 identical), `hunt_gap.py` and
   `store_check.py` on run B, `mem_sampler.py --summary .cache/mini-b-mem.csv --workers 2`, then
   record the gate verdict (JOURNAL session 8).
+  2026-10-28 (session 9): run B finished 09:33:38Z, exit 0, 21 recorded, 0 failed, bugs 0. Every
+  criterion measured, all meeting their thresholds (as restated in this item, f3323f6, before the runs):
+  `store_compare.py` `identical cells: 21 ... differing: 0`; `hunt_gap.py` on B `gap above +0.01:
+  0`, `oracle_underfit: 0 flagged`, GATE PASS; STORE OK; memory 2.045 GiB per worker (both runs
+  used `--workers 1`; x 2 = 4.09 GiB, + parent 0.16); report renders. Red team (session 9): PASS
+  with caveats. **The verdict is not recorded yet**: LOG 2026-10-27 (beats-truth proposal) says the
+  gate is not judged before 2026-10-28T13:00Z. Next session, after 13:00Z and with VETO.md
+  empty: record PASS with the caveats in JOURNAL session 9. Not shown yet: byte identity at 2
+  workers (the full pilot's setting); `store_compare.py .cache/mini-a .cache/mini-cpu` covers it
+  once mini-cpu has run on 2 workers. Stores and logs at
+  `s3://delaymargin-results-482913/sciagent/p3-linux/mini-4cd2564/`.
 - [~] **CPU time per unit** (found 2026-10-28, JOURNAL session 6): wall times on dm-devbox swing
   more than 10× with the other lane's load (run B's ORACLE dev-008 860.5 s against run A's
   75.6 s). Record the worker's CPU time per job (`resource.getrusage`) beside `wall_s` in
@@ -142,7 +153,8 @@ Each item says when it is done. Move finished items to the bottom section after 
   2026-10-28 (session 8): merge rehearsal of all five branches on local branch `merge-rehearsal`
   9dcb2cd (worktree `.claude/worktrees/merge-rehearsal`): only conflict `driver.py`'s docstring
   (union kept); ruff, mypy (243 files) clean; fast `2856 passed, 3 skipped`. Slow tier not run on
-  the combined tree. A CPU-timed rerun of the mini-pilot plan runs on 21e7947 (`sci-minicpu`,
+  the combined tree (session 9: `tests/campaign tests/investigation tests/sandbox -m slow -n 1`
+  on 9dcb2cd `40 passed, 1 warning in 6762.88s`, exit 0; `.cache/slow-rehearsal/run.log`). A CPU-timed rerun of the mini-pilot plan runs on 21e7947 (`sci-minicpu`,
   store `.cache/mini-cpu`), for the projection below.
 - [ ] **Where the baselines run.** From the mini-pilot's per-unit times, project the full plan
   at 2 workers. At about 48 hours or less, run on dm-devbox. Above that, stop point: the owner
@@ -156,6 +168,13 @@ Each item says when it is done. Move finished items to the bottom section after 
   4077 s for CPU 1072 s. When run B exits, the next session may stop it (`STOP`), wait for the
   unit in flight, delete `STOP`, and resume with `.cache/mini-cpu-run.sh 2`. Caveat: all three mini truths are
   in the far stratum.
+  2026-10-28 (session 9): at 09:35Z kept at 1 worker (7 GB available with the slow tier running;
+  a second worker peaks at ~2 GB; AUTOPILOT's 6 GB floor). At 09:48Z, slow tier done and 8 GB
+  available: `.cache/mini-cpu-to2.sh` (window `to2` of `sci-minicpu`) wrote STOP and, when the unit
+  in flight ends (the run log's next `exit:` line), deletes STOP and relaunches with 2 workers if
+  MemAvailable ≥ 8 GiB at that moment, else 1; it logs `to2: relaunch with N workers` in
+  `.cache/mini-cpu-run.log`. Next session: check that line and that the run is going. A 2-worker
+  run also gives the 2-worker byte check against run A (`store_compare.py`).
 - [ ] **Full pilot** (pilot-runner): `nice -n 10 uv run python scripts/pilot.py --root
   .cache/pilot --truths 20 --seeds 1,2,3 --b10f-truths 10 --workers 2 --llm-concurrency 1` in
   tmux, exactly the SPEC §7 P3 plan: 20 dev truths x 3 seeds; AG-c-S and AG-o-S, named and

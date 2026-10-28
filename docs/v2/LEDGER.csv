@@ -3,3 +3,6 @@ date,item,provider,hours,usd,stage
 2026-10-27,full slow tier at 4a6d780 (2 workers; nice 10),dm-devbox,1.59,0,p3
 2026-10-27,P3 smoke at e3fc6f1 (dev-000/001 seed 1; 2 workers; 4 LLM units under Max; nice 10),dm-devbox,6.57,0,p3
 2026-10-28,S3 copy of the smoke store and logs (35 objects; 4.4 MB; sciagent/p3-linux/smoke-e3fc6f1/),aws-s3,0,0,p3
+2026-10-28,S3 copy of mini-pilot runs A and B stores and logs (59 objects; 8.7 MB; sciagent/p3-linux/mini-4cd2564/),aws-s3,0,0,p3
+2026-10-28,P3 mini-pilot run A at 4cd2564 (dev-008/013/017 seed 1; 7 non-LLM systems; 1 worker; nice 10; incl. 1.6 h brake freeze),dm-devbox,9.89,0,p3
+2026-10-28,P3 mini-pilot run B at 4cd2564 (same plan; 1 worker; nice 10),dm-devbox,9.71,0,p3

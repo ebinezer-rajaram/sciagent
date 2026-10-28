@@ -1095,3 +1095,20 @@ cost ceiling approved.
    a CPU-timed far B-sym@10F unit.
 4. Owner decisions still waiting: the stop point (option 1 or 2), Δ6 (A/B/C), and the brake and
    pilot-unit question.
+
+## 2026-10-28: Lane session 12 (16:08 UTC), progress: waiting on the 17:00Z window; `--by-link` costing started
+
+**Done.** Oriented: INBOX has no open entry; VETO.md is empty; the tree was clean and up to date
+with `origin/v2` (4c140e2). `git merge-tree --write-tree v2 <sha>` is clean for 7bf2e0a (session
+keys), d0c3e69 (fingerprint guard) and 76a70ef (rescore guard) against current v2. The rescore
+guard (d5d1d90, 76a70ef) is test only and has no veto window of its own, so it lands with the
+fingerprint guard at 19:15Z. An engineer is adding `--by-link` to `scripts/project_runtime.py`
+on local branch `by-link` (worktree `.claude/worktrees/by-link`), test first, to reproduce the
+red team's hand figures for costing by link (44.7 to 49.5 h CPU).
+
+**Learned.** Load is about 6 on 4 vCPUs from the other lane's analysis job (16:09Z), so test tiers
+will run slowly.
+
+**Next.** After 17:00Z: check VETO.md again, merge 7bf2e0a, run ruff, mypy and the fast tier, then
+push. After 19:15Z: merge up to 76a70ef the same way, before this session's 19:48Z deadline.
+c1-oracle-inf and c1-label (21:45Z) go to the next session.

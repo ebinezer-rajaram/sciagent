@@ -10,3 +10,5 @@ date,item,provider,hours,usd,stage
 2026-10-28,S3 copy of the CPU-timed rerun store logs and projection (31 objects; 4.4 MB; sciagent/p3-linux/mini-cpu-21e7947/),aws-s3,0,0,p3
 2026-10-28,P3 strata CPU-timed run at b953390 (dev-001 near and dev-010 mid seed 1; 7 non-LLM systems plus B-sym@10F on dev-001; 2 workers; nice 10; 13:07:33Z-14:28:54Z),dm-devbox,1.36,0,p3
 2026-10-28,S3 copy of the strata store logs and projection (24 objects; 1.2 MB; sciagent/p3-linux/strata-b953390/),aws-s3,0,0,p3
+2026-10-28,P3 far B-sym@10F CPU-timed run at 87b406f (dev-000 and dev-003 seed 1; --no-llm; 2 workers; nice 10; 17:30:36Z-23:04:21Z),dm-devbox,5.56,0,p3
+2026-10-28,S3 copy of the far10f store logs and projections (13 objects; 4.7 MB; sciagent/p3-linux/far10f-87b406f/),aws-s3,0,0,p3

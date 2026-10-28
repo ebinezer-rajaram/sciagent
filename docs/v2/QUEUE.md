@@ -214,6 +214,11 @@ Each item says when it is done. Move finished items to the bottom section after 
   over (LOG and JOURNAL corrections). Measuring near, mid and B-sym@10F: `.cache/strata`
   (tmux `sci-strata`, resume `bash .cache/strata-run.sh 2`), then `project_runtime.py` on both
   stores. The owner's choice stands.
+  Session 11, later: the strata run finished (15 recorded, 0 failed; STORE OK, GATE PASS; S3
+  `p3-linux/strata-b953390/`). `project_runtime.py` (pools stores, `--by-stratum`, `--wall-from`)
+  is merged. Red-teamed figure: quiet machine about 48 h (40-60 h) including LLM scoring; this
+  week's load about 90 h (75-115 h). The lane leans to dm-devbox after the merges (JOURNAL
+  session 11 stop point update). Still the owner's choice.
 - [ ] **Full pilot** (pilot-runner): `nice -n 10 uv run python scripts/pilot.py --root
   .cache/pilot --truths 20 --seeds 1,2,3 --b10f-truths 10 --workers 2 --llm-concurrency 1` in
   tmux, exactly the SPEC §7 P3 plan: 20 dev truths x 3 seeds; AG-c-S and AG-o-S, named and

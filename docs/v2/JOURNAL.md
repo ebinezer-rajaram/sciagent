@@ -1010,3 +1010,48 @@ cost ceiling approved).
   Strata rest on n = 1 per non-far stratum, and B-sym@10F on one near unit (2121.5 s CPU), so the
   far B-sym@10F units are probably understated. Not recorded as the answer until the run ends and
   the red team has read it.
+
+## 2026-10-28: Stop point update (lane session 11, 14:50 UTC): on a quiet dm-devbox the baseline plan sits at about 48 h (40-60 h); at this week's load about 90 h
+
+**Answer.** With near and mid truths measured, the full P3 pool at 2 workers on a quiet machine
+(LLM scoring included) is about 48 h, range 40-60 h: at the line, not under it. At this week's
+load (wall/CPU 1.83) it is about 90 h, range 75-115 h. Both figures are the red team's (session 11,
+second review), and I checked their key inputs. The call depends on the other lane's load and on
+B-sym@10F, link and seed spread. The owner's choice stands.
+
+**Evidence.**
+- `.cache/strata` (b953390): finished 14:28:54Z, 15 recorded, 0 failed, bugs 0; `store_check.py`
+  STORE OK; `hunt_gap.py` GATE PASS (gap above +0.01: 0; oracle_underfit: 0 of 2). Copied to
+  `s3://delaymargin-results-482913/sciagent/p3-linux/strata-b953390/` (24 objects).
+- Projection with both stores and the walls from mini-a and mini-b
+  (`.cache/s11/projection-strata.txt`):
+  - unit mean CPU 43.0 h;
+  - stratum mean CPU 37.7 h;
+  - uncontended min(CPU, walls): 40.0 h unit mean, 35.4 h stratum mean;
+  - x 1.83 wall/CPU: 69-79 h.
+
+  The red team's rerun is byte-identical, and its hand checks of a table row and of the LPT match.
+- Why those figures understate (red team; inputs checked by me):
+  - B-sym@10F on the five far truths is costed at the one near unit's 2121.5 s. The smoke store
+    (same computation, identical dev-001 digests) has B-sym@10F dev-000 (far) at 17411.8 s wall,
+    against 2083.6 s on dev-001. That adds about 2.5 to 10 h.
+  - Stratum is confounded with link. All 9 far truths are softplus; dev-001 and dev-010 are
+    identity; 3 of the 4 mid truths are exp or softplus. So dev-010 understates mid. Costed by
+    link: 44.7 to 49.5 h CPU, 41.5 to 46.3 h uncontended.
+  - The LLM arms' 240 scoring jobs share the pool (front of the queue, `driver.py:360`): +2.1 to
+    4.4 h. The in-process session fits and the AG-o containers are not quantified.
+  - Seed 1 only, and cost per unit is a draw: a bootstrap over the 5 truths gives a 90% interval
+    of 29.6 to 55.6 h on the unit-mean basis.
+
+**Caveats.** No measurement on seeds 2-3, on exp-link truths, or on uncontended dm-devbox. The
+Windows pilot's per-unit store is not on this machine or in S3, so the method has no backtest.
+
+**Recommendation.** Option 1 (dm-devbox) is now plausible: about 2 days if the other lane is
+quiet, about 4 days at this week's load, with no new tooling and no AWS spend. Option 2 (AWS)
+only pays if the instance runs more than 2 workers with matching bytes; that needs launch
+tooling and a byte check first. I lean to option 1, started right after the five merges (from
+17:00Z to 21:45Z, QUEUE). The run is resumable, so it can be stopped if the owner prefers AWS
+later.
+
+**Decision needed.** As before: option 1 or option 2. Option 2 also needs the AWS launch and its
+cost ceiling approved.

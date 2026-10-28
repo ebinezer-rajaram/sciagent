@@ -236,6 +236,56 @@ def planted_text(pc: Any) -> str:
     )
 
 
+def control_1_headline(
+    verdict: Any,
+    truths: Sequence[str],
+    underfit: Any,
+    oracle_inf: Sequence[tuple[str, int]],
+) -> str:
+    """Control 1's label, read from the verdict's own checks of all three parts.
+
+    The margin part is ``verdict.oracle_checks`` (truths with ≥ 2 paired
+    finite seeds); a truth failing it is dropped and reported, and none kept
+    fails the control, as in ``analysis.verdict``. A truth without the pairs
+    is neither kept nor dropped: named as not checkable. With no truth checked
+    the label is NOT CHECKABLE, never PASS; any failing part makes it FAIL.
+    """
+    from sciagent.campaign import analysis
+    from sciagent.scoring import gonogo
+
+    checked = [c.truth for c in verdict.oracle_checks]
+    unchecked = [t for t in truths if t not in checked]
+    not_checkable = (
+        f"margin not checkable (< 2 paired finite seeds of ORACLE and B-lib) "
+        f"for {unchecked}"
+    )
+    fail = gonogo.underfit_reason(underfit) + analysis.oracle_inf_reason(oracle_inf)
+    if checked and not verdict.kept:
+        fail.append(
+            f"no truth kept: margin ≤ SE on every checked truth {list(verdict.dropped)}"
+        )
+    if fail:
+        return "**FAIL**: " + "; ".join(
+            [*fail, *([not_checkable] if unchecked else [])]
+        )
+    if not checked:
+        return (
+            f"**NOT CHECKABLE** (inconclusive): {not_checkable}; the other parts: "
+            f"no flag and no -inf on {underfit.checked} units"
+        )
+    parts = [
+        f"margin > SE on {len(verdict.kept)} of {len(truths)} truths",
+        *(
+            [f"dropped by the preregistered rule: {list(verdict.dropped)}"]
+            if verdict.dropped
+            else []
+        ),
+        *([not_checkable + " (inconclusive there)"] if unchecked else []),
+        f"no flag and no -inf on {underfit.checked} units",
+    ]
+    return "**PASS** (" + "; ".join(parts) + ")"
+
+
 def interim_controls(tab: Any, resamples: int) -> list[str]:
     """§6.4 controls on completed units only, without the drop rule (interim)."""
     import numpy as np
@@ -492,18 +542,13 @@ def main() -> None:
     L += ["## Positive controls (SPEC §6.4)", ""]
     uf = analysis.underfit_check([r for r in rows if not r.llm])
     oracle_inf = analysis.oracle_inf_units([r for r in rows if not r.llm])
-    c1_fail = gonogo.underfit_reason(uf) + analysis.oracle_inf_reason(oracle_inf)
     L += [
         "**1. ORACLE beats B-lib** per truth: mean over seeds of gap(ORACLE) - "
         "gap(B-lib) must exceed its paired SE (finite seeds only), **and** zero "
         "`oracle_underfit` flags on every ORACLE unit (P4-PROPOSAL §2.4), "
         "**and** no ORACLE scoring -inf per event on held-out data on any "
         "(truth, seed) (not an upper bound; LOG 2026-10-27 item (c)): "
-        + (
-            f"**PASS** (no flag and no -inf on {uf.checked} units)"
-            if uf.passed and not oracle_inf
-            else "**FAIL**: " + "; ".join(c1_fail)
-        )
+        + control_1_headline(verdict, sorted(tab.truths), uf, oracle_inf)
         + ".",
         "",
     ]

@@ -27,6 +27,15 @@ Each item says when it is done. Move finished items to the bottom section after 
   bytes on disk per call bounded only per file; no lock on a `Sandbox` (asyncio abandons tool
   threads after 300 s). The scored-not-voided choice is a proposal (veto window ends
   2026-10-28T15:00Z).
+- [ ] **Merge the five pre-pilot branches from `rehearsal2`** (session 11): local branch
+  `rehearsal2` abb4059 (worktree `rehearsal2`), on v2 4845e50. In order: session keys 7bf2e0a
+  (window 17:00Z), fingerprint-guard d0c3e69 (19:15Z), rescore guard d5d1d90 and 76a70ef,
+  c1-oracle-inf eb48450 (21:45Z), c1-label abb4059. The only conflict is `driver.py`'s docstring;
+  its resolution is byte-identical to the earlier rehearsal. On abb4059: ruff and mypy (247 files)
+  clean; fast tier `2886 passed, 3 skipped`, exit 0; `tests/campaign -m slow` `12 passed`, exit 0
+  (`.cache/s11/rehearsal2-*.log`). `git merge-tree` against v2 3e8bf91 is clean. After each
+  window, with VETO.md checked, merge v2 up to that branch's commit on rehearsal2
+  (`git merge <sha>`). After the last, rerun the fast tier on v2.
 - [~] **Session keys and the sandbox** (before any AG-o cell that produces reported numbers):
   `session_text` covers neither `SandboxLimits`, the handoff helper's sha256 nor the image tag,
   so a stored AG-o session cell would be reused across a change to any of them. Recommend

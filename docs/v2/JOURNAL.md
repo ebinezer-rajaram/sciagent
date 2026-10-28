@@ -967,3 +967,24 @@ dm-devbox for about 4 days at this week's load.
 
 **Decision needed.** As before: option 1 (dm-devbox) or option 2 (AWS, with the launch and its
 cost ceiling approved).
+
+## 2026-10-28: Lane session 11 (13:05 UTC), progress: the waiting merges rehearsed on current v2
+
+**Done.**
+- Engineer: the five pre-pilot branches applied onto v2 4845e50 as local branch `rehearsal2`
+  abb4059, in merge order (QUEUE, new item). The one conflict was `driver.py`'s module docstring
+  (kept "Times"; took "One driver per store"). The resolved file is byte-identical to the earlier
+  rehearsal's 9dcb2cd. Checks on abb4059 (tails read by me, logs in `.cache/s11/`):
+  - ruff: `258 files already formatted`, `All checks passed!`
+  - mypy: `Success: no issues found in 247 source files`
+  - `pytest -m "not slow" -n 1`: `2886 passed, 3 skipped, 3 warnings in 660.52s`, exit 0
+  - `pytest tests/campaign -m slow -n 1`: `12 passed, 1 warning in 2900.29s`, exit 0
+  - `git merge-tree --write-tree v2 rehearsal2` against 3e8bf91: clean
+- Strata run at 14:10Z: 10 of 15 timing lines. dev-001 near: B-rand 2229.7 s wall, B-sym 418.1 s,
+  B-sparse 925.7 s, planted-hint 703.7 s; dev-010 started. These are wall times, not yet read as
+  CPU and not a result.
+- Delegated to the engineer: `project_runtime.py` with several stores, per-stratum costing, and
+  the min(CPU, wall) uncontended line (local branch `projection2`).
+
+**Learned.** The lane's guard hook blocks inline shell code that writes files when the text names
+`.claude` (worktree paths included). Use the Edit tool for those edits.

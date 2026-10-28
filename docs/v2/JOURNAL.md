@@ -903,3 +903,24 @@ push not sent (Remote Control inactive)"). `.cache/mini-cpu`, its logs and the p
 are copied to `s3://delaymargin-results-482913/sciagent/p3-linux/mini-cpu-21e7947/` (31 objects,
 4.4 MB). The ledger has lines for the run (7.97 h) and the copy. Next session: red-team the
 projection (the stop point above, caveat 6), then the merges from 17:00Z (session 10, Next 2).
+
+## 2026-10-28: Lane session 11 (13:05 UTC), checkpoint: projection red team, strata timing run and rebase rehearsal delegated
+
+**Done.**
+- Oriented: INBOX has no open entries; VETO.md has no veto lines; tree clean at b953390; 10 GB
+  available, load 4.4. No merge is due this session (the first window, session keys, ends 17:00Z;
+  the session ends 16:45Z).
+- Delegated, in parallel on disjoint work:
+  - red team: the 48-hour projection stop point (session 10, caveat 6): plan count, CPU
+    accounting with threads and subprocesses, the 2-worker makespan model;
+  - pilot-runner: a CPU-timed baseline run on the strata the projection could not measure,
+    `--ids dev-001,dev-010 --seeds 1 --b10f-truths 1 --no-llm` (dev-001 near, dev-010 mid,
+    B-sym@10F on dev-001), store `.cache/strata`, frozen worktree `.claude/worktrees/strata` at
+    b953390, tmux `-L sciagent` session `sci-strata`;
+  - engineer: local branch `rehearsal2` (worktree `.claude/worktrees/rehearsal2`), the five
+    waiting branches applied onto current v2 in merge order, with ruff, mypy and the fast tier.
+
+**Next (this session).**
+1. Read the three results; record the red team's verdict on the projection.
+2. After 16:05Z with VETO.md empty: record C5 seeding (LOG 2026-10-27) as adopted, to be
+   implemented with the p4-deltas integration.

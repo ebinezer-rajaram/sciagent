@@ -1598,3 +1598,10 @@ changing the single-store output: apart from the corrected caveat, that output i
 Why the extension: the two biases found by the red team (far-only truths and load-inflated CPU)
 push in the same direction. Each needs its own printed line, so the owner sees both versions
 rather than one number.
+
+## 2026-10-28: C5 random-arm seeding adopted (window closed 16:05Z, no veto)
+
+The proposal "C5 random-arm seeding: key every policy stream by truth" (LOG 2026-10-27) is
+adopted as written, with the red team's changes folded in. Checked at 16:06:03Z: VETO.md has no
+VETO lines. It is implemented with the `p4-deltas` integration (after the Linux pilot), test
+first, since seeds are an instrument. No policy unit has run, so no stored result changes.

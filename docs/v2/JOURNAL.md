@@ -1055,3 +1055,43 @@ later.
 
 **Decision needed.** As before: option 1 or option 2. Option 2 also needs the AWS launch and its
 cost ceiling approved.
+
+## 2026-10-28: Lane session 11 (13:05 UTC) hand-over: projection corrected and extended, strata measured, merges rehearsed, C5 adopted
+
+**Done.**
+- The 48-hour stop point was red-teamed twice and corrected twice (entries above). Contended
+  CPU is not a lower bound on this 2-core, 4-thread box (LOG correction). With near and mid
+  measured, the figure is about 48 h quiet (40-60 h) and about 90 h at this week's load (75-115 h).
+  Owner notified twice; desktop only, since mobile push is inactive.
+- Strata run `.cache/strata` (b953390, 2 workers, 13:07:33Z-14:28:54Z): 15 recorded, 0 failed;
+  STORE OK; GATE PASS. Copied to S3 and entered in the ledger (1.36 h).
+- `scripts/project_runtime.py`: caveat text corrected. Repeatable `--store`, `--by-stratum` and
+  `--wall-from` merged as d4bd845 (`pull --rebase` flattened the merge commit e474a6b named in the
+  progress entry). Fast tier on v2: `2759 passed, 3 skipped, 3 warnings in 374.32s`, exit 0
+  (`.cache/s11/fast-v2.log`).
+- `rehearsal2` abb4059: the five pre-pilot branches on current v2, with fast and campaign slow
+  tiers passing (QUEUE item).
+- C5 random-arm seeding adopted at 16:06Z, with VETO.md empty (LOG). It is implemented with the
+  p4-deltas integration.
+
+**Learned.**
+- On a hyperthreaded host, CPU seconds measured under load inflate. min(CPU, walls of identical
+  reruns) is the tighter figure.
+- Stratum is confounded with link in the dev split (every far truth is softplus, most near truths
+  identity). Cost tracks link, so per-stratum costing from one identity mid truth understates mid.
+- The smoke store holds a B-sym@10F far measurement (dev-000, 17411.8 s wall) that the CPU-timed
+  stores lacked. Check the older stores for evidence before calling a system unmeasured.
+- `git pull --rebase` linearises a local merge commit, so record SHAs after the push, not before.
+
+**Next.**
+1. Merges from `rehearsal2`, each after its window and a VETO.md check (QUEUE item, top of
+   Platform): session keys 7bf2e0a (17:00Z), fingerprint-guard d0c3e69 (19:15Z), the rescore guard
+   d5d1d90 and 76a70ef, c1-oracle-inf eb48450 (21:45Z), then c1-label abb4059. Then the fast tier
+   on v2 and `tests/campaign -m slow`.
+2. When the owner answers the stop point: if option 1, the full pilot on dm-devbox after the
+   merges (pilot-runner; the brake question in QUEUE still applies to its wall times). If option
+   2, launch tooling and the instance byte check.
+3. Optional, if the owner wants a sharper figure: `--by-link` costing in `project_runtime.py`, and
+   a CPU-timed far B-sym@10F unit.
+4. Owner decisions still waiting: the stop point (option 1 or 2), Δ6 (A/B/C), and the brake and
+   pilot-unit question.

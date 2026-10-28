@@ -267,7 +267,7 @@ Each item says when it is done. Move finished items to the bottom section after 
   <UTC>` 24 hours ahead, pushes the owner a summary, and adopts it after the window unless a
   `VETO` line appears in docs/v2/VETO.md. Done when each is adopted or vetoed and logged.
   Progress: decision 6 (C5 seeding) proposed and red-teamed 2026-10-27 (LOG, veto window ends
-  2026-10-28T16:05Z); implement with the p4-deltas integration.
+  2026-10-28T16:05Z); adopted 2026-10-28 16:06Z with no veto (LOG); implement with the p4-deltas integration.
   F5 (hand-written address text) proposed and red-teamed 2026-10-27 (LOG, veto window ends
   2026-10-28T19:15Z): the guard above before the pilot; derived address text with the p4-deltas
   integration. Δ11 (EIG weights) proposed 2026-10-27 after the red team rejected the first

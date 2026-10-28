@@ -611,3 +611,35 @@ tier; details are in QUEUE and LOG. The INBOX sprint entry is marked handled.
    check list in session 6's Next 2, plus `mem_sampler.py --summary` for both runs.
 3. "Where the baselines run": decide its timing source as in Learned, before the full pilot.
 4. Owner decisions waiting: Δ6 (A/B/C); the brake and pilot-unit question (QUEUE).
+
+
+## 2026-10-28: Lane session 8 (04:59 UTC), checkpoint: mini-pilot run A complete, CPU-timed rerun started
+
+**Done.**
+- Inbox: no open entries. VETO.md: no vetoes. No veto window ends before this session's
+  deadline (08:39Z; earliest wall-time-move 12:00Z), so no merges into v2.
+- **Mini-pilot run A finished** 2026-10-28T04:59:30Z, exit 0: `recorded={'B-lib': 3, 'B-np': 3,
+  'B-rand': 3, 'B-sparse': 3, 'B-sym': 3, 'ORACLE': 3, 'planted-hint': 3}, failed={}, bugs=0`.
+  Gate checks on run A (main checkout f570546):
+  - `hunt_gap.py --store .cache/mini-a --env fit/5 --split data/v2/truths/dev`: `units: 21 under
+    fit/5`, `gap above +0.01: 0`, `above the truth's own parameters by > +0.01: 0`,
+    `oracle_underfit: 0 flagged, 0 unrecorded, of 3 ORACLE units`, `GATE PASS`.
+  - `store_check.py --store .cache/mini-a`: `cells: 21; issues: 0; warnings: 0`, STORE OK.
+  - `mem_sampler.py --summary .cache/mini-a-mem.csv --workers 2`: `peak worker VmHWM 2.050 GB`,
+    `x 2 workers = 4.100 GB` (criterion ≤ 6 GB), `lowest MemAvailable 2.124 GB` (machine-wide).
+  - `pilot_report.py` renders (exit 0, to `/tmp/sci-s8/PILOT-mini-a.md`, outside the repo). It
+    says INTERIM/incomplete only because its planned set still counts B-sym@10F and the four LLM
+    arms, which the mini-pilot plan excludes (`--no-llm`, `--systems`); not a gate failure.
+  - Wall time per unit from the report (median / max s): B-lib 8/16, B-np 9/16, ORACLE 76/116,
+    B-sym 536/1082, B-sparse 714/1711, B-rand 3830/5696, planted-hint 2978/13694 (the max
+    includes the 5810 s brake freeze). Contended, so not usable for the projection as is.
+- **CPU-timed rerun of the mini-pilot plan** started 05:02:39Z in `tmux -L sciagent`
+  `sci-minicpu`: frozen worktree `.claude/worktrees/mini-cpu` at `cpu-time` 21e7947 (dev split
+  copied in, sha256 `604acec5…`), store `.cache/mini-cpu`, `--workers 1` while run B still uses
+  one worker, nice 10, memory sampler beside it; launcher `.cache/mini-cpu-run.sh <workers>`
+  (resume by rerunning). Purpose: per-unit `cpu_s` for the "Where the baselines run" projection
+  (CPU time does not accrue while frozen or descheduled), and a third copy of the baseline
+  cells, which `cpu-time` must not move (`store_compare.py` against run A).
+- In progress: engineer rehearsing the five pending merges (wall-time-move, cpu-time, session
+  keys, fingerprint-guard, c1-oracle-inf) on a local branch `merge-rehearsal`, never v2, fast
+  tier on the combined tree.

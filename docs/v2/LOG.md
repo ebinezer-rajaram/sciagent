@@ -1605,3 +1605,17 @@ The proposal "C5 random-arm seeding: key every policy stream by truth" (LOG 2026
 adopted as written, with the red team's changes folded in. Checked at 16:06:03Z: VETO.md has no
 VETO lines. It is implemented with the `p4-deltas` integration (after the Linux pilot), test
 first, since seeds are an instrument. No policy unit has run, so no stored result changes.
+
+## 2026-10-28: The projection costs by link through the same grouping as by stratum; exp-as-softplus is a printed assumption, not the default
+
+`scripts/project_runtime.py` groups unit costs by stratum (`--by-stratum`) or by link
+(`--by-link`) through one `Grouping`, with the link read from `read_split`'s records. An
+unmeasured (system, link) falls back to that system's mean over all links, as `--by-stratum`
+does. Costing the unmeasured exp link as softplus (the red team's hand choice, "both use nodes")
+takes a separate `--assume-link exp=softplus`. The output prints that as an assumption, and the
+flag is refused for a link that has been measured. On mini-cpu and strata with the mini-a and mini-b
+walls: plain `--by-link` gives 43.4 h CPU and 40.3 h uncontended; with the assumption, 44.7 h and
+41.5 h, the red team's lower ends (merged 5aff197; checked in lane session 12). Their upper ends
+(49.5 and 46.3 h) come from B-sym@10F far guesses, not from link, and no costing flag reproduces
+them. Why: the fallback should understate rather than guess, so a reader can see that
+exp-as-softplus was assumed.

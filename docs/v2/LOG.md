@@ -1514,3 +1514,16 @@ moves; a test pins byte-identical stores across two runs whose CPU figures diffe
 control (copying `job_cpu_s` into a detail) made it fail. CPU time is not load-free either (cache
 and SMT sharing inflate it somewhat), so the projection reports both wall and CPU figures and says
 which it uses. Stacked on `wall-time-move` because both edit the same timing lines; merges after it.
+
+## 2026-10-28: The baselines' run-time projection uses CPU time, with the wall/CPU ratio beside it
+
+The "Where the baselines run" projection (full P3 plan at 2 workers, the 48-hour line) takes each
+unit's cost as `cpu_s + cpu_children_s` from a CPU-timed rerun of the mini-pilot plan
+(`.cache/mini-cpu`, code `cpu-time` 21e7947), not the mini-pilot's wall times. Why: on dm-devbox
+the wall time of one unit varies with the other lane's load and with usage-brake freezes, not with
+the unit. The first CPU-timed units show it: B-rand dev-008 5210 s wall for 2676 s CPU, B-sym
+dev-008 4077 s wall for 1072 s CPU.
+CPU time does not accrue while a process is frozen or descheduled. It is a lower bound on
+uncontended wall time per worker, so the projection reports CPU totals and the measured wall/CPU
+ratio of the same units, and states which drives the 48-hour call. Residual bias: all three mini
+truths are in the far stratum, so the projection may overstate the near and mid truths.

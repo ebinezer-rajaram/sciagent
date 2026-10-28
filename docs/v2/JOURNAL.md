@@ -643,3 +643,51 @@ tier; details are in QUEUE and LOG. The INBOX sprint entry is marked handled.
 - In progress: engineer rehearsing the five pending merges (wall-time-move, cpu-time, session
   keys, fingerprint-guard, c1-oracle-inf) on a local branch `merge-rehearsal`, never v2, fast
   tier on the combined tree.
+
+
+## 2026-10-28: Lane session 8 (04:59 UTC): mini-pilot run A passes its gate criteria, merge rehearsal green, CPU-timed rerun running
+
+**Done.**
+- Checkpoint entry above (run A gate checks at 05:00Z; CPU-timed rerun launched 05:02:39Z).
+- **Merge rehearsal** (engineer, checked by me): local branch `merge-rehearsal` 9dcb2cd in
+  `.claude/worktrees/merge-rehearsal`, from v2 f570546, five `--no-ff` merges in the planned
+  order (wall-time-move, cpu-time, session keys, fingerprint-guard, c1-oracle-inf). Only
+  conflict: the `campaign/driver.py` module docstring (cpu-time's "Times" paragraph against
+  fingerprint-guard's "One driver per store"), resolved by keeping both; I read the resolution
+  (`git show 0283ebc --cc`). Engineer: ruff `254 files already formatted`, `All checks passed!`;
+  mypy `Success: no issues found in 243 source files`; fast `2856 passed, 3 skipped, 3 warnings in
+  187.78s`. My rerun in the worktree: mypy `Success: no issues found in 243 source files`, ruff
+  `All checks passed!`. Slow tier not run on the combined tree. Nothing merged into v2 (windows).
+- **Mini-pilot run B interim** at 07:50Z (20 of 21 cells; planted-hint dev-017 still running):
+  `store_compare.py .cache/mini-a .cache/mini-b` `identical cells: 20; only in a: 1; only in b:
+  0; differing: 0`; `hunt_gap.py --store .cache/mini-b --env fit/5 --split data/v2/truths/dev`
+  `units: 20`, `gap above +0.01: 0`, `oracle_underfit: 0 flagged, 0 unrecorded, of 3 ORACLE
+  units`, GATE PASS; `store_check.py` STORE OK.
+- **CPU-timed rerun** (`.cache/mini-cpu`, 21e7947) at 07:50Z, 5 cells: `store_compare.py
+  .cache/mini-a .cache/mini-cpu` `identical cells: 5 ... differing: 0` (cpu-time moves no
+  baseline cell, as designed). wall_s against cpu_s (cpu_children_s 0.0 in each): ORACLE dev-008
+  106.4 / 77.6, B-lib 8.8 / 7.6, B-np 24.7 / 11.4, B-rand 5210.3 / 2675.7, B-sym 4077.3 / 1071.7.
+- Decision: the projection uses CPU time with the wall/CPU ratio beside it (LOG 2026-10-28).
+- No code on a tracked path changed this session (docs only), so no test tier was run on v2.
+
+**Learned.**
+- Contention on dm-devbox this morning (load 5 to 8 on 4 vCPUs) cost B-sym 3.8× and B-rand 1.9×
+  in wall time over CPU time. Session 6's 10× swings were wall time; CPU time is the stable figure.
+- The three mini truths are all far stratum, so a projection from them alone may overstate the
+  full plan's near and mid truths; the next session should say so with the number.
+- A Bash background wait is capped at 2 hours; one watcher was killed at its limit (harmless:
+  a second covered it).
+
+**Next.**
+1. Mini-pilot gate: when run B exits (`.cache/mini-b-run.log` `exit:` line), rerun
+   `store_compare.py` (want `identical cells: 21`), `hunt_gap.py` and `store_check.py` on run B,
+   `mem_sampler.py --summary .cache/mini-b-mem.csv --workers 2`; record each criterion pass or
+   fail, then copy both stores and logs to `s3://delaymargin-results-482913/sciagent/p3-linux/`.
+2. Then put the CPU-timed rerun on 2 workers: `touch .cache/mini-cpu/STOP`, wait for the unit in
+   flight, delete STOP, `tmux -L sciagent new-session -d -s sci-minicpu
+   ".cache/mini-cpu-run.sh 2"` (absolute path). When it finishes, project the full plan from its
+   CPU times (QUEUE "Where the baselines run").
+3. After each veto window (VETO.md first): merge in the rehearsed order, from wall-time-move at
+   12:00Z; `merge-rehearsal` 9dcb2cd shows the resolution of the one conflict. Then
+   `tests/campaign -m slow` and the full fast tier on v2.
+4. Owner decisions waiting: Δ6 (A/B/C); the brake and pilot-unit question (QUEUE).

@@ -17,7 +17,11 @@ import pytest
 from campaign_support import entry, environment, tiny_config
 
 from sciagent.campaign import llm
-from sciagent.campaign.llm import SessionOutcome, run_session_isolated
+from sciagent.campaign.llm import (
+    SessionOutcome,
+    run_session_isolated,
+    session_timing,
+)
 from sciagent.campaign.plan import CampaignConfig, LLMArm, Unit
 from sciagent.sandbox import SandboxError
 
@@ -34,7 +38,9 @@ def _config() -> CampaignConfig:
 def _killed(unit: Unit) -> SessionOutcome:
     detail = {"outcome": "hard_timeout", "error": "HardTimeout"}
     reading = {"status": 0.0, "void": 1.0}
-    return SessionOutcome(unit, False, reading, detail, None, (), 1.0)
+    return SessionOutcome(
+        unit, False, reading, detail, None, (), 1.0, session_timing(None)
+    )
 
 
 class Recorder:

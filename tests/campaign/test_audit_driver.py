@@ -86,18 +86,18 @@ def test_the_checks_pass_on_a_store_the_driver_wrote(
     assert [u.gap for u in report.units if u.llm] == [-0.72 - -0.70]
 
 
-def test_two_driver_runs_compare_identical_apart_from_the_live_session(
+def test_two_driver_runs_give_byte_identical_cells_of_every_kind(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A session cell carries its ``wall_s`` in its reading, so two live runs
-    differ there and only there; every scored cell is byte-identical."""
+    """Under the scripted model driver, every cell, the session cell included,
+    is byte-identical across two runs: the session's wall time and the API's
+    figures live in ``timing.jsonl``, which is not compared (LOG 2026-10-27)."""
     a = run_campaign(tmp_path / "a", monkeypatch)
     b = run_campaign(tmp_path / "b", monkeypatch)
-    scored = compare_stores(a, b, kinds=("baseline", "llm-score"))
-    assert scored.identical, scored
-    assert scored.same == check_store(a).cells - 1
     every = compare_stores(a, b)
-    assert len(every.differing) == 1
+    assert every.identical, every
+    assert every.differing == ()
+    assert every.same == check_store(a).cells
     with ResultStore(a) as store:
-        cell = store.cell(every.differing[0])
-    assert cell["key"]["config"]["kind"] == "llm-session"
+        kinds = sorted({c["key"]["config"]["kind"] for c in store.cells()})
+    assert kinds == ["baseline", "llm-score", "llm-session"]

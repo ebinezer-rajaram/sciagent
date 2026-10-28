@@ -389,7 +389,7 @@ def test_a_retryable_session_drops_llm_concurrency_to_one(
 
     def rate_limited(unit: Unit, *args: Any, **kwargs: Any) -> SessionOutcome:
         return SessionOutcome(
-            unit, True, {}, {"outcome": "session_error"}, None, (), 0.0
+            unit, True, {}, {"outcome": "session_error"}, None, (), 0.0, {}
         )
 
     monkeypatch.setattr(driver_module, "run_session", rate_limited)

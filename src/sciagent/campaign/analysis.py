@@ -157,6 +157,8 @@ class Session:
     detail: Mapping[str, Json]
     void: VoidStatus
     env_version: str
+    #: The session cell's address: its ``timing.jsonl`` line's key.
+    digest: str
 
 
 @dataclass(frozen=True)
@@ -278,6 +280,7 @@ def load_rows(
                 detail,
                 void,
                 str(skey.env_version),
+                str(skey.digest),
             )
         )
         ckey = score_key(u, skey, env, config)

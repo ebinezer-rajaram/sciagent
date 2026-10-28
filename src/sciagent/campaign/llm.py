@@ -3,7 +3,7 @@
 :func:`run_session` runs one (truth, seed, arm) through
 :func:`sciagent.investigation.runner.run` (live Sonnet by default; tests pass a
 scripted driver), then reads the saved, hash-chained record back for what the
-campaign keeps: outcome, cost (turns, tokens, wall time), budgets used,
+campaign keeps: outcome, cost (turns, tokens), budgets used,
 predictions (SPEC §4.4), tool-call counts, the submitted structure and every
 charged fit's structure in fit order (native DSL, for the efficiency curve in
 :func:`sciagent.campaign.execute.run_score_job`).
@@ -25,6 +25,12 @@ overload), a served-model mismatch
 under load), and the sandbox being unavailable at start. These are about
 quota and infrastructure, not about the agent; the driver logs each attempt,
 backs off, and gives up on a unit after a fixed number of attempts.
+
+**Times are not in the cell.** The record's ``timing`` section is not hashed,
+so two runs of the same record differ there. The session's wall time and the
+API's duration and cost therefore travel beside the outcome
+(:attr:`SessionOutcome.wall_s`, :attr:`SessionOutcome.timing`) into the cell's
+``timing.jsonl`` line, never into its reading or detail (LOG 2026-10-27).
 """
 
 from __future__ import annotations
@@ -88,6 +94,11 @@ OUTCOMES: Final = (
 HARD_TIMEOUT_GRACE_S: Final = 600.0
 #: Outcomes that are retried rather than recorded (module docstring).
 RETRY_OUTCOMES: Final = ("session_error",)
+#: What a session outcome carries beside its cell, for its ``timing.jsonl``
+#: line (:attr:`SessionOutcome.timing`): the harness's own elapsed time and the
+#: API's figures, all from the record's unhashed ``timing`` section; ``None``
+#: where the session has no such value (an abort, a hard timeout).
+SESSION_TIMING_FIELDS: Final = ("harness_wall_s", "duration_api_ms", "total_cost_usd")
 
 _USAGE_FIELDS: Final = (
     "input_tokens",
@@ -107,7 +118,25 @@ class SessionOutcome:
     detail: dict[str, Json]
     submission: str | None
     fitted: tuple[str, ...]
+    #: The driver's clock over the attempt: the campaign's wall time of the
+    #: unit. Written to the cell's ``timing.jsonl`` line, never to the cell.
     wall_s: float
+    #: :data:`SESSION_TIMING_FIELDS`, each present (``None`` when absent), for
+    #: the same line; empty for a retryable attempt, which is not recorded.
+    timing: Mapping[str, Json]
+
+
+def session_timing(record: SessionRecord | None) -> dict[str, Json]:
+    """A session's :data:`SESSION_TIMING_FIELDS` from its record's unhashed
+    ``timing`` section; each ``None`` where the record (or a record at all)
+    lacks it, so an abort's missing harness time is stated, not taken as 0."""
+    times: Mapping[str, Any] = {} if record is None else record.timing
+    wall = times.get("wall_s")
+    return {
+        "harness_wall_s": None if wall is None else float(wall),
+        "duration_api_ms": times.get("duration_api_ms"),
+        "total_cost_usd": times.get("total_cost_usd"),
+    }
 
 
 def _usage(usage: Mapping[str, Any] | None) -> dict[str, float]:
@@ -191,7 +220,14 @@ def run_session(
             "outcome": float(OUTCOMES.index("aborted")),
         }
         return SessionOutcome(
-            unit, False, reading, detail, None, (), time.perf_counter() - start
+            unit,
+            False,
+            reading,
+            detail,
+            None,
+            (),
+            time.perf_counter() - start,
+            session_timing(error.record),
         )
     record = SessionRecord.load(outcome.record_path)
     fitted, counts = read_record(record, unit, truth, env, config)
@@ -213,12 +249,10 @@ def run_session(
         "api_error_status": result_body.get("api_error_status"),
         "errors": result_body.get("errors"),
         "served_models": result_body.get("served_models"),
-        "total_cost_usd": record.timing.get("total_cost_usd"),
-        "duration_api_ms": record.timing.get("duration_api_ms"),
     }
     if outcome.outcome in RETRY_OUTCOMES:
         return SessionOutcome(
-            unit, True, {}, detail, None, (), time.perf_counter() - start
+            unit, True, {}, detail, None, (), time.perf_counter() - start, {}
         )
     evaluated = [p for p in outcome.predictions if p.value is not None]
     reading = {
@@ -229,7 +263,6 @@ def run_session(
         "submitted": 0.0 if outcome.submission is None else 1.0,
         "void": 1.0 if outcome.void else 0.0,
         "turns": float(outcome.num_turns or 0),
-        "wall_s": float(outcome.wall_s or 0.0),
         "fits_used": float(outcome.fits_used),
         "experiments_used": float(outcome.experiments_used),
         "tool_calls": float(sum(counts.values())),
@@ -246,6 +279,7 @@ def run_session(
         detail["submission"],
         fitted,
         time.perf_counter() - start,
+        session_timing(record),
     )
 
 
@@ -257,7 +291,9 @@ def _retry(unit: Unit, error: BaseException, start: float) -> SessionOutcome:
         "message": str(error)[:2000],
         "head": None if record is None else record.head,
     }
-    return SessionOutcome(unit, True, {}, detail, None, (), time.perf_counter() - start)
+    return SessionOutcome(
+        unit, True, {}, detail, None, (), time.perf_counter() - start, {}
+    )
 
 
 # --------------------------------------------------------------------------
@@ -437,7 +473,9 @@ def _run_isolated(
         if receive.poll(deadline):
             outcome: SessionOutcome = receive.recv()
             process.join()
-            return outcome
+            # The driver's clock, spawn included, as for a hard timeout below,
+            # so the unit's wall time is one measurement whatever the outcome.
+            return dataclasses.replace(outcome, wall_s=time.perf_counter() - start)
     except EOFError as error:
         process.join()
         return _retry(unit, error, start)
@@ -455,8 +493,14 @@ def _run_isolated(
         "status": 0.0,
         "void": 1.0,
         "outcome": float(OUTCOMES.index("hard_timeout")),
-        "wall_s": time.perf_counter() - start,
     }
     return SessionOutcome(
-        unit, False, reading, detail, None, (), time.perf_counter() - start
+        unit,
+        False,
+        reading,
+        detail,
+        None,
+        (),
+        time.perf_counter() - start,
+        session_timing(None),
     )

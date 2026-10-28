@@ -108,9 +108,10 @@ older harness are expected to differ (the pilot's nine reclassified voids).
 compared as sets, and every common digest's detail file and ledger reading
 must be byte-identical. ``timing.jsonl`` is not compared: it holds wall-clock
 times by design (store docstring). The comparison can be restricted to some
-kinds of cell: an ``llm-session`` cell is not reproducible by design (a live
-model; its reading also carries the session's ``wall_s``), so two runs that
-each conducted their own sessions compare on ``baseline`` and ``llm-score``.
+kinds of cell: an ``llm-session`` cell of a live model is not reproducible by
+design, so two runs that each conducted their own sessions compare on
+``baseline`` and ``llm-score``. Its times are not in it (they are in
+``timing.jsonl``), so under a scripted model every kind is byte-identical.
 """
 
 from __future__ import annotations

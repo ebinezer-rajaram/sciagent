@@ -1627,5 +1627,5 @@ from the truth-keyed random draw, degeneracy reported, KL pick logged as a diagn
 as written and lands with the `p4-deltas` integration, test first. Review items (a), (d) and (e)
 are adopted as "keep, document only" or "not adopted for now"; (b)'s reword waits for the next P4
 prompt edit so LLM keys move once. (c) is in force for P3 and P4: any ORACLE −inf on any (truth,
-seed) fails control 1, merged into v2 with its label fix at 21:49Z (f6e2d0e, from `rehearsal2`
+seed) fails control 1, merged into v2 with its label fix at 21:49Z (as bed7454 and 1c8160a, from `rehearsal2`
 eb48450 and abb4059). The Linux pilot has not run, so no stored verdict changes.

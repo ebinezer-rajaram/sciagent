@@ -27,7 +27,7 @@ Each item says when it is done. Move finished items to the bottom section after 
   bytes on disk per call bounded only per file; no lock on a `Sandbox` (asyncio abandons tool
   threads after 300 s). The scored-not-voided choice is a proposal (veto window ends
   2026-10-28T15:00Z).
-- [x] 2026-10-28 **Merge the five pre-pilot branches from `rehearsal2`** (all five merged; last f6e2d0e at 21:49Z) (session 11): local branch
+- [x] 2026-10-28 **Merge the five pre-pilot branches from `rehearsal2`** (all five merged; last 1c8160a at 21:49Z) (session 11): local branch
   `rehearsal2` abb4059 (worktree `rehearsal2`), on v2 4845e50. In order: session keys 7bf2e0a
   (window 17:00Z), fingerprint-guard d0c3e69 (19:15Z), rescore guard d5d1d90 and 76a70ef,
   c1-oracle-inf eb48450 (21:45Z), c1-label abb4059. The only conflict is `driver.py`'s docstring;
@@ -44,7 +44,8 @@ Each item says when it is done. Move finished items to the bottom section after 
   slow `12 passed`, `.cache/s12/premerge-*.log`). Left: c1-oracle-inf eb48450 and c1-label
   abb4059 after 21:45Z, then the fast tier and campaign slow tier on v2.
   2026-10-28 (session 13): c1-oracle-inf and c1-label (up to abb4059) merged at 21:49Z with
-  VETO.md empty (f6e2d0e; tree equals `git merge-tree` of v2 and abb4059, which differs from
+  VETO.md empty (bed7454, 1c8160a: `git pull --rebase` flattened merge f6e2d0e before the push;
+  1c8160a's tree `48699bb…` equals `git merge-tree` of v2 and abb4059, which differs from
   abb4059 only in docs and the by-link script and its tests). On v2: ruff clean, mypy `247 source
   files` clean, fast tier `2897 passed, 3 skipped`, exit 0 (`.cache/s13/fast-c1.log`);
   `tests/campaign -m slow` rerun in tmux `s13-slow` (`.cache/s13/campaign-slow-c1.log`).
@@ -75,7 +76,7 @@ Each item says when it is done. Move finished items to the bottom section after 
   merged into v2 at 12:00:30Z with VETO.md empty (4f3adb8), then cpu-time (0bb8b41) and
   `projection` (39d088f); on v2 ruff, mypy (242 files) clean, fast tier exit 0 (2753 passed, 3
   skipped; `.cache/s10/fast.log`).
-- [x] 2026-10-28 **C1: any ORACLE −inf fails control 1** (merged f6e2d0e at 21:49Z, no veto; adopted, LOG 2026-10-28) (review item (c), LOG 2026-10-27; veto window ends
+- [x] 2026-10-28 **C1: any ORACLE −inf fails control 1** (merged 1c8160a at 21:49Z, no veto; adopted, LOG 2026-10-28) (review item (c), LOG 2026-10-27; veto window ends
   2026-10-28T21:45Z; sets a P3 go/no-go rule, owner pushed): replace the drop at
   `campaign/analysis.py:580-600` with a C1 failure for P3 and P4, and fix the "dropped as not
   identifiable" label. Engineer, test first (analysis is the go/no-go instrument). Must land

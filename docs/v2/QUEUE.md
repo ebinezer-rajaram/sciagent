@@ -36,8 +36,10 @@ Each item says when it is done. Move finished items to the bottom section after 
   in LOG (veto window ends 2026-10-28T17:00Z). Red team (session 5): merge with fixes; fixes in
   90612ca, 7ce500f, f1c5b0f (argv, /data format and tool caps in the key; image ID recorded and
   checked on replay; only the 240 AG-o addresses move). Fast tier NOT run on f1c5b0f; slow
-  campaign and AG-o replay tests NOT passed (killed for memory). Next: those tests, then after
-  the window rebase onto `v2` and merge.
+  campaign and AG-o replay tests NOT passed (killed for memory).
+  2026-10-28: rebased, e9a3ce7: fast `2762 passed, 3 skipped`; slow campaign/investigation/sandbox
+  `37 passed` (AG-o replay included). Next: its two longest campaign slow tests, then merge after
+  the window (second, after wall-time-move; JOURNAL session 6).
 - [~] **Session cells carry wall time**: proposed 2026-10-27 to move `wall_s`, `duration_api_ms`
   and `total_cost_usd` from the `llm-session` cell to its `timing.jsonl` line (LOG 2026-10-27,
   veto window ends 2026-10-28T12:00Z). After the window, unless VETO.md objects, and after the
@@ -46,17 +48,20 @@ Each item says when it is done. Move finished items to the bottom section after 
   `timing.jsonl`). Must land before the full pilot.
   2026-10-27: implemented on local branch `wall-time-move` (df0ce40; worktree
   `.claude/worktrees/agent-a9c4be026147be112`): ruff, mypy clean, fast tier `2720 passed, 3
-  skipped`; `tests/campaign -m slow` NOT confirmed (no summary line). Next: that tier, then
-  after the window merge.
-- [ ] **C1: any ORACLE −inf fails control 1** (review item (c), LOG 2026-10-27; veto window ends
+  skipped`; `tests/campaign -m slow` NOT confirmed (no summary line).
+  2026-10-28: rebased, 3f0274b: `tests/campaign -m slow` `12 passed`. Next: merge after the
+  window (first of the four).
+- [~] **C1: any ORACLE −inf fails control 1** (review item (c), LOG 2026-10-27; veto window ends
   2026-10-28T21:45Z; sets a P3 go/no-go rule, owner pushed): replace the drop at
   `campaign/analysis.py:580-600` with a C1 failure for P3 and P4, and fix the "dropped as not
   identifiable" label. Engineer, test first (analysis is the go/no-go instrument). Must land
   before the full pilot.
   2026-10-27: on local branch `c1-oracle-inf` (285485a; worktree
   `.claude/worktrees/agent-a2e38fbd1385fefee`): its 21 analysis tests pass, ruff and mypy clean;
-  the fast tier showed 2 UNIDENTIFIED failures before it was killed for memory. Next: rerun with
-  `-rf`, find them, then the report's slow test, then merge after the window.
+  the fast tier showed 2 UNIDENTIFIED failures before it was killed for memory.
+  2026-10-28: rebased, 9db6d8e: the 2 were `test_replay_check` failing on the worktree's missing
+  (gitignored) dev split, not the branch; report slow tests `4 passed`; clean fast tier
+  `2715 passed, 3 skipped`. Next: merge after the window (last of the four).
 - [~] **Code-fingerprint guard on stores** (F5, LOG 2026-10-27; veto window ends
   2026-10-28T19:15Z): the store keeps a sidecar with the git commit, a clean-tree flag and the
   `uv.lock` sha256; a dirty tree refuses to write; a resume under a different fingerprint refuses
@@ -66,8 +71,9 @@ Each item says when it is done. Move finished items to the bottom section after 
   `.claude/worktrees/agent-ac2f2d04e01ad1a75`), LOG 2026-10-27. Red-teamed in session 5 (merge
   with fixes); fixes in checkpoint 903937e (one driver per store via `flock`, `uv.lock` dropped
   from the fingerprint, imported code must be under the checkout). `tests/campaign` fast `187
-  passed`; full fast tier and campaign slow tier NOT run on 903937e. Next: those, then after the
-  window rebase onto `v2`, merge. Resuming the smoke or mini-pilot stores under it needs
+  passed`; full fast tier and campaign slow tier NOT run on 903937e.
+  2026-10-28: rebased, 1ea5056: fast `2770 passed, 3 skipped`; `tests/campaign -m slow` all 11
+  passed (two parts). Next: merge after the window (third). Resuming the smoke or mini-pilot stores under it needs
   `--reuse-from unrecorded`.
 - [!] **Pilot runs and the usage brake** (needs the owner; found 2026-10-28, JOURNAL session 6):
   `~/bin/usage_brake.py` freezes `research-lane@sciagent.service`, and pilot processes started
@@ -110,6 +116,12 @@ Each item says when it is done. Move finished items to the bottom section after 
   the lane unit 2026-10-27T22:13:59Z-23:50:49Z (`~/logs/usage/brake.log`) and run A's processes
   are in it, so run A's planted-hint dev-008 wall time includes about 97 min frozen; take wall
   times from units that overlap no freeze interval in brake.log (JOURNAL session 6).
+- [ ] **CPU time per unit** (found 2026-10-28, JOURNAL session 6): wall times on dm-devbox swing
+  more than 10× with the other lane's load (run B's ORACLE dev-008 860.5 s against run A's
+  75.6 s). Record the worker's CPU time per job (`resource.getrusage`) beside `wall_s` in
+  `timing.jsonl` (engineer, test first, in a worktree; not while a run uses that checkout), so the
+  projection below can use it. Small follow-up in the same change: `test_replay_check`'s `_check`
+  helper passes stderr through, and a missing dev split fails with a clear message.
 - [ ] **Where the baselines run.** From the mini-pilot's per-unit times, project the full plan
   at 2 workers. At about 48 hours or less, run on dm-devbox. Above that, stop point: the owner
   chooses between the longer dm-devbox run and the AWS CPU option (LOG 2026-10-27: m6i.xlarge,

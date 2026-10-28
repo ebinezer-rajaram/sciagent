@@ -472,3 +472,65 @@ tier; details are in QUEUE and LOG. The INBOX sprint entry is marked handled.
 - In progress: an engineer is rebasing and testing the four waiting branches one tier at a
   time (no merges before their windows); an analyst is drafting the Δ6 link-balanced variant
   for its red team.
+
+
+## 2026-10-28: Lane session 6 (23:50 UTC): four branches verified, Δ6 goes to the owner, brake and contention distort wall times
+
+**Done.**
+- Checkpoint entry above: smoke closed (S3 copy, ledger, per-unit wall times), usage-brake
+  finding and its queue item.
+- **Four pilot-blocking branches verified, not merged** (engineer; windows end 2026-10-28
+  12:00Z to 21:45Z). All rebased onto v2 without conflict, trees clean, no code commits needed.
+  `git merge-tree --write-tree` chained wall-time-move, session keys, fingerprint-guard,
+  c1-oracle-inf: clean onto v2; the merged tree is ruff and mypy clean (241 files, engineer).
+  Per branch (logs under each worktree's `.cache/`):
+  - `wall-time-move` 3f0274b: `tests/campaign -m slow` `12 passed, 1 warning in 1666.30s`; fast
+    tier last run on df0ce40 (`2720 passed, 3 skipped`), not rerun after the docs-only rebase.
+  - session keys `worktree-agent-a501a8588ae2e77cb` e9a3ce7: fast `2762 passed, 3 skipped`; slow
+    `tests/campaign tests/investigation tests/sandbox` without the two longest campaign tests
+    `37 passed in 780.82s` (includes the AG-o replay perturbation test and all sandbox slow
+    tests, Docker on). Not run: `test_every_non_llm_system_runs_and_scores_one_real_unit` and
+    `test_the_spawn_pool_runs_and_records_real_units` (a first full run hit a 60-min tool timeout
+    at 36 of 39 with no failure and no summary line, so not a pass).
+  - `fingerprint-guard` 1ea5056: fast `2770 passed, 3 skipped`; `tests/campaign -m slow` in two
+    parts, `9 passed` and `2 passed, 1 warning`, all 11.
+  - `c1-oracle-inf` 9db6d8e: the two unidentified fast-tier failures were `test_replay_check`
+    tests, caused by the gitignored dev split missing from that worktree (`replay_check.py` exits
+    2, the tests expect 1, and the test helper discards stderr). With the split copied in (sha256
+    `604acec5…`): those tests pass (rerun by me). Report slow tests `4 passed in 34.68s`. Clean
+    full fast tier (rerun by me, 02:41Z): `2715 passed, 3 skipped, 3 warnings in 150.22s`.
+  The 3 skips on every branch are the QTM acceptance tests (no QTM file on the machine).
+- **Δ6 link-balanced** drafted (analyst) and red-teamed: adopt with fixes, but only on the
+  owner's explicit choice, since it sets aside the approved rule (A) after its numbers were seen
+  (LOG 2026-10-28; correction to the softplus bound, ≥2 of 5 not ≥3). Pushed (not delivered:
+  Remote Control inactive).
+- **Mini-pilot** (still running, `tmux -L sciagent` `sci-mini`): run A 10 of 15 jobs (dev-008
+  all 7; dev-013 ORACLE 43.3 s, B-lib 7.0 s, B-np 9.2 s). Run A's planted-hint dev-008 took
+  13694.4 s, which includes the 22:13:59Z-23:50:49Z freeze (5810 s). Run B 5 of 15 (dev-008
+  ORACLE 860.5 s, B-lib 88.0 s, B-np 125.8 s, B-rand 7162.5 s, B-sym 1211.7 s). The
+  `timing.jsonl` digest field is equal for all 5 units both runs have; whether that field is the
+  cell's content or its address is not checked here, so byte identity waits for
+  `store_compare.py` at the gate.
+
+**Learned.**
+- Wall times on this shared machine are not a property of the unit. Run B's ORACLE dev-008 took
+  11× run A's (860.5 s against 75.6 s; `run_s` 768.6 against 60.7), B-np 19×: the pilot runs at
+  nice 10 while the other lane's tests run at nice 0 (load 9 to 18 on 4 vCPUs). Two distortions,
+  then: brake freezes (the whole lane unit stops) and CPU contention. A projection of the full
+  plan from these wall times can be off by an order of magnitude in either direction.
+- A worktree has no `data/v2/truths/dev` (gitignored); copy it in before any test tier, or
+  `test_replay_check` fails with an empty message.
+- One helper running test tiers serially kept MemAvailable above 5.8 GB all session (session
+  5's six parallel helpers reached 2 GB).
+
+**Next.**
+1. After each veto window (VETO.md first): merge wall-time-move (12:00Z), session keys (17:00Z;
+   run its two long campaign slow tests first), fingerprint-guard (19:15Z), c1-oracle-inf
+   (21:45Z), in that order, then the full fast tier and `tests/campaign -m slow` on v2.
+2. Mini-pilot gate when both runs end: `store_compare.py`, `hunt_gap.py --split`,
+   `store_check.py`, the report, memory × workers; wall times read with the two distortions above
+   (exclude units overlapping `~/logs/usage/brake.log` freezes; compare `run_s` across runs).
+3. Before projecting the full plan ("Where the baselines run"): record per-unit CPU time
+   (`resource.getrusage` in the worker) beside `wall_s` in `timing.jsonl` (engineer, test first,
+   in a worktree, not while a run uses it), or project from uncontended units only; say which.
+4. Owner decisions waiting: Δ6 (A/B/C); the brake and pilot-unit question (QUEUE).

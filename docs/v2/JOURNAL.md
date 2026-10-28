@@ -861,3 +861,39 @@ tier; details are in QUEUE and LOG. The INBOX sprint entry is marked handled.
    (19:15Z), the rescore guard test (`guard-on-rehearsal` d7705b5 and 5ef1db7), c1-oracle-inf
    (21:45Z), c1-label 66f7d7d. Then the full fast tier and `tests/campaign -m slow` on v2.
 3. Owner decisions still waiting: Δ6 (A/B/C); the brake and pilot-unit question (QUEUE).
+
+## 2026-10-28: Stop point (lane session 10, 13:05 UTC): the P3 baseline plan projects above 48 hours on dm-devbox
+
+**Answer.** The full P3 non-LLM plan at 2 workers needs at least 53.3 h of CPU time per worker at
+mean unit cost, and about 107 h of wall time at the measured contention, so it is over the
+48-hour line. The owner chooses where the baselines run.
+
+**Evidence.** `.cache/mini-cpu` (code 21e7947), finished 2026-10-28T13:00:53Z, exit 0, 21 cells,
+0 failed, bugs 0. `scripts/project_runtime.py --store .cache/mini-cpu --workers 2 --truths 20
+--seeds 1,2,3 --b10f-truths 10` (full output in `.cache/s10/projection.txt`):
+`unit mean: CPU 53.3 h > 48 h`, `x 2.00 wall/CPU 106.8 h`; `unit max: CPU 65.1 h`, `130.3 h`.
+Mean CPU per unit: B-rand 2733 s, planted-hint 2119 s, B-sparse 862 s, B-sym 577 s, ORACLE 87 s,
+B-np 12 s, B-lib 11 s. B-rand and planted-hint are about 70% of the total. On the same store:
+`store_compare.py .cache/mini-a .cache/mini-cpu` `identical cells: 21; ... differing: 0`
+(IDENTICAL), `hunt_gap.py` GATE PASS (gap above +0.01: 0; oracle_underfit: 0), `store_check.py`
+STORE OK.
+
+**Caveats.** (1) B-sym@10F (10 units) is not measured and is left out, so every figure is a lower
+bound; with an assumed 10x B-sym it is 61.4 h of CPU. (2) All three mini truths are in the far
+stratum; the plan has far 9, mid 4, near 7, so near and mid units may cost less. (3) CPU time is a
+lower bound on uncontended wall time; the 2.00 wall/CPU ratio is this week's contention with the
+other lane at nice 10. (4) The projection does not model the driver's job bundling or
+`--max-heavy`. (5) 7 of the 21 cells ran on 1 worker, before the relaunch, so the byte check at 2
+workers covers the other 14. (6) This has not been red-teamed yet; the next session runs the red
+team before this number is used for anything beyond this stop point.
+
+**Recommendation.** The CPU lower bound alone is over the line, so the call does not hinge on the
+contention ratio. Option 1: dm-devbox, about 4 to 5 days of wall time at this week's load, with no
+new tooling. Option 2: the AWS m6i.xlarge CPU option (LOG 2026-10-27, about $9-11). It needs
+sciagent launch tooling and a byte check of the instance against dm-devbox before any store is
+filled there. I lean to option 2 if the owner wants the pilot inside a week, and to option 1
+otherwise. The pilot cannot start yet in either case: four merges are still waiting on their
+veto windows (QUEUE).
+
+**Decision needed.** Option 1 or option 2. If option 2, also approve the AWS launch and its cost
+ceiling (AUTOPILOT stop point 3).

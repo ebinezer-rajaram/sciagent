@@ -171,7 +171,7 @@ Each item says when it is done. Move finished items to the bottom section after 
   the combined tree (session 9: `tests/campaign tests/investigation tests/sandbox -m slow -n 1`
   on 9dcb2cd `40 passed, 1 warning in 6762.88s`, exit 0; `.cache/slow-rehearsal/run.log`). A CPU-timed rerun of the mini-pilot plan runs on 21e7947 (`sci-minicpu`,
   store `.cache/mini-cpu`), for the projection below.
-- [ ] **Where the baselines run.** From the mini-pilot's per-unit times, project the full plan
+- [!] **Where the baselines run** (needs the owner: stop point, projection above 48 h; JOURNAL session 10 stop point). From the mini-pilot's per-unit times, project the full plan
   at 2 workers. At about 48 hours or less, run on dm-devbox. Above that, stop point: the owner
   chooses between the longer dm-devbox run and the AWS CPU option (LOG 2026-10-27: m6i.xlarge,
   about $9-11), which also needs sciagent launch tooling and a byte check of the instance
@@ -195,6 +195,10 @@ Each item says when it is done. Move finished items to the bottom section after 
   at 13:00Z): CPU-only lower bound 53.8 h at mean unit cost, 65.1 h at max, B-sym@10F not
   measured and left out; x 2.06 measured wall/CPU, 110.6 h. Above 48 h, so this is heading for the
   stop point; record it only from the finished store (JOURNAL session 10).
+  Final (run exited 13:00:53Z, 21 cells): CPU lower bound 53.3 h at mean, 65.1 h at max, x 2.00
+  wall/CPU 106.8 h; B-sym@10F left out (61.4 h CPU with 10x B-sym assumed). Stop point pushed to
+  the owner. 2-worker byte check: `store_compare.py .cache/mini-a .cache/mini-cpu` `identical
+  cells: 21 ... differing: 0` (14 of its 21 cells ran on 2 workers). Not red-teamed yet.
 - [ ] **Full pilot** (pilot-runner): `nice -n 10 uv run python scripts/pilot.py --root
   .cache/pilot --truths 20 --seeds 1,2,3 --b10f-truths 10 --workers 2 --llm-concurrency 1` in
   tmux, exactly the SPEC §7 P3 plan: 20 dev truths x 3 seeds; AG-c-S and AG-o-S, named and

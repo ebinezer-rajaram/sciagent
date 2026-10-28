@@ -588,9 +588,11 @@ tier; details are in QUEUE and LOG. The INBOX sprint entry is marked handled.
   figures). My rerun in the worktree: ruff `251 files already formatted`, `All checks passed!`,
   mypy `Success: no issues found in 240 source files`, `test_cpu_time.py test_replay_check.py -m
   "not slow"` `17 passed in 13.76s`. I read `cpu.py` and the driver and execute diffs.
-- **Session keys' two long slow tests** (`sci-longslow`, e9a3ce7): at 03:33Z one
-  progress dot (one test passed), the second still running; not a pass until the log's `exit`
-  line. Log `.claude/worktrees/agent-a501a8588ae2e77cb/.cache/long-slow-s7.log`.
+- **Session keys' two long slow tests** (`sci-longslow`, e9a3ce7): both passed,
+  `..  [100%]`, `exit 0 2026-10-28T03:36:35Z` (47 min at nice 19, one process). No count line:
+  my `-q` on top of addopts' `-q` suppressed it (session 2's lesson, repeated); exit 0 with two
+  marks is the evidence. Log `.claude/worktrees/agent-a501a8588ae2e77cb/.cache/long-slow-s7.log`.
+  Session keys now has every campaign slow test passed on e9a3ce7.
 
 **Learned.**
 - CPU figures cannot be added to the running mini-pilot (frozen at 4cd2564), so its projection
@@ -603,7 +605,7 @@ tier; details are in QUEUE and LOG. The INBOX sprint entry is marked handled.
 **Next.**
 1. After each veto window (VETO.md first): merge wall-time-move (12:00Z), then `cpu-time` on top
    (rebase onto v2 first; run `test_every_non_llm_system_runs_and_scores_one_real_unit`), session
-   keys (17:00Z), fingerprint-guard (19:15Z), c1-oracle-inf (21:45Z); then the full fast tier and
+   keys (17:00Z; all its tests now run), fingerprint-guard (19:15Z), c1-oracle-inf (21:45Z); then the full fast tier and
    `tests/campaign -m slow` on v2.
 2. Mini-pilot gate when both runs end (run A 17 of 21 cells, run B 10, at 03:32Z): the full
    check list in session 6's Next 2, plus `mem_sampler.py --summary` for both runs.

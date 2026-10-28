@@ -38,8 +38,9 @@ Each item says when it is done. Move finished items to the bottom section after 
   checked on replay; only the 240 AG-o addresses move). Fast tier NOT run on f1c5b0f; slow
   campaign and AG-o replay tests NOT passed (killed for memory).
   2026-10-28: rebased, e9a3ce7: fast `2762 passed, 3 skipped`; slow campaign/investigation/sandbox
-  `37 passed` (AG-o replay included). Next: its two longest campaign slow tests, then merge after
-  the window (second, after wall-time-move; JOURNAL session 6).
+  `37 passed` (AG-o replay included). 2026-10-28 (session 7): its two longest campaign slow
+  tests passed (exit 0, 03:36Z; JOURNAL session 7). Next: merge after the window (second, after
+  wall-time-move).
 - [~] **Session cells carry wall time**: proposed 2026-10-27 to move `wall_s`, `duration_api_ms`
   and `total_cost_usd` from the `llm-session` cell to its `timing.jsonl` line (LOG 2026-10-27,
   veto window ends 2026-10-28T12:00Z). After the window, unless VETO.md objects, and after the

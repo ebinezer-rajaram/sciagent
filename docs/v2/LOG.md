@@ -1619,3 +1619,13 @@ walls: plain `--by-link` gives 43.4 h CPU and 40.3 h uncontended; with the assum
 (49.5 and 46.3 h) come from B-sym@10F far guesses, not from link, and no costing flag reproduces
 them. Why: the fallback should understate rather than guess, so a reader can see that
 exp-as-softplus was assumed.
+
+## 2026-10-28: Δ11 EIG weights and review items (a) to (e) adopted (windows closed 21:40Z and 21:45Z, no veto)
+
+Checked at 21:49Z: VETO.md has no VETO lines. Δ11 (keep BIC, EIG to relative precision, full ties
+from the truth-keyed random draw, degeneracy reported, KL pick logged as a diagnostic) is adopted
+as written and lands with the `p4-deltas` integration, test first. Review items (a), (d) and (e)
+are adopted as "keep, document only" or "not adopted for now"; (b)'s reword waits for the next P4
+prompt edit so LLM keys move once. (c) is in force for P3 and P4: any ORACLE −inf on any (truth,
+seed) fails control 1, merged into v2 with its label fix at 21:49Z (f6e2d0e, from `rehearsal2`
+eb48450 and abb4059). The Linux pilot has not run, so no stored verdict changes.

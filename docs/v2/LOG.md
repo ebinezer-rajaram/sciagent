@@ -1558,3 +1558,22 @@ system with no timing in the store is printed as not measured and left out, so e
 lower bound. `--assume SYSTEM=FxOTHER` adds it as a printed assumption, and is refused for a
 system the store has measured. Why: the result feeds a stop point (the owner chooses where the
 baselines run), so it should understate rather than guess.
+
+## 2026-10-28: Correction: CPU time under load is not a lower bound on uncontended wall time on dm-devbox
+
+Supersedes one sentence of "The baselines' run-time projection uses CPU time" above, which said
+CPU time "is a lower bound on uncontended wall time per worker". Found by the session 11 red team
+and checked: mini-a and mini-b ran the same units with identical bytes. In 12 of the 21 units,
+one of those runs finished in less wall time than mini-cpu's CPU time for the same unit. Examples
+are ORACLE dev-017 at 95.4 s wall against 155.6 s CPU, and planted-hint dev-017 at 1495.9 s
+against 2015.6 s. dm-devbox (Xeon 8488C) has 2 cores with 2 hardware threads each, so under the
+other lane's load a unit accrues more CPU seconds for the same work. Both versions of the 48-hour
+figure are kept:
+- (a) as reported at the stop point, contended CPU: 53.3 h at the mean;
+- (b) each unit costed at the minimum of its CPU and its three wall times (an upper bound on its
+  uncontended cost): the sum falls to 0.906 of (a), about 48.3 h.
+
+The call therefore does hinge on contention. The method stays CPU time, with this bias stated.
+The script's caveat line is corrected (text only, no figure changes). The figures stand, but the
+reading changes: on a quiet machine the non-LLM plan sits at about the 48-hour line, and
+B-sym@10F (unmeasured) and the near and mid strata decide which side.

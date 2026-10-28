@@ -924,3 +924,46 @@ projection (the stop point above, caveat 6), then the merges from 17:00Z (sessio
 1. Read the three results; record the red team's verdict on the projection.
 2. After 16:05Z with VETO.md empty: record C5 seeding (LOG 2026-10-27) as adopted, to be
    implemented with the p4-deltas integration.
+
+## 2026-10-28: Stop point correction (lane session 11, 13:30 UTC): uncontended, the baseline plan sits at about 48 hours, not clearly over
+
+**Answer.** Session 10's stop point said "the CPU lower bound alone is over the line, so the call
+does not hinge on the contention ratio". That is wrong. Contended CPU time on dm-devbox is not a
+lower bound. On a quiet machine the non-LLM plan is about 48 h at 2 workers, before B-sym@10F. At
+this week's load it is still clearly over: 91 h at the 2-worker wall/CPU of 1.71, and 107 h at the
+mixed 2.00. The owner's decision is the same, with different numbers behind it.
+
+**Evidence.** Red team (session 11), checked by me on `.cache/mini-{a,b,cpu}/timing.jsonl`:
+- 12 of 21 units had a mini-a or mini-b wall time below mini-cpu's CPU time for the same unit
+  (identical bytes). Examples: ORACLE dev-017 95.4 s wall against 155.6 s CPU, planted-hint
+  dev-017 1495.9 s against 2015.6 s.
+- Summing each unit's minimum of its CPU and its three wall times gives 17405 s against 19205 s,
+  0.906 of the CPU sum, which puts 53.3 h at about 48.3 h.
+- `lscpu`: Xeon 8488C, 2 cores with 2 threads each.
+
+Correct in the red team's report:
+- the unit count (430: 420 projected plus 10 B-sym@10F; the rerun reproduces the output byte
+  for byte);
+- the CPU accounting (`cpu_children_s` is 0 throughout, and units run single-threaded);
+- the makespan model (simulating the driver's FIFO order gives 53.58 h against 53.35 h).
+
+Other findings:
+- `--max-heavy 2` cannot bind at 2 workers.
+- The LLM arms' 240 scoring jobs share the same pool and were left out of option 1's "4-5 days".
+- The "$9-11" for the m6i.xlarge assumed 4 workers scaling 4x on a 2-core, 4-thread instance;
+  that is untested, so option 2 is not shown to land under 48 h either.
+
+LOG 2026-10-28 records the correction with both versions. The caveat line in
+`scripts/project_runtime.py` is corrected as text (7 tests pass).
+
+**Caveats.** Margins are thin, so the unmeasured parts decide the call. The strata run
+(`.cache/strata`: dev-001 near, dev-010 mid, B-sym@10F on dev-001; started 13:07:33Z, 2 workers)
+measures them, but it also runs under load. Its CPU figures carry the same bias.
+
+**Recommendation.** Unchanged in substance. Neither option is shown under 48 h at 2 workers. If the
+owner wants the pilot inside a week, an AWS instance should run more than 2 workers once its
+bytes match dm-devbox; that needs the launch tooling and the byte check. Otherwise, run on
+dm-devbox for about 4 days at this week's load.
+
+**Decision needed.** As before: option 1 (dm-devbox) or option 2 (AWS, with the launch and its
+cost ceiling approved).

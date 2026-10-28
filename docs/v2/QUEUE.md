@@ -198,7 +198,13 @@ Each item says when it is done. Move finished items to the bottom section after 
   Final (run exited 13:00:53Z, 21 cells): CPU lower bound 53.3 h at mean, 65.1 h at max, x 2.00
   wall/CPU 106.8 h; B-sym@10F left out (61.4 h CPU with 10x B-sym assumed). Stop point pushed to
   the owner. 2-worker byte check: `store_compare.py .cache/mini-a .cache/mini-cpu` `identical
-  cells: 21 ... differing: 0` (14 of its 21 cells ran on 2 workers). Not red-teamed yet.
+  cells: 21 ... differing: 0` (14 of its 21 cells ran on 2 workers).
+  2026-10-28 (session 11): red-teamed. Contended CPU is not a lower bound on this 2-core,
+  4-thread box: 12 of 21 units ran faster in mini-a or mini-b than mini-cpu's CPU time.
+  Uncontended, the plan is about 48.3 h before B-sym@10F, so it is at the line, not clearly
+  over (LOG and JOURNAL corrections). Measuring near, mid and B-sym@10F: `.cache/strata`
+  (tmux `sci-strata`, resume `bash .cache/strata-run.sh 2`), then `project_runtime.py` on both
+  stores. The owner's choice stands.
 - [ ] **Full pilot** (pilot-runner): `nice -n 10 uv run python scripts/pilot.py --root
   .cache/pilot --truths 20 --seeds 1,2,3 --b10f-truths 10 --workers 2 --llm-concurrency 1` in
   tmux, exactly the SPEC §7 P3 plan: 20 dev truths x 3 seeds; AG-c-S and AG-o-S, named and

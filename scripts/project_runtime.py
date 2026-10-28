@@ -439,7 +439,9 @@ def report(args: argparse.Namespace, assumptions: Sequence[Assumption]) -> list[
         "caveat: units are scheduled one by one; the driver runs ORACLE, B-lib "
         "and B-np of a (truth, seed) as one job and at most "
         f"--max-heavy={args.max_heavy} B-sparse jobs at once, neither modelled. "
-        "CPU time is a lower bound on uncontended wall time per worker."
+        "CPU time measured under load is not a lower bound on uncontended wall "
+        "time: on a hyperthreaded host a contended unit accrues more CPU "
+        "seconds for the same work (LOG 2026-10-28)."
     )
     return out
 

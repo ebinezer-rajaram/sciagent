@@ -3,6 +3,7 @@ reruns, the spawn process pool, and a scripted LLM unit scored for real."""
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import signal
@@ -31,7 +32,7 @@ from sciagent.campaign.plan import (
     score_key,
     session_key,
 )
-from sciagent.campaign.store import cell_bytes
+from sciagent.campaign.store import TIMING_FILE, cell_bytes
 from sciagent.harness.scripted import ScriptedDriver
 from sciagent.systems.v2.sparse import SparseConfig
 
@@ -82,6 +83,19 @@ def test_the_spawn_pool_runs_and_records_real_units(tmp_path: Path) -> None:
     campaign.close()
     assert summary.recorded == {"B-lib": 1, "B-np": 1, "B-rand": 1, "ORACLE": 1}
     assert summary.bugs == 0 and not summary.failed
+    # CPU time is a delta measured in the worker over each unit and each job:
+    # an absolute figure would include the worker's start-up and imports (and,
+    # for the fast group's later units, the earlier ones), exceeding the
+    # interval's wall time; with one BLAS thread per worker, CPU cannot
+    # outrun wall by more than noise.
+    text = (tmp_path / TIMING_FILE).read_text(encoding="utf-8")
+    lines = [json.loads(line) for line in text.splitlines()]
+    assert len(lines) == 4
+    for x in lines:
+        assert 0.0 < x["cpu_s"] <= x["wall_s"] * 1.05 + 0.2, x
+        assert 0.0 < x["job_cpu_s"] <= x["job_wall_s"] * 1.05 + 0.2, x
+        assert x["cpu_children_s"] == 0.0 and x["job_cpu_children_s"] == 0.0, x
+    assert sorted(x["job_units"] for x in lines) == [1, 3, 3, 3]
 
 
 def test_a_scripted_llm_unit_is_scored_for_real(

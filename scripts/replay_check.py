@@ -155,6 +155,16 @@ def main(argv: list[str] | None = None) -> int:
     if not args.root.is_dir():
         print(f"{args.root}: not a directory", file=sys.stderr)
         return 2
+    if not args.split.exists():
+        print(
+            f"{args.split}: the split is missing. The dev split is git-ignored, "
+            "so a fresh clone or worktree has none: copy data/v2/truths/dev from "
+            "the main checkout (truths.json sha256 604acec5...4420), or regenerate "
+            "it on this machine with scripts/sample_truths.py --split dev --n 20 "
+            "--seed 2026 and check that sha256",
+            file=sys.stderr,
+        )
+        return 2
     if not (args.split / "truths.json").is_file():
         print(f"{args.split}: no truths.json", file=sys.stderr)
         return 2

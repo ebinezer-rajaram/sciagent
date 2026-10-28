@@ -57,6 +57,23 @@ is launched for the rest of the run, and that is logged. Creating the file
 ``STOP`` in the root stops launching new units of either kind; ``STOP_LLM``
 stops launching LLM sessions only.
 
+**Times** go to ``timing.jsonl`` only, never into a cell or an address
+(:mod:`sciagent.campaign.store`), so they never move a byte that
+``store_compare.py`` or ``audit.py`` compares. Each line carries ``wall_s``
+and the CPU time over the same interval, ``cpu_s`` and ``cpu_children_s``
+(:mod:`sciagent.campaign.cpu`, which says what each does and does not
+cover), measured in the process that did the work, as ``getrusage`` deltas
+since workers are reused. A pool job's lines also carry the whole job as the
+worker saw it (:data:`JOB_TIMING_FIELDS`: its data simulation included, shared
+by the lines of a multi-unit job, so a total is the sum of ``job_cpu_s /
+job_units``). A session's ``cpu_*`` are measured in its isolated process over
+its run (the process's spawn and imports, which its ``wall_s`` includes, are
+not in them); an
+in-thread session (a scripted driver, ``isolate_llm = False``) shares this
+process with the scheduler and other threads, and its ``cpu_*`` are ``None``,
+as are those of a hard timeout (killed before it could report) and of a job
+function that does not measure them: absent is stated, never written as 0.
+
 **Several processes on one store.** Before a job or a session is launched its
 units are checked against the store again, so two drivers on one root (say a
 second, LLM-only one) never run a unit twice; at worst both run it at the same
@@ -86,6 +103,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Final
 
+from sciagent.campaign import cpu
+from sciagent.campaign.cpu import CPU_FIELDS
 from sciagent.campaign.execute import (
     BaselineJob,
     ScoreJob,
@@ -129,6 +148,13 @@ ATTEMPTS_FILE: Final = "attempts.jsonl"
 STOP_FILE: Final = "STOP"
 STOP_LLM_FILE: Final = "STOP_LLM"
 LLM_DIR: Final = "llm"
+#: Whole-job figures on each pool job's timing lines (module docstring).
+JOB_TIMING_FIELDS: Final = (
+    "job_wall_s",
+    "job_cpu_s",
+    "job_cpu_children_s",
+    "job_units",
+)
 
 #: Builds the session driver for one LLM unit; None means the live SDK.
 type DriverFactory = Callable[[Unit], SessionDriver | None]
@@ -367,6 +393,7 @@ class Campaign:
                     "digest": str(key.digest),
                     "ok": r.ok,
                     "wall_s": round(r.wall_s, 3),
+                    **dict.fromkeys(CPU_FIELDS),
                     **(r.timing or {}),
                 }
             )
@@ -395,6 +422,7 @@ class Campaign:
                 "digest": str(task.key.digest),
                 "wall_s": round(out.wall_s, 3),
                 "attempt": task.attempts,
+                **dict.fromkeys(CPU_FIELDS),
                 **out.timing,
             }
         )
@@ -705,7 +733,21 @@ def _is_heavy(pj: _PoolJob) -> bool:
 
 
 def _run_job(job: BaselineJob | ScoreJob) -> tuple[UnitResult, ...]:
-    """The pool's entry point (module-level, so spawned workers can import it)."""
-    if isinstance(job, ScoreJob):
-        return (run_score_job(job),)
-    return run_baseline_job(job)
+    """The pool's entry point (module-level, so spawned workers can import it).
+
+    Measures the whole job in the worker, data simulation included, and adds
+    :data:`JOB_TIMING_FIELDS` to each unit's timing (module docstring).
+    """
+    start = time.perf_counter()
+    mark = cpu.cpu_mark()
+    results = (
+        (run_score_job(job),) if isinstance(job, ScoreJob) else run_baseline_job(job)
+    )
+    used = cpu.cpu_since(mark)
+    shared: dict[str, float | None] = {
+        "job_wall_s": round(time.perf_counter() - start, 3),
+        "job_cpu_s": used["cpu_s"],
+        "job_cpu_children_s": used["cpu_children_s"],
+        "job_units": len(results),
+    }
+    return tuple(replace(r, timing={**(r.timing or {}), **shared}) for r in results)

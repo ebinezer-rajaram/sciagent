@@ -51,6 +51,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Final
 
+from sciagent.campaign import cpu
 from sciagent.campaign.plan import (
     B_LIB,
     B_NP,
@@ -97,14 +98,19 @@ UNIT_FAILURES: Final = (SciAgentError, ValueError, ArithmeticError)
 
 @dataclass(frozen=True)
 class UnitResult:
-    """One unit's reading and detail, plus wall times (never addressed)."""
+    """One unit's reading and detail, plus wall and CPU times (never addressed).
+
+    ``timing`` goes to the unit's ``timing.jsonl`` line only: ``run_s`` (a
+    baseline's own run) and :data:`~sciagent.campaign.cpu.CPU_FIELDS`, the
+    worker's CPU time over the same interval as ``wall_s``.
+    """
 
     system: str
     ok: bool
     reading: dict[str, float]
     detail: dict[str, Json]
     wall_s: float
-    timing: dict[str, float] | None = None
+    timing: dict[str, float | None] | None = None
 
 
 @dataclass(frozen=True)
@@ -144,13 +150,16 @@ def observational_data(
     return InvestigationData((world.datasets[OBSERVATIONAL],), env.channels, env.marks)
 
 
-def _failure(system: str, error: BaseException, wall: float) -> UnitResult:
+def _failure(
+    system: str, error: BaseException, wall: float, mark: cpu.CpuMark | None
+) -> UnitResult:
     return UnitResult(
         system,
         False,
         {"status": 0.0},
         {"error": type(error).__name__, "message": str(error)[:2000]},
         wall,
+        cpu.cpu_since(mark),
     )
 
 
@@ -278,15 +287,17 @@ def run_baseline_job(job: BaselineJob) -> tuple[UnitResult, ...]:
     if unknown:
         raise CampaignError(f"unknown baseline systems {unknown}")
     start = time.perf_counter()
+    mark = cpu.cpu_mark()
     try:
         data = observational_data(job.truth, job.seed, job.env)
         held = held_out_dataset(job.truth.spec, job.truth.id, job.seed)
     except UNIT_FAILURES as error:
         wall = time.perf_counter() - start
-        return tuple(_failure(s, error, wall) for s in job.systems)
+        return tuple(_failure(s, error, wall, mark) for s in job.systems)
     out: list[UnitResult] = []
     for system in job.systems:
         t0 = time.perf_counter()
+        unit_mark = cpu.cpu_mark()
         try:
             result, extra, run_s = _run_system(system, job, data)
             reading, detail = score_submission(
@@ -294,7 +305,7 @@ def run_baseline_job(job: BaselineJob) -> tuple[UnitResult, ...]:
             )
             curve = _curve(result, held)
         except UNIT_FAILURES as error:
-            out.append(_failure(system, error, time.perf_counter() - t0))
+            out.append(_failure(system, error, time.perf_counter() - t0, unit_mark))
             continue
         reading["fits_used"] = float(result.fits_used)
         detail.update(result.details)
@@ -315,7 +326,7 @@ def run_baseline_job(job: BaselineJob) -> tuple[UnitResult, ...]:
                 reading,
                 detail,
                 time.perf_counter() - t0,
-                {"run_s": run_s},
+                {"run_s": run_s, **cpu.cpu_since(unit_mark)},
             )
         )
     return tuple(out)
@@ -385,6 +396,7 @@ def llm_curve(
 def run_score_job(job: ScoreJob) -> UnitResult:
     """Score one LLM session (module docstring)."""
     start = time.perf_counter()
+    mark = cpu.cpu_mark()
     channels = job.env.channels
     try:
         data = observational_data(job.truth, job.seed, job.env)
@@ -399,6 +411,7 @@ def run_score_job(job: ScoreJob) -> UnitResult:
                 {"status": 2.0, "exact": 0.0, "has_structure": 0.0},
                 {"structure": None, "curve": curve, "no_submission": True},
                 time.perf_counter() - start,
+                cpu.cpu_since(mark),
             )
         structure = canonicalise(parse(job.submission, channels))
         key = structure_hash(structure)
@@ -412,7 +425,7 @@ def run_score_job(job: ScoreJob) -> UnitResult:
             job.truth, job.seed, structure, model, held, job.env
         )
     except UNIT_FAILURES as error:
-        return _failure(job.system, error, time.perf_counter() - start)
+        return _failure(job.system, error, time.perf_counter() - start, mark)
     reading["fits_used"] = float(len(job.fitted))
     detail.update(
         {
@@ -421,4 +434,11 @@ def run_score_job(job: ScoreJob) -> UnitResult:
             "held_out_events": held.log.n,
         }
     )
-    return UnitResult(job.system, True, reading, detail, time.perf_counter() - start)
+    return UnitResult(
+        job.system,
+        True,
+        reading,
+        detail,
+        time.perf_counter() - start,
+        cpu.cpu_since(mark),
+    )

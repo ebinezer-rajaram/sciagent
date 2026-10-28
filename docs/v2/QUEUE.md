@@ -36,7 +36,10 @@ Each item says when it is done. Move finished items to the bottom section after 
   (`.cache/s11/rehearsal2-*.log`). `git merge-tree` against v2 3e8bf91 is clean. After each
   window, with VETO.md checked, merge v2 up to that branch's commit on rehearsal2
   (`git merge <sha>`). After the last, rerun the fast tier on v2.
-- [~] **Session keys and the sandbox** (before any AG-o cell that produces reported numbers):
+  2026-10-28 (session 12): session keys 7bf2e0a merged at 17:01Z with VETO.md empty (87b406f,
+  after by-link 5aff197); on v2 ruff and mypy (243 files) clean, fast tier `2815 passed, 3 skipped`
+  exit 0, `tests/campaign -m slow` `12 passed` exit 0 (`.cache/s12/*-keys.log`).
+- [x] 2026-10-28 **Session keys and the sandbox** (merged 87b406f at 17:01Z, no veto) (before any AG-o cell that produces reported numbers):
   `session_text` covers neither `SandboxLimits`, the handoff helper's sha256 nor the image tag,
   so a stored AG-o session cell would be reused across a change to any of them. Recommend
   (veto rule) adding them to the AG-o session key, or refusing reuse on mismatch; engineer,
@@ -219,6 +222,14 @@ Each item says when it is done. Move finished items to the bottom section after 
   is merged. Red-teamed figure: quiet machine about 48 h (40-60 h) including LLM scoring; this
   week's load about 90 h (75-115 h). The lane leans to dm-devbox after the merges (JOURNAL
   session 11 stop point update). Still the owner's choice.
+  2026-10-28 (session 12): `--by-link` and `--assume-link` merged (5aff197; LOG). With exp
+  costed as softplus they reproduce the red team's 44.7 h CPU and 41.5 h uncontended; plain
+  `--by-link` gives 43.4 h and 40.3 h. The largest open term is B-sym@10F on the five far truths.
+  Measuring it: `.cache/far10f` (tmux `far10f`, worktree `far10f` at 87b406f, `--ids
+  dev-000,dev-003 --systems B-sym@10F --b10f-truths 2 --no-llm --workers 2`, started 17:30:36Z;
+  the smoke store's dev-000 unit took 17411.8 s wall). Resume: `bash .cache/far10f-run.sh 2`.
+  Next session: when it ends, run `store_check.py`, rerun `project_runtime.py` on all three stores,
+  copy the store to S3 and add the ledger line.
 - [ ] **Full pilot** (pilot-runner): `nice -n 10 uv run python scripts/pilot.py --root
   .cache/pilot --truths 20 --seeds 1,2,3 --b10f-truths 10 --workers 2 --llm-concurrency 1` in
   tmux, exactly the SPEC §7 P3 plan: 20 dev truths x 3 seeds; AG-c-S and AG-o-S, named and

@@ -1156,3 +1156,28 @@ c1-oracle-inf and c1-label (21:45Z) go to the next session.
    point entry.
 3. Owner decisions still waiting: the stop point (option 1 dm-devbox or option 2 AWS), Δ6
    (A/B/C), and the brake and pilot-unit question.
+
+## 2026-10-28: Lane session 13 (21:49 UTC), progress: C1 branches merged; waiting on far10f dev-003
+
+**Done.**
+- INBOX has no open entry; VETO.md has no VETO lines (checked 21:49Z, after the 21:40Z and 21:45Z
+  windows). c1-oracle-inf and c1-label (up to `rehearsal2` abb4059) merged into v2. On v2: ruff
+  clean, mypy `247 source files` clean, fast tier `2897 passed, 3 skipped in 391.27s`, exit 0
+  (`.cache/s13/fast-c1.log`). `tests/campaign -m slow -n 1` is rerunning in tmux `s13-slow`
+  (`.cache/s13/campaign-slow-c1.log`); the same tree minus docs and the by-link script passed it
+  on abb4059 in session 11.
+- LOG: Δ11 EIG weights and review items (a) to (e) adopted after their windows.
+- far10f: B-sym@10F dev-000 s1 finished 21:28:23Z, ok, wall 14262.5 s, CPU 12091.8 s
+  (`.cache/far10f/timing.jsonl`). dev-003 is still running (worker CPU 3 h 51 min at 22:14Z).
+- An engineer is preparing the FSD event-count measurement (LOG 2026-10-27, FSD event cap) in
+  worktree `.claude/worktrees/fsd-dist` on `origin/p4-deltas`, script in `.cache/drafts/fsd-dist/`;
+  smoke only, no full run while far10f is measuring.
+
+**Learned.** `git pull --rebase origin v2` after a local merge flattened it: merge f6e2d0e was
+pushed as bed7454 and 1c8160a. Not a force push, and 1c8160a's tree `48699bb…` equals the tested
+merge tree, but merge commits should be pushed after `git fetch` shows nothing upstream (or with
+`--rebase=merges`).
+
+**Next.** When dev-003 ends: `store_check.py` on far10f, `project_runtime.py --by-link` on
+mini-cpu, strata and far10f, S3 copy and ledger line, and update the stop point if the figure
+moves. Read the slow tier's tail.

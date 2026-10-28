@@ -14,7 +14,7 @@ from multiprocessing.connection import Connection
 from pathlib import Path
 
 import pytest
-from campaign_support import entry, environment, tiny_config
+from campaign_support import FINGERPRINT, entry, environment, tiny_config
 from test_campaign import SCRIPT, clean
 
 from sciagent.campaign import llm
@@ -78,6 +78,7 @@ def test_the_spawn_pool_runs_and_records_real_units(tmp_path: Path) -> None:
         config,
         [entry("hawkes")],
         DriverSettings(workers=2, poll_s=0.5, run_llm=False),
+        fingerprint=FINGERPRINT,
     )
     summary = campaign.run()
     campaign.close()
@@ -114,6 +115,7 @@ def test_a_scripted_llm_unit_is_scored_for_real(
             run_baselines=False,
             driver_factory=lambda unit: ScriptedDriver(SCRIPT),
         ),
+        fingerprint=FINGERPRINT,
     )
     campaign.run()
     unit = Unit("size_excitation", 1, "AG-c-H/named")

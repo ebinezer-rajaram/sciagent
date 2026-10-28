@@ -92,6 +92,27 @@ def test_store_check_audits_session_budgets(tmp_path: Path) -> None:
     assert bad.stdout.rstrip().endswith("STORE INCONSISTENT")
 
 
+def test_store_check_reports_the_code_fingerprint_history(tmp_path: Path) -> None:
+    from sciagent.campaign.fingerprint import FINGERPRINT_FILE, UNRECORDED, guard_store
+
+    root = clean_store(tmp_path / "s")  # cells written without a sidecar
+    legacy = run("store_check.py", "--store", root)
+    assert legacy.returncode == 0, legacy.stdout
+    assert "code fingerprint: none recorded" in legacy.stdout
+    guard_store(root, "fp-a", reuse_from=UNRECORDED)
+    guard_store(root, "fp-b", reuse_from="fp-a")
+    ok = run("store_check.py", "--store", root)
+    assert ok.returncode == 0, ok.stdout
+    assert "code fingerprint 1: reuse fp-a from unrecorded" in ok.stdout
+    assert "code fingerprint 2: reuse fp-b from fp-a" in ok.stdout
+    with (root / FINGERPRINT_FILE).open("a", encoding="utf-8") as f:
+        f.write('{"event": "establish", "fingerprint": "fp-c"}\n')
+    bad = run("store_check.py", "--store", root)
+    assert bad.returncode == 1
+    assert "ISSUE fingerprint" in bad.stdout
+    assert bad.stdout.rstrip().endswith("STORE INCONSISTENT")
+
+
 def test_store_check_refuses_a_path_that_is_not_a_store(tmp_path: Path) -> None:
     done = run("store_check.py", "--store", tmp_path / "nope")
     assert done.returncode == 2

@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from campaign_support import TRUTH_IDS, entry, environment, tiny_config
+from campaign_support import FINGERPRINT, TRUTH_IDS, entry, environment, tiny_config
 from test_campaign import SCRIPT, clean
 
 from sciagent.campaign import driver as driver_module
@@ -57,6 +57,7 @@ def run_campaign(root: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             llm_limit=1,
             driver_factory=lambda unit: ScriptedDriver(SCRIPT),
         ),
+        fingerprint=FINGERPRINT,
     )
     summary = campaign.run()
     campaign.close()

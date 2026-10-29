@@ -1918,3 +1918,14 @@ hand-over. The owner's answers still gate the freeze, the pilot and P4 sizing.
   (`.cache/s22/hunt-snap.log`). Note: `hunt_gap.py` needs `--env fit/5`. With `--env pointproc` it finds 0 units.
 - A red-team review of `pilot-multiroot` is running (code only, no writes to live stores). It merges into v2
   only if the verdict allows it.
+- **Red team on `pilot-multiroot`: merge with fixes.** The cells match what one driver would have written:
+  its 9 tests pass, two merges are byte-identical, and the ledger, store and fingerprint code is unchanged since
+  900e66a. Three fixes are needed:
+  1. A merge killed partway leaves a store that passes `check_store`. This one should be fixed before use.
+  2. The rebuilt ledger is not checked against each source's ledger readings.
+  3. `timing.jsonl` is read after the ledger snapshot, so it can copy orphan lines that `pilot_report` would
+     count.
+  Two findings need no code fix. The "positive control" test uses fake jobs, so it checks the copy, not the
+  real two-driver split; that claim rests on reading the code. The merged store records no provenance, and
+  `replay_check` must run on `.cache/pilot-llm` itself. The engineer is fixing 1-3 test first on the branch,
+  with no trailer, no push and no merge.

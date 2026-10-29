@@ -586,6 +586,13 @@ def _check_session_record(
         issues.append(Finding("missing_record", where, f"no record {rel}/{record}"))
 
 
+def detail_reading_is_ledgers(detail_reading: object, entry: LedgerEntry) -> bool:
+    """Whether a detail file's ``reading`` (hex text) is its ledger row's
+    reading bit for bit (``reading_mismatch`` of :func:`check_store`)."""
+    hexes = {k: float(v).hex() for k, v in sorted(entry.reading.items())}
+    return detail_reading == hexes
+
+
 def _check_cell(
     root: Path,
     entry: LedgerEntry,
@@ -622,8 +629,7 @@ def _check_cell(
         issues.append(Finding("schema", digest, f"schema {cell.get('schema')!r}"))
     if str(key.digest) != digest or cell.get("digest") != digest:
         issues.append(Finding("detail_address", digest, "detail key/digest != name"))
-    hexes = {k: float(v).hex() for k, v in sorted(entry.reading.items())}
-    if cell["reading"] != hexes:
+    if not detail_reading_is_ledgers(cell["reading"], entry):
         issues.append(Finding("reading_mismatch", digest, "detail reading != ledger"))
     if cell_bytes(key, reading, body) != data:
         issues.append(Finding("noncanonical", digest, "bytes are not cell_bytes"))

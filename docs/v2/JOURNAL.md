@@ -1485,3 +1485,54 @@ under an intervention. That is a SPEC §4.2 question for the owner, not somethin
 where the truth or the member explodes), with the three drafts and their reviews as evidence, and push
 it. Meanwhile, controls with preset pass criteria (known d*; WH caps while the truth matches the
 member), and an R-independent exclusion computed once and shared, if that option is kept.
+
+## 2026-10-29: Stop point (lane session 17, 07:05 UTC): SPEC §4.2, what "most telling" means where the truth explodes
+
+**Answer.** SPEC §4.2 defines the telling diagnostic as "the diagnostic with the largest
+truth-vs-best-library discrepancy", but it does not say what to do with an intervention under which
+the truth (or the best member) explodes, meaning it hits the 15,000-event cap or runs away. On those
+designs every rule tried so far either lets the cap pick d* or moves the cliff somewhere else. The lane
+cannot settle this without changing §4.2, so the owner decides.
+
+**Evidence** (all from session 15-16 files; decision 0, seed 1, truth R = 4 proxy, 14 truths):
+- On a design where the truth caps, the world hands the agent 15,000 events on [0, τ ≈ 800-1000] of
+  H = 2000. Capped and uncapped `mean_rate` have disjoint supports, so He² = 1 whatever the mechanism,
+  and 8-18 of the 35 diagnostics are exactly 1.0 there (`.cache/drafts/fsd-rule/draft.md` §1,
+  `candidates-out.txt`). Menu order then picks d*.
+- Count exploding designs, using the world's own truncation (K1): telling d* sits on a truth-capped design
+  on 9 of 14 truths and is `mean_rate` on 11 of 14 (`fsd-rule/redteam-s16.md`, reproduced 0 mismatches).
+- Today's code (K0): telling drops stopped runs and zeroes a design with a side all stopped (b), truthFSD
+  sets every diagnostic to None (a), and the world truncates (c), so three rules are in force. Control 5
+  (truthFSD against telling) agrees on 3 of 14 because of the mismatch (`fsd-ties/redteam-s16.md`).
+- Exclude designs where either side caps or stops (K4): d* is on a truth-capped design 0 of 14 times and
+  equals today's d* on 13 of 14; control-5 proxy 11 of 14. Red team (`fsd-rule/redteam-s16.md`): this
+  redefines §4.2's d* (a SPEC change); it makes control 5 nearly circular; "any replicate" exclusion
+  on each side's own R (16 vs 32) excludes different designs; and it discards the designs where the
+  library is most wrong.
+
+**Options.**
+1. *As written, with the world's truncation.* An exploding design counts and is maximally telling.
+   No SPEC change. The telling rate then mostly measures "ran an intervention where the truth explodes"
+   and not a mechanism diagnostic; ties go by a fixed menu order.
+2. *Amend §4.2: d* is taken among designs on which neither the truth nor the best member explodes.* The
+   exclusion is computed once, independently of R, and shared by telling and truthFSD. A second number is
+   reported beside the telling rate: "ran a design on which the truth explodes and the best member
+   does not". Control 5's role is restated (with a shared exclusion it checks sampling noise at real R,
+   not the rule).
+3. *Keep today's (b) for telling.* This is not recommended: it is not what the world does, and it puts a
+   1-of-R cliff on partly stopped designs.
+
+**Recommendation.** Option 2, provided the two controls being preregistered this session (a planted d*
+with a truth-only-capping design, and the dev-005 shape where WH caps but the truth matches the member)
+pass under it. Explosion is real evidence, but it is evidence about stability, not about which
+diagnostic exposes the mechanism, so it should be its own number. The lane does not adopt anything until
+the owner answers. FSD's own experiment choice is a separate question and stays under (c).
+
+**Caveats.** All counts are a decision-0, R = 4 proxy on one seed. No positive control has run yet.
+The threshold for "explodes" (any replicate, or above half) is not identified by this data: the truth
+caps on 0 or 4 of 4 replicates except one cell. Every option changes `Telling` (an instrument), so tests
+come first, and it is preregistered before the test split.
+
+**Decision needed.** Option 1, 2 or 3 for SPEC §4.2 (or another reading). Option 2 changes the SPEC
+text. Options 1 and 3 keep it and change only code (1 moves telling and truthFSD to (c), 3 moves
+truthFSD to (b)).

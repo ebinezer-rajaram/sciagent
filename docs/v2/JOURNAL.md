@@ -2095,3 +2095,24 @@ hand-over. The owner's answers still gate the freeze, the pilot and P4 sizing.
    freeze, preregistered and red-teamed, under which a rerun is exploratory (§5).
 2. As in the hand-over entry above: the pilot's two halves, LLM initialize timeouts, and the slow tier on
    `p4-rehearsal`.
+
+## 2026-10-29: Lane session 24 (20:01 UTC), progress: seed-lead step 3 running; wall-time sessions log zero turns and tokens
+
+- INBOX: nothing open. Tree clean, v2 up to date with origin.
+- **Runs at 20:01Z.** Baselines: 15 of 310 `ok`, 0 failed. `to2` relaunched at 1 worker at 18:48:58Z because
+  MemAvailable was 7 GiB, under the 8 GiB rule. LLM half: 22 scored `ok`. No retryable failure since 18:51Z.
+  Load about 14, mostly the other lane.
+- **Seed lead step 3** is running in user unit `sci-seedlead-step3`
+  (`.cache/drafts/fsd-seedlead/step3-run.sh`: `sim.py 128 … 0,2,3,4`, then `analyse.py … 1000 600`; nice 15,
+  one process). It runs in the `fsd-dist` worktree (bff61ec), because v2 has no `run_experiment_truncating`.
+  Two launches failed before it started (a relative path, then that import); neither ran any simulation.
+  Design 0 finished at 88.6 CPU s.
+- **Found:** a session that ends on `wall_time` has no SDK `result` entry. `campaign/llm.py:267` and `_usage` then
+  store turns=0 and tokens=0, so these are missing counts written as zeros. The pilot store has two such sessions
+  (AG-o-S/named dev-005 s1 and dev-008 s1), whose records hold 42 and 83 assistant entries. Session 23's interim
+  AG-o turn and token means include one of them as zeros, so those means are low. `pilot_report.py`'s medians
+  read the same zeros. The engineer is fixing the report test-first on a local branch `report-unrecorded-counts`
+  (no src change). The root fix in `llm.py` goes with the p4-deltas integration, because the pilot's code is
+  frozen at 900e66a.
+- Checked and not a defect: 4 of 11 AG-o cells store `foreign tool: python` voids. Each comes from a denied bare
+  `python` call ("No such tool available: python"), which the analysis void policy excuses (LOG 2026-10-03).

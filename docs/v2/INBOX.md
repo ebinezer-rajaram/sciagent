@@ -36,7 +36,7 @@ entry, and marks it handled with the date and what was done. Newest last.
 
 ## 2026-10-29, 11:27 UTC (owner, via the control-room session)
 
-- [ ] **The four open owner questions: all as the control room suggested.** Owner's words: "Do all
+- [x] **The four open owner questions: all as the control room suggested.** Owner's words: "Do all
   as suggested, please do your experiments". (1) The baselines run on dm-devbox, no AWS (non-LLM
   runs in their own sci-<run> user units, as decided earlier today). (2) Delta-6: (A) link-neutral,
   as the owner's pre-set rule picks. (3) SPEC 4.2: option 2 (d* chosen only among designs where
@@ -47,3 +47,8 @@ entry, and marks it handled with the date and what was done. Newest last.
   allow_deletions false, enforce_admins true; no required reviews or checks, so ordinary pushes
   work; `gh api repos/ebinezer-rajaram/sciagent/branches/v2 --jq .protected` gives true).
   Gate H1 can pass: freeze the at-stop controls and calibrate now.
+  Handled 2026-10-29 (lane session 19, 11:27-11:45Z): protection checked (H1 `[false,false,true]`); F₀
+  8405509 and its LEDGER row 900e66a pushed; calibrate A1 and B running in their own user units; the
+  pilot's baselines (`--no-llm`, 310 pool jobs) running on dm-devbox in `sci-pilot-baselines`; Δ6 (A) and
+  SPEC §4.2 option 2 recorded (LOG 2026-10-29, SPEC §4.2; the `Telling` change waits for A1 and B). The
+  control room was told.

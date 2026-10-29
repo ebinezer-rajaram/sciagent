@@ -1736,3 +1736,25 @@ must switch protection on. Found by the engineer: `python -I` ignores `PYTHONDON
 `PYTHONPYCACHEPREFIX`, so `controls.py` sets `sys.dont_write_bytecode` and `sys.pycache_prefix` itself and the gate
 requires `-I`. One joint review of v8 and the code (s18b): ready to freeze; its non-blocking fixes are in v8.1
 (963d1495…), with no rule, threshold or seed changed.
+
+## 2026-10-29: The owner's four answers (baselines on dm-devbox, Δ6 (A), SPEC §4.2 option 2, v2 protected); at-stop controls frozen
+
+The owner answered all four open questions as the lane and the control room suggested ("Do all as suggested,
+please do your experiments"; INBOX 11:27Z). (1) **The P3 baselines run on dm-devbox**, not AWS, in their own
+user unit outside the usage brake. Started 11:31:27Z: `pilot.py --truths 20 --seeds 1,2,3 --b10f-truths 10
+--no-llm` (plan: 310 pool jobs) at v2 900e66a in the detached worktree `pilot`, unit `sci-pilot-baselines`, store
+`.cache/pilot`, with 1 worker, because at launch 8.7 GiB was available with both calibrates and a test run going,
+and a second worker (about 2 GB at peak) would breach AUTOPILOT's 6 GB floor. The LLM half follows with
+`--no-baselines` from the same commit. `pilot_report.py` reads one `--root` and a store takes one driver, so the
+two halves run in turn on this store unless the report learns to read two stores (open). (2) **Δ6: (A)
+`link-neutral`** is the P4 prompt variant, by the owner's pre-set rule (p4-deltas `investigation/prompts.py`). It
+lands with the p4-deltas integration; the guard, arm matching and reader listed on 2026-10-28 stay required.
+(3) **SPEC §4.2, option 2**: the telling diagnostic is chosen among designs on which neither the truth nor the
+best member explodes (K5: at least one truncated or stopped run among telling's replicates on either side; one
+shared exclusion, also used by truthFSD), and the explosion share is reported as its own number. The SPEC text
+is amended now. As recommended, the code change to `Telling` (an instrument, tests first) waits for controls A1
+and B to pass under the rule, and a failure returns it to the owner. (4) **Branch protection** on v2 was switched
+on by the control room at 11:27Z (H1 reads `[false,false,true]`). The at-stop controls were then frozen with no
+window: F₀ 8405509 (criteria v8.1 963d1495…, controls.py c0895289…) and its LEDGER row (900e66a, ceiling 7.6 CPU h,
+$0) were pushed plainly to the protected branch. Calibrate A1 and B started 11:29Z in the units
+`sci-fsdctl-A1-calibrate` and `sci-fsdctl-B-calibrate`; both passed the gate.

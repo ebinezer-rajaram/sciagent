@@ -874,6 +874,15 @@ Orchestrator decisions:
 - **SPEC is not edited.** The Δ11 SPEC-silent choices and controls 4-6 are
   recorded here.
 
+*Note 2026-10-29 (merge into v2):* The P4 entries below are kept as history. Where v2's LOG
+has since settled one of their open or for-review points, a dated note at the end of the entry
+names v2's entry. The P3.1 rescore this entry waits for was replaced by the Linux pilot rerun
+(v2 LOG 2026-10-27, "The P3 pilot is rerun from scratch on Linux (owner)"), and the merge waits
+for that pilot's numbers. Open points are settled under v2's process (v2 LOG 2026-10-29, "No veto
+windows; one red-team round per item (owner, INBOX 09:12Z)"). The Δ6 Sonnet check was replaced by
+the owner's choice (see the note under Δ6). SPEC §4.2 was amended by the owner (v2 LOG 2026-10-29,
+"The owner's four answers ...").
+
 ## 2026-10-06 — Δ2: an experiment at the event cap is truncated, not stopped
 
 **Approved** in outline (P4-PROPOSAL Δ2). The SPEC-silent details are **for
@@ -975,6 +984,13 @@ variant reads as `v1`. `link-neutral` changes only those two places:
 
 A non-default variant gets a system-name suffix, `+link-neutral`.
 
+*Note 2026-10-29 (merge into v2):* Settled. The owner chose **(A) `link-neutral`** as the P4
+prompt variant (v2 LOG 2026-10-29, "The owner's four answers (baselines on dm-devbox, Δ6 (A), SPEC
+§4.2 option 2, v2 protected) ..."). The "tries more links on the dev check" rule above was not
+applied as written. For the history, see v2 LOG 2026-10-27, "Δ6 prompt variant freeze: `link-neutral`
+is not adopted as drafted ...", and 2026-10-28, "Δ6 link-balanced variant red-teamed ...". The guard,
+arm matching and reader listed on 2026-10-28 are still required.
+
 ## 2026-10-06 — Δ8: one void classifier, at harness level
 
 **Approved:** void only on an executed foreign tool, a server tool use or an
@@ -1012,6 +1028,16 @@ sessions are still found.
 
 A non-default policy gets the suffix `+policy=<name>`, and policy names must
 match `[A-Za-z0-9_.-]+`.
+
+*Note 2026-10-29 (merge into v2):* Two changes from v2.
+- **AG-o sessions.** v2 added the AG-o sandbox to the session key (v2 LOG 2026-10-27, "An AG-o
+  session's key names its sandbox"). The surface digest still leaves the sandbox out, but an AG-o
+  session text ends with the sandbox block under both harnesses. The frozen `harness/1` text is
+  v2's pre-merge `session_text`, not the Windows one. Its AG-o text carries that block, and the
+  Linux pilot's AG-o sessions were addressed with it. `tests/campaign/test_pilot_harness1_cells.py`
+  pins it against that pilot's cells.
+- **Address text.** Deriving address text from code is v2's F5 work, done after the pilot (v2 LOG
+  2026-10-27, "F5, stale-cell reuse: ...").
 
 ## 2026-10-06 — Δ11 evidence policies: the core, and its SPEC-silent choices
 
@@ -1063,6 +1089,23 @@ Cost per decision at fit/4 (R = 16, 8 designs): EIG at K = 3 took 97-116 s,
 FSD 81-86 s and one FSD-null bootstrap 85-97 s. An exploding Wiener–Hopf
 design costs about 23 min per decision. The weights and that cost are open
 (see the 2026-10-09 entry on open decisions).
+
+*Note 2026-10-29 (merge into v2):* Several points above are superseded by v2 entries.
+None of these is in the code yet. Each lands with the integration, test first.
+- **Weights and ties.** BIC weights are kept. EIG is computed to relative precision. A full
+  tie is broken by the truth-keyed random draw, not by menu order (v2 LOG 2026-10-27, "Δ11 EIG
+  weights: keep BIC, report the degeneracy, break full ties from the truth-keyed random draw,
+  compute EIG to relative precision"). This was adopted on 2026-10-28 ("Δ11 EIG weights and
+  review items (a) to (e) adopted").
+- **Seeds.** Every policy stream is keyed by truth (v2 LOG 2026-10-27, "C5 random-arm seeding:
+  key every policy stream by truth"). This was adopted on 2026-10-28.
+- **Telling diagnostic.** Stopped replicates are no longer dropped. Under SPEC §4.2 option 2,
+  d* is chosen among designs on which neither the truth nor the best member explodes. The
+  exclusion is shared with truthFSD, and the explosion share is reported (v2 LOG 2026-10-29,
+  "The owner's four answers ..."). The `Telling` code change waits for the preregistered at-stop
+  controls A1 and B to pass (v2 LOG 2026-10-29, "FSD at-stop controls, criteria v8 ...").
+- **The 15,000 cap** stays (v2 LOG 2026-10-29, "FSD at-stop rule: the drop-rule draft is
+  withdrawn ...; the cap stays 15,000; open").
 
 ## 2026-10-06 — Δ11 policy mode for AG-c-S; AG-S-boed
 
@@ -1133,6 +1176,12 @@ unchanged. **For review** (plan choices 9, 12 and 13):
     experiment that left data. A failed unit is not observed. The rate weights
     truths equally.
 
+*Note 2026-10-29 (merge into v2):* Two items are superseded.
+- **Item 5.** The policy seed is a per-(truth, seed) key derived by the framework, not the
+  investigation seed (v2 LOG 2026-10-27, "C5 random-arm seeding ..."; adopted 2026-10-28).
+- **Item 8.** The 15,000 cap stays. The telling unit's at-stop handling follows SPEC §4.2
+  option 2 (see the note under "Δ11 evidence policies").
+
 ## 2026-10-09 — Positive controls 4-6 (preregistered)
 
 Plan choice 18 puts controls 4-6 here rather than in SPEC. The code is
@@ -1172,6 +1221,12 @@ is reported. A failure means fixing the instrument first (§7.1).
 - C4 includes one experiment, so that the anon time rescaling is crossed.
 - C4 and C5 refuse partial or unpaired input rather than dropping it.
 
+*Note 2026-10-29 (merge into v2):* C5's random arm now draws per truth (v2 LOG 2026-10-27,
+"C5 random-arm seeding ..."; adopted 2026-10-28). This is the open point 3 below. truthFSD shares
+telling's exclusion of exploding designs under SPEC §4.2 option 2 (v2 LOG 2026-10-29, "The
+owner's four answers ..."). The FSD at-stop rule has its own preregistered controls, A1 and B,
+which are separate from C4 to C6 (v2 LOG 2026-10-29, "FSD at-stop controls, criteria v8 ...").
+
 ## 2026-10-09 — Open decisions for the user (not decided)
 
 Each has a setting or a proposal. None is resolved here.
@@ -1195,6 +1250,24 @@ Each has a setting or a proposal. None is resolved here.
    not generalise to random selection. The proposed fix keys random draws by
    truth too. That moves the unit keys of the four B-sym+* arms and of
    AG-c-S+random, so it must be decided before any policy unit runs for real.
+
+*Note 2026-10-29 (merge into v2):* All three are decided in v2's LOG. Each lands with the
+integration, test first.
+1. **EIG weights.** Adopted: BIC is kept, ties are broken by the truth-keyed draw, and the
+   degeneracy is reported (v2 LOG 2026-10-27, "Δ11 EIG weights: ..."; 2026-10-28, "Δ11 EIG weights
+   and review items (a) to (e) adopted").
+2. **The event cap.** A 6,000 cap was drafted outside this branch and not adopted (v2 LOG
+   2026-10-27, "FSD event cap: the draft's 6,000 is not adopted; a measured choice is needed
+   first"). After the measurement, the cap stays 15,000 (v2 LOG 2026-10-29, "FSD at-stop rule:
+   ... the cap stays 15,000; open"). The at-stop rule is SPEC §4.2 option 2, under the
+   preregistered controls A1 and B (v2 LOG 2026-10-29, "FSD at-stop controls, criteria v8 ...";
+   "The owner's four answers ..."). AG-c-S's `PolicySettings` now carries `max_events` and
+   `weighting` at their defaults, and both enter the session key (rehearsal commit f3da328). The gap
+   in `make_policy` was found in v2 LOG 2026-10-28, "The FSD event-cap measurement ...", and again on
+   2026-10-29.
+3. **C5 seeding.** Adopted: every policy stream is keyed by truth (v2 LOG 2026-10-27, "C5
+   random-arm seeding: key every policy stream by truth"; 2026-10-28, "C5 random-arm seeding
+   adopted").
 
 ## 2026-10-27: The reference platform for v2 numbers is dm-devbox (owner)
 

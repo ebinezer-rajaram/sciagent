@@ -1866,3 +1866,16 @@ explains A1's (ii) gap, the lane comes back with a new freeze, preregistered and
 F₀'s criteria or thresholds changes, and A1 is not rescored. The SPEC §4.2 text amended this morning for option
 2 stays as written until the owner or the control room says otherwise. Whether to mark it as parked is noted for
 the control room, not edited by the lane, because a SPEC change is a stop point.
+
+## 2026-10-29: A session with no SDK `result` message has turns and tokens "not recorded", not 0
+
+A session that ends on `wall_time` gets no SDK `result` message. `campaign/llm.py` then stores turns and every
+token count as 0 (`num_turns or 0`, `_usage(None)`). In the pilot, three AG-o-S/named sessions (dev-005,
+dev-008 and dev-012, seed 1) hold 42, 83 and 83 assistant entries but read 0. Decided: `pilot_report.py`'s cost
+table takes turns and token medians over the sessions whose stored record has a `result` entry. This is decided
+from the record, not from the outcome name or a zero value. It prints `(n/m recorded)` the way missing wall
+times are shown, with a note only when that happens (58d1ac2, test first). A store where every session has a
+result renders byte-identically. Why: P4 sizing and the report's cost row would otherwise count missing counts
+as zero, and they read low (AG-o median turns 19 against 26 on the interim store). No version constant moves.
+The cell readings are not changed now, because the pilot's code is frozen at 900e66a. The root fix in `llm.py`
+(store the counts as missing, or count them from the record) goes with the p4-deltas integration, test first.

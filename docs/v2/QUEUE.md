@@ -284,6 +284,9 @@ Each item says when it is done. Move finished items to the bottom section after 
   Note for the report (session 20; LOG 2026-10-29): an AG-o record whose own sandbox code prints wall time
   fails `replay_check` under the pilot's code (dev-003 s1, step 51). Count such records apart from harness
   replay defects, and run `replay_check` at 900e66a.
+  Note (session 24; LOG 2026-10-29): wall-time sessions have no SDK `result`, so their turns and tokens are
+  "not recorded"; the report counts them apart since 58d1ac2. Session 23's interim AG-o turn and token means
+  include one as zeros, so use the report's figures, not those, for P4 sizing.
 - [!] **P3 go/no-go read: stop point.** SPEC §7.1 under the re-read rules of P4-PROPOSAL §2.4;
   the owner reads a few AG-o transcripts in full. Prepare the evidence and transcript picks,
   push the owner, wait. Done when the owner has decided.
@@ -298,6 +301,8 @@ Each item says when it is done. Move finished items to the bottom section after 
   Also with it (LOG 2026-10-29): `investigation/policy.py:make_policy` builds `EIGPolicy` and
   `FSDPolicy` from `seed` and `replicates` only; pass the arm settings' `max_events` and EIG's
   `weighting` through, test first.
+  Also (LOG 2026-10-29, session 24): `campaign/llm.py:267` and `_usage` store turns and tokens as 0 when the
+  record has no SDK `result` (a wall-time end); store them as missing or count them from the record, test first.
   2026-10-29 (session 19): rehearsal merge done on local branch `p4-rehearsal` (worktree
   `.claude/worktrees/p4-rehearsal`, from v2 84e7a2a; not merged into v2, not pushed). 3642c3c merge (8 files,
   17 hunks; v2's fixes kept, p4 added), then 0872a7f, 1d8a7ec, 6561868 and ce4c167 (merge fixes) and f3da328

@@ -1838,3 +1838,23 @@ hand-over. The owner's answers still gate the freeze, the pilot and P4 sizing.
 2. Baselines: check `grep to2 .cache/pilot-run.log` for the relaunch line and that `sci-pilot-baselines` runs.
 3. The `Telling` change (SPEC §4.2 option 2) waits for A1 and B to be scored.
 4. After the pilot finishes: rerun p4 points 1-2 on the full store, then the slow tier on p4-rehearsal.
+
+## 2026-10-29: Lane session 21 (14:29 UTC), progress: FSD ceiling raised to 12.0 CPU h with an automatic resume; replay_check refusal delegated
+
+- INBOX: nothing open. All four runs alive at 14:30Z: `sci-fsdctl-A1-test`, `sci-fsdctl-B-test`,
+  `sci-pilot-baselines` (1 worker; `sci-pilot-to2` still waits for the unit in flight since 12:53Z) and the LLM
+  half in `tmux -L sciagent` `sci-pilot-llm`. MemAvailable 8 GiB, load 4.8.
+- **FSD test CPU runs ~1.9x the estimate.** From `cpu-ledger.csv` at 14:29Z: test has charged 1,666 CPU s (A1)
+  and 1,678 CPU s (B) for 6,044 and 5,306 runs lines. Each seed is 2,560 lines (cost5.py's counts), so about
+  706 CPU s per A1 seed and 810 per B seed, against cost5's ~365. Projected total at the end of both tests:
+  14,791 (calibrate) + 15 x 706 + 15 x 810 ≈ 37,500 CPU s ≈ 10.4 CPU h, above F₀'s 7.6 h ceiling (27,360 s),
+  which should fire around 15:45Z. Ledger total 18,068 CPU s at 14:29:50Z.
+- **Ceiling row pushed: `fsd-controls ceiling 12.0 CPU h`** (b6a63d2; $0; projection + ~15%). Running processes
+  read the ceiling only at their gate, so they still stop at 7.6 h. `.cache/fsdctl-resume.sh` in user unit
+  `sci-fsdctl-resume` waits for both test units to end, then, only if `$D/STOP` exists, origin/v2's LEDGER holds
+  the row and the total is below 12 h, removes STOP (the coordinator's step, §6) and restarts each unit that
+  exited 11 with the §7 command and its own D. Log lines start `resume:` in `.cache/fsdctl-test-launch.log`.
+  At ~13.6 min wall per seed both tests end around 17:20Z, after this session; score is next session's.
+- **LLM half:** 12 launches by 14:24Z (11 sessions submitted), no error, limit or failure line. That is about
+  12 min per unit, so 240 units take ~47 h, not the ~35 h estimated in session 20.
+- An engineer is adding the harness-version refusal to `replay_check` on `p4-rehearsal` (test first; not merged).

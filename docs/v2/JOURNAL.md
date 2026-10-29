@@ -1294,3 +1294,57 @@ degenerate He² = 1 picks the earlier red team predicted. They are not random ex
    draft the cap choice using the one-side-always-stops cells, and red-team the draft (LOG
    2026-10-27 FSD event cap).
 3. The next session that runs the full fast tier for other work covers 9b1f92c too.
+
+## 2026-10-29: Lane session 15 (03:04 UTC) hand-over: FSD measurement finished, the drop-rule draft withdrawn after red team, truncation option measured; QTM fetched
+
+**Done.**
+- INBOX: no open entry. VETO.md: no VETO lines. No owner answer on where the baselines run (INBOX,
+  OWNER_LOG), so the full pilot stays blocked.
+- Fast tier on v2 6f469f4 (covers 9b1f92c, which session 14 left unrun): exit 0, 2,906 passed, 3 skipped,
+  0 failed (counted from the progress characters, since the doubled `-q` hid the summary line;
+  `.cache/s15/fast.log`).
+- QTM catalogue fetched (`scripts/fetch_qtm.py`, exit 0; `--verify` both files `ok`);
+  `tests/acceptance/test_qtm_ingestion.py` `20 passed`, no skips. Queue item closed.
+- FSD measurement: pass 2 finished (`pass2-exit: 0`, 5,120 lines, 1.105 CPU h of simulation;
+  `.cache/drafts/fsd-dist/summary-full.txt`, `percell-full.txt`). Truth side on replicates 0-1 (348
+  runs; the full truth side was stopped once one replicate took 88.4 CPU s to reach the cap;
+  `truth-r01.txt`). The same 6 WH cells stop on 16/16 replicates at every cap from 6,000 to 15,000. GLM
+  side (B-lib's pick): 0 stops. Truth vs GLM: one-side-always-stops on 12 cells of 10 truths. Cost per
+  8-decision investigation at 15,000: FSD 1,614 CPU s on average (max 6,456), truthFSD 2,957 (max 17,617);
+  `cost-per-investigation.txt`.
+- Draft recommendation (`.cache/drafts/fsd-cap-draft2.md`: FSD and truthFSD drop stopped replicates as
+  telling does; keep 15,000; one cap path). Red team: **do not adopt**. Its premise, that a stopped world
+  run returns None, is false: the arms and the agent lab run `World(..., truncate=True)`, so a capped
+  run is kept, cut at τ (`execute.py:436`, `runner.py:269`, `world.py`; I checked each). Also a
+  one-survivor cliff, an uneven change across C5 arms, and the dev-plan cost (about 76 CPU h for the two
+  B-sym arms). The red team's numbers reproduced mine. Withdrawn; the cap stays 15,000; the at-stop rule
+  stays open (LOG 2026-10-29). Found: `make_policy` passes neither the cap nor EIG's `weighting`
+  (queued with the integration).
+- Truncation option measured (engineer; `.cache/drafts/fsd-trunc/`, scratch script on bff61ec, no src
+  change; self-check 0 failures in 63 pairs, crosscheck against dist-s1-d0 48 match, 0 mismatch): full run 05:40:17Z, exit 0, 4,032 lines, 1.36 CPU h,
+  14 truths, seed 1, decision 0, WH and GLM on 16 replicates, truth on 4; crosscheck 3,812 match, 0 mismatch;
+  `summary-full.txt`). **Unreviewed observations, not a decision:** (1) truncating at the cap like the
+  world (rule c) leaves the decision-0 pick unchanged against the current rule (a) in 27 of 28 (truth,
+  policy) cases (the change: truthFSD dev-006). On truncated cells He² is still 1.000 on many diagnostics
+  (median 1.000): a 15,000-event run cut at τ ≈ 830 is genuinely far from a fit predicting about 2,000.
+  So `mean_rate` there is a tied maximum, not an artifact of the undefined atom. (2) He² saturates at 1.000
+  on many cells, so menu-order ties decide picks; `choose` breaks ties design-first, telling's argmax
+  diagnostic-first; on the same table the two picks differ for FSD on 1 (rule b) and 2 (rule c) of 14
+  truths, for truthFSD on 3 (b) and 4 (c) (dev-000, 003, 005, 013). Control 5 matches by diagnostic, so
+  the tie order matters to it.
+
+
+**Learned.** Check what the world does before reasoning about what the policy should predict: the
+draft's central premise came from the policy module's simulator semantics, not the world's, and
+`investigation/policy.py:44-53` already documented the mismatch. On these cells the at-stop rule
+barely moves decision-0 picks; He² saturation and the tie order do.
+
+**Next.**
+1. Owner, unchanged: where the baselines run (about 51 h on a quiet dm-devbox, 85 to 95 h at this
+   week's load, or AWS m6i.xlarge at about $9 to 11); Δ6 (A/B/C); the brake and pilot-unit question.
+   The full pilot waits on the first.
+2. FSD decision: red-team the truncation measurement (`.cache/drafts/fsd-trunc/`, script, README,
+   `summary-full.txt`) first, then a theorist draft on He² saturation and the tie order (FSD design-first
+   vs telling diagnostic-first, which control 5 depends on), with or without truncation. Owner rule:
+   recommendation, red team, LOG with a 24 h veto window, push.
+3. With the p4-deltas integration: `make_policy` cap and EIG weighting (queued).

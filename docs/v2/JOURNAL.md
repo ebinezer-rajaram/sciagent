@@ -1899,3 +1899,22 @@ hand-over. The owner's answers still gate the freeze, the pilot and P4 sizing.
 2. Baselines: check `grep to2 .cache/pilot-run.log` for the relaunch line.
 3. When the pilot finishes: merge `pilot-multiroot`, merge the stores, run the report, red team, PILOT.md. On
    `p4-rehearsal`, the slow tier is still open (after the runs free the CPU).
+
+## 2026-10-29: Lane session 22 (16:43 UTC), progress: store merge rehearsed on live snapshots; its red team running
+
+- INBOX: nothing open. All runs alive at 16:44Z: `sci-fsdctl-A1-test`, `sci-fsdctl-B-test`, `sci-fsdctl-resume`,
+  `sci-pilot-baselines` (1 worker, `.cache/pilot/STOP` from `sci-pilot-to2`; the unit in flight since 12:53Z
+  has no `exit:` line yet) and the LLM half (`sci-pilot-llm`, no STOP). MemAvailable 8 GiB, load 15.4.
+- **FSD:** ledger total 26,522 CPU s at 16:51Z against the 27,360 s ceiling (7.6 h); no STOP yet. Runs files
+  24,852 (A1) and 21,299 (B) lines. The resume script will act when the ceiling fires.
+- **Store-merge rehearsal** (`pilot-multiroot` 6b970b6, not merged): `store_merge.py .cache/pilot
+  .cache/pilot-llm --out .cache/s22/merged-snap` gave `merged 2 stores (7 + 29 cells) ... 15 record dirs, 36
+  timing lines`, exit 0. On the merged root: `store_check.py` `STORE OK` (15 sessions audited, 0 budget
+  issues); `session_check.py` `sessions: 15; found: 15; ... issues: 0; warnings: 2` (`void_reclassified` on
+  AG-o-S/named dev-003 s1 and dev-005 s1: stored void, policy not void); `pilot_report.py --interim` renders
+  (`.cache/s22/report-snap.md`, 7 baseline units and 15 sessions scored). `hunt_gap.py --env fit/5` gives
+  `units: 21`, `gap above +0.01: 0`, `submitted without a finite ORACLE: 11`, so `GATE FAIL`. That is expected
+  mid-run: ORACLE exists only for dev-000 s1. On a copy of the baselines store alone it is `GATE PASS`
+  (`.cache/s22/hunt-snap.log`). Note: `hunt_gap.py` needs `--env fit/5`. With `--env pointproc` it finds 0 units.
+- A red-team review of `pilot-multiroot` is running (code only, no writes to live stores). It merges into v2
+  only if the verdict allows it.

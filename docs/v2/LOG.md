@@ -1658,4 +1658,9 @@ address, FIT_VERSION or METRIC_VERSION moves. Tests: `tests/campaign/test_store_
 (snapshot of every file under the root before and after each reader; control: the snapshot sees a
 timing line and the read-write repair). The hash-seed pair (`test_hash_seed_pair.py`) runs B-lib on
 `hawkes` seed 1 through the driver under `PYTHONHASHSEED` 0, 1 and random: cells byte-identical by
-`compare_stores`, passed at once.
+`compare_stores`, passed at once. Red team (session 14): merge with one fix, made test first:
+`check_store` raised `FileNotFoundError` on a store whose `details/` was deleted (the read-write open
+had recreated it); it now reports `missing_details_dir`. Known and accepted: after a driver crash
+leaves a hot rollback journal, a `mode=ro` reader cannot roll it back and raises `RegistryError`
+("attempt to write a readonly database") until the driver reopens the store; it never reads wrong
+data. Not fixed here: `audit._ro` raises untyped sqlite errors and never closes its connection.

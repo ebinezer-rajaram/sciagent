@@ -160,6 +160,23 @@ def test_the_store_checks_leave_the_store_unchanged(tmp_path: Path) -> None:
     assert snapshot(root) == before
 
 
+def test_check_store_reports_a_missing_details_directory(tmp_path: Path) -> None:
+    """A store whose ``details/`` was removed is reported, not a crash, and
+    the directory is not recreated (a read-write open used to recreate it)."""
+    root = clean_store(tmp_path / "s")
+    for path in (root / "details").iterdir():
+        path.unlink()
+    (root / "details").rmdir()
+    before = snapshot(root)
+    check = check_store(root)
+    assert ("missing_details_dir", "details") in [
+        (f.kind, f.where) for f in check.issues
+    ]
+    assert {f.kind for f in check.issues} == {"missing_details_dir", "missing_detail"}
+    assert not (root / "details").exists()
+    assert snapshot(root) == before
+
+
 def _render(root: Path, out: Path) -> subprocess.CompletedProcess[str]:
     """``pilot_report.py`` on ``root`` in a fresh process (as it is run)."""
     return subprocess.run(

@@ -667,7 +667,14 @@ def check_store(root: Path) -> StoreCheck:
             issues.append(
                 Finding("dangling_session", digest, f"session {session} not in store")
             )
-    for path in sorted((root / DETAILS_DIR).iterdir()):
+    details = root / DETAILS_DIR
+    detail_files: list[Path] = []
+    if details.is_dir():
+        detail_files = sorted(details.iterdir())
+    else:
+        # A reader never recreates it (LOG 2026-10-28, readers read-only).
+        issues.append(Finding("missing_details_dir", DETAILS_DIR, "no details dir"))
+    for path in detail_files:
         stem = path.stem
         if path.suffix != ".json" or not _DIGEST.fullmatch(stem):
             warnings.append(Finding("stray_file", path.name, "not a detail file"))

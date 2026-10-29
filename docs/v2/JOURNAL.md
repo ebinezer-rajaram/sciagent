@@ -1986,3 +1986,82 @@ hand-over. The owner's answers still gate the freeze, the pilot and P4 sizing.
 3. When the pilot finishes: `store_merge.py .cache/pilot .cache/pilot-llm --out <new>`, then the report and
    checks on it, then `replay_check` on `.cache/pilot-llm` itself (harness/1 at 900e66a), then the red team,
    then PILOT.md.
+
+## 2026-10-29: Lane session 23 (17:51 UTC), progress: waiting on the FSD control scores; interim LLM sizing
+
+- INBOX: nothing open. At 17:51Z all runs were alive: `sci-fsdctl-A1-test` and `sci-fsdctl-B-test` (restarted 17:05Z
+  past the 7.6 h ceiling), `sci-fsdctl-score` (watching), `sci-pilot-baselines` (1 worker, STOP from `sci-pilot-to2`),
+  and the LLM half in `sci-pilot-llm`. MemAvailable 7 GiB, load 15.5.
+- **FSD:** runs files at 17:52Z had A1 33,912 and B 28,992 lines, of 38,401 each. The score watcher starts score
+  when both test units end.
+- **Baselines:** still 7 of 310 jobs `ok`. The worker running since 12:53Z had VmHWM 2.02 GB at 17:52Z
+  (`.cache/pilot-mem.csv`). It is still waiting on that unit, as designed.
+- **Interim P4 sizing, LLM half** (`.cache/pilot-llm/timing.jsonl` and `progress.log`, 17 Sonnet sessions, all
+  named, seed 1). This is a partial read, not the queue item's estimate:
+  - AG-c-S/named, n 9: session wall mean 929 s (median 341, max 2,687), API time mean 73 s; turns mean 31.7 (max
+    67), output tokens mean 6,479, fits mean 19.7, experiments mean 1.1; score wall mean 277 s.
+  - AG-o-S/named, n 8: session wall mean 1,204 s (median 442, max 5,061), API time mean 98 s (one session has
+    none recorded); turns mean 27.1 (max 70), output tokens mean 10,602, fits mean 18.1, experiments mean 0.5;
+    score wall mean 721 s.
+  - The model's API time is under a tenth of the session wall time. Most of the wall time is the framework's fits
+    under this week's load, so the P4 estimate must separate the two.
+
+## 2026-10-29: Lane session 23 (17:51 UTC) hand-over and STOP POINT: FSD control A1 fails under every rule, so option 2's `Telling` change goes back to the owner
+
+**Stop point (AUTOPILOT 5: a queue item conditioned on the owner's choice).**
+- **Answer in one line:** control A1 fails under every telling rule, including the four exclusion rules that put
+  SPEC §4.2 option 2 into code (criterion (ii): 78 of 120 against 84). Under the frozen §8, no candidate is
+  ready, so the `Telling` change does not proceed. Control B came out as predicted.
+- **Evidence:**
+  - `.cache/drafts/fsd-controls/score-ctlA1.txt` and `score-ctlB.txt` (commit 7386536; S3
+    `sciagent/fsd-controls/8405509/`).
+  - Criteria v8.1 §1, §2 and §8 (frozen in F₀ 8405509). LOG 2026-10-29, "FSD at-stop controls A1 and B scored".
+  - A1 tested rung 2 (θ₊ 0.6). Under K3a, K3h, K4 and K5 alike: (i) 12/15 (the floor), (ii) 78/120 (needs
+    84), (iii) p 0.0352 (pass). K0 fails (ii) 0/120. K1 and K2z fail (i) 0/15.
+  - B tested rung 3 (the size rung). Fx passes with K0, K3a, K3h, K4 and K5 (B1 120/120, B3 15/15,
+    p 9.8e-4). Fa, Fc and Fz fail B1 0/120.
+- **Caveats:**
+  - D0 calibrated pass_ii at 0.99999775, so the calibration did not transfer to the test streams (expected (ii)
+    about 110). The red team found one candidate cause, untested and outside the preregistration: calibrate
+    fixes the diagnostics' arguments on seed 0, test per seed (controls.py:1363 and 1396 against 1534 and 1913).
+  - B's three θ₋ rungs were unbuildable, so the dev-005 shape itself was not tested, and B's pass holds only
+    for truths whose best design is not the artefact design.
+  - Per §3, nothing here favours option 2 over option 1.
+  - One red-team round: **read stands**, counts reproduced, the run as preregistered (records, hashes, H1 and
+    H2 checked).
+- **Recommendation:** keep the pilot and P4 on the current `Telling` code. Per §8, take up He² resolution next
+  (the (He², D) ordering from the session 16 ties draft, which its red team found not ready). Test the
+  seed-0-arguments lead first, as a cheap exploratory check (§5 makes any rerun under a later freeze
+  exploratory). Then come back to the owner with a new freeze if it explains the gap.
+- **Decision needed:** whether option 2 waits for He² resolution as §8 says (lane's recommendation), or the
+  owner drops option 2 for now and keeps today's telling for P4.
+
+**Done.**
+- Both FSD tests finished at 38,401 lines each (A1 18:21Z, B about 18:55Z). The score watcher started both
+  scores at 18:56:03Z; both exited 0. Score files committed alone and pushed (7386536). Nine output files copied
+  to S3. LEDGER rows: 9.19 CPU h (33,093.5 CPU s by the controls' ledger) and the 69.7 MB S3 copy.
+- One red-team round on the read: READ STANDS, with no blocking finding.
+- The control room asked for fewer notices: only launches, results, failures that need the owner, and money
+  beyond what is approved. Followed from now on.
+- No src or scripts change this session, so mypy and the test tiers were not rerun. Ruff was run (below).
+
+**Learned.**
+- A1's (ii) shortfall is far outside the calibrated law (red team: P((ii) ≤ 78) about 1e-7 under D0's counts),
+  so the calibration step, not the rule alone, is in question.
+- LLM half: three `Control request timeout: initialize` failures between 18:36 and 18:51Z, with load at about
+  20 and five-hour usage at 76% (no brake). The driver paused launches for 900 s, and launches resumed at
+  19:06Z with a submitted session. AG-o dev-008 s1 ended on `wall_time` after 4,645 s, logging turns=0
+  out_tokens=0. Check that this is how a wall-time end is logged and not a lost count. By 19:05Z, 19 sessions
+  had scored `ok`.
+- Baselines: still 7 of 310 at 19:10Z. The worker running since 12:53Z (VmHWM 2.02 GB) is presumably a far
+  B-sym@10F unit (about 4 h CPU each).
+
+**Next.**
+1. Check the owner's answer in INBOX. Meanwhile, as an exploratory check with no adoption: the theorist or
+   engineer tests whether the seed-0-arguments difference explains A1's (ii) gap (reading controls.py and a
+   small offline recount; do not run controls.py phases, and do not modify anything in
+   `.cache/drafts/fsd-controls/`).
+2. Pilot: `grep -E 'to2|exit:' .cache/pilot-run.log | tail`. Check LLM `progress.log` for further initialize
+   timeouts or units failed after 3 attempts.
+3. With the FSD runs ended, the CPU is freer: run the slow tier on `p4-rehearsal` if MemAvailable allows (at
+   most 2 workers, nice).

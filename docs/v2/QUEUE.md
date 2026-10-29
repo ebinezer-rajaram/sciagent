@@ -268,6 +268,9 @@ Each item says when it is done. Move finished items to the bottom section after 
   else 1; it logs `to2: relaunch with N workers` in `.cache/pilot-run.log`. Next session: check that line
   and that the unit is running. LLM concurrency stays 1: 10 sessions in 87 min is about 35 h for 240 units,
   shorter than the baselines' ~51 h at 2 workers, so a second session would only spend Max usage faster.
+  2026-10-29 (session 23): LLM half 19 scored `ok` by 19:05Z. Three `Control request timeout: initialize` failures
+  18:36-18:51Z (retryable; load ~20; five-hour usage 76%, no brake) paused launches 900 s; launches resumed 19:06Z. AG-o
+  dev-008 s1 ended `wall_time` (4,645 s, turns=0 out_tokens=0 logged). Baselines: still 7 of 310 at 19:10Z.
   Original item: `nice -n 10 uv run python scripts/pilot.py --root
   .cache/pilot --truths 20 --seeds 1,2,3 --b10f-truths 10 --workers 2 --llm-concurrency 1` in
   tmux, exactly the SPEC §7 P3 plan: 20 dev truths x 3 seeds; AG-c-S and AG-o-S, named and
@@ -392,6 +395,12 @@ Each item says when it is done. Move finished items to the bottom section after 
   2026-10-29 (session 22): the ceiling fired at 17:04:58Z and `fsdctl-resume.sh` restarted both tests at 17:05Z.
   `.cache/fsdctl-score-launch.sh` in unit `sci-fsdctl-score` starts the score phase for each control whose test exits 0
   (log `score:` lines in `.cache/fsdctl-test-launch.log`). Next: commit the score files, S3 copy, LEDGER row, §8 read, red team.
+  2026-10-29 (session 23): scored 18:57Z (exit 0 both; files 7386536; S3 `fsd-controls/8405509/`; LEDGER 9.19 CPU h).
+  **A1 fails under every rule**: exclusion rules (i) 12/15, (ii) 78/120 < 84, (iii) p 0.035; D0's pass_ii was 0.99999775.
+  B (size rung 3; θ₋ rungs unbuildable) as predicted: Fx passes with K0/K3a/K3h/K4/K5; Fa, Fc, Fz fail B1. Red team: read
+  stands (LOG 2026-10-29). By §8 no candidate is ready: He² resolution first, thresholds unchanged, no rerun. **Option 2's
+  `Telling` change does not proceed; returned to the owner** (stop point, JOURNAL session 23). Open lead, untested: calibrate
+  fixes diagnostic arguments on seed 0, test per seed (controls.py:1363/1396 vs 1534/1913).
 - [ ] **Remaining P4 work packages**: WP9 (1327de9), WP10 (98205b4), WP11 controls 4-6
   (6ac6142) and WP12 LOG entries (f4a38e0) are committed on `origin/p4-deltas`
   (HANDOFF-2026-10-09); its slow tier was never run. Folded into the integration item above.

@@ -1835,3 +1835,23 @@ Kept as known, with no code change:
 
 The branch's first commit carried a `Co-Authored-By` trailer, so both commits were replayed without trailers
 (40d5d0c, 9d452fa; the tree equals d72ba3c) before the merge.
+
+## 2026-10-29: FSD at-stop controls A1 and B scored under F₀ 8405509: A1 fails under every rule, so SPEC §4.2 option 2's `Telling` change does not proceed and returns to the owner
+
+Score ran at 18:56-18:57Z (both exit 0, determinism rerun OK, no P1 breaches; score files 7386536; S3
+`sciagent/fsd-controls/8405509/`; 33,093.5 CPU s, under the 12.0 h ceiling). Read under criteria §8, as frozen;
+one red-team round: **read stands**, counts reproduced from the per-seed records and, for a sample, from the
+raw runs. **A1** (tested rung 2, θ₊ = 0.6) fails under every rule. The four exclusion rules (K3a, K3h, K4, K5)
+give identical results: (i) 12/15 (at the floor), (ii) **78/120 against 84**, (iii) p = 0.0352 (pass); K0 fails
+(ii) 0/120 and (iii); K1 and K2z fail (i) 0/15. D0's calibrated pass_ii at that rung was 0.99999775 and pass_iii
+0.99988 (Fix 4 requires reporting them): the calibration did not transfer to the test streams (expected (ii)
+about 110 under D0's own counts). By §8, "no candidate is ready; He² resolution comes first, and the thresholds
+are not changed"; Fix 4 rules out a rerun or extension. **B** (tested rung 3, the size rung; the three θ₋ rungs
+were unbuildable, so the dev-005 shape itself was not tested) came out as predicted: Fx passes with K0, K3a, K3h,
+K4 and K5 (B1 120/120, B3 15/15, p = 9.8e-4, h_F = 0.952); Fa, Fc and Fz fail B1 (0/120); Fa|K1 and Fc|K1 fail
+B2; Fx|K1 and Fx|K2z fail B3. By §8, FSD needs its own exclusion and K1 needs design-aware matching; per §2 this
+holds only for truths whose best design is not the artefact design, and per §3 nothing here favours option 2
+over option 1. Refused as post hoc: counting telling's rate_after_mark_slope[sign] picks (seeds 102, 114, 115;
+in rung 0's D*₀, not rung 2's). Unexplained and not acted on: the red team noted that calibration fixes the
+diagnostic menu's arguments on seed 0 while test fixes them per seed (controls.py:1363, 1396 against 1534,
+1913), a possible cause of the transfer gap that nobody has tested. Any rerun under a later freeze is exploratory (§5).

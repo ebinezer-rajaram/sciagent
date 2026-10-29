@@ -1758,3 +1758,22 @@ on by the control room at 11:27Z (H1 reads `[false,false,true]`). The at-stop co
 window: F₀ 8405509 (criteria v8.1 963d1495…, controls.py c0895289…) and its LEDGER row (900e66a, ceiling 7.6 CPU h,
 $0) were pushed plainly to the protected branch. Calibrate A1 and B started 11:29Z in the units
 `sci-fsdctl-A1-calibrate` and `sci-fsdctl-B-calibrate`; both passed the gate.
+
+## 2026-10-29: The P3 pilot runs as two drivers on two stores from one commit, merged into a third store for the report
+
+Decided so that the LLM half need not wait 2-4 days for the non-LLM half. One store takes one driver, and the
+brake rule puts LLM runs in the lane unit and non-LLM runs in their own unit. No unit reads another unit's cell
+(engineer, from the code: `_plan_baselines` and `_plan_llm` look up only their own addresses; `_launch_llm` gets
+no store; `run_score_job` simulates its own data; `session_void` reads only its own record). The halves meet only
+when the report reads ORACLE and B-lib beside the LLM gaps. So both halves run at v2 900e66a: `--no-llm` into
+`.cache/pilot` (unit `sci-pilot-baselines`, 11:31Z) and `--no-baselines --llm-concurrency 1 --workers 1` into
+`.cache/pilot-llm` (tmux `-L sciagent` `sci-pilot-llm`, inside the lane unit, 12:09Z; plan 240 LLM units). For
+the report, `scripts/store_merge.py` (local branch `pilot-multiroot` 6b970b6, written test first, not yet merged
+into v2) copies both stores into a new one. It refuses unless every source has exactly one established
+fingerprint and they are equal, the cells are disjoint, there is one truth digest per id, and every detail is in
+canonical bytes. The report and every analyst check then run unchanged on one root. This was chosen over teaching
+five readers several roots: no instrument code is edited, and the merge only copies bytes. Its positive control:
+a baselines-only store and an LLM-only store, merged, equal one driver's store cell for cell (9 tests; the lead
+reran them: 9 passed). Cost: wall times reflect the two halves running together (cells and CPU times do not),
+and `replay_check` must run on `.cache/pilot-llm` itself to cover running or void sessions. To be red-teamed
+with the report, before PILOT.md.

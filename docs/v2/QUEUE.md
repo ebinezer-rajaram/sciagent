@@ -252,9 +252,13 @@ Each item says when it is done. Move finished items to the bottom section after 
   `sci-pilot-baselines`, store `.cache/pilot`, log `.cache/pilot-run.log`, memory
   `.cache/pilot-mem.csv`. It runs 1 worker because of the 6 GB floor. Go to 2 when MemAvailable is 8 GiB or
   more (STOP, wait for the units in flight, delete STOP, `systemd-run --user --unit=sci-pilot-baselines
-  --setenv=PATH=$PATH bash .cache/pilot-run.sh 2`). The LLM half (`--no-baselines`, same commit, same
-  worktree) cannot share the store while this driver runs; either it waits, or `pilot_report.py` learns
-  to read two stores (an engineer item, decided by whichever is sooner). Original item: `nice -n 10 uv run python scripts/pilot.py --root
+  --setenv=PATH=$PATH bash .cache/pilot-run.sh 2`). The LLM half is running since 12:09:29Z:
+  `.cache/pilot-llm-run.sh 1` (`--no-baselines --llm-concurrency 1 --workers 1`, plan 240 LLM units) at
+  the same commit in the worktree `.claude/worktrees/pilot-llm`, store `.cache/pilot-llm`, tmux `-L sciagent`
+  session `sci-pilot-llm` (inside the lane unit, so braked). Raise to concurrency 2 only if no rate limit has
+  appeared. On a usage-limit error: `touch .cache/pilot-llm/STOP` and record it. For the report: merge
+  `pilot-multiroot` (6b970b6, `scripts/store_merge.py`) into v2, then `store_merge.py .cache/pilot
+  .cache/pilot-llm --out <new>` and run the report there (LOG 2026-10-29, two stores). Original item: `nice -n 10 uv run python scripts/pilot.py --root
   .cache/pilot --truths 20 --seeds 1,2,3 --b10f-truths 10 --workers 2 --llm-concurrency 1` in
   tmux, exactly the SPEC §7 P3 plan: 20 dev truths x 3 seeds; AG-c-S and AG-o-S, named and
   anonymised, live under Max; B-lib, B-rand, B-sym, B-sparse, B-np, ORACLE, planted-hint;

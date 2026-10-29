@@ -1591,3 +1591,24 @@ criterion's own success probability (an outcome-dependent VOID); and readings le
    criteria v6 (scratch, in `.cache/drafts/fsd-controls/`, no src edits). Then a code red team, then the freeze
    per the preregister skill: commit F, a LOG entry with the digests and `veto window ends` 24 h later, push,
    notify. Calibrate only after the window.
+
+## 2026-10-29: Lane session 17, addendum: control criteria v7 (the last blocking item fixed, not yet reviewed)
+
+**Done.**
+- Red team s17f on v6 found one blocking item: the freeze-chain test-data rule could be gamed (an unpushed D
+  could be reset and the controls re-frozen), and it mislabelled honest restarts. It also found v4's
+  test-time P1-breach rule had been lost.
+- The theorist wrote v7 (`.cache/drafts/fsd-controls/criteria.md`, sha256
+  9c15e47e440ef65f67aadde0a3beda3a89bcfec2555f6d7d55a0c0f50d3fea34; `engineer-contract.md` 405095af…). The
+  changes:
+  - Every phase fetches origin. F, and for test and score also D, must be ancestors of origin/v2.
+  - The freeze chain is read from `origin/v2:docs/v2/LEDGER.csv`.
+  - "Has test data" is defined by D0 commits between earlier freezes.
+  - The P1-breach rule is restored (VOID beyond 2 of 15 seeds).
+  - Exit codes are 0 and 10-15, clear of Python's 1 and 2.
+- v7's changes have not been reviewed. The code red team of `controls.py` comes before F, and should re-read
+  v7 §0 and §7. Checks this session (docs only, no code changed): ruff format and check clean, mypy
+  `Success: no issues found in 250 source files`, and the fast tier 2,909 passed, exit 0.
+
+**Next.** As in the hand-over above: an engineer writes `controls.py` to v7, then a code red team, then the
+freeze, then the veto window, then calibrate.

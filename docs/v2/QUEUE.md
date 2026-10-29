@@ -403,6 +403,9 @@ Each item says when it is done. Move finished items to the bottom section after 
   fixes diagnostic arguments on seed 0, test per seed (controls.py:1363/1396 vs 1534/1913).
   Decided 19:10Z (control room, delegated; LOG): today's telling stays; option 2 **parked**; the seed lead is tested first
   (theorist, exploratory, `.cache/drafts/fsd-seedlead/`); a new freeze only if it explains the gap.
+  Seed lead, first pass: undetermined, leaning against (flips sit on mark_gap_correlation, whose menu entry is
+  seed-independent); step 3 simulation unrun, and the fixed 128-run calibration pool is a second untested candidate
+  (JOURNAL session 23 addendum). Next: step 3 with a 40-minute-plus timeout, then a fresh-pool check.
 - [ ] **Remaining P4 work packages**: WP9 (1327de9), WP10 (98205b4), WP11 controls 4-6
   (6ac6142) and WP12 LOG entries (f4a38e0) are committed on `origin/p4-deltas`
   (HANDOFF-2026-10-09); its slow tier was never run. Folded into the integration item above.

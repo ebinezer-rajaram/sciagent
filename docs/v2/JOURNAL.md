@@ -2065,3 +2065,33 @@ hand-over. The owner's answers still gate the freeze, the pilot and P4 sizing.
    timeouts or units failed after 3 attempts.
 3. With the FSD runs ended, the CPU is freer: run the slow tier on `p4-rehearsal` if MemAvailable allows (at
    most 2 workers, nice).
+
+## 2026-10-29: Lane session 23, addendum (19:55 UTC): delegated decision recorded; seed lead checked: undetermined, leaning against
+
+**Done.**
+- INBOX 19:10Z (control room, delegated) handled. Today's telling rule stays for the pilot and the next
+  experiment. Option 2 is parked, not dropped. The seed lead is tested first, and a new freeze follows only if
+  it explains the gap. Recorded in LOG 2026-10-29 and the queue (f807d5a).
+- Theorist, exploratory, nothing adopted. Scripts and outputs are in `.cache/drafts/fsd-seedlead/`. Nothing was
+  written in `fsd-controls/`: `git status --ignored` on it shows only `!!` entries.
+  - Step 1 (`menus.py`, `menus-out.txt`): the label lists are identical for seed 0 and seeds 101-115. Of the 35
+    diagnostics, 19 have identical arguments, including mark_gap_correlation[sign]. The other 16 scale with the
+    mean gap. rate_after_mark_slope[sign]'s window is 1.639 at seed 0 and 1.638-2.723 at test.
+  - Step 2 (`stored.py`, `stored-out.txt`), on the stored test runs: telling's three flips (seeds 102, 114 and
+    115) come from mark_gap_correlation running low (0.785, 0.786 and 0.828, against a mean of about 0.865).
+    rate_after's value there is in the range of the seeds that did not flip. Spearman(window, rate_after
+    column max) = 0.011 (p 0.97). One post-hoc hint goes the other way: truthFSD's rate_after picks are 1 of 40
+    below a window of 1.96 and 13 of 80 above it (Fisher p 0.02). The split was chosen after seeing the data.
+  - Step 3 (re-reading one run pool under all 16 menus) did not finish. It was stopped at 19:47Z under load of
+    about 18, after about 9 CPU minutes, with no output.
+- **Answer: undetermined, leaning against.** The menu difference is real, but the flips sit on a diagnostic
+  whose menu entry does not change. The other candidate the theorist named: p32 and p16 are estimated by
+  subsampling one fixed pool of 128 calibration runs, so a fresh independent pool would show whether that pool
+  was unrepresentative. Neither candidate is tested.
+
+**Next.**
+1. Run step 3 with a timeout of 40 minutes or more (`sim.py 128 <out.json> 0,2,3,4`, then `analyse.py <out.json>
+   1000 600`; nice, one process). Then the fresh-pool check, sized first. Only if one explains the gap: a new
+   freeze, preregistered and red-teamed, under which a rerun is exploratory (§5).
+2. As in the hand-over entry above: the pilot's two halves, LLM initialize timeouts, and the slow tier on
+   `p4-rehearsal`.

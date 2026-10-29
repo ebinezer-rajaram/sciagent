@@ -1702,3 +1702,61 @@ merge base and p4-deltas has 16.
 
 **Next.** Read the engineer's report and check its output; record the conflict list and checks in the
 hand-over. The owner's answers still gate the freeze, the pilot and P4 sizing.
+
+## 2026-10-29: Lane session 19 (10:59 UTC) hand-over: owner unblocked everything; FSD controls frozen and calibrating; the full P3 pilot is running (both halves)
+
+**Done.**
+- INBOX 11:27Z (owner, through the control room): "Do all as suggested, please do your experiments". Handled and
+  ticked. I checked that v2 is protected: `gh api …/branches/v2/protection` gives force-push false, deletion false,
+  admins true; `.protected` gives `true`.
+- **FSD at-stop controls frozen** per criteria §5:
+  - `cpu-total.txt` = `0.0`, then F₀ 8405509 (`git add -f` of 54 files; criteria v8.1 963d1495…, controls.py
+    c0895289…, both in the message), then its LEDGER row 900e66a (`fsd-controls freeze 8405509… ceiling 7.6 CPU h`,
+    $0). Both pushed plainly to the protected branch.
+  - Calibrate A1 and B started 11:29Z in the user units `sci-fsdctl-A1-calibrate` and `sci-fsdctl-B-calibrate`.
+    Both passed the gate. At 13:02Z they were still running at 1.43 CPU h each (`cpu-ledger.csv`), with no D
+    pushed yet.
+  - The control room was told.
+- **SPEC §4.2 amended (option 2)** and LOG entry written. Δ6 is (A) `link-neutral`, with the integration. The
+  `Telling` code waits for A1 and B to pass. Desktop notification sent (no phone: Remote Control is off).
+- **P3 pilot, non-LLM half** running since 11:31:27Z:
+  - `.cache/pilot-run.sh 1` at v2 900e66a in the detached worktree `pilot`, unit `sci-pilot-baselines`,
+    store `.cache/pilot`, plan 310 pool jobs, 1 worker (6 GB floor).
+  - My first launch failed at once: the new worktree had no git-ignored dev split. I copied it in (sha256
+    604acec5…, the same as the main checkout's) and relaunched; nothing had been written.
+  - 7 baseline units were `ok` by 13:02Z, including B-rand dev-000 s1 at 2650.3 s.
+- **P3 pilot, LLM half** running since 12:09:29Z:
+  - Engineer 2 found from the code that no unit reads another's cell, so the halves can run in parallel on two
+    stores (LOG 2026-10-29).
+  - `.cache/pilot-llm-run.sh 1` in the worktree `pilot-llm` at the same commit, store `.cache/pilot-llm`,
+    `tmux -L sciagent` `sci-pilot-llm` (inside the lane unit, so braked). Plan 240 LLM units, concurrency 1,
+    and no API key in its environment.
+  - By 13:02Z, 7 sessions submitted and 6 scored `ok`, with no failure line.
+- **p4-deltas rehearsal** (engineer 1), local branch `p4-rehearsal`:
+  - A merge plus 5 fixes, and the `make_policy` fix done test first.
+  - Engineer's checks: ruff clean, mypy `285 source files` clean, fast tier `3525 passed`. My rerun of the new
+    test: 7 passed.
+  - The slow tier was not run; I stopped it to keep CPU for the runs. The open points are in the queue.
+- **Store merge** (engineer 2), local branch `pilot-multiroot` 6b970b6: `scripts/store_merge.py`, written test
+  first, with 9 tests and a positive control. Engineer's checks: mypy clean, fast tier `2927 passed`. My rerun:
+  9 passed. Not merged; it gets its red team with the report.
+- Checks this session on v2: docs-only commits, ruff clean. No src change was made on v2, so I did not rerun
+  mypy or the tests there.
+
+**Learned.**
+- A new worktree needs the git-ignored dev split copied in before `pilot.py` can run.
+- Calibrate CPU is above the criteria's per-calibrate figures: 1.43 CPU h each and still running, against "about
+  1.1 for A1 and 1.6 for B". The most likely cause is contention (load 9-10 on 4 vCPU most of the session), but I
+  did not measure it. The total ceiling of 7.6 CPU h may stop a test phase before it ends; §6's resume rule (a
+  `fsd-controls ceiling <c> CPU h` row) covers that.
+- The LLM sessions are quick so far: 17-67 turns, 138-341 s per session.
+
+**Next.**
+1. Calibrate: check `systemctl --user status sci-fsdctl-{A1,B}-calibrate` and `journalctl --user -u …`. After the
+   D commits arrive with `git pull --rebase`, check that `D0-<C>.json`'s bytes equal `D:$P/D0-<C>.json`. Then run
+   the test phase for each control in its own unit, with the §7 command plus `--d0-commit <D>`. Do not add files
+   to `.cache/drafts/fsd-controls` while they run.
+2. Pilot: watch both progress logs. Move the baselines to 2 workers when MemAvailable is at least 8 GiB, and raise
+   the LLM concurrency to 2 if no rate limit has appeared. On a usage-limit error, write the STOP file.
+3. When both halves finish: merge `pilot-multiroot` into v2, merge the stores, run the report and checks, red
+   team, then PILOT.md.

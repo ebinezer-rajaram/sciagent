@@ -1704,3 +1704,16 @@ spending the shared Max usage and wall time without changing outcomes (six round
 JOURNAL session 17). Not changed: stop points (SPEC changes, the P3 go/no-go, spend, AUTOPILOT §stop points)
 and choices the owner must make explicitly (Δ6 A/B/C) still wait for the owner. First use: the FSD control
 criteria v8 and `controls.py` get a single joint review, then the freeze and calibration.
+
+## 2026-10-29: Runs with no LLM calls start in their own user unit, outside the usage brake (control room)
+
+Decided by the control room (the brake is its infrastructure, so not an owner question; QUEUE "Pilot runs and
+the usage brake"). Runs that make no LLM calls (baselines, `--no-llm` pilots, FSD controls, measurements) start
+in a transient user unit, `XDG_RUNTIME_DIR=/run/user/1000 systemd-run --user --unit=sci-<run> ...`, so the brake,
+which freezes only `research-lane@sciagent`, never stalls them or inflates their wall times. Runs that call the
+LLM stay inside the lane's unit as now, so the brake still covers the Max usage they spend. Wall times from units
+that overlap an interval in `~/logs/usage/brake.log` stay flagged as before. Consequence for the full pilot:
+`scripts/pilot.py` as planned mixes LLM and baseline units in one process, so either it runs whole in the lane
+unit (baselines braked with it), or it is split into a `--no-llm` baseline run in its own unit and an LLM-arm run
+in the lane unit, writing to the same plan; the pilot-runner chooses when the pilot is unblocked and records it.
+The usual rules still apply inside the unit: `nice -n 10`, at most 2 pool workers, tmux for the console.

@@ -110,7 +110,7 @@ Each item says when it is done. Move finished items to the bottom section after 
   2026-10-28: rebased, 1ea5056: fast `2770 passed, 3 skipped`; `tests/campaign -m slow` all 11
   passed (two parts). Next: merge after the window (third). Resuming the smoke or mini-pilot stores under it needs
   `--reuse-from unrecorded`.
-- [!] **Pilot runs and the usage brake** (needs the owner; found 2026-10-28, JOURNAL session 6):
+- [x] 2026-10-29 **Pilot runs and the usage brake** (decided by the control room 2026-10-29, LOG 2026-10-29: no-LLM runs in their own `systemd-run --user --unit=sci-<run>` unit, LLM runs stay in the lane unit; found 2026-10-28, JOURNAL session 6):
   `~/bin/usage_brake.py` freezes `research-lane@sciagent.service`, and pilot processes started
   from a lane session live in that unit, so a brake freeze stalls a baseline-only run and adds the
   frozen time to its measured wall times (mini-pilot run A, 22:13:59Z-23:50:49Z). Recommendation:

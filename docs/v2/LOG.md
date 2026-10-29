@@ -1715,5 +1715,6 @@ LLM stay inside the lane's unit as now, so the brake still covers the Max usage 
 that overlap an interval in `~/logs/usage/brake.log` stay flagged as before. Consequence for the full pilot:
 `scripts/pilot.py` as planned mixes LLM and baseline units in one process, so either it runs whole in the lane
 unit (baselines braked with it), or it is split into a `--no-llm` baseline run in its own unit and an LLM-arm run
-in the lane unit, writing to the same plan; the pilot-runner chooses when the pilot is unblocked and records it.
+in the lane unit (whether two `pilot.py` processes may share one store root is not checked yet); the
+pilot-runner chooses when the pilot is unblocked and records it.
 The usual rules still apply inside the unit: `nice -n 10`, at most 2 pool workers, tmux for the console.

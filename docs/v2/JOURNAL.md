@@ -1929,3 +1929,60 @@ hand-over. The owner's answers still gate the freeze, the pilot and P4 sizing.
   real two-driver split; that claim rests on reading the code. The merged store records no provenance, and
   `replay_check` must run on `.cache/pilot-llm` itself. The engineer is fixing 1-3 test first on the branch,
   with no trailer, no push and no merge.
+
+## 2026-10-29: Lane session 22 (16:43 UTC) hand-over: store merge in v2; FSD resumed past the ceiling; score watcher armed
+
+**Done.**
+- **`store_merge.py` merged into v2** (40598b2, then the LOG and queue update 6bbf8f9).
+  - One red-team round gave "merge with fixes" (progress entry above).
+  - The engineer made fixes 1-3 test first. The three new tests failed before the fix and pass after; the file
+    gives `12 passed`.
+  - `audit.py` only moved code: `check_store`'s reading comparison became `detail_reading_is_ledgers`, with no
+    change in behaviour. I read the diff.
+  - The branch's first commit (6b970b6, session 19) carried a `Co-Authored-By` trailer. I undid my local merge
+    (`git reset --keep`, never pushed) and replayed both commits without trailers as 40d5d0c and 9d452fa. Their
+    tree equals the engineer's d72ba3c.
+  - Rerun on the live stores: `merged 2 stores (7 + 31 cells) ... 16 record dirs, 38 timing lines`. On the
+    merged store `STORE OK`, no build-directory path inside, and `fingerprint.jsonl` the same as before.
+  - Checks on v2 after the merge:
+    - `ruff format --check`: 264 files formatted; `ruff check`: all checks passed.
+    - `mypy`: `Success: no issues found in 253 source files`.
+    - `nice uv run pytest -m "not slow" -n 2 -q`: exit 0 with 2,930 dots and no F, E or s mark. Pytest
+      printed no summary line, so this rests on the exit code and the dot count (`.cache/s22/fast.log`).
+    - The affected slow files (`test_hash_seed_pair.py`, `test_store_readers.py`, `-m slow`) gave exit 0 with
+      3 dots. Of the slow files, only these two use `check_store`.
+    - The full slow tier was not run, because the runs hold the CPU.
+- **FSD ceiling resume worked.**
+  - The 7.6 h ceiling fired at 17:04:58Z. Both test units exited 11.
+  - `fsdctl-resume.sh` removed STOP at 27,361 CPU s and restarted both units at 17:05:08-09Z.
+  - The ledger kept growing under new processes. At 17:32Z: total 28,870 CPU s; runs files A1 30,787 and
+    B 26,254 lines, of 38,401 each.
+- **Score watcher armed:** `.cache/fsdctl-score-launch.sh` in user unit `sci-fsdctl-score` (17:31:55Z).
+  - It waits for both test units to end and logs each exit status and runs-file line count.
+  - It starts `sci-fsdctl-<C>-score` with the §7 command and that control's D only when the test exited 0
+    and no STOP is present. The gate needs `--d0-commit` for score (`ctl_gate.py:537`).
+  - Log lines start `score:` in `.cache/fsdctl-test-launch.log`.
+  - Committing the score files, the S3 copy and the LEDGER row stay the coordinator's (§5 step 9).
+
+**Learned.**
+- Since the restart, FSD tests run at about 3.3 seeds an hour (A1: +3,854 lines in 27 min), faster than session
+  21's slow patch. At that rate A1 ends around 18:30Z and B around 19:00Z. Projected total about 34,000 CPU s
+  (9.4 h), under the 12 h ceiling.
+- `hunt_gap.py` needs `--env fit/5`. With `--env pointproc` it reports 0 units and `GATE FAIL`.
+- Baselines half: still only 7 of 430 units scored. The unit in flight since 12:53Z had no `exit:` line at
+  17:32Z (4 h 39 min), and `sci-pilot-to2` is waiting for it, as designed.
+- LLM half: 17 scores `ok`, and no limit, error or failure line in `progress.log`.
+
+**Next.**
+1. FSD: `grep score: .cache/fsdctl-test-launch.log`. If both say `started`, check `score-ctlA1.*` and
+   `score-ctlB.*` in `$D` and the units' exit status. Then, per §5 step 9:
+   - commit the score files (`git add -f`, nothing else) and push;
+   - copy the runs files to `s3://delaymargin-results-482913/sciagent/fsd-controls/8405509/`;
+   - add the CPU LEDGER row.
+   Then read the outcome with §8 and red-team it before any adoption (SPEC §4.2 option 2's `Telling` code
+   waits on A1 and B).
+   If a test exited non-zero, `score:` says so and nothing was started.
+2. Baselines: `grep to2 .cache/pilot-run.log` for the 2-worker relaunch.
+3. When the pilot finishes: `store_merge.py .cache/pilot .cache/pilot-llm --out <new>`, then the report and
+   checks on it, then `replay_check` on `.cache/pilot-llm` itself (harness/1 at 900e66a), then the red team,
+   then PILOT.md.

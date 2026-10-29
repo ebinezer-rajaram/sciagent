@@ -1664,3 +1664,31 @@ had recreated it); it now reports `missing_details_dir`. Known and accepted: aft
 leaves a hot rollback journal, a `mode=ro` reader cannot roll it back and raises `RegistryError`
 ("attempt to write a readonly database") until the driver reopens the store; it never reads wrong
 data. Not fixed here: `audit._ro` raises untyped sqlite errors and never closes its connection.
+
+## 2026-10-29: FSD at-stop rule: the drop-rule draft is withdrawn (the world truncates at the cap); the cap stays 15,000; open
+
+Measurement finished (LOG 2026-10-28; `.cache/drafts/fsd-dist/`, 5,468 lines, seed 1, decision 0, cap
+15,000): WH and GLM sides on 16 replicates, truth side on replicates 0-1 (the full truth side was stopped
+after one replicate took 88.4 CPU s to reach the cap). The same 6 WH cells (all `inject_*`) stop on every
+replicate at every cap from 6,000 to 15,000; GLM (B-lib's pick) 0 stops in 2,560 runs; truth vs GLM is
+one-side-always-stops on 12 cells of 10 truths. Under the undefined-atom rule such a cell has He² = 1 on
+every diagnostic and `choose` takes it with diagnostic 0. **Draft (session 15, not adopted):** FSD and
+truthFSD adopt telling's rule (drop stopped replicates), because "a stopped world run returns None";
+keep 15,000; one cap path. **Red team (session 15): do not adopt.** The premise is false: the B-sym
+policy arms and the agent lab run `World(..., truncate=True)` (`campaign/execute.py:436`,
+`investigation/runner.py:269`), so a run reaching the cap is truncated at τ and kept; only runaway and
+candidate-limit guards return None (`world.py` class docstring; `investigation/policy.py:44-53` names the
+mismatch). On the 5 cells where WH and the truth both stop, the world returns a 15,000-event dataset
+against a fit predicting about 2,000: the falsification FSD is built to find, which the drop rule would
+score 0. Also: with 1 of 16 reference replicates kept the variance floor gives He² near 1 again (a cliff,
+not a fix); B-lib's pick is mark-blind `hawkes` or `regime_switching` on 17 of 20 truths, so "GLM never
+stops" says little about B-sym's fits; at 15,000 the two B-sym arms' policy simulation is about 76 CPU h on
+the dev plan (60 x (1,614 + 2,957) s, decision 0 costed 8 times, a floor for FSD). Decided: the cap stays
+15,000 (= the world's cap; a lower cap would select towards stable runs on near-critical cells such as
+dev-006 `inject_size_high`, 5 of 16 WH runs stop at 15,000, 13 at 6,000). Open: the at-stop rule. The
+option to draft next is that policy simulations truncate at the cap as the world does and read each
+diagnostic on [0, τ] (no all-diagnostics cliff, no policy/world mismatch); the WH filter has no truncate
+mode (`systems/v2/models.py:358` raises), so it is an instrument change and needs per-diagnostic
+measurements first. Found for the p4-deltas integration: `investigation/policy.py:make_policy` builds both
+`EIGPolicy` and `FSDPolicy` from `seed` and `replicates` only, so neither the arm settings' cap nor
+EIG's `weighting` reaches AG-c-S (fix and test with the integration).

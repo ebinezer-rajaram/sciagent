@@ -266,6 +266,9 @@ Each item says when it is done. Move finished items to the bottom section after 
   (older v2). Merge into v2 only after the pilot's numbers are produced (it changes the harness:
   HARNESS_VERSION harness/2, session keys), re-run fast and slow tiers and the determinism check
   on dm-devbox. The `p3-fit4` tag was not pushed; not needed unless an old record cites it.
+  Also with it (LOG 2026-10-29): `investigation/policy.py:make_policy` builds `EIGPolicy` and
+  `FSDPolicy` from `seed` and `replicates` only; pass the arm settings' `max_events` and EIG's
+  `weighting` through, test first.
 - [x] 2026-10-27 **Cross-check the rebuilt defect-hunt checks against the originals** (7406810,
   LOG 2026-10-27): ported test-first `check_budgets`, `check_sessions` (`scripts/session_check.py`),
   `KEY_FIELDS` and the beats-truth flag (`hunt_gap.py --split`; making it fail the gate is a
@@ -301,7 +304,7 @@ Each item says when it is done. Move finished items to the bottom section after 
   2026-10-28T19:15Z): the guard above before the pilot; derived address text with the p4-deltas
   integration. Δ11 (EIG weights) proposed 2026-10-27 after the red team rejected the first
   draft's tie rule (LOG, veto window ends 2026-10-28T21:40Z). Drafts of the FSD event cap and the
-  five review items are in `.cache/drafts/`; review items proposed (LOG, window ends 2026-10-28T21:45Z); Δ6: `link-neutral` not adopted, a link-balanced variant recommended pending its own red team (LOG); 2026-10-28: link-balanced red-teamed, **needs the owner's explicit choice** (A/B/C; no veto window, since (C) sets aside rule (A) after the numbers; LOG 2026-10-28); FSD cap: draft not adopted, measurement first (LOG). 2026-10-28 (session 13): measurement prepared (LOG 2026-10-28); pass 1 running in `tmux -L sciagent` `fsd-dist`, output `.cache/drafts/fsd-dist/dist-s1-d0.jsonl`; then summary, pass 2, a cap draft and its red team. 2026-10-29 (session 14): pass 1 done (1,280 lines, exit 0; `.cache/drafts/fsd-dist/summary-pass1.txt`): 6 of 160 WH (truth, design) cells stop at 15,000 on every replicate, no GLM stop, 0.31 CPU h; pass 2 (all 16 replicates) running in `fsd-dist` since 00:04Z, about 1 CPU h. Next: summary on the full file, then the cap draft and its red team.
+  five review items are in `.cache/drafts/`; review items proposed (LOG, window ends 2026-10-28T21:45Z); Δ6: `link-neutral` not adopted, a link-balanced variant recommended pending its own red team (LOG); 2026-10-28: link-balanced red-teamed, **needs the owner's explicit choice** (A/B/C; no veto window, since (C) sets aside rule (A) after the numbers; LOG 2026-10-28); FSD cap: draft not adopted, measurement first (LOG). 2026-10-28 (session 13): measurement prepared (LOG 2026-10-28); pass 1 running in `tmux -L sciagent` `fsd-dist`, output `.cache/drafts/fsd-dist/dist-s1-d0.jsonl`; then summary, pass 2, a cap draft and its red team. 2026-10-29 (session 14): pass 1 done (1,280 lines, exit 0; `.cache/drafts/fsd-dist/summary-pass1.txt`): 6 of 160 WH (truth, design) cells stop at 15,000 on every replicate, no GLM stop, 0.31 CPU h; pass 2 (all 16 replicates) running in `fsd-dist` since 00:04Z, about 1 CPU h. Next: summary on the full file, then the cap draft and its red team. 2026-10-29 (session 15): pass 2 done (5,120 lines, 1.105 CPU h sim) and truth side on replicates 0-1 (348 runs); the drop-rule draft (`.cache/drafts/fsd-cap-draft2.md`) was red-teamed **do not adopt** (the world truncates at the cap, it does not return None) and is withdrawn; the cap stays 15,000; the at-stop rule stays open (LOG 2026-10-29). Next: theorist/engineer draft of the truncation option (policy simulations truncate at the cap like the world and read diagnostics on [0, τ]; the WH filter needs a truncate mode), with per-diagnostic He² measured on the 6 WH cells and dev-006 before any proposal.
 - [ ] **Remaining P4 work packages**: WP9 (1327de9), WP10 (98205b4), WP11 controls 4-6
   (6ac6142) and WP12 LOG entries (f4a38e0) are committed on `origin/p4-deltas`
   (HANDOFF-2026-10-09); its slow tier was never run. Folded into the integration item above.
@@ -312,8 +315,10 @@ Each item says when it is done. Move finished items to the bottom section after 
   repository (records kept on dm-devbox and under the S3 prefix; only the sha256 committed) and
   prepare the single freeze commit of SPEC §6.1. The owner approves before any agent touches
   the test split.
-- [ ] **Fetch the QTM catalogue** (`scripts/fetch_qtm.py`, for P5) so its three skipped
-  acceptance tests run. Low priority.
+- [x] 2026-10-29 **Fetch the QTM catalogue** (`scripts/fetch_qtm.py`, for P5) so its three skipped
+  acceptance tests run. Low priority. Session 15: fetched into `data/qtm` (gitignored), exit 0;
+  `--verify` both files `ok` (201061306 and 99744391 bytes, pinned sha256);
+  `tests/acceptance/test_qtm_ingestion.py` `20 passed`, no skips.
 
 ## Done
 

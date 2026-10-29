@@ -1,4 +1,19 @@
-# Positive controls for the at-stop rule (FSD, truthFSD, telling): preregistered criteria, v8
+# Positive controls for the at-stop rule (FSD, truthFSD, telling): preregistered criteria, v8.1
+
+**v8.1 (2026-10-29): s18b non-blocking fixes, no rule, threshold or seed change.** `redteam-s18b.md` (joint review of v8 and the code) found nothing blocking. The text edits are its items 6, 7, 8 and 10:
+- §5 Interruptions: a rerun repeats D0's values, not necessarily its bytes (item 6).
+- §0 result codes: the evidence on 15 is the mismatching lines, and on 14 the breaches by seed (item 7).
+- §0 rungs: B with a failed reference check calibrates no rung (item 8).
+- §5 Operational notes: what loses a calibrate, rerunning score after its commit, and finishing the other control under F first (item 10).
+
+The code fixes (items 1-5, 9 and 11) change no rule:
+- D is built and pushed with a temporary object directory, so D0's bytes reach $R/.git/objects only through the step-4 fetch (item 1).
+- The tests gain literal streams, boundary tests and the listed gate cases (item 2).
+- B's reference check counts cut0 as truncated (item 3).
+- Gate git calls drop every inherited `GIT_*` variable and set `GIT_NO_REPLACE_OBJECTS=1` (item 4).
+- OSError, missing files and a ledger error in the refusal path exit 10 (item 5).
+- calibrate's ledger unit counts charges, not runs (item 9).
+- The docstrings name v8 (item 11).
 
 v8 (2026-10-29, theorist) is v7 (`criteria-v7.md`, sha256 9c15e47e…, commit ecb909a) with `redteam-s18.md`'s four blocking fixes, its cheap non-blocking fixes, and the engineer's seven v7 gaps (coordinator 09:20Z). Following the owner (LOG 2026-10-29, d550bc4), there are no veto windows: v7 had no veto wait, and v8 adds none. There is one review, joint with the controls.py code review. §0's rules, §1 and §2's controls, thresholds and seeds are unchanged; the one addition there is a third reading for B rungs (E2). New evidence is in $D/v8-checks/: `breach_model.py`, `run_big-out.txt`, `pvoid-out.txt`, and the scratch-git scripts `lib8.sh`, `scen8.sh`, `s2diag.sh`, `refined.sh`, `s8.sh`, and `lib8c.sh` with `refined-c.sh` (v8's exact content-compare C7). These were written for /tmp/fsd-v8-check and /tmp/fsd-v8-theory; copy them there before rerunning. They use local bare repositories only.
 
@@ -125,7 +140,7 @@ Telling's argmax is d-major (`Telling.from_table`: the first d whose column maxi
 - P3 (A1): h ≥ 0.95; `pass_ii(15, p₃₂, p₁₆)` ≥ 0.95; `pass_iii(101..115, p₃₂, h(·))` ≥ 0.95 (`power2.py`: exact, clustered, given random's fixed picks); and the 99% clause.
 
 **Rungs and their reading (redteam-s17d 3, 7).**
-- Every rung of A1 and of B is calibrated, and every rung's P1, P2 and P3 (or P3-B) values go into `D0-<C>.json`.
+- Every rung of A1 and of B is calibrated, and every rung's P1, P2 and P3 (or P3-B) values go into `D0-<C>.json`. The exception is B when its reference check fails at both θ₊: it then calibrates no rung, and D0 holds the check's counts (VOID, 12, either way; v8.1).
 - The test uses the first rung, in ladder order, that passes all its preconditions.
 - A rung is **unbuildable** if it fails P1, P2 or the 99% clause (N3).
 - Calibration makes a control VOID (12) only if every rung is unbuildable or, for B, the reference check fails at both θ₊ = 0.5 and 0.6. Test and score can VOID it later (14, 15).
@@ -153,7 +168,7 @@ Telling's argmax is d-major (`Telling.from_table`: the first d whose column maxi
   - test exits 12 or 13 at once, drawing nothing, if that is D0's result.
   - score exits with the control's terminal code (0, 12, 13, 14 or 15), after writing its files.
     - It checks determinism first and breaches second, so 15 takes precedence over 14.
-    - On 14 or 15, the score files hold only the result and its evidence: the mismatching lines, and the breaches by seed. No rule is scored (restored from v4).
+    - On 14 or 15, the score files hold only the result and its evidence. On 15 the evidence is the mismatching lines (stored and redrawn); on 14 it is the breaches by seed. No rule is scored (restored from v4).
     - On 12 or 13, they hold D0's per-rung values.
 - **Test-time P1 breach** (restored from v4). This is a truncation, cut0 or stop where calibration had none, or a run that does not truncate where calibration had 256/256.
   - It is scored as observed under every rule and listed by seed in the score files.
@@ -397,7 +412,7 @@ A2 is not part of this preregistration. It drew no verdict, it had no power calc
 - **After a successful push**, calibrate writes D0 to $D (a temporary file, then `os.replace`), prints D's sha and exits with D0's result (0, 12 or 13).
 - **Interruptions.**
   - A calibrate that crashes, is killed or hits STOP before step 4 succeeds leaves no value anywhere. Its CPU stays charged.
-  - Rerunning calibrate under the same F is a clean restart. D0 records no time and not O, so its bytes repeat; only CPU is lost, at most about 1.1 CPU h for A1 and 1.6 for B (cost5's worst calibration).
+  - Rerunning calibrate under the same F is a clean restart. D0 records no time and not O, so its values repeat. Its bytes can differ, because its records include the LEDGER rows and status commits seen at the push. Only CPU is lost, at most about 1.1 CPU h for A1 and 1.6 for B (cost5's worst calibration).
   - If the push landed but D0 was not written, the rerun refuses and prints D's sha; restore D0 as above.
 - **The lane and git.** On the lane's next `git pull --rebase`, D arrives, and git overwrites an untracked D0-<C>.json without notice (scratch S8). That is harmless, because the file then holds D's bytes. The gate never relies on git to protect D0.
 - **Why not the alternatives.**
@@ -424,6 +439,11 @@ A2 is not part of this preregistration. It drew no verdict, it had no power calc
   - the numpy and scipy versions.
 - D0 records no time and not O. It cannot record D, whose sha depends on D0's bytes.
 - The score files record the same, plus O, D and the sha256 of `runs-<C>.jsonl`.
+
+**Operational notes (v8.1, s18b 10).**
+- A calibrate (1-1.6 CPU h) is lost, exiting 10 at the gate rerun before its push, if a new file appears in $D, HEAD leaves v2, or a gh or network call fails. Keep $D, HEAD and the network still while it runs.
+- Do not rerun score after its files are committed and pushed. Doing so leaves a modified tracked file in $D, and C8 then refuses every phase of both controls until the committed bytes are restored.
+- Once a control's D is pushed, any F′ makes that control exploratory. Finish the other control under F first, which §5 allows, before any re-freeze.
 
 **Deviations.**
 - After F, any change to a frozen file, including a controls.py bug fix, needs a new version of this file, its review and a new freeze F′ (Sequence 5–6).

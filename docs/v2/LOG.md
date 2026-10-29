@@ -1718,3 +1718,21 @@ unit (baselines braked with it), or it is split into a `--no-llm` baseline run i
 in the lane unit (whether two `pilot.py` processes may share one store root is not checked yet); the
 pilot-runner chooses when the pilot is unblocked and records it.
 The usual rules still apply inside the unit: `nice -n 10`, at most 2 pool workers, tmux for the console.
+
+## 2026-10-29: FSD at-stop controls, criteria v8: calibrate pushes its D0 before anyone can read it; the gate needs branch protection
+
+Red team s18 found v7's freeze chain gameable without a force-push: a re-freeze merged into v2, or a LEDGER row
+deleted, let fresh test data pass as preregistered (`.cache/drafts/fsd-controls/redteam-s18.md`, scratch
+scenarios S2, S3). v8 (theorist) decides: the freezes are every non-merge commit on origin/v2 that ever changed
+`controls.py`, each named by a LEDGER row ever added (read from the `+` lines of the file's history, so a
+deleted row changes nothing); a control has earlier test data iff some commit touching its `D0-<C>.json` does
+not descend from the current freeze; every phase fetches the explicit URL into a private ref under a lock and
+refuses on any failure. Calibrate keeps D0 in memory, builds the D commit itself in a temporary object store and
+pushes it before writing D0 anywhere, so every D0 anyone has seen is on origin. Chosen over encrypting D0 (the key
+stays on this machine) and over counting every calibrate start (an honest crash would then be mislabelled), at
+the price of losing a 1-1.6 CPU h calibrate that crashes before its push. The rule assumes v2 is never rewritten,
+so v8 checks GitHub branch protection (H1) and the force-push and deletion activity (H2) in every phase; the owner
+must switch protection on. Found by the engineer: `python -I` ignores `PYTHONDONTWRITEBYTECODE` and
+`PYTHONPYCACHEPREFIX`, so `controls.py` sets `sys.dont_write_bytecode` and `sys.pycache_prefix` itself and the gate
+requires `-I`. One joint review of v8 and the code (s18b): ready to freeze; its non-blocking fixes are in v8.1
+(963d1495…), with no rule, threshold or seed changed.

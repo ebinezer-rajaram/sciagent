@@ -1631,3 +1631,49 @@ freeze, then the veto window, then calibrate.
 **Next.** Read both reports. If the red team finds a blocking item in v7, write v8 before the code red team
 and tell the engineer. Then: the code red team of `controls.py` against v7 (or v8), then the freeze per the
 preregister skill (commit F, LOG entry with digests and a 24 h veto window, LEDGER row, push, notify).
+
+## 2026-10-29: Lane session 18 (08:45 UTC) hand-over: FSD controls written and reviewed, ready to freeze; the freeze waits on branch protection
+
+**Done.**
+- INBOX: the owner's 09:12Z entry (no veto windows; one red-team round per item) handled. It is recorded in LOG
+  and the queue rule, the VETO.md header is updated, and the control room has been told (d550bc4). The control room
+  settled the brake question (LOG, 3b1ad97): runs with no LLM calls start in their own `systemd-run --user` unit.
+  My recommendations on the four owner questions went to the control room: where the baselines run
+  (dm-devbox), Δ6 ((A) `link-neutral`), SPEC §4.2 (option 2) and branch protection (turn it on).
+- FSD at-stop controls:
+  - Criteria v7 was committed (ecb909a).
+  - A fresh red team found it **not ready** (redteam-s18.md, a416b34). The freeze chain could be gamed without a
+    force-push, through a merge or a deleted LEDGER row.
+  - The theorist wrote v8 (1dc2ea1), and the engineer wrote `controls.py`, `ctl_gate.py`, `ctl_det.py`,
+    `test_controls.py` and `parity/` to it.
+  - One joint review of v8 and the code (redteam-s18b.md, 0ee902c) said **ready to freeze**, with nothing
+    blocking. Its fixes are made: v8.1, sha256 963d1495…; controls.py c0895289…; ctl_gate.py 60140412…;
+    test_controls.py 36a208f1….
+  - The engineer reports 90 passed in 587.72 s, parity 72 of 72 picks with 0 mismatches, all 16 of the reviewer's
+    surviving mutants now caught, ctl-det `cmp: identical`, and ruff and mypy --strict clean on the five files.
+  - My rerun of the fast subset with `-m "not slow"`: `82 passed, 8 deselected`. My first rerun failed
+    `test_check_runtime_requires_the_isolated_flag`, only because my `PYTHONPYCACHEPREFIX` directory did not
+    exist; the gate requires it, and the test assumes it.
+  - `controls.py` and its helpers stay **uncommitted** until the freeze commit F, as the criteria require.
+  - CPU used: about 0.37 CPU h for the engineer's tests and mutants, plus the reviewers' runs. No real
+    calibrate, test or score phase ran.
+- Not verified: nothing ran against GitHub beyond read-only `gh` calls, and the CLI ran only up to its pre-git
+  refusals. Also, the engineer ran `ruff format` over 11 of session 17's untracked probe scripts in
+  `.cache/drafts/fsd-controls/` (a2band, bench, cost2-5, power2-3, probe4-5, randpicks). This changed layout only,
+  and their outputs are untouched, but the original bytes are lost. They are not part of the freeze.
+
+**Learned.**
+- The previous round's criteria checks compared commits and LEDGER text that git history simplification and an
+  ordinary commit can hide. Mechanical scratch-repo scenarios found this; reading had not, across six rounds.
+- The single joint review of text and code, with mutation testing, was the useful kind. It found test gaps that
+  the passing count hid (10 mutants survived the 78 tests).
+
+**Next.**
+1. The owner turns on branch protection for v2 (command with the control room; gate H1 refuses every phase until
+   then).
+2. Then freeze straight away, with no window: create `cpu-total.txt` = `0.0`, commit F with `git add -f` of the
+   controls files (both hashes in the message), add the LEDGER row `fsd-controls freeze <F> ceiling 7.6 CPU h`
+   ($0), push, and tell the control room.
+3. Calibrate A1 and B, each in its own `systemd-run --user --unit=sci-fsdctl-<C>` unit, nice, one process each.
+   Leave `$D` and HEAD alone while they run (criteria §5, operational notes).
+4. Owner questions are unchanged apart from the brake: where the baselines run, Δ6, and SPEC §4.2.

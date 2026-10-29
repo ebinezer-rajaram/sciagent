@@ -258,7 +258,16 @@ Each item says when it is done. Move finished items to the bottom section after 
   session `sci-pilot-llm` (inside the lane unit, so braked). Raise to concurrency 2 only if no rate limit has
   appeared. On a usage-limit error: `touch .cache/pilot-llm/STOP` and record it. For the report: merge
   `pilot-multiroot` (6b970b6, `scripts/store_merge.py`) into v2, then `store_merge.py .cache/pilot
-  .cache/pilot-llm --out <new>` and run the report there (LOG 2026-10-29, two stores). Original item: `nice -n 10 uv run python scripts/pilot.py --root
+  .cache/pilot-llm --out <new>` and run the report there (LOG 2026-10-29, two stores).
+  2026-10-29 (session 20): at 13:34Z 7 baseline units `ok` (the last at 12:53Z, so one unit in flight),
+  10 LLM sessions submitted and 7 scored `ok`, no failure or rate-limit line, MemAvailable 8.68 GiB. The move
+  to 2 workers is automated: `.cache/pilot-to2.sh` in user unit `sci-pilot-to2` wrote STOP at 13:35:36Z,
+  waits for the unit in flight (the run log's next `exit:` line and `sci-pilot-baselines` inactive), deletes
+  STOP and relaunches `pilot-run.sh` in `sci-pilot-baselines` with 2 workers if MemAvailable ≥ 8 GiB then,
+  else 1; it logs `to2: relaunch with N workers` in `.cache/pilot-run.log`. Next session: check that line
+  and that the unit is running. LLM concurrency stays 1: 10 sessions in 87 min is about 35 h for 240 units,
+  shorter than the baselines' ~51 h at 2 workers, so a second session would only spend Max usage faster.
+  Original item: `nice -n 10 uv run python scripts/pilot.py --root
   .cache/pilot --truths 20 --seeds 1,2,3 --b10f-truths 10 --workers 2 --llm-concurrency 1` in
   tmux, exactly the SPEC §7 P3 plan: 20 dev truths x 3 seeds; AG-c-S and AG-o-S, named and
   anonymised, live under Max; B-lib, B-rand, B-sym, B-sparse, B-np, ORACLE, planted-hint;
@@ -340,6 +349,14 @@ Each item says when it is done. Move finished items to the bottom section after 
   `systemctl --user status`, logs with `journalctl --user -u`). Each pushes its own D commit
   (`fsd-controls D0 <C> under 8405509…`) and then writes `D0-<C>.json`. Next: after a pull brings D, run the
   test phase per criteria §5 with `--d0-commit <D>`, then score, then commit the score files.
+  2026-10-29 (session 20): A1's D is c0d1b8f (calibrate exited 13:23:15Z; D0-ctlA1.json sha256 2fe5e7e4… on
+  disk equals D's blob). B's calibrate still running at 13:34Z; ledger total 13,450 CPU s (3.74 of the 7.6
+  CPU h ceiling). Both test phases start automatically: `.cache/fsdctl-test-launch.sh` in user unit
+  `sci-fsdctl-watch` waits for B's calibrate unit to end, takes B's D from its journal line, checks each D's
+  subject names F₀ and each D0 on disk equals its D blob, then starts `sci-fsdctl-A1-test` and
+  `sci-fsdctl-B-test` with the §7 command; log `.cache/fsdctl-test-launch.log`. If B ends without a D line it
+  starts nothing. Expect the 7.6 CPU h ceiling to fire during test (exit 11, `STOP` in $D); resume per §6 with
+  a pushed `fsd-controls ceiling <c> CPU h` row, then remove STOP and rerun test. Then score per §5 step 9.
 - [ ] **Remaining P4 work packages**: WP9 (1327de9), WP10 (98205b4), WP11 controls 4-6
   (6ac6142) and WP12 LOG entries (f4a38e0) are committed on `origin/p4-deltas`
   (HANDOFF-2026-10-09); its slow tier was never run. Folded into the integration item above.

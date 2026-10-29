@@ -1770,3 +1770,28 @@ hand-over. The owner's answers still gate the freeze, the pilot and P4 sizing.
 - I did not start A1's test phase. Its `runs-ctlA1.jsonl` would be a new file in `$D` while B's calibrate has
   yet to rerun its gate before its push, and §5's operational note says that loses a calibrate. Next session:
   once B's D is on v2, start both test phases, each with its own `--d0-commit`.
+
+## 2026-10-29: Lane session 20 (13:33 UTC), progress: both runs moving; watchers set for 2 workers and the FSD test phases
+
+- INBOX: nothing open.
+- State at 13:34Z:
+  - Baselines: 7 units `ok`, one in flight since 12:53Z.
+  - LLM half: 10 sessions submitted, 7 scored `ok`, no failure or rate-limit line.
+  - Calibrate B still running (FSD controls ledger 13,450 CPU s in total).
+  - MemAvailable 8.68 GiB; load 3.4.
+- **Baselines to 2 workers.** The queue's rule (≥ 8 GiB) is met, but the unit in flight may run for hours
+  (the smoke's B-sym@10F dev-000 took 17,412 s). So `.cache/pilot-to2.sh` runs in its own user unit
+  `sci-pilot-to2`:
+  - it wrote STOP at 13:35:36Z and waits for the in-flight unit and `sci-pilot-baselines` to end;
+  - it then relaunches in the same unit, with 2 workers if MemAvailable ≥ 8 GiB at that moment.
+  - I checked that a user unit can start another (`systemd-run` nested: `inner-ok`).
+- **LLM concurrency stays 1.** At 10 sessions in 87 min, 240 units take about 35 h, less than the baselines.
+  A second concurrent session would only spend Max usage faster.
+- **FSD test phases.** `.cache/fsdctl-test-launch.sh` runs in user unit `sci-fsdctl-watch`.
+  - It waits for B's calibrate to end and checks both D commits and D0 bytes.
+  - It then starts both test units with the §7 command.
+  - A1's test is not started earlier because of §5's operational note: a new file in $D during B's pre-push
+    gate loses B's calibrate.
+  - The script's D-line parsing and byte check give the right answer on A1 (c0d1b8f; 2fe5e7e4… both sides).
+- An engineer is on the p4-rehearsal pre-merge points (1) legacy key, (2) replay and audit on a copy of the
+  LLM store, (3) LOG reconciliation.

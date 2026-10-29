@@ -20,26 +20,41 @@ created, unless:
 - each truth id carries one ``truth_digest`` across the sources (one split:
   two splits can share their ids);
 - every source detail file is the canonical bytes of its key, reading and
-  detail, so the copy is the same file.
+  detail, so the copy is the same file;
+- every source detail's reading is its ledger row's, bit for bit (the
+  ``reading_mismatch`` of ``check_store``): the new ledger is rebuilt from
+  the details, so a mismatch would otherwise pass there;
+- every complete line of each source's ``timing.jsonl`` is JSON.
 
 Copied, source by source in the order given and so deterministically: the
 committed cells in ledger order, the record dir of each committed session
 cell (``detail.session.record_dir``, when the source has it; a missing one
 stays missing, for ``store_check.py`` to report) and the complete lines of
-``timing.jsonl``. Not copied: ``progress.log``, ``attempts.jsonl`` and record
-dirs no committed cell names (a session still running), so merging a store a
-driver is writing gives a snapshot of its committed cells. The new store's
-sidecar establishes the shared fingerprint.
+``timing.jsonl`` that name a copied cell's digest. Not copied:
+``progress.log``, ``attempts.jsonl``, record dirs no committed cell names (a
+session still running) and timing lines of cells committed after the ledger
+was read, so merging a store a driver is writing gives a snapshot of its
+committed cells. The new store's sidecar establishes the shared fingerprint.
+
+The store is built in a sibling directory of ``dest``
+(``.<name>.merging-<pid>``, same filesystem) and renamed to ``dest`` only once
+every file is written and closed; a failure removes that directory and
+re-raises, so ``dest`` is either complete or absent and a rerun can go ahead.
+A process killed outright (SIGKILL) can leave the build directory behind, but
+never ``dest``.
 """
 
 from __future__ import annotations
 
+import json
+import os
 import shutil
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from sciagent.campaign.audit import detail_reading_is_ledgers
 from sciagent.campaign.fingerprint import (
     LLM_DIR,
     StoreLock,
@@ -104,6 +119,27 @@ def _record_dir(root: Path, cell: _Cell) -> str | None:
     return text if (root / text).is_dir() else None
 
 
+def _timing(root: Path, cells: Sequence[_Cell]) -> str:
+    """The complete lines of ``root``'s timing log that name a copied cell, as
+    written. The ledger was read first, so a line whose cell was committed
+    since (or that names no cell) is left out; a line that is not JSON is
+    refused, as :func:`~sciagent.campaign.audit.check_store` fails it."""
+    path = root / TIMING_FILE
+    text = path.read_text(encoding="utf-8") if path.exists() else ""
+    digests = {str(c.key.digest) for c in cells}
+    kept: list[str] = []
+    for n, line in enumerate(text[: text.rfind("\n") + 1].splitlines(True), 1):
+        try:
+            record = json.loads(line)
+        except ValueError:
+            raise CampaignError(
+                f"{root}: {TIMING_FILE} line {n} is not JSON; not merged"
+            ) from None
+        if isinstance(record, dict) and record.get("digest") in digests:
+            kept.append(line)
+    return "".join(kept)
+
+
 def _read(root: Path) -> _Source:
     cells: list[_Cell] = []
     with ResultStore(root, read_only=True) as store:
@@ -119,12 +155,14 @@ def _read(root: Path) -> _Source:
                     f"{root}: cell {entry.digest} is not the canonical bytes of "
                     f"its key, reading and detail; not merged"
                 )
+            if not detail_reading_is_ledgers(stored["reading"], entry):
+                raise CampaignError(
+                    f"{root}: cell {entry.digest}'s detail reading is not its "
+                    f"ledger reading; not merged"
+                )
             cells.append(_Cell(key, reading, stored["detail"]))
     dirs = tuple(d for c in cells if (d := _record_dir(root, c)) is not None)
-    path = root / TIMING_FILE
-    text = path.read_text(encoding="utf-8") if path.exists() else ""
-    timing = text[: text.rfind("\n") + 1]
-    return _Source(root, tuple(cells), dirs, timing)
+    return _Source(root, tuple(cells), dirs, _timing(root, cells))
 
 
 def _check_disjoint(sources: Sequence[_Source]) -> None:
@@ -150,6 +188,23 @@ def _check_disjoint(sources: Sequence[_Source]) -> None:
                 )
 
 
+def _write(read: Sequence[_Source], fingerprint: str, root: Path) -> None:
+    """The merged store at ``root``, every file closed on return."""
+    lock = StoreLock(root)
+    try:
+        guard_store(root, fingerprint, lock=lock)
+        with ResultStore(root) as out:
+            for source in read:
+                for d in source.record_dirs:
+                    shutil.copytree(source.root / d, root / d)
+                for cell in source.cells:
+                    out.put(cell.key, cell.reading, cell.detail)
+                with (root / TIMING_FILE).open("a", encoding="utf-8", newline="") as f:
+                    f.write(source.timing)
+    finally:
+        lock.release()
+
+
 def merge_stores(sources: Sequence[Path], dest: Path) -> MergeSummary:
     """Write a new store at ``dest`` from ``sources`` (module docstring)."""
     if len(sources) < 2 or len({s.resolve() for s in sources}) != len(sources):
@@ -163,19 +218,17 @@ def merge_stores(sources: Sequence[Path], dest: Path) -> MergeSummary:
     fingerprint = fingerprints[sources[0]]
     read = tuple(_read(s) for s in sources)
     _check_disjoint(read)
-    lock = StoreLock(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    build = dest.parent / f".{dest.name}.merging-{os.getpid()}"
+    build.mkdir()
     try:
-        guard_store(dest, fingerprint, lock=lock)
-        with ResultStore(dest) as out:
-            for source in read:
-                for d in source.record_dirs:
-                    shutil.copytree(source.root / d, dest / d)
-                for cell in source.cells:
-                    out.put(cell.key, cell.reading, cell.detail)
-                with (dest / TIMING_FILE).open("a", encoding="utf-8", newline="") as f:
-                    f.write(source.timing)
-    finally:
-        lock.release()
+        _write(read, fingerprint, build)
+        if dest.exists():
+            raise CampaignError(f"{dest} appeared during the merge; not replaced")
+        build.rename(dest)
+    except BaseException:
+        shutil.rmtree(build)
+        raise
     return MergeSummary(
         fingerprint,
         tuple(len(s.cells) for s in read),

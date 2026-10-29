@@ -29,8 +29,17 @@ from sciagent.campaign.fingerprint import (
 )
 from sciagent.campaign.merge import merge_stores
 from sciagent.campaign.plan import CampaignError, LLMArm
-from sciagent.campaign.store import DETAILS_DIR, TIMING_FILE, ResultStore
+from sciagent.campaign.store import (
+    DETAILS_DIR,
+    TIMING_FILE,
+    Json,
+    ResultStore,
+    cell_bytes,
+    key_from_json,
+)
 from sciagent.harness.scripted import ScriptedDriver, Step
+from sciagent.registry.ledger import LedgerEntry
+from sciagent.registry.store import ExperimentKey
 from sciagent.systems.llm.agent_sdk_provider import CONTAMINATING_VARIABLES
 
 SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "store_merge.py"
@@ -243,3 +252,75 @@ def test_a_merge_refuses_an_existing_destination_or_one_source(tmp_path: Path) -
     assert not any((tmp_path / "m").iterdir())
     _refused((tmp_path / "a",), tmp_path / "n", "two or more")
     _refused((tmp_path / "a", tmp_path / "a"), tmp_path / "n", "two or more")
+
+
+def test_a_merge_killed_partway_leaves_no_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The store is built beside ``dest`` and renamed into place only when
+    complete: a failure during the copy leaves no ``dest`` (which would pass
+    ``check_store`` holding some of the cells) and no build dir, so a rerun
+    goes ahead."""
+    with _store(tmp_path / "a") as a:
+        put_baseline(a, "ORACLE", -0.7)
+        put_baseline(a, "B-lib", -0.8)
+    with _store(tmp_path / "b") as b:
+        put_baseline(b, "B-nonpar", -0.9)
+    put = ResultStore.put
+    calls: list[str] = []
+
+    def failing_put(
+        store: ResultStore, key: ExperimentKey, reading: dict[str, float], detail: Json
+    ) -> LedgerEntry:
+        calls.append(str(key.digest))
+        if len(calls) == 2:
+            raise OSError("killed partway")
+        return put(store, key, reading, detail)
+
+    monkeypatch.setattr(ResultStore, "put", failing_put)
+    sources = (tmp_path / "a", tmp_path / "b")
+    with pytest.raises(OSError, match="killed partway"):
+        merge_stores(sources, tmp_path / "m")
+    assert not (tmp_path / "m").exists()
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["a", "b"]
+    monkeypatch.undo()
+    assert merge_stores(sources, tmp_path / "m").cells == (2, 1)
+    assert check_store(tmp_path / "m").passed
+
+
+def test_a_merge_refuses_a_detail_whose_reading_is_not_the_ledgers(
+    tmp_path: Path,
+) -> None:
+    """A detail rewritten canonically with another reading fails ``check_store``
+    on its source; the merge rebuilds the ledger from the details, so it must
+    refuse rather than launder it into a store that passes."""
+    with _store(tmp_path / "a") as a:
+        put_baseline(a, "ORACLE", -0.7)
+    with _store(tmp_path / "b") as b:
+        key = put_baseline(b, "B-lib", -0.8)
+        cell = b.cell(key.digest)
+    reading = {k: float.fromhex(v) for k, v in cell["reading"].items()}
+    reading["per_event"] = -0.5
+    path = tmp_path / "b" / DETAILS_DIR / f"{key.digest}.json"
+    path.write_bytes(cell_bytes(key_from_json(cell["key"]), reading, cell["detail"]))
+    assert not check_store(tmp_path / "b").passed
+    _refused((tmp_path / "a", tmp_path / "b"), tmp_path / "m", "reading")
+
+
+def test_a_merge_copies_only_the_timing_lines_of_copied_cells(
+    tmp_path: Path,
+) -> None:
+    """The ledger is read before ``timing.jsonl``: a cell committed in between
+    has its timing line but not its cell in the snapshot. That line is not
+    copied (``pilot_report`` counts every line)."""
+    with _store(tmp_path / "a") as a:
+        key = put_baseline(a, "ORACLE", -0.7)
+        a.log_timing({"digest": str(key.digest), "wall_s": 1.5})
+        a.log_timing({"digest": "f" * 64, "wall_s": 9.0})
+    with _store(tmp_path / "b") as b:
+        put_baseline(b, "B-lib", -0.8)
+    summary = merge_stores((tmp_path / "a", tmp_path / "b"), tmp_path / "m")
+    lines = (tmp_path / "m" / TIMING_FILE).read_text(encoding="utf-8").splitlines()
+    assert [json.loads(x)["digest"] for x in lines] == [str(key.digest)]
+    assert summary.timing_lines == 1
+    assert check_store(tmp_path / "m").warnings == ()

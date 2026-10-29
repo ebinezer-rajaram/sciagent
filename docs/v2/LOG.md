@@ -1816,3 +1816,22 @@ ran, and treating it as REFUSED would let a record leave the failure count by lo
 this, the pilot's harness/1 records read as 0 of 10 replay failures under the merged code, which looks like a
 harness defect but is by design. The new errors sit in `sciagent.harness.errors` beside `RecordError`
 (that module's own rule), still under `SciAgentError`.
+
+## 2026-10-29: `store_merge.py` merged into v2 with the red team's three fixes
+
+The store merge for the pilot's two stores (LOG above, "two drivers on two stores") had one red-team round in
+session 22: **merge with fixes**. Before merging, three fixes were made test first (9d452fa):
+- the merged store is built in a sibling `.<name>.merging-<pid>` directory and renamed into place only when
+  complete, so a merge killed partway leaves no store that passes `check_store`;
+- a detail whose reading differs from its source ledger row is refused, using the comparison `check_store` itself
+  uses (`audit.detail_reading_is_ledgers`), because the merged ledger is rebuilt from the details;
+- only the timing lines of copied cells are kept, so a cell committed after the ledger snapshot adds no line to
+  the report's wall-time n or pool CPU. A timing line that is not JSON is refused.
+
+Kept as known, with no code change:
+- The test called the positive control uses fake jobs, so the claim that real cells do not depend on which half
+  ran them rests on reading the code (`_plan_baselines` and `_plan_llm` look up only their own addresses).
+- The merged store records no provenance, so `replay_check` runs on `.cache/pilot-llm` itself.
+
+The branch's first commit carried a `Co-Authored-By` trailer, so both commits were replayed without trailers
+(40d5d0c, 9d452fa; the tree equals d72ba3c) before the merge.

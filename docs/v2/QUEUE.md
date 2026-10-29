@@ -256,8 +256,9 @@ Each item says when it is done. Move finished items to the bottom section after 
   `.cache/pilot-llm-run.sh 1` (`--no-baselines --llm-concurrency 1 --workers 1`, plan 240 LLM units) at
   the same commit in the worktree `.claude/worktrees/pilot-llm`, store `.cache/pilot-llm`, tmux `-L sciagent`
   session `sci-pilot-llm` (inside the lane unit, so braked). Raise to concurrency 2 only if no rate limit has
-  appeared. On a usage-limit error: `touch .cache/pilot-llm/STOP` and record it. For the report: merge
-  `pilot-multiroot` (6b970b6, `scripts/store_merge.py`) into v2, then `store_merge.py .cache/pilot
+  appeared. On a usage-limit error: `touch .cache/pilot-llm/STOP` and record it. For the report: ~~merge
+  `pilot-multiroot` (6b970b6, `scripts/store_merge.py`) into v2~~ (merged 2026-10-29 session 22 with the red
+  team's fixes, LOG 2026-10-29), then `store_merge.py .cache/pilot
   .cache/pilot-llm --out <new>` and run the report there (LOG 2026-10-29, two stores).
   2026-10-29 (session 20): at 13:34Z 7 baseline units `ok` (the last at 12:53Z, so one unit in flight),
   10 LLM sessions submitted and 7 scored `ok`, no failure or rate-limit line, MemAvailable 8.68 GiB. The move

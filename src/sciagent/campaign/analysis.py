@@ -57,6 +57,25 @@ held-out values: ``gap = per_event - per_event[ORACLE]`` and
 per_event[B-lib])`` (:func:`~sciagent.scoring.heldout.gap_closed`, None when
 ORACLE does not beat B-lib). Efficiency curves become gaps the same way.
 
+**Policy arms and the telling unit** (SPEC §4.2; P4 Δ11). A B-sym policy
+arm's cell is an ordinary scored row, plus what its policy computed on
+experiment data (:attr:`Row.computed`); the telling unit is not a scored
+system, so its cell becomes :attr:`Table.telling`, and
+:func:`telling_observed` and :func:`telling_rate` read the second number of
+§4.2 from the two. The verdict reads :data:`~sciagent.campaign.plan.BASELINES`
+only, so these units never enter it.
+
+**Policy-arm predictions** (P4 Δ11, plan choice 10). In an LLM policy arm
+(``AG-c-S+{random,EIG,FSD}``, AG-S-boed: :attr:`LLMArm.policy` set, which is
+in the session's address and in its record's ``InvestigationSpec.policy``) the
+framework chose every experiment, so the agent's predictions about them are
+left out of the §4.4 measures read from predictions: calibration,
+falsification-seeking and revision (C6). :func:`behaviour_sessions` is the one
+place that rule is applied, keyed on :attr:`Session.policy`, never on the
+system name. An excluded session is counted (:attr:`PredictionTally.excluded`),
+as a void is, not dropped; its score row and its stopping are unaffected (the
+agent still chose when to run an experiment and when to submit).
+
 **Shares** are over truths, each truth weighted equally (its value is the
 fraction of its seeds with the property), as in
 :mod:`sciagent.scoring.gonogo`.
@@ -94,6 +113,7 @@ from sciagent.campaign.plan import (
     BASELINES,
     ORACLE,
     PLANTED,
+    TELLING,
     CampaignConfig,
     CampaignEnvironment,
     CampaignError,
@@ -111,6 +131,7 @@ from sciagent.core import reductions
 from sciagent.scoring import gonogo
 from sciagent.scoring.heldout import gap_closed
 from sciagent.scoring.stats import DEFAULT_RESAMPLES
+from sciagent.scoring.telling import observed
 
 type Json = Any
 
@@ -148,6 +169,17 @@ class Row:
     oracle_psi_source: str | None = None
     #: The gap closed's denominator is within its paired noise (docstring).
     closed_flagged: bool = False
+    #: B-sym policy arms: the ``(name, args)`` of every diagnostic the policy
+    #: chose on an experiment that left data (None: not a policy arm's cell).
+    computed: tuple[tuple[str, tuple[tuple[str, Json], ...]], ...] | None = None
+
+
+@dataclass(frozen=True)
+class TellingCell:
+    """A (truth, seed)'s telling diagnostic: its name and channel arguments."""
+
+    name: str
+    channel_args: tuple[tuple[str, Json], ...]
 
 
 @dataclass(frozen=True)
@@ -163,6 +195,10 @@ class Session:
     env_version: str
     #: The session cell's address: its ``timing.jsonl`` line's key.
     digest: str
+    #: The arm's experiment-choice policy (P4 Δ11); None when the agent
+    #: designs its own experiments. When set, its predictions are not read
+    #: (:func:`behaviour_sessions`).
+    policy: str | None = None
 
 
 @dataclass(frozen=True)
@@ -174,6 +210,8 @@ class Table:
     sessions: tuple[Session, ...]
     planned: Mapping[str, int]
     missing: Mapping[str, int] = field(default_factory=dict)
+    #: The telling diagnostic of each (truth, seed) with a telling unit.
+    telling: Mapping[tuple[str, int], TellingCell] = field(default_factory=dict)
 
 
 def _f(reading: Mapping[str, str], name: str) -> float | None:
@@ -229,6 +267,25 @@ def row_from_cell(
         error=None if ok else str(detail.get("error")),
         oracle_underfit=underfit,
         oracle_psi_source=psi_source,
+        computed=_computed(detail.get("computed")),
+    )
+
+
+def _computed(
+    value: Json,
+) -> tuple[tuple[str, tuple[tuple[str, Json], ...]], ...] | None:
+    if value is None:
+        return None
+    return tuple((str(name), tuple(sorted(args.items()))) for name, args in value)
+
+
+def telling_cell(cell: Mapping[str, Json]) -> TellingCell | None:
+    """A stored telling unit's diagnostic; None for a failed unit."""
+    if _f(cell["reading"], "status") != 1.0:
+        return None
+    diagnostic = cell["detail"]["result"]["diagnostic"]
+    return TellingCell(
+        str(diagnostic["name"]), tuple(sorted(diagnostic["channel_args"].items()))
     )
 
 
@@ -252,11 +309,17 @@ def load_rows(
     found_sessions: list[Session] = []
     planned: dict[str, int] = {}
     missing: dict[str, int] = {}
+    telling: dict[tuple[str, int], TellingCell] = {}
     for u in baseline_units(order, config):
         planned[u.system] = planned.get(u.system, 0) + 1
         key = baseline_key(u, by_id[u.truth_id], env, config)
         if not store.done(key):
             missing[u.system] = missing.get(u.system, 0) + 1
+            continue
+        if u.system == TELLING:  # not a scored system: no row
+            found_cell = telling_cell(store.cell(key.digest))
+            if found_cell is not None:
+                telling[(u.truth_id, u.seed)] = found_cell
             continue
         rows.append(
             row_from_cell(u.truth_id, u.seed, u.system, False, store.cell(key.digest))
@@ -285,6 +348,7 @@ def load_rows(
                 void,
                 str(skey.env_version),
                 str(skey.digest),
+                config.arm_of(u.system).policy,
             )
         )
         ckey = score_key(u, skey, env, config)
@@ -294,7 +358,14 @@ def load_rows(
                     u.truth_id, u.seed, u.system, True, store.cell(ckey.digest)
                 )
             )
-    return Table(by_id, tuple(derive(rows)), tuple(found_sessions), planned, missing)
+    return Table(
+        by_id,
+        tuple(derive(rows)),
+        tuple(found_sessions),
+        planned,
+        missing,
+        telling,
+    )
 
 
 def void_counts(table: Table) -> dict[str, int]:
@@ -304,6 +375,61 @@ def void_counts(table: Table) -> dict[str, int]:
         if x.void.void:
             out[x.system] = out.get(x.system, 0) + 1
     return dict(sorted(out.items()))
+
+
+def behaviour_sessions(
+    table: Table, system: str
+) -> tuple[tuple[Session, ...], tuple[Session, ...]]:
+    """A system's sessions whose predictions the §4.4 measures read, and those
+    excluded because a policy chose their experiments (module docstring).
+
+    Every measure read from predictions (calibration, falsification-seeking,
+    revision) must take its sessions from here. Void sessions are not
+    filtered: that is the void policy's business, not this rule's.
+    """
+    mine = [x for x in table.sessions if x.system == system]
+    return (
+        tuple(x for x in mine if x.policy is None),
+        tuple(x for x in mine if x.policy is not None),
+    )
+
+
+@dataclass(frozen=True)
+class PredictionTally:
+    """A system's §4.4 prediction counts, policy-arm sessions excluded."""
+
+    #: Every stored session of the system.
+    sessions: int
+    #: Sessions in a policy arm, whose predictions are not read.
+    excluded: int
+    #: The predictions those excluded sessions made.
+    excluded_predictions: int
+    #: Sessions whose predictions are read (``sessions - excluded``).
+    read: int
+    #: Read sessions with at least one prediction.
+    predicting: int
+    predictions: int
+    evaluated: int
+    covered: int
+
+
+def prediction_tally(table: Table, system: str) -> PredictionTally:
+    """The prediction counts of :func:`behaviour_sessions`' read sessions."""
+    read, excluded = behaviour_sessions(table, system)
+
+    def total(sessions: Sequence[Session], name: str) -> int:
+        return int(sum(x.reading.get(name, 0.0) for x in sessions))
+
+    return PredictionTally(
+        sessions=len(read) + len(excluded),
+        excluded=len(excluded),
+        excluded_predictions=total(excluded, "predictions"),
+        read=len(read),
+        predicting=sum(x.reading.get("predictions", 0.0) > 0.0 for x in read),
+        predictions=total(read, "predictions"),
+        evaluated=total(read, "predictions_evaluated"),
+        covered=total(read, "predictions_covered"),
+    )
 
 
 def _denominator_noise(
@@ -460,6 +586,43 @@ def summarise(rows: Sequence[Row], system: str) -> SystemSummary:
         distance_mean=_mean(dists),
         closed_flagged=sum(r.closed_flagged for r in mine),
     )
+
+
+def telling_observed(table: Table, system: str) -> list[tuple[str, int, bool]]:
+    """Whether ``system`` observed the telling diagnostic, per (truth, seed).
+
+    SPEC §4.2's second read-out. Read for the units with a telling cell whose
+    row records what was computed (the B-sym policy arms); a failed unit
+    counts as not observed, as it counts as neither recovering nor closing
+    (:func:`truth_share`). "Observed": some diagnostic computed on an
+    experiment dataset has d*'s name and channel arguments
+    (:func:`sciagent.scoring.telling.observed`). Sorted by (truth, seed).
+    """
+    out: list[tuple[str, int, bool]] = []
+    for r in table.rows:
+        target = table.telling.get((r.truth, r.seed))
+        if r.system != system or target is None:
+            continue
+        if r.ok and r.computed is None:
+            continue
+        hit = r.ok and observed(
+            target.name,
+            dict(target.channel_args),
+            ((name, dict(args)) for name, args in r.computed or ()),
+        )
+        out.append((r.truth, r.seed, hit))
+    return sorted(out)
+
+
+def telling_rate(table: Table, system: str) -> tuple[float | None, int]:
+    """Truth-weighted share of :func:`telling_observed`, and the truths read."""
+    per_truth: dict[str, list[bool]] = {}
+    for truth, _, hit in telling_observed(table, system):
+        per_truth.setdefault(truth, []).append(hit)
+    if not per_truth:
+        return None, 0
+    shares = [sum(v) / len(v) for _, v in sorted(per_truth.items())]
+    return _mean(shares), len(shares)
 
 
 def gap_at(curve: Sequence[tuple[int, float]], fits: int) -> float | None:

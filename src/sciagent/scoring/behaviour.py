@@ -13,11 +13,14 @@ investigation module supplies three things:
 - **experiments**: :class:`ExperimentRun` per run experiment, its index and
   the agent turn at which it ran (its predictions are evaluated then).
 - **beliefs**: the agent's favoured-hypothesis timeline, :class:`Belief`
-  ``(turn, favoured, runner_up)`` at each turn where it changed (or was
-  restated), in turn order. The state at turn t is the latest belief with
-  ``turn ≤ t``. Where it comes from (an explicit tool argument, the
-  hypotheses named by the latest predictions, the last fit) is the
-  investigation's choice; this module only needs the timeline.
+  ``(turn, favoured, rivals, confidence)`` at each turn where it changed (or
+  was restated), in turn order; the runner-up is ``rivals[0]``. The state at
+  turn t is the latest belief with ``turn ≤ t``. In P4 (Δ4) the timeline is
+  read from the record's ``belief`` tool calls by
+  :mod:`sciagent.investigation.timeline`, on the experiment clock: experiment
+  j runs at turn j, and a belief stated after j experiments have run has turn
+  j (so a belief recorded after experiment j has turn j + 1). This module
+  only needs the timeline.
 
 The measures:
 
@@ -35,7 +38,9 @@ The measures:
   which a prediction of the hypothesis favoured at that experiment's turn was
   evaluated and not covered (several falsified statistics on one experiment
   are one falsification). It is *revised* when the favoured hypothesis
-  differs from it at some belief with turn in ``(t, t + k]``. It is a
+  differs from it at some belief with turn in ``(t, t + k]``; k defaults to
+  :data:`REVISION_K`, one turn: the beliefs stated after that experiment and
+  before the next. It is a
   *zombie* when the hypothesis is displaced at some later belief and then
   favoured again after that.
 - **Stopping** (:func:`stopping`): per run, the held-out gap of the model
@@ -65,16 +70,48 @@ from sciagent.scoring.errors import ScoringError
 #: tolerance as recovery in the go/no-go read (``scoring/gonogo.py``).
 CONVERGENCE_TOLERANCE: Final = 0.005
 
+#: Default revision window (turns). On the P4 experiment clock one turn is the
+#: interval between one experiment and the next.
+REVISION_K: Final = 1
+
 type PredictionRecord = tuple[Prediction, Evaluation | None]
 
 
 @dataclass(frozen=True)
 class Belief:
-    """The agent's favoured hypothesis (and runner-up) from ``turn`` on."""
+    """The agent's favoured hypothesis, its rivals and its stated confidence
+    from ``turn`` on.
+
+    ``rivals`` are distinct and exclude ``favoured``; the runner-up is
+    ``rivals[0]``. ``confidence`` is the agent's statement, in (0, 1), or None
+    when none was given (a submission). Labels should be canonical structure
+    text, so that equal labels mean equal structures.
+    """
 
     turn: int
     favoured: str
-    runner_up: str | None = None
+    rivals: tuple[str, ...] = ()
+    confidence: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.turn < 0:
+            raise ScoringError(f"a belief's turn must be >= 0, got {self.turn}")
+        if not isinstance(self.rivals, tuple) or not all(
+            isinstance(r, str) for r in self.rivals
+        ):
+            raise ScoringError(f"rivals must be a tuple of labels, got {self.rivals!r}")
+        if self.favoured in self.rivals:
+            raise ScoringError(f"the favoured {self.favoured!r} is also a rival")
+        if len(set(self.rivals)) != len(self.rivals):
+            raise ScoringError(f"rivals must be distinct, got {self.rivals!r}")
+        c = self.confidence
+        if c is not None and not (math.isfinite(c) and 0.0 < c < 1.0):
+            raise ScoringError(f"confidence must be in (0, 1), got {c!r}")
+
+    @property
+    def runner_up(self) -> str | None:
+        """The first rival, or None when no rival was named."""
+        return self.rivals[0] if self.rivals else None
 
 
 @dataclass(frozen=True)
@@ -266,7 +303,7 @@ def revision(
     experiments: Sequence[ExperimentRun],
     beliefs: Sequence[Belief],
     *,
-    k: int,
+    k: int = REVISION_K,
 ) -> Revision:
     """Revision within ``k`` turns of a falsification, and zombie returns."""
     if k < 1:

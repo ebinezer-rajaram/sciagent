@@ -57,6 +57,32 @@ def test_sciagent_never_imports_environments(path: Path) -> None:
     assert not offenders, f"{path} imports {sorted(offenders)}"
 
 
+HARNESS = SCIAGENT / "harness"
+
+
+@pytest.mark.parametrize(
+    "path", sorted(HARNESS.rglob("*.py")), ids=lambda p: str(p.name)
+)
+def test_the_harness_never_imports_campaign_or_investigation(path: Path) -> None:
+    """The harness is the layer below the investigation and the campaign: it
+    runs a session over any tool layer. The void policy's classifier lives in
+    it (``harness/voids.py``) so the harness can apply it at run time, and the
+    campaign re-imports it, never the other way round (P4 Δ8)."""
+    above = ("sciagent.campaign", "sciagent.investigation")
+    offenders: set[str] = set()
+    for node in ast.walk(_parse(path)):
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            names = [node.module, *(f"{node.module}.{a.name}" for a in node.names)]
+        else:
+            continue
+        offenders.update(
+            n for n in names if any(n == m or n.startswith(m + ".") for m in above)
+        )
+    assert not offenders, f"{path} imports {sorted(offenders)}"
+
+
 def test_sciagent_core_performs_no_io() -> None:
     """CLAUDE.md: no I/O in ``core/``. Pure functions only."""
     forbidden = {"open", "pathlib", "os", "io", "sqlite3", "requests", "httpx"}

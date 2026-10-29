@@ -10,7 +10,15 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from investigation_support import clean_environment, lab, plain_run, scripted_run
+from investigation_support import (
+    BELIEF,
+    STOP,
+    believe,
+    clean_environment,
+    lab,
+    plain_run,
+    scripted_run,
+)
 
 from sciagent.harness.record import SessionRecord
 from sciagent.harness.scripted import Step
@@ -31,6 +39,7 @@ def test_tool_sets_split_by_tier() -> None:
         "nonparam_kernels",
         "fit",
         "predict",
+        "belief",
         "submit",
     ]
     assert "python" not in constrained
@@ -45,9 +54,11 @@ def test_budgets_are_the_configured_ones() -> None:
 def test_experiment_budget_is_enforced() -> None:
     layer = lab("AG-c", experiments=2).layer()
     for k in range(2):
+        believe(layer)
         out = layer.call("run_experiment", plain_run(200.0))
         assert not out.is_error, out.text
         assert f"experiment e{k} done" in out.text
+    believe(layer)
     refused = layer.call("run_experiment", plain_run(200.0))
     assert refused.is_error
     assert "budget exhausted" in refused.text
@@ -56,6 +67,7 @@ def test_experiment_budget_is_enforced() -> None:
 
 def test_an_invalid_design_is_not_charged() -> None:
     layer = lab("AG-c", experiments=1).layer()
+    believe(layer)
     bad = layer.call(
         "run_experiment",
         {"intervention": {"type": "censor", "window": [5.0, 1.0]}, "horizon": 100.0},
@@ -102,13 +114,16 @@ def test_malformed_structure_costs_no_fit() -> None:
 
 def test_submit_once_ends_the_run() -> None:
     layer = lab("AG-c").layer()
-    bad = layer.call("submit", {"structure": "Excite(", "report": "r"})
+    believe(layer)
+    bad = layer.call("submit", {"structure": "Excite(", "report": "r", **STOP})
     assert bad.is_error
     assert not layer.finished
-    ok = layer.call("submit", {"structure": "Excite(ExpK, One, all)", "report": "r"})
+    ok = layer.call(
+        "submit", {"structure": "Excite(ExpK, One, all)", "report": "r", **STOP}
+    )
     assert not ok.is_error
     assert layer.finished
-    again = layer.call("submit", {"structure": "null", "report": "r"})
+    again = layer.call("submit", {"structure": "null", "report": "r", **STOP})
     assert again.is_error
     assert "ended" in again.text
     after = layer.call("diagnostic", {"name": "mean_rate", "data_id": "obs"})
@@ -133,7 +148,15 @@ def test_fit_configuration_is_pinned_framework_side(
     # The pinned configuration is recorded with the run and checked on replay.
     clean_environment(monkeypatch)
     outcome = scripted_run(
-        [Step(calls=(("submit", {"structure": "null", "report": "r"}),))], tmp_path
+        [
+            Step(
+                calls=(
+                    BELIEF,
+                    ("submit", {"structure": "null", "report": "r", **STOP}),
+                )
+            )
+        ],
+        tmp_path,
     )
     record = SessionRecord.load(outcome.record_path)
     spec = record.of_kind("config")[0].body["investigation"]

@@ -13,6 +13,11 @@ goes through :meth:`ToolLayer.call`, which
 * refuses every call after a terminal tool (``submit``) has succeeded;
 * logs the call, its output, what it was charged to and the budget state after.
 
+An optional ``footer`` (P4 Δ12) builds one line from the budget meters *after*
+the call has been charged; it is appended to every output -- a success, a
+handler's error, a refusal by the layer -- before the output is logged and
+returned, so the logged text is the text the agent read and replay digests it.
+
 Charging rule. A metered call is charged iff its handler returns
 ``is_error=False``. A malformed request (bad rate, unknown model) costs nothing,
 so an agent is never billed for the framework rejecting its input -- and a
@@ -45,6 +50,7 @@ from sciagent.harness.record import canonical_json, digest
 
 __all__ = [
     "BudgetMeter",
+    "Footer",
     "Handler",
     "ToolCall",
     "ToolLayer",
@@ -84,6 +90,8 @@ class ToolOutput:
 
 
 type Handler = Callable[[Mapping[str, Any]], ToolOutput]
+#: Builds the line appended to every output from the meters after charging.
+type Footer = Callable[[Mapping[str, "BudgetMeter"]], str]
 
 
 @dataclass(frozen=True)
@@ -142,9 +150,23 @@ class ToolCall:
 class ToolLayer:
     """Holds the tool specs and budgets; the only door to environment state."""
 
-    __slots__ = ("_calls", "_finished", "_lock", "_meters", "_specs", "_submission")
+    __slots__ = (
+        "_calls",
+        "_finished",
+        "_footer",
+        "_lock",
+        "_meters",
+        "_specs",
+        "_submission",
+    )
 
-    def __init__(self, specs: Sequence[ToolSpec], budgets: Mapping[str, int]) -> None:
+    def __init__(
+        self,
+        specs: Sequence[ToolSpec],
+        budgets: Mapping[str, int],
+        *,
+        footer: Footer | None = None,
+    ) -> None:
         names = [s.name for s in specs]
         if len(set(names)) != len(names):
             raise ToolLayerError(f"duplicate tool names in {names}")
@@ -169,6 +191,7 @@ class ToolLayer:
         self._calls: list[ToolCall] = []
         self._finished = False
         self._submission: ToolCall | None = None
+        self._footer = footer
         self._lock = threading.Lock()
 
     # -- introspection ------------------------------------------------------
@@ -212,6 +235,11 @@ class ToolLayer:
                 meter = self._meters[charged]
                 self._meters[charged] = BudgetMeter(
                     meter.name, meter.limit, meter.used + 1
+                )
+            if self._footer is not None:
+                line = self._footer(dict(self._meters))
+                output = ToolOutput(
+                    f"{output.text}\n{line}", output.is_error, output.record
                 )
             logged = ToolCall(
                 index=len(self._calls),

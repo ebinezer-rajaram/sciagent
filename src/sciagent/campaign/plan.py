@@ -32,33 +32,75 @@ An :class:`~sciagent.registry.store.ExperimentKey` with
 An LLM unit has two cells: the *session* (the expensive, non-reproducible
 investigation; no metric version, so a scorer change never reruns a model) and
 its *score* (keyed by the session's address plus :data:`METRIC_VERSION`).
+
+**The session surface** (P4 Δ7). A session's configuration text
+(:func:`session_text`) ends with the SHA-256 of the canonical JSON of the
+rendered surface (:func:`~sciagent.investigation.runner.rendered_config`: the
+system prompt and every tool schema for the arm, condition, budgets and prompt
+variant), so an edit to any prompt or schema text gives every session a new
+address instead of resuming old sessions under new text. The pilot's
+``harness/1`` sessions were addressed by a text without it;
+:func:`legacy_session_text_v1` keeps that text, frozen, so the rescore can
+still find them (:mod:`sciagent.campaign.rescore`).
+
+**Variants and policies.** An :class:`LLMArm` with a non-default prompt
+variant or a policy has its own system name (:meth:`LLMArm.system`), so two
+of them never share a unit.
+
+**The B-sym policy arms and the telling unit** (SPEC §4.2; P4 Δ11, WP9):
+:data:`POLICY_UNITS`, run only when named in ``CampaignConfig.baselines`` (the
+default plan is unchanged). ``B-sym+{random,EIG,FSD}`` run B-sym in two epochs
+around ``experiments`` policy-chosen experiments
+(:mod:`sciagent.systems.v2.policy_search`) on the (truth, seed)'s world;
+``B-sym+truthFSD`` is the control-5 arm (FSD against the truth, with B-lib's
+pick as the parametric side); ``telling`` computes the (truth, seed)'s telling
+diagnostic (:mod:`sciagent.scoring.telling`). Their configuration text holds
+the policy's own config (:func:`policy_arm_config`; P4 Δ11 decision 16) and
+:class:`PolicyArmSettings`, so a change to either moves their addresses and
+never an existing unit's. The telling unit's key has ``kind = "telling"``.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from typing import Final, Literal
 
+import numpy as np
+
 from sciagent.core.errors import SciAgentError
 from sciagent.core.program import stable_key
 from sciagent.core.types import DataVersion, EnvVersion, FrozenDict, MetricVersion, Seed
+from sciagent.glm.data import Dataset
 from sciagent.glm.fit import FIT_VERSION, FitConfig
 from sciagent.glm.grammar import ChannelSpec, Structure
+from sciagent.glm.interventions import Experiment
 from sciagent.glm.simulate import MarkSampler
 from sciagent.glm.syntax import render
 from sciagent.harness.live import HARNESS_VERSION
-from sciagent.investigation.prompts import Arm
+from sciagent.harness.record import canonical_json
+from sciagent.investigation.policy import policy_config
+from sciagent.investigation.prompts import (
+    Arm,
+    PromptError,
+    PromptVariant,
+    as_policy,
+    as_variant,
+    check_policy_arm,
+)
 from sciagent.investigation.runner import (
     EnvironmentSpec,
+    rendered_config,
     run_sandbox_limits,
     sandbox_json,
 )
 from sciagent.investigation.tools import FIT_CONFIG as AGENT_FIT_CONFIG
 from sciagent.investigation.tools import python_tool_json
 from sciagent.investigation.view import Condition
+from sciagent.investigation.world import MAX_EVENTS as WORLD_MAX_EVENTS
 from sciagent.investigation.world import OBSERVATIONAL_HORIZON, TruthSpec
 from sciagent.nonparam.wiener_hopf import DEFAULT as WIENER_HOPF_DEFAULT
 from sciagent.registry.store import ExperimentKey
@@ -72,7 +114,23 @@ from sciagent.sandbox.dataset import format_sha256 as dataset_format_sha256
 from sciagent.sandbox.image import SANDBOX_CONTEXT
 from sciagent.sandbox.runner import canonical_run_argv
 from sciagent.scoring import battery
+from sciagent.scoring.battery import Simulator
 from sciagent.scoring.heldout import HELDOUT_HORIZON
+from sciagent.scoring.telling import TELLING_REPLICATES
+from sciagent.systems.v2.policies import (
+    BIC_WEIGHTS,
+    ENTERTAINED_MAX,
+    POLICY_HORIZON,
+    POLICY_MAX_EVENTS,
+    REPLICATES,
+    EIGPolicy,
+    FSDPolicy,
+    Policy,
+    RandomPolicy,
+    Weighting,
+)
+from sciagent.systems.v2.policy_controls import TruthFSDPolicy
+from sciagent.systems.v2.policy_search import epoch_budgets
 from sciagent.systems.v2.search import GPConfig, StructureSampler
 from sciagent.systems.v2.sparse import SparseConfig
 from sciagent.systems.v2.systems import GrammarMember, LibraryEntry, ModelMember
@@ -88,6 +146,26 @@ B_SYM_10F: Final = "B-sym@10F"
 
 #: Every non-LLM system, in report order.
 BASELINES: Final = (ORACLE, B_LIB, B_NP, B_RAND, B_SYM, B_SPARSE, PLANTED, B_SYM_10F)
+
+#: The B-sym policy arms (SPEC §4.2; P4 Δ11) and control 5's truth-aware arm.
+B_SYM_RANDOM: Final = "B-sym+random"
+B_SYM_EIG: Final = "B-sym+EIG"
+B_SYM_FSD: Final = "B-sym+FSD"
+B_SYM_TRUTH_FSD: Final = "B-sym+truthFSD"
+#: The (truth, seed)'s telling diagnostic (SPEC §4.2; P4 Δ11 choice 12).
+TELLING: Final = "telling"
+#: Each policy arm's policy.
+ARM_POLICIES: Final = {
+    B_SYM_RANDOM: "random",
+    B_SYM_EIG: "EIG",
+    B_SYM_FSD: "FSD",
+    B_SYM_TRUTH_FSD: "truthFSD",
+}
+POLICY_ARMS: Final = (B_SYM_RANDOM, B_SYM_EIG, B_SYM_FSD, B_SYM_TRUTH_FSD)
+#: Units run only when named in ``CampaignConfig.baselines`` (module docstring).
+POLICY_UNITS: Final = (*POLICY_ARMS, TELLING)
+#: Every system ``CampaignConfig.baselines`` may name.
+KNOWN_BASELINES: Final = (*BASELINES, *POLICY_UNITS)
 
 #: The scorer's version: held-out gap, structure, battery, efficiency curve.
 #: Bump when any scoring code or constant changes. /2 (2026-10-03): the
@@ -163,14 +241,150 @@ class CampaignEnvironment:
 
 
 @dataclass(frozen=True)
+class PolicyArmSettings:
+    """The B-sym policy arms' and the telling unit's settings (all addressed).
+
+    The defaults are the policy core's (``systems/v2/policies.py``) and
+    ``scoring/telling.py``'s. ``max_events`` is the event cap of the policies'
+    own simulations (past it a replicate is undefined): the lever on FSD's cost
+    on exploding designs (handoff 2026-10-06, decision 3), left at the core's
+    default until that decision is taken. ``weighting`` is the EIG policy's
+    (BIC weights, or tempered; handoff decision 2). ``entertained`` is the
+    entertained set's size. The telling unit has its own replicates and cap.
+    """
+
+    replicates: int = REPLICATES
+    max_events: int = POLICY_MAX_EVENTS
+    weighting: Weighting = BIC_WEIGHTS
+    entertained: int = ENTERTAINED_MAX
+    telling_replicates: int = TELLING_REPLICATES
+    telling_max_events: int = POLICY_MAX_EVENTS
+
+    def __post_init__(self) -> None:
+        for name in ("replicates", "telling_replicates"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 2:
+                raise CampaignError(f"{name} must be an integer ≥ 2, got {value!r}")
+        for name in ("max_events", "telling_max_events"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise CampaignError(f"{name} must be an integer ≥ 1, got {value!r}")
+        if not 1 <= self.entertained <= ENTERTAINED_MAX:
+            raise CampaignError(
+                f"entertained must lie in 1..{ENTERTAINED_MAX}, got {self.entertained}"
+            )
+
+
+class _ConfigOnly:
+    """Stands in for the truth and B-lib's pick when only a policy's
+    configuration is read (it never simulates)."""
+
+    def simulate_experiment(
+        self,
+        experiment: Experiment,
+        rng: np.random.Generator,
+        *,
+        label: str = "experiment",
+    ) -> Dataset:
+        raise CampaignError("a configuration placeholder cannot simulate")
+
+
+def build_policy(
+    system: str,
+    seed: int,
+    settings: PolicyArmSettings,
+    *,
+    truth: Simulator | None = None,
+    comparator: Simulator | None = None,
+) -> Policy:
+    """The policy of a B-sym policy arm, seeded with the investigation seed.
+
+    ``truth`` and ``comparator`` (B-lib's pick on the observational log) are
+    required by, and read only by, ``B-sym+truthFSD``: the truth enters there,
+    at the caller (``execute.py``), as it does for ORACLE.
+    """
+    match ARM_POLICIES.get(system):
+        case "random":
+            return RandomPolicy(seed)
+        case "EIG":
+            return EIGPolicy(
+                seed,
+                replicates=settings.replicates,
+                max_events=settings.max_events,
+                weighting=settings.weighting,
+            )
+        case "FSD":
+            return FSDPolicy(
+                seed, replicates=settings.replicates, max_events=settings.max_events
+            )
+        case "truthFSD":
+            if truth is None or comparator is None:
+                raise CampaignError(
+                    f"{system} needs the truth and B-lib's pick as its comparator"
+                )
+            return TruthFSDPolicy(
+                truth,
+                seed,
+                comparator=comparator,
+                replicates=settings.replicates,
+                max_events=settings.max_events,
+            )
+    raise CampaignError(f"{system!r} is not a policy arm")
+
+
+def policy_arm_config(system: str, settings: PolicyArmSettings) -> str:
+    """The arm's policy configuration (canonical JSON; no seed, no truth)."""
+    placeholder = _ConfigOnly()
+    return build_policy(
+        system, 0, settings, truth=placeholder, comparator=placeholder
+    ).config
+
+
+#: What a policy name may hold: it is part of a system name.
+_POLICY_NAME: Final = re.compile(r"[A-Za-z0-9_.-]+")
+
+
+@dataclass(frozen=True)
 class LLMArm:
-    """One LLM arm: tier and naming condition, on the campaign's model."""
+    """One LLM arm: tier and naming condition, on the campaign's model.
+
+    ``prompt_variant`` is the system prompt's variant (P4 Δ6); ``policy`` names
+    an experiment-choice policy (P4 Δ11; ``None``: the agent designs its own
+    experiments): one of ``random``, ``EIG`` or ``FSD``, on AG-c only. Both
+    enter the session key and, when not the default, the system name.
+    AG-S-boed (SPEC §4.1) is ``LLMArm("AG-c", "named", policy="EIG")`` on the
+    Sonnet letter: its system name is ``AG-c-S/named+policy=EIG``.
+    """
 
     arm: Arm
     condition: Condition
+    prompt_variant: PromptVariant = "v1"
+    policy: str | None = None
+
+    def __post_init__(self) -> None:
+        try:
+            as_variant(self.prompt_variant)
+        except PromptError as error:
+            raise CampaignError(str(error)) from None
+        if self.policy is not None and not _POLICY_NAME.fullmatch(self.policy):
+            raise CampaignError(
+                f"policy name {self.policy!r} must match {_POLICY_NAME.pattern}"
+            )
+        try:
+            check_policy_arm(self.arm, as_policy(self.policy))
+        except PromptError as error:
+            raise CampaignError(str(error)) from None
 
     def system(self, letter: str) -> str:
-        return f"{self.arm}-{letter}/{self.condition}"
+        """``<arm>-<letter>/<condition>``, plus ``+<variant>`` for a non-default
+        variant and ``+policy=<name>`` for a policy (the pilot's arms keep
+        their names)."""
+        name = f"{self.arm}-{letter}/{self.condition}"
+        if self.prompt_variant != "v1":
+            name += f"+{self.prompt_variant}"
+        if self.policy is not None:
+            name += f"+policy={self.policy}"
+        return name
 
 
 #: The pilot's four arms, named first (the priority order of SPEC P3's brief).
@@ -204,15 +418,20 @@ class CampaignConfig:
     gp: GPConfig = field(default_factory=GPConfig)
     sparse: SparseConfig = field(default_factory=SparseConfig)
     fit_config: FitConfig = field(default_factory=FitConfig)
+    #: The B-sym policy arms' and the telling unit's settings; addressed in
+    #: those units only.
+    policy: PolicyArmSettings = field(default_factory=PolicyArmSettings)
 
     def __post_init__(self) -> None:
         if not self.seeds or len(set(self.seeds)) != len(self.seeds):
             raise CampaignError("seeds must be non-empty and distinct")
         if not set(self.control_seeds) <= set(self.seeds):
             raise CampaignError("control seeds must be campaign seeds")
-        unknown = sorted(set(self.baselines) - set(BASELINES))
+        unknown = sorted(set(self.baselines) - set(KNOWN_BASELINES))
         if unknown:
             raise CampaignError(f"unknown baseline systems {unknown}")
+        if set(self.baselines) & set(POLICY_ARMS) and self.fits < 2:
+            raise CampaignError("the B-sym policy arms need fits ≥ 2 (two epochs)")
         if self.control_truths is not None and self.control_truths < 0:
             raise CampaignError("control_truths must be ≥ 0")
         if self.fits < 1 or self.experiments < 0 or self.control_factor < 1:
@@ -229,6 +448,9 @@ class CampaignConfig:
                 "fit configuration it did not run. Use the default fit_config, "
                 "or no llm_arms"
             )
+        systems = self.llm_systems()
+        if len(set(systems)) != len(systems):
+            raise CampaignError(f"LLM arms must have distinct systems: {systems}")
 
     def llm_systems(self) -> tuple[str, ...]:
         return tuple(a.system(self.llm_letter) for a in self.llm_arms)
@@ -339,7 +561,42 @@ def system_config_text(
             return f"budget={budget}; gp={config.gp!r}; seeds={seeds}"
         case "B-sparse":
             return f"sparse: {config.sparse!r}"
+        case "B-sym+random" | "B-sym+EIG" | "B-sym+FSD" | "B-sym+truthFSD":
+            return _policy_arm_text(system, env, config, seeds)
+        case "telling":
+            s = config.policy
+            return (
+                f"telling: member=B-lib; library: {_library_text(env.library)}; "
+                f"replicates={s.telling_replicates}; "
+                f"max_events={s.telling_max_events}; "
+                f"design_horizon={POLICY_HORIZON!r}; menus=full, frozen on obs; "
+                f"argmax=diagnostic then design, ties to menu order; "
+                f"stopped runs dropped"
+            )
     raise CampaignError(f"unknown system {system!r}")
+
+
+def _policy_arm_text(
+    system: str, env: CampaignEnvironment, config: CampaignConfig, seeds: str
+) -> str:
+    first, second = epoch_budgets(config.fits)
+    s = config.policy
+    text = (
+        f"budget={config.fits}; epochs={first}+{second}; "
+        f"experiments={config.experiments}; gp={config.gp!r}; seeds={seeds}; "
+        f"policy={policy_arm_config(system, s)}; policy_seed=investigation seed; "
+        f"world_cap={WORLD_MAX_EVENTS}, truncating; stopped=used, no data"
+    )
+    if system == B_SYM_RANDOM:
+        return text + "; entertained=none"
+    text += (
+        f"; entertained=top {s.entertained} of epoch 1 by BIC, refitted on all "
+        f"data; design_horizon={POLICY_HORIZON!r}; menus=full, frozen on obs; "
+        f"fallback=random"
+    )
+    if system == B_SYM_TRUTH_FSD:
+        text += f"; comparator=B-lib: {_library_text(env.library)}"
+    return text
 
 
 def _key(
@@ -371,7 +628,7 @@ def baseline_key(
         config,
         unit.seed,
         {
-            "kind": "baseline",
+            "kind": "telling" if unit.system == TELLING else "baseline",
             "system": unit.system,
             "truth": truth.id,
             "truth_digest": truth.digest,
@@ -381,34 +638,102 @@ def baseline_key(
     )
 
 
-def session_text(arm: LLMArm, config: CampaignConfig) -> str:
-    """The full configuration of an LLM session as text.
+def surface_digest(
+    arm: LLMArm, config: CampaignConfig, env: CampaignEnvironment
+) -> str:
+    """SHA-256 of the canonical JSON of the session's rendered surface.
 
-    An AG-o session's text ends with its sandbox (:func:`session_sandbox_text`):
-    the limits :func:`~sciagent.investigation.runner.run` gives it, the handoff
-    helper's SHA-256 and the image tag computed from the build context (no
-    Docker call). So a change to any of them moves the session's address and a
-    stored session is not reused across it. AG-c has no sandbox, and its text
-    is unchanged.
+    The surface is :func:`~sciagent.investigation.runner.rendered_config` for
+    the environment's channels and anonymised names, the arm, the condition,
+    the budgets, the prompt variant and the policy: no truth and no seed. A
+    policy arm's digest also covers the policy's framework-only configuration
+    (:func:`~sciagent.investigation.policy.policy_config`: replicates, weights,
+    tie tolerance, quadrature, menus; P4 Δ11 decision 16), which the agent
+    never sees, so a change to it moves the key too. A non-policy arm's digest
+    is the surface's alone, as before.
     """
-    text = (
+    if env.investigation is None:
+        raise CampaignError("the environment has no investigation spec")
+    surface = rendered_config(
+        env.investigation,
+        env.channels,
+        arm.arm,
+        arm.condition,
+        experiments=config.experiments,
+        fits=config.fits,
+        prompt_variant=arm.prompt_variant,
+        policy=arm.policy,
+    )
+    policy = as_policy(arm.policy)
+    if policy is None:
+        return _sha(canonical_json(surface))
+    return _sha(
+        canonical_json({"surface": surface, "policy_config": policy_config(policy)})
+    )
+
+
+def _with_sandbox(arm: LLMArm, text: str) -> str:
+    """``text``, and for an AG-o arm its sandbox (:func:`session_sandbox_text`):
+    the limits :func:`~sciagent.investigation.runner.run` gives it, the
+    handoff helper's SHA-256 and the image tag computed from the build context
+    (no Docker call). So a change to any of them moves the session's address
+    and a stored session is not reused across it. AG-c has no sandbox, and its
+    text is ``text`` unchanged."""
+    if arm.arm != "AG-o":
+        return text
+    try:
+        image = image_tag(SANDBOX_CONTEXT)
+    except SandboxImageError as error:
+        raise CampaignError(
+            f"cannot name the sandbox image of an AG-o session: {error}"
+        ) from error
+    sandbox = session_sandbox_text(run_sandbox_limits(), HANDOFF_HELPER_SHA256, image)
+    return f"{text}; {sandbox}"
+
+
+def session_text(arm: LLMArm, config: CampaignConfig, env: CampaignEnvironment) -> str:
+    """The full configuration of an LLM session as text (module docstring).
+
+    An AG-o session's text ends with its sandbox (:func:`_with_sandbox`).
+    """
+    return _with_sandbox(
+        arm,
+        f"model={config.llm_model}; arm={arm.arm}; condition={arm.condition}; "
+        f"prompt_variant={arm.prompt_variant}; "
+        f"policy={'none' if arm.policy is None else arm.policy}; "
+        f"experiments={config.experiments}; fits={config.fits}; "
+        f"max_turns={config.max_turns}; wall_time_s={config.wall_time_s!r}; "
+        f"harness={HARNESS_VERSION}; surface={surface_digest(arm, config, env)}",
+    )
+
+
+def session_config_digest(
+    arm: LLMArm, config: CampaignConfig, env: CampaignEnvironment
+) -> str:
+    """The SHA-256 of :func:`session_text` (the session key's config field)."""
+    return _sha(session_text(arm, config, env))
+
+
+#: The harness version the pilot's sessions were addressed under.
+LEGACY_HARNESS_VERSION: Final = "harness/1"
+
+
+def legacy_session_text_v1(arm: LLMArm, config: CampaignConfig) -> str:
+    """The pilot's (``harness/1``) session text, frozen: do not edit.
+
+    It holds no prompt variant, policy or surface digest; every pilot session
+    ran a default arm. Only :mod:`sciagent.campaign.rescore` reads it. It is
+    ``session_text`` as v2 had it before the P4 merge, so an AG-o text ends
+    with its sandbox (:func:`_with_sandbox`), as the Linux pilot's AG-o
+    sessions were addressed; an AG-c text is the Windows pilot's byte for byte.
+    """
+    return _with_sandbox(
+        arm,
         f"model={config.llm_model}; arm={arm.arm}; condition={arm.condition}; "
         f"experiments={config.experiments}; fits={config.fits}; "
         f"max_turns={config.max_turns}; wall_time_s={config.wall_time_s!r}; "
-        f"harness={HARNESS_VERSION}"
+        f"harness={LEGACY_HARNESS_VERSION}",
     )
-    if arm.arm == "AG-o":
-        try:
-            image = image_tag(SANDBOX_CONTEXT)
-        except SandboxImageError as error:
-            raise CampaignError(
-                f"cannot name the sandbox image of an AG-o session: {error}"
-            ) from error
-        sandbox = session_sandbox_text(
-            run_sandbox_limits(), HANDOFF_HELPER_SHA256, image
-        )
-        text = f"{text}; {sandbox}"
-    return text
 
 
 def session_sandbox_text(limits: SandboxLimits, helper_sha256: str, image: str) -> str:
@@ -444,9 +769,12 @@ def _float_fields(limits: SandboxLimits) -> dict[str, int | float]:
     return out
 
 
-def session_config_digest(arm: LLMArm, config: CampaignConfig) -> str:
-    """The SHA-256 of :func:`session_text` (the session key's config field)."""
-    return _sha(session_text(arm, config))
+def legacy_session_config_digest(arm: LLMArm, config: CampaignConfig) -> str | None:
+    """The SHA-256 of :func:`legacy_session_text_v1`; ``None`` for an arm the
+    pilot could not have run (a non-default variant or a policy)."""
+    if arm.prompt_variant != "v1" or arm.policy is not None:
+        return None
+    return _sha(legacy_session_text_v1(arm, config))
 
 
 def session_key(
@@ -455,6 +783,12 @@ def session_key(
     """The address of an LLM unit's session (no metric version)."""
     if unit.truth_id != truth.id:
         raise CampaignError(f"unit truth {unit.truth_id!r} is not {truth.id!r}")
+    if tuple(truth.spec.channels) != tuple(env.channels):
+        raise CampaignError(
+            f"truth {truth.id!r} has channels {truth.spec.channels}, the "
+            f"environment {env.channels}: the session surface is rendered from "
+            f"the environment's"
+        )
     arm = config.arm_of(unit.system)
     return _key(
         env,
@@ -465,7 +799,7 @@ def session_key(
             "system": unit.system,
             "truth": truth.id,
             "truth_digest": truth.digest,
-            "session_config": session_config_digest(arm, config),
+            "session_config": session_config_digest(arm, config, env),
         },
         "none",
     )

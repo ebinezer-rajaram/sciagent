@@ -389,6 +389,9 @@ Each item says when it is done. Move finished items to the bottom section after 
   the total is under 12 h (log lines `resume:` in `.cache/fsdctl-test-launch.log`). Tests should end ~17:20Z.
   Next: check both units finished (exit 0, 38,401 lines per runs file: header + 15 x 2,560), then score each
   control (§5 step 9) and commit the score files.
+  2026-10-29 (session 22): the ceiling fired at 17:04:58Z and `fsdctl-resume.sh` restarted both tests at 17:05Z.
+  `.cache/fsdctl-score-launch.sh` in unit `sci-fsdctl-score` starts the score phase for each control whose test exits 0
+  (log `score:` lines in `.cache/fsdctl-test-launch.log`). Next: commit the score files, S3 copy, LEDGER row, §8 read, red team.
 - [ ] **Remaining P4 work packages**: WP9 (1327de9), WP10 (98205b4), WP11 controls 4-6
   (6ac6142) and WP12 LOG entries (f4a38e0) are committed on `origin/p4-deltas`
   (HANDOFF-2026-10-09); its slow tier was never run. Folded into the integration item above.

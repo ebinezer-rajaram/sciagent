@@ -278,8 +278,18 @@ Each item says when it is done. Move finished items to the bottom section after 
   Also with it (LOG 2026-10-29): `investigation/policy.py:make_policy` builds `EIGPolicy` and
   `FSDPolicy` from `seed` and `replicates` only; pass the arm settings' `max_events` and EIG's
   `weighting` through, test first.
-  2026-10-29 (session 19): rehearsal merge onto v2 84e7a2a running on local branch `p4-rehearsal`
-  (worktree `.claude/worktrees/p4-rehearsal`) with the `make_policy` fix; not merged into v2.
+  2026-10-29 (session 19): rehearsal merge done on local branch `p4-rehearsal` (worktree
+  `.claude/worktrees/p4-rehearsal`, from v2 84e7a2a; not merged into v2, not pushed). 3642c3c merge (8 files,
+  17 hunks; v2's fixes kept, p4 added), then 0872a7f, 1d8a7ec, 6561868 and ce4c167 (merge fixes) and f3da328
+  (`make_policy`: `PolicySettings` gains `max_events` and `weighting` at their defaults, and the session key
+  includes them; test `tests/campaign/test_policy_arm_settings_agcs.py`, 7 passed on the lead's rerun).
+  Engineer's checks: ruff clean, mypy `Success: no issues found in 285 source files`, fast tier `3525 passed,
+  3 warnings`. The slow tier was not run (only `test_replay_check.py`, 4 passed). Before the real merge:
+  (1) confirm the legacy key, so that harness/1 = v2's pre-merge text with the AG-o sandbox block (the pilot's AG-o sessions
+  stay rescorable); (2) run `replay_check` and the audit on the Linux pilot's harness/1 records under the
+  merged code; (3) reconcile p4's LOG entries (its open decisions and 6,000-cap draft are settled in v2's LOG);
+  (4) strip the engineer's `Co-Authored-By` trailers if these commits are replayed; (5) run the slow tier.
+  Also: the pinned AG-c EIG/FSD session addresses move even at defaults (no store holds one).
 - [x] 2026-10-27 **Cross-check the rebuilt defect-hunt checks against the originals** (7406810,
   LOG 2026-10-27): ported test-first `check_budgets`, `check_sessions` (`scripts/session_check.py`),
   `KEY_FIELDS` and the beats-truth flag (`hunt_gap.py --split`; making it fail the gate is a

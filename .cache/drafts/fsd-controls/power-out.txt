@@ -1,0 +1,18 @@
+random over 8 decisions, one label in 35: r = 0.2070
+smallest b with c = 0 that passes: 5
+N=10: P(control 5 passes | truthFSD ever-hit 1.0) = 0.9924
+N=10: P(control 5 passes | truthFSD ever-hit 0.99) = 0.9851
+N=10: P(control 5 passes | truthFSD ever-hit 0.9) = 0.8803
+N=10: P(control 5 passes | truthFSD ever-hit 0.8) = 0.7051
+N=10: P(control 5 passes | truthFSD ever-hit 0.5) = 0.1769
+N=10: P(pass | truthFSD ever-hit = r, no better than random) = 0.0052
+P(>= 8 of 10 seeds | per-seed hit 0.95) = 0.9885
+P(>= 8 of 10 seeds | per-seed hit 0.9) = 0.9298
+P(>= 8 of 10 seeds | per-seed hit 0.8) = 0.6778
+P(>= 72 of 80 | per-pair 0.95) = 0.9816
+P(>= 56 of 80 | per-pair 0.80) = 0.9885
+pi=0.01: P(telling excludes, R=32)=0.275, P(truthFSD excludes, R=16)=0.149, K4 per-decision exclusion disagreement=0.342; P(truthFSD excludes at >=1 of 8 decisions)=0.7237
+pi=0.03: P(telling excludes, R=32)=0.623, P(truthFSD excludes, R=16)=0.386, K4 per-decision exclusion disagreement=0.528; P(truthFSD excludes at >=1 of 8 decisions)=0.9797
+pi=0.05: P(telling excludes, R=32)=0.806, P(truthFSD excludes, R=16)=0.560, K4 per-decision exclusion disagreement=0.463; P(truthFSD excludes at >=1 of 8 decisions)=0.9986
+pi=0.10: P(telling excludes, R=32)=0.966, P(truthFSD excludes, R=16)=0.815, K4 per-decision exclusion disagreement=0.207; P(truthFSD excludes at >=1 of 8 decisions)=1.0000
+pi=0.20: P(telling excludes, R=32)=0.999, P(truthFSD excludes, R=16)=0.972, K4 per-decision exclusion disagreement=0.029; P(truthFSD excludes at >=1 of 8 decisions)=1.0000

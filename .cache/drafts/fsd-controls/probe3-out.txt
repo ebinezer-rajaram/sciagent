@@ -1,0 +1,30 @@
+A1nc5: theta+=0.5 high branching 1.10 on inject_sign_high: trunc 64/64, stop 0/64, tau min/max 833/967, non-truncated mean_rate []
+A1nc6: theta+=0.6 high branching 1.15 on inject_sign_high: trunc 64/64, stop 0/64, tau min/max 831/1052, non-truncated mean_rate []
+
+=== A16: obs n=2441, R=8 per side, probe streams ===
+  burst                truth  trunc 0/8 stop 0/8 tau [] n_med 2284 cpu med 0.14 max 0.15
+  burst                member trunc 0/8 stop 0/8 tau [] n_med 2126 cpu med 0.10 max 0.11
+  inject_sign_high     truth  trunc 8/8 stop 0/8 tau [836, 837, 842] n_med 15000 cpu med 0.97 max 1.07
+  inject_sign_high     member trunc 0/8 stop 0/8 tau [] n_med 1907 cpu med 0.09 max 0.14
+  inject_sign_low      truth  trunc 0/8 stop 0/8 tau [] n_med 1860 cpu med 0.14 max 0.16
+  inject_sign_low      member trunc 0/8 stop 0/8 tau [] n_med 1891 cpu med 0.10 max 0.12
+  inject_size_high     truth  trunc 0/8 stop 0/8 tau [] n_med 2044 cpu med 0.13 max 0.19
+  inject_size_high     member trunc 0/8 stop 0/8 tau [] n_med 2123 cpu med 0.11 max 0.12
+  inject_size_low      truth  trunc 0/8 stop 0/8 tau [] n_med 2178 cpu med 0.14 max 0.21
+  inject_size_low      member trunc 0/8 stop 0/8 tau [] n_med 1965 cpu med 0.10 max 0.12
+  clamp_release        truth  trunc 0/8 stop 0/8 tau [] n_med 3067 cpu med 0.17 max 0.20
+  clamp_release        member trunc 0/8 stop 0/8 tau [] n_med 3277 cpu med 0.12 max 0.16
+  silence_release      truth  trunc 0/8 stop 0/8 tau [] n_med 1744 cpu med 0.12 max 0.17
+  silence_release      member trunc 0/8 stop 0/8 tau [] n_med 1606 cpu med 0.08 max 0.08
+  censor_marked_burst  truth  trunc 0/8 stop 0/8 tau [] n_med 1450 cpu med 0.16 max 0.21
+  censor_marked_burst  member trunc 0/8 stop 0/8 tau [] n_med 1624 cpu med 0.09 max 0.11
+  top cells on designs where no run truncated or stopped (rank by D):
+    clamp_release        spectral_peak_frequency            He2=0.996738 D=5.73
+    burst                mark_gap_correlation[sign]         He2=0.984514 D=4.17
+    inject_sign_low      mark_gap_correlation[sign]         He2=0.939926 D=2.81
+    clamp_release        mark_gap_correlation[sign]         He2=0.915078 D=2.47
+    inject_size_low      mark_gap_correlation[sign]         He2=0.883451 D=2.15
+    inject_sign_low      rate_after_mark_slope[sign]        He2=0.881925 D=2.14
+  capped design inject_sign_high: He2(mean_rate)=1.0, He2==1 on 7/35
+
+total probe3 CPU 124.8s

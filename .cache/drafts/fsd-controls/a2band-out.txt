@@ -1,0 +1,18 @@
+N=20 pi=0.010: P(keep e1)=0.725; expected kept seeds 14.5; P(<5 seeds on a side)=0.3194; per pair K5 kept-capped 0.108, K4 kept-uncapped 0.234
+N=20 pi=0.015: P(keep e1)=0.617; expected kept seeds 12.3; P(<5 seeds on a side)=0.0686; per pair K5 kept-capped 0.132, K4 kept-uncapped 0.301
+N=20 pi=0.020: P(keep e1)=0.524; expected kept seeds 10.5; P(<5 seeds on a side)=0.0137; per pair K5 kept-capped 0.145, K4 kept-uncapped 0.345
+N=20 pi=0.025: P(keep e1)=0.445; expected kept seeds 8.9; P(<5 seeds on a side)=0.0224; per pair K5 kept-capped 0.148, K4 kept-uncapped 0.370
+N=20 pi=0.030: P(keep e1)=0.377; expected kept seeds 7.5; P(<5 seeds on a side)=0.0762; per pair K5 kept-capped 0.146, K4 kept-uncapped 0.382
+N=20 pi=0.035: P(keep e1)=0.320; expected kept seeds 6.4; P(<5 seeds on a side)=0.1832; per pair K5 kept-capped 0.139, K4 kept-uncapped 0.385
+N=20 pi=0.040: P(keep e1)=0.271; expected kept seeds 5.4; P(<5 seeds on a side)=0.3345; per pair K5 kept-capped 0.130, K4 kept-uncapped 0.379
+N=20 pi=0.045: P(keep e1)=0.229; expected kept seeds 4.6; P(<5 seeds on a side)=0.5023; per pair K5 kept-capped 0.119, K4 kept-uncapped 0.369
+N=24 pi=0.010: P(keep e1)=0.725; expected kept seeds 17.4; P(<5 seeds on a side)=0.1691; per pair K5 kept-capped 0.108, K4 kept-uncapped 0.234
+N=24 pi=0.015: P(keep e1)=0.617; expected kept seeds 14.8; P(<5 seeds on a side)=0.0200; per pair K5 kept-capped 0.132, K4 kept-uncapped 0.301
+N=24 pi=0.020: P(keep e1)=0.524; expected kept seeds 12.6; P(<5 seeds on a side)=0.0020; per pair K5 kept-capped 0.145, K4 kept-uncapped 0.345
+N=24 pi=0.025: P(keep e1)=0.445; expected kept seeds 10.7; P(<5 seeds on a side)=0.0042; per pair K5 kept-capped 0.148, K4 kept-uncapped 0.370
+N=24 pi=0.030: P(keep e1)=0.377; expected kept seeds 9.1; P(<5 seeds on a side)=0.0231; per pair K5 kept-capped 0.146, K4 kept-uncapped 0.382
+N=24 pi=0.035: P(keep e1)=0.320; expected kept seeds 7.7; P(<5 seeds on a side)=0.0773; per pair K5 kept-capped 0.139, K4 kept-uncapped 0.385
+N=24 pi=0.040: P(keep e1)=0.271; expected kept seeds 6.5; P(<5 seeds on a side)=0.1807; per pair K5 kept-capped 0.130, K4 kept-uncapped 0.379
+N=24 pi=0.045: P(keep e1)=0.229; expected kept seeds 5.5; P(<5 seeds on a side)=0.3269; per pair K5 kept-capped 0.119, K4 kept-uncapped 0.369
+N=15: P(>= 12 of 15 | 0.95) = 0.9945
+N=15: P(>= 12 of 15 | 0.9) = 0.9444

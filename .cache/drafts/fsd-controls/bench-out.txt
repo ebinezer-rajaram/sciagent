@@ -1,0 +1,2 @@
+R=32: 10.7 ms CPU per 8x35 table
+R=16: 7.1 ms CPU per 8x35 table

@@ -1,0 +1,72 @@
+35 menu labels; [sign] labels: ['mark_mean[sign]', 'mark_skewness[sign]', 'mark_autocorrelation[sign]', 'mark_gap_correlation[sign]', 'next_gap_after_large_mark[sign]', 'rate_after_mark_slope[sign]', 'mark_intensity_correlation[sign]', 'mark_cross_correlation[sign,size]']
+
+== random arm's fixed picks, A1 seeds 101-130 (label hits per seed) ==
+  mark_mean[sign]                      seeds<111: [104, 106]  all 30: 8
+  mark_skewness[sign]                  seeds<111: [102, 105, 109]  all 30: 6
+  mark_autocorrelation[sign]           seeds<111: []  all 30: 6
+  mark_gap_correlation[sign]           seeds<111: [101, 102, 104, 105]  all 30: 8
+  next_gap_after_large_mark[sign]      seeds<111: [102, 104, 106]  all 30: 9
+  rate_after_mark_slope[sign]          seeds<111: [106, 107, 108, 110]  all 30: 9
+  mark_intensity_correlation[sign]     seeds<111: []  all 30: 4
+  mark_cross_correlation[sign,size]    seeds<111: [101, 103, 105]  all 30: 8
+  mean_rate                            seeds<111: []  all 30: 4
+
+== random arm's fixed picks, B seeds 301-330 (label hits per seed) ==
+  mark_mean[sign]                      seeds<311: []  all 30: 4
+  mark_skewness[sign]                  seeds<311: [303, 305]  all 30: 6
+  mark_autocorrelation[sign]           seeds<311: [301, 302, 310]  all 30: 9
+  mark_gap_correlation[sign]           seeds<311: []  all 30: 4
+  next_gap_after_large_mark[sign]      seeds<311: [301, 308]  all 30: 7
+  rate_after_mark_slope[sign]          seeds<311: [302, 303, 309, 310]  all 30: 5
+  mark_intensity_correlation[sign]     seeds<311: []  all 30: 1
+  mark_cross_correlation[sign,size]    seeds<311: []  all 30: 2
+  mean_rate                            seeds<311: [302, 306, 308]  all 30: 8
+
+== (iii)/B3 power given the fixed picks; one telling label for all seeds; worst over [sign] ==
+  A1 N=10: h=0.99: 0.959 (mark_gap_correlation[sign]); h=0.95: 0.788 (mark_gap_correlation[sign]); h=0.9: 0.581 (mark_gap_correlation[sign])
+  A1 N=15: h=0.99: 1.000 (mark_gap_correlation[sign]); h=0.95: 0.985 (mark_gap_correlation[sign]); h=0.9: 0.905 (mark_gap_correlation[sign])
+  A1 N=20: h=0.99: 1.000 (mark_gap_correlation[sign]); h=0.95: 1.000 (next_gap_after_large_mark[sign]); h=0.9: 0.999 (next_gap_after_large_mark[sign])
+  A1 N=25: h=0.99: 1.000 (next_gap_after_large_mark[sign]); h=0.95: 1.000 (next_gap_after_large_mark[sign]); h=0.9: 1.000 (next_gap_after_large_mark[sign])
+  A1 N=30: h=0.99: 1.000 (mark_autocorrelation[sign]); h=0.95: 1.000 (next_gap_after_large_mark[sign]); h=0.9: 1.000 (next_gap_after_large_mark[sign])
+  B N=10: h=0.99: 0.959 (rate_after_mark_slope[sign]); h=0.95: 0.788 (rate_after_mark_slope[sign]); h=0.9: 0.581 (rate_after_mark_slope[sign])
+  B N=15: h=0.99: 1.000 (mark_autocorrelation[sign]); h=0.95: 1.000 (rate_after_mark_slope[sign]); h=0.9: 0.994 (mark_autocorrelation[sign])
+  B N=20: h=0.99: 1.000 (mark_autocorrelation[sign]); h=0.95: 1.000 (mark_autocorrelation[sign]); h=0.9: 0.999 (mark_autocorrelation[sign])
+  B N=25: h=0.99: 1.000 (mark_autocorrelation[sign]); h=0.95: 1.000 (mark_autocorrelation[sign]); h=0.9: 1.000 (mark_autocorrelation[sign])
+  B N=30: h=0.99: 1.000 (mark_cross_correlation[sign,size]); h=0.95: 1.000 (mark_autocorrelation[sign]); h=0.9: 1.000 (mark_autocorrelation[sign])
+
+== B3 power at N=15 if D*0 carries [size] (size-gated rung): worst over [size] ==
+  B N=15 h=0.99: 1.000 (mark_gap_correlation[size])
+  B N=15 h=0.95: 0.997 (next_gap_after_large_mark[size])
+  random hits on [size] labels, seeds 301-315:
+    mark_mean[size]                      [304, 306, 307]
+    mark_dispersion[size]                [301, 303, 307]
+    mark_skewness[size]                  [302, 308, 309, 314]
+    mark_autocorrelation[size]           [309, 311, 312]
+    mark_gap_correlation[size]           [301, 304, 311, 312, 315]
+    next_gap_after_large_mark[size]      [305, 307, 308, 310, 313]
+    rate_after_mark_slope[size]          [309, 314]
+    mark_intensity_correlation[size]     [306, 309, 311]
+    mark_cross_correlation[sign,size]    [315]
+
+== (ii) clustered power, threshold 0.7 of 8N pairs ==
+  N=10 p32 .95/.05, p16 .84/.12: P(ii passes) = 0.942
+  N=10 p32 .8/.2, p16 1/0: P(ii passes) = 0.879
+  N=10 p32 1, p16 .8: P(ii passes) = 0.989
+  N=10 p32 .95/.05, p16 .9/.1: P(ii passes) = 0.984
+  N=20 p32 .95/.05, p16 .84/.12: P(ii passes) = 0.983
+  N=20 p32 .8/.2, p16 1/0: P(ii passes) = 0.913
+  N=20 p32 1, p16 .8: P(ii passes) = 0.999
+  N=20 p32 .95/.05, p16 .9/.1: P(ii passes) = 0.998
+
+== (i) binomial: P(>= ceil(0.8 N) seeds in D*0 | p) ==
+  N=10: p=0.95: 0.988; p=0.9: 0.930
+  N=20: p=0.95: 0.997; p=0.9: 0.957
+
+== per-unit ever-hit over 8 decisions from a per-decision match p ==
+  p=0.2: 0.8322; p=0.3: 0.9424; p=0.32: 0.9543; p=0.4: 0.9832; p=0.5: 0.9961
+
+== A2 exposure (telling R=32 decides X; truthFSD R=16 per decision) ==
+  pi=0.01: P(telling keeps e1)=0.725; per pair: K5 kept-capped 0.108, K4 kept-uncapped 0.234, sets differ (K4) 0.342; N=20 P(fewer than 5 seeds on a side) = 0.3194
+  pi=0.02: P(telling keeps e1)=0.524; per pair: K5 kept-capped 0.145, K4 kept-uncapped 0.345, sets differ (K4) 0.489; N=20 P(fewer than 5 seeds on a side) = 0.0137
+  pi=0.03: P(telling keeps e1)=0.377; per pair: K5 kept-capped 0.146, K4 kept-uncapped 0.382, sets differ (K4) 0.528; N=20 P(fewer than 5 seeds on a side) = 0.0762
+  pi=0.04: P(telling keeps e1)=0.271; per pair: K5 kept-capped 0.130, K4 kept-uncapped 0.379, sets differ (K4) 0.509; N=20 P(fewer than 5 seeds on a side) = 0.3345

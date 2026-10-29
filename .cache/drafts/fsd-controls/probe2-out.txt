@@ -1,0 +1,30 @@
+sign=- structure canonical; features (Excite(kernel=<KernelKind.EXP: 'ExpK'>, mark=One(), source=Source(kind=<SourceKind.NEGATIVE: '-'>, channel='sign')), Excite(kernel=<KernelKind.EXP: 'ExpK'>, mark=One(), source=Source(kind=<SourceKind.ALL: 'all'>, channel=None)))
+
+=== B2: obs n=1982, R=8 per side, probe streams ===
+  burst                truth  trunc 0/8 stop 0/8 tau [] n_med 1908 cpu med 0.12 max 0.15
+  burst                member trunc 0/8 stop 0/8 tau [] n_med 2166 cpu med 0.10 max 0.11
+  inject_sign_high     truth  trunc 0/8 stop 0/8 tau [] n_med 1677 cpu med 0.11 max 0.14
+  inject_sign_high     member trunc 0/8 stop 0/8 tau [] n_med 1975 cpu med 0.09 max 0.10
+  inject_sign_low      truth  trunc 8/8 stop 0/8 tau [846, 847, 857] n_med 15000 cpu med 0.78 max 0.79
+  inject_sign_low      member trunc 0/8 stop 0/8 tau [] n_med 1839 cpu med 0.09 max 0.10
+  inject_size_high     truth  trunc 0/8 stop 0/8 tau [] n_med 1969 cpu med 0.12 max 0.14
+  inject_size_high     member trunc 0/8 stop 0/8 tau [] n_med 1748 cpu med 0.08 max 0.10
+  inject_size_low      truth  trunc 0/8 stop 0/8 tau [] n_med 2186 cpu med 0.13 max 0.13
+  inject_size_low      member trunc 0/8 stop 0/8 tau [] n_med 1978 cpu med 0.09 max 0.11
+  clamp_release        truth  trunc 0/8 stop 0/8 tau [] n_med 3357 cpu med 0.15 max 0.17
+  clamp_release        member trunc 0/8 stop 0/8 tau [] n_med 3187 cpu med 0.11 max 0.12
+  silence_release      truth  trunc 0/8 stop 0/8 tau [] n_med 1451 cpu med 0.09 max 0.12
+  silence_release      member trunc 0/8 stop 0/8 tau [] n_med 1829 cpu med 0.08 max 0.10
+  censor_marked_burst  truth  trunc 0/8 stop 0/8 tau [] n_med 1698 cpu med 0.13 max 0.16
+  censor_marked_burst  member trunc 0/8 stop 0/8 tau [] n_med 1538 cpu med 0.09 max 0.12
+  top cells on designs where no run truncated or stopped (rank by D):
+    inject_sign_high     mark_gap_correlation[sign]         He2=0.917941 D=2.50
+    clamp_release        rate_after_mark_slope[sign]        He2=0.845860 D=1.87
+    inject_size_low      mark_gap_correlation[sign]         He2=0.760183 D=1.43
+    inject_sign_high     rate_after_mark_slope[sign]        He2=0.642595 D=1.03
+    clamp_release        mark_gap_correlation[sign]         He2=0.641501 D=1.03
+    burst                rate_after_mark_slope[sign]        He2=0.624162 D=0.98
+  capped design inject_sign_low: He2(mean_rate)=1.0, He2==1 on 5/35
+A1s inject_sign_high: trunc truth 16/16 member 0/16; He2 == 1.0 on 6/35, menu order: ['mean_rate', 'mark_mean[sign]', 'log_gap_cv', 'burstiness', 'uniformity_ks', 'gap_exponential_ks']
+
+total probe2 CPU 33.0s

@@ -1,0 +1,4 @@
+A1: calibration 0.16 h + test 1.01 h = 1.18 CPU h
+A2: calibration 0.23 h + test 0.46 h = 0.69 CPU h
+B: calibration 0.16 h + test 1.23 h = 1.39 CPU h
+total 3.25 CPU h; with 30% margin 4.23 CPU h

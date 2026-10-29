@@ -1,0 +1,46 @@
+{
+ "copies": {
+  "candidates": {
+   "path": "candidates-picks.json",
+   "sha256": "4ca6a8e87434f3f6d7958a54be09eb2c9e2bd577bb821e2a1740e09e42e2b5ba"
+  },
+  "lines": {
+   "path": "trunc-lines.jsonl",
+   "sha256": "03efa888b546b3704d98e48405a264e5a6867a1cb65790ea5a62010d4fe538d4"
+  },
+  "truths": {
+   "path": "trunc-truths.jsonl",
+   "sha256": "45e410e9e2569b2537a2821e4c138b07f2fc6d0a049d2e53640d32ec69acca30"
+  }
+ },
+ "n_lines": 1152,
+ "n_truths": 4,
+ "rules": [
+  "K0",
+  "K1",
+  "K2z",
+  "K3a",
+  "K3h",
+  "K4"
+ ],
+ "sources": {
+  "candidates": {
+   "path": "/home/ubuntu/lanes/sciagent/.cache/drafts/fsd-rule/candidates.json",
+   "sha256": "9b9a044f56f19447a0f18111ec6e61d47f946783ba70629ef8466f5cba56e2b7"
+  },
+  "lines": {
+   "path": "/home/ubuntu/lanes/sciagent/.cache/drafts/fsd-trunc/trunc-s1-d0.jsonl",
+   "sha256": "e90cb6d1915b83e50b3d4dfafde13e8c7380a518949e40f5709ddb1dccc6f3d1"
+  },
+  "truths": {
+   "path": "/home/ubuntu/lanes/sciagent/.cache/drafts/fsd-trunc/trunc-s1-d0.jsonl.truths.jsonl",
+   "sha256": "4ab4906ba8e4f167873d77afb74109e183b093bbbd12b6d520bdafc0250ffd16"
+  }
+ },
+ "truths": [
+  "dev-002",
+  "dev-005",
+  "dev-006",
+  "dev-015"
+ ]
+}

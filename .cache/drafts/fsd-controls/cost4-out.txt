@@ -1,0 +1,2 @@
+expected: A1 1.85 h, B 3.29 h, A2 2.85 h, total 7.99 CPU h (Delta_pred simulation 0.090 h)
+worst: A1 2.78 h, B 3.75 h, A2 3.08 h, total 9.60 CPU h (Delta_pred simulation 0.090 h)

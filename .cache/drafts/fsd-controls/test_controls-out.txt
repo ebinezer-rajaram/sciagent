@@ -1,0 +1,213 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.1, pluggy-1.6.0 -- /home/ubuntu/lanes/sciagent/.claude/worktrees/fsd-dist/.venv/bin/python
+hypothesis profile 'default'
+rootdir: /home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls
+configfile: ../../../../../../../dev/null
+plugins: anyio-4.14.2, hypothesis-6.164.0, xdist-3.8.0
+collecting ... collected 90 items
+
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_column_rules_on_every_outcome PASSED [  1%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_rule_b_zero_row_and_k0_uses_b_for_telling_a_for_truthfsd PASSED [  2%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_k2z_and_fz_zero_mean_rate_only_where_a_side_truncates PASSED [  3%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_k3a_k3h_thresholds PASSED [  4%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_k3a_against_k4_on_an_all_stopped_design PASSED [  5%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_k5_shares_x_and_truthfsd_keeps_its_own_truncations_outside_x PASSED [  6%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_f_rules PASSED [  7%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_d_major_against_e_major PASSED [  8%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_exclude_all_for_every_arm PASSED [ 10%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_exclude_all_scores_a_miss_and_keeps_the_unit PASSED [ 11%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_a1_scoring_counts_on_a_planted_cell PASSED [ 12%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_b_scoring_b1_b2_b3 PASSED [ 13%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_cut0_and_non_finite_values PASSED [ 14%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_d_star0_selection_and_p2_parts PASSED [ 15%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_p1_and_e_cal PASSED [ 16%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_bootstrap_and_rung_values_on_stub_runs PASSED [ 17%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_rung_reading_every_branch PASSED [ 18%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_calibration_exit_statuses PASSED [ 20%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_p1_breaches_and_score_exit_statuses PASSED [ 21%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_execute_maps_stop_to_11_and_charges PASSED [ 22%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_cli_refuses_with_10_before_touching_git PASSED [ 23%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_every_exit_status_is_distinct_from_pythons PASSED [ 24%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_ledger_two_processes_lose_no_update PASSED [ 25%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_ledger_loops_are_charged_every_30_cpu_seconds PASSED [ 26%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_ledger_refuses_a_missing_or_unparseable_total PASSED [ 27%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_stop_fires_at_the_ceiling_and_blocks_every_process PASSED [ 28%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_canonical_json_bytes PASSED [ 30%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_run_store_cuts_a_torn_tail_and_refuses_corruption PASSED [ 31%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_runs_header_refuses_another_freeze_or_d PASSED [ 32%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_x_never_reaches_fsdpolicy_tools_or_agent_records PASSED [ 33%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_random_picks_match_random_picks_txt PASSED [ 34%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_pass_ii_matches_power2_out PASSED [ 35%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_pass_iii_matches_power2_out PASSED [ 36%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_parity_manifest_and_k0_k4_picks PASSED [ 37%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_exclusion_removes_a_design_it_does_not_zero_it PASSED [ 38%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_internal_functions_refuse_the_real_ids_without_the_token PASSED [ 40%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_ledger_calibrate_updates_are_coarse PASSED [ 41%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_passes_on_a_clean_scratch_and_records PASSED [ 42%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_refuses_the_environment[OPENBLAS_NUM_THREADS-2] PASSED [ 43%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_refuses_the_environment[OMP_NUM_THREADS-None] PASSED [ 44%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_refuses_the_environment[MKL_NUM_THREADS-4] PASSED [ 45%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_refuses_the_environment[PYTHONPYCACHEPREFIX-None] PASSED [ 46%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_refuses_the_environment[PYTHONPYCACHEPREFIX-relative/dir] PASSED [ 47%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_refuses_the_environment[PYTHONPYCACHEPREFIX-INSIDE] PASSED [ 48%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_refuses_the_environment[PYTHONPYCACHEPREFIX-MISSING] PASSED [ 50%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_refuses_when_fetch_fails PASSED [ 51%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_reads_o_from_the_url_not_origin_v2 PASSED [ 52%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_refuses_h1_and_h2 PASSED [ 53%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_c1_no_freeze PASSED [ 54%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_c2_freeze_branched_from_before_f0 PASSED [ 55%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_c3_a_controls_commit_without_a_row PASSED [ 56%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_c4_f_must_be_the_newest PASSED [ 57%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_c5_hashes PASSED [ 58%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_c6_run_output_in_f PASSED [ 60%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_c7_content_in_f_o_head_and_the_working_tree PASSED [ 61%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_c8_refuses_a_non_run_output[stray.txt] PASSED [ 62%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_c8_refuses_a_non_run_output[D0-x.json.bak] PASSED [ 63%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_c8_refuses_a_non_run_output[runs.jsonl] PASSED [ 64%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_c8_refuses_an_untracked_directory PASSED [ 65%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_c9_the_worktree PASSED [ 66%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_ceiling_is_read_from_rows PASSED [ 67%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_refuses_without_a_ceiling_row PASSED [ 68%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_args PASSED [ 70%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_d_build_and_push_against_a_concurrent_pusher PASSED [ 71%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_d_push_whose_reply_is_lost_still_counts PASSED [ 72%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_d_push_gives_up_after_20_attempts PASSED [ 73%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_calibrate_refuses_when_a_d_exists_and_names_it PASSED [ 74%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_d_checks PASSED [ 75%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_d_checks_extra_file_and_bytes PASSED [ 76%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_d_checks_environment PASSED [ 77%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_status_s1_linear_refreeze_after_a_pushed_d PASSED [ 78%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_status_s2_refreeze_on_a_branch_and_merged PASSED [ 80%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_status_s4_s5_killed_before_the_push PASSED [ 81%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_check_runtime_refuses_outside_python_i PASSED [ 82%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_draw_keys_match_the_score_side PASSED [ 83%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_cal_keys_match_the_bootstrap_side PASSED [ 84%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_miniature_a1_killed_then_calibrated_tested_and_scored PASSED [ 85%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_miniature_b_not_tested_exits_13_everywhere PASSED [ 86%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_boundaries_coverage_clause_and_d_star0_size PASSED [ 87%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_boundaries_a1_i_and_ii PASSED [ 88%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_boundaries_b1 PASSED [ 90%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_p_f_excludes_e1_with_the_plant_on_e1 PASSED [ 91%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_check_runtime_requires_the_isolated_flag PASSED [ 92%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_d_with_two_parents_is_refused PASSED [ 93%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_a_commit_deleting_d0_is_not_a_d_candidate PASSED [ 94%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_status_walk_uses_full_history PASSED [ 95%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_c8_refuses_an_untracked_unignored_entry PASSED [ 96%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_ignores_git_environment_and_replace_refs PASSED [ 97%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_os_errors_and_missing_files_refuse_with_10 PASSED [ 98%]
+../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_d_push_leaves_no_d0_object_in_r_before_it_lands PASSED [100%]
+
+==================================== PASSES ====================================
+___________________ test_execute_maps_stop_to_11_and_charges ___________________
+----------------------------- Captured stderr call -----------------------------
+INCOMPLETE: STOP
+_____________________ test_parity_manifest_and_k0_k4_picks _____________________
+----------------------------- Captured stdout call -----------------------------
+parity: 72 picks checked, 0 mismatches
+_______________ test_miniature_b_not_tested_exits_13_everywhere ________________
+----------------------------- Captured stdout call -----------------------------
+D 32cc17c214fbcfd81f40f5223a339f93c77573b7
+============================= slowest 10 durations =============================
+351.85s call     test_controls.py::test_miniature_a1_killed_then_calibrated_tested_and_scored
+78.36s call     test_controls.py::test_miniature_b_not_tested_exits_13_everywhere
+31.60s call     test_controls.py::test_a1_scoring_counts_on_a_planted_cell
+23.24s call     test_controls.py::test_boundaries_a1_i_and_ii
+15.34s call     test_controls.py::test_b_scoring_b1_b2_b3
+6.74s call     test_controls.py::test_exclude_all_scores_a_miss_and_keeps_the_unit
+6.65s call     test_controls.py::test_boundaries_b1
+5.04s call     test_controls.py::test_d_push_gives_up_after_20_attempts
+3.16s call     test_controls.py::test_ledger_two_processes_lose_no_update
+2.16s call     test_controls.py::test_d_checks_extra_file_and_bytes
+=========================== short test summary info ============================
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_column_rules_on_every_outcome
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_rule_b_zero_row_and_k0_uses_b_for_telling_a_for_truthfsd
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_k2z_and_fz_zero_mean_rate_only_where_a_side_truncates
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_k3a_k3h_thresholds
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_k3a_against_k4_on_an_all_stopped_design
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_k5_shares_x_and_truthfsd_keeps_its_own_truncations_outside_x
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_f_rules
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_d_major_against_e_major
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_exclude_all_for_every_arm
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_exclude_all_scores_a_miss_and_keeps_the_unit
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_a1_scoring_counts_on_a_planted_cell
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_b_scoring_b1_b2_b3
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_cut0_and_non_finite_values
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_d_star0_selection_and_p2_parts
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_p1_and_e_cal
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_bootstrap_and_rung_values_on_stub_runs
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_rung_reading_every_branch
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_calibration_exit_statuses
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_p1_breaches_and_score_exit_statuses
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_execute_maps_stop_to_11_and_charges
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_cli_refuses_with_10_before_touching_git
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_every_exit_status_is_distinct_from_pythons
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_ledger_two_processes_lose_no_update
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_ledger_loops_are_charged_every_30_cpu_seconds
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_ledger_refuses_a_missing_or_unparseable_total
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_stop_fires_at_the_ceiling_and_blocks_every_process
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_canonical_json_bytes
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_run_store_cuts_a_torn_tail_and_refuses_corruption
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_runs_header_refuses_another_freeze_or_d
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_x_never_reaches_fsdpolicy_tools_or_agent_records
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_random_picks_match_random_picks_txt
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_pass_ii_matches_power2_out
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_pass_iii_matches_power2_out
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_parity_manifest_and_k0_k4_picks
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_exclusion_removes_a_design_it_does_not_zero_it
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_internal_functions_refuse_the_real_ids_without_the_token
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_ledger_calibrate_updates_are_coarse
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_passes_on_a_clean_scratch_and_records
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_refuses_the_environment[OPENBLAS_NUM_THREADS-2]
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_refuses_the_environment[OMP_NUM_THREADS-None]
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_refuses_the_environment[MKL_NUM_THREADS-4]
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_refuses_the_environment[PYTHONPYCACHEPREFIX-None]
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_refuses_the_environment[PYTHONPYCACHEPREFIX-relative/dir]
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_refuses_the_environment[PYTHONPYCACHEPREFIX-INSIDE]
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_refuses_the_environment[PYTHONPYCACHEPREFIX-MISSING]
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_refuses_when_fetch_fails
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_reads_o_from_the_url_not_origin_v2
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_refuses_h1_and_h2
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_c1_no_freeze
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_c2_freeze_branched_from_before_f0
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_c3_a_controls_commit_without_a_row
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_c4_f_must_be_the_newest
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_c5_hashes
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_c6_run_output_in_f
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_c7_content_in_f_o_head_and_the_working_tree
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_c8_refuses_a_non_run_output[stray.txt]
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_c8_refuses_a_non_run_output[D0-x.json.bak]
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_c8_refuses_a_non_run_output[runs.jsonl]
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_c8_refuses_an_untracked_directory
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_c9_the_worktree
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_ceiling_is_read_from_rows
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_refuses_without_a_ceiling_row
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_args
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_d_build_and_push_against_a_concurrent_pusher
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_d_push_whose_reply_is_lost_still_counts
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_d_push_gives_up_after_20_attempts
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_calibrate_refuses_when_a_d_exists_and_names_it
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_d_checks
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_d_checks_extra_file_and_bytes
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_d_checks_environment
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_status_s1_linear_refreeze_after_a_pushed_d
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_status_s2_refreeze_on_a_branch_and_merged
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_status_s4_s5_killed_before_the_push
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_check_runtime_refuses_outside_python_i
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_draw_keys_match_the_score_side
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_cal_keys_match_the_bootstrap_side
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_miniature_a1_killed_then_calibrated_tested_and_scored
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_miniature_b_not_tested_exits_13_everywhere
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_boundaries_coverage_clause_and_d_star0_size
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_boundaries_a1_i_and_ii
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_boundaries_b1
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_p_f_excludes_e1_with_the_plant_on_e1
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_check_runtime_requires_the_isolated_flag
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_d_with_two_parents_is_refused
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_a_commit_deleting_d0_is_not_a_d_candidate
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_status_walk_uses_full_history
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_c8_refuses_an_untracked_unignored_entry
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_gate_ignores_git_environment_and_replace_refs
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_os_errors_and_missing_files_refuse_with_10
+PASSED ../home/ubuntu/lanes/sciagent/.cache/drafts/fsd-controls/test_controls.py::test_d_push_leaves_no_d0_object_in_r_before_it_lands
+======================== 90 passed in 587.72s (0:09:47) ========================
+pytest: 208.81 user 8.65 sys 592.88 wall

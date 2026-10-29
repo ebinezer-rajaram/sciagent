@@ -1,0 +1,2 @@
+expected: A1 2.57 h, B 3.32 h, total 5.89 CPU h; +15% 6.77
+worst: A1 2.81 h, B 3.78 h, total 6.58 CPU h; +15% 7.57

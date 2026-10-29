@@ -1,0 +1,66 @@
+sciagent from /home/ubuntu/lanes/sciagent/.claude/worktrees/fsd-dist/src/sciagent/__init__.py; cap 15000
+
+=== A1: obs n=1973, R=8 per side, probe streams ===
+  burst                truth  trunc 0/8 stop 0/8 tau [] n_med 2202 cpu med 0.13 max 0.14
+  burst                member trunc 0/8 stop 0/8 tau [] n_med 2224 cpu med 0.09 max 0.10
+  inject_sign_high     truth  trunc 8/8 stop 0/8 tau [850, 858, 861] n_med 15000 cpu med 0.71 max 0.74
+  inject_sign_high     member trunc 0/8 stop 0/8 tau [] n_med 2035 cpu med 0.09 max 0.11
+  inject_sign_low      truth  trunc 0/8 stop 0/8 tau [] n_med 1645 cpu med 0.10 max 0.13
+  inject_sign_low      member trunc 0/8 stop 0/8 tau [] n_med 2041 cpu med 0.09 max 0.09
+  inject_size_high     truth  trunc 0/8 stop 0/8 tau [] n_med 2037 cpu med 0.12 max 0.13
+  inject_size_high     member trunc 0/8 stop 0/8 tau [] n_med 2007 cpu med 0.09 max 0.12
+  inject_size_low      truth  trunc 0/8 stop 0/8 tau [] n_med 2038 cpu med 0.12 max 0.13
+  inject_size_low      member trunc 0/8 stop 0/8 tau [] n_med 1958 cpu med 0.08 max 0.11
+  clamp_release        truth  trunc 0/8 stop 0/8 tau [] n_med 3516 cpu med 0.15 max 0.18
+  clamp_release        member trunc 0/8 stop 0/8 tau [] n_med 3306 cpu med 0.11 max 0.14
+  silence_release      truth  trunc 0/8 stop 0/8 tau [] n_med 1780 cpu med 0.10 max 0.13
+  silence_release      member trunc 0/8 stop 0/8 tau [] n_med 1689 cpu med 0.07 max 0.08
+  censor_marked_burst  truth  trunc 0/8 stop 0/8 tau [] n_med 1560 cpu med 0.11 max 0.16
+  censor_marked_burst  member trunc 0/8 stop 0/8 tau [] n_med 1667 cpu med 0.09 max 0.11
+  top cells on designs where no run truncated or stopped (rank by D):
+    censor_marked_burst  rate_after_mark_slope[sign]        He2=0.990283 D=4.63
+    clamp_release        mark_gap_correlation[sign]         He2=0.892906 D=2.23
+    inject_size_low      rate_after_mark_slope[sign]        He2=0.836271 D=1.81
+    inject_size_high     rate_after_mark_slope[sign]        He2=0.726132 D=1.30
+    inject_sign_low      mark_gap_correlation[sign]         He2=0.675588 D=1.13
+    inject_sign_low      rate_after_mark_slope[sign]        He2=0.674271 D=1.12
+  capped design inject_sign_high: He2(mean_rate)=1.0, He2==1 on 5/35
+
+=== B: obs n=1954, R=8 per side, probe streams ===
+  burst                truth  trunc 0/8 stop 0/8 tau [] n_med 2173 cpu med 0.12 max 0.13
+  burst                member trunc 0/8 stop 0/8 tau [] n_med 2102 cpu med 0.09 max 0.09
+  inject_sign_high     truth  trunc 0/8 stop 0/8 tau [] n_med 2381 cpu med 0.14 max 0.14
+  inject_sign_high     member trunc 0/8 stop 0/8 tau [] n_med 2065 cpu med 0.09 max 0.09
+  inject_sign_low      truth  trunc 0/8 stop 0/8 tau [] n_med 1820 cpu med 0.11 max 0.11
+  inject_sign_low      member trunc 0/8 stop 0/8 tau [] n_med 2004 cpu med 0.08 max 0.09
+  inject_size_high     truth  trunc 0/8 stop 0/8 tau [] n_med 1927 cpu med 0.11 max 0.12
+  inject_size_high     member trunc 0/8 stop 0/8 tau [] n_med 1951 cpu med 0.08 max 0.09
+  inject_size_low      truth  trunc 0/8 stop 0/8 tau [] n_med 2041 cpu med 0.12 max 0.14
+  inject_size_low      member trunc 0/8 stop 0/8 tau [] n_med 2005 cpu med 0.09 max 0.09
+  clamp_release        truth  trunc 0/8 stop 0/8 tau [] n_med 3216 cpu med 0.13 max 0.13
+  clamp_release        member trunc 0/8 stop 0/8 tau [] n_med 3149 cpu med 0.10 max 0.10
+  silence_release      truth  trunc 0/8 stop 0/8 tau [] n_med 1722 cpu med 0.10 max 0.10
+  silence_release      member trunc 0/8 stop 0/8 tau [] n_med 1618 cpu med 0.07 max 0.07
+  censor_marked_burst  truth  trunc 0/8 stop 0/8 tau [] n_med 1587 cpu med 0.11 max 0.12
+  censor_marked_burst  member trunc 0/8 stop 0/8 tau [] n_med 1617 cpu med 0.08 max 0.09
+  top cells on designs where no run truncated or stopped (rank by D):
+    inject_sign_low      mark_gap_correlation[sign]         He2=0.928613 D=2.64
+    silence_release      rate_after_mark_slope[sign]        He2=0.927732 D=2.63
+    inject_sign_high     rate_after_mark_slope[sign]        He2=0.900950 D=2.31
+    inject_sign_low      rate_after_mark_slope[sign]        He2=0.892551 D=2.23
+    inject_sign_high     mark_mean[sign]                    He2=0.867122 D=2.02
+    inject_sign_high     mark_skewness[sign]                He2=0.859892 D=1.97
+
+=== Bx: obs n=2136, R=8 per side, probe streams ===
+  inject_sign_high     truth  trunc 8/8 stop 0/8 tau [881, 882, 894] n_med 15000 cpu med 0.69 max 0.71
+  inject_sign_high     member trunc 0/8 stop 0/8 tau [] n_med 2071 cpu med 0.09 max 0.09
+  top cells on designs where no run truncated or stopped (rank by D):
+  capped design inject_sign_high: He2(mean_rate)=1.0, He2==1 on 8/35
+
+=== partial-cap sweep: truth on inject_sign_high, obs branching 0.85, R=12 ===
+  theta+=0.26 high branching 0.98: trunc 0/12; uncapped mean_rate [0.79, 1.0, 1.12]..[2.27, 2.65, 3.44]; cpu 2.1s
+  theta+=0.30 high branching 1.00: trunc 6/12; uncapped mean_rate [2.04, 2.2, 3.09]..[3.39, 6.99, 7.36]; cpu 6.4s
+  theta+=0.34 high branching 1.02: trunc 12/12; uncapped mean_rate []..[]; cpu 8.1s
+  theta+=0.38 high branching 1.04: trunc 11/12; uncapped mean_rate [1.2]..[1.2]; cpu 7.5s
+
+total probe CPU 61.4s

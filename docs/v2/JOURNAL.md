@@ -1430,3 +1430,31 @@ brings back the cap artefacts.
 **Next.** Settle the at-stop rule first, with (c) treated explicitly and a decision on truncated designs
 in telling; a positive control with a known d* (SPEC §6.4) and one where (a) and (c) must differ; then the
 tie-break as a tested log-space function.
+
+## 2026-10-29: Lane session 16, addendum 2: draft of a shared at-stop rule (unreviewed)
+
+**Done.** Theorist draft `.cache/drafts/fsd-rule/draft.md` (scripts `candidates.py`, `followup.py`,
+outputs beside them). It is unreviewed, and no positive control has been run. Candidates on the session-15
+tables (decision 0, truth R = 4 proxy; telling here shares truthFSD's table), from
+`candidates-out.txt:20,37,54,71,122`:
+
+| candidate | telling d* on a truth-truncated design | d* = mean_rate | control-5 proxy |
+|---|---|---|---|
+| K0 today (a / b) | 1/14 | 1/14 | 3/14 |
+| K1 (c) everywhere | 9/14 | 11/14 | 10/14 |
+| K2z (c), mean_rate scored 0 when truncated | 8/14 | 2/14 | 11/14 |
+| K4 (c), exclude any design where truth or member truncates or stops | 0/14 | 1/14 | 11/14 |
+
+Marking mean_rate undefined (K2a) gives the same rows as K1 (an atom against a defined value is still
+He² = 1). Draft's recommendation: (c) for every simulation; telling and truthFSD apply K4 and record the
+excluded designs, with a separate reported share "ran a design on which the truth explodes"; FSD keeps
+every design, because when FSD (c) picked a WH-capped design (5 of 14 truths) the truth capped there too
+on every replicate (`followup-out.txt:1-6`). I recomputed from `candidates.json`: K4's telling d* matches
+today's on the diagnostic on 13 of 14 truths (all but dev-006), on the full cell on 12 of 14. Weakest
+point: on the 10 of 14 truths with a truth-capped design, exclusion discards the fact that the truth
+explodes there; the "any replicate" threshold is not identified; the member side never capped.
+
+**Next.** Red-team the rule draft; then the controls it lists (a planted d* with a truth-only-capping
+design, where K4 must return the planted d* and K1 visibly fail; both sides capping with different mark
+laws plus the same-law null; a threshold sweep). The rule is a design decision for telling and control 5:
+owner's rule applies (recommendation, red team, LOG with a 24 h veto window, push).

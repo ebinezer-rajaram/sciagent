@@ -277,6 +277,9 @@ Each item says when it is done. Move finished items to the bottom section after 
 - [ ] **Regenerate PILOT.md** (analyst) with `scripts/pilot_report.py` from the Linux store;
   rewrite the notes block for the Linux run (the Windows notes stay in git history; say so).
   Red team before the commit. Done when committed with the red team's findings addressed.
+  Note for the report (session 20; LOG 2026-10-29): an AG-o record whose own sandbox code prints wall time
+  fails `replay_check` under the pilot's code (dev-003 s1, step 51). Count such records apart from harness
+  replay defects, and run `replay_check` at 900e66a.
 - [!] **P3 go/no-go read: stop point.** SPEC §7.1 under the re-read rules of P4-PROPOSAL §2.4;
   the owner reads a few AG-o transcripts in full. Prepare the evidence and transcript picks,
   push the owner, wait. Done when the owner has decided.
@@ -303,6 +306,17 @@ Each item says when it is done. Move finished items to the bottom section after 
   merged code; (3) reconcile p4's LOG entries (its open decisions and 6,000-cap draft are settled in v2's LOG);
   (4) strip the engineer's `Co-Authored-By` trailers if these commits are replayed; (5) run the slow tier.
   Also: the pinned AG-c EIG/FSD session addresses move even at defaults (no store holds one).
+  2026-10-29 (session 20): points (1)-(3) done on `p4-rehearsal` (engineer; not merged, not pushed), all on a
+  13:37Z copy of `.cache/pilot-llm` (10 sessions):
+  (1) the merged code re-derives the 17 cell addresses (`match 17 differ 0`), and the harness/1 texts are
+  byte-identical to 900e66a's; pinned by `tests/campaign/test_pilot_harness1_cells.py` (0de8220; lead's rerun
+  7 of 7 pass).
+  (2) `store_check` and `session_check` pass, and the rescored cells are identical. `replay_check` passes 0 of
+  10 under the merged code (harness/2 tools, by design), so harness/1 records are replayed at 900e66a (LOG
+  2026-10-29); add the version-mismatch refusal to `replay_check`, test first.
+  (3) dated notes in the merged LOG (85c586a, 0 lines removed).
+  Left: (4) trailers (none on 0de8220 or 85c586a), (5) the slow tier, rerunning (1)-(2) on the finished pilot
+  store, and the anon-arm digests against stored cells.
 - [x] 2026-10-27 **Cross-check the rebuilt defect-hunt checks against the originals** (7406810,
   LOG 2026-10-27): ported test-first `check_budgets`, `check_sessions` (`scripts/session_check.py`),
   `KEY_FIELDS` and the beats-truth flag (`hunt_gap.py --split`; making it fail the gate is a
@@ -357,6 +371,12 @@ Each item says when it is done. Move finished items to the bottom section after 
   `sci-fsdctl-B-test` with the §7 command; log `.cache/fsdctl-test-launch.log`. If B ends without a D line it
   starts nothing. Expect the 7.6 CPU h ceiling to fire during test (exit 11, `STOP` in $D); resume per §6 with
   a pushed `fsd-controls ceiling <c> CPU h` row, then remove STOP and rerun test. Then score per §5 step 9.
+  Session 20, later: B's calibrate exited 13:57Z (2h 20min CPU, systemd) and pushed D = 8d079f4 (D0-ctlB.json
+  da7c6de1…, equal to D's blob). The watcher's checks passed, and both test units started 13:57:49Z and wrote
+  runs files. At 14:18Z: ledger total 16,863 CPU s (4.68 h), about 100 CPU s a minute, so the 7.6 h ceiling
+  (27,360 s) should fire around 16:00Z. Next: if `$D/STOP` exists, push the ceiling row and resume the test
+  units, each with its own D: A1 c0d1b8f123fde746e9cf8497b2c9a919a479a4a2, B
+  8d079f47cbd5e3a6b82547c32b796f6cd1039fd5.
 - [ ] **Remaining P4 work packages**: WP9 (1327de9), WP10 (98205b4), WP11 controls 4-6
   (6ac6142) and WP12 LOG entries (f4a38e0) are committed on `origin/p4-deltas`
   (HANDOFF-2026-10-09); its slow tier was never run. Folded into the integration item above.

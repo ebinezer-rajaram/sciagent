@@ -1795,3 +1795,46 @@ hand-over. The owner's answers still gate the freeze, the pilot and P4 sizing.
   - The script's D-line parsing and byte check give the right answer on A1 (c0d1b8f; 2fe5e7e4… both sides).
 - An engineer is on the p4-rehearsal pre-merge points (1) legacy key, (2) replay and audit on a copy of the
   LLM store, (3) LOG reconciliation.
+
+## 2026-10-29: Lane session 20 (13:33 UTC) hand-over: FSD test phases running; baselines go to 2 workers after the unit in flight; p4 pre-merge points 1-3 done
+
+**Done.**
+- **Watchers in their own user units.**
+  - `sci-pilot-to2` wrote STOP at 13:35:36Z. When the in-flight unit and `sci-pilot-baselines` end, it
+    relaunches the baselines with 2 workers if MemAvailable ≥ 8 GiB, else 1.
+  - `sci-fsdctl-watch` waited for calibrate B.
+- **Calibrate B** exited at 13:57Z after 2h 20min CPU (systemd) and pushed D = 8d079f4. D0-ctlB.json is
+  da7c6de1…, equal to D's blob before and after my `git pull --rebase`.
+  - The watcher checked both D subjects and D0 bytes, then started `sci-fsdctl-A1-test` and `sci-fsdctl-B-test`
+    at 13:57:49Z. Both passed the gate and are writing runs files: 3,700 and 3,246 lines at 14:18Z.
+  - The ledger total was 16,863 CPU s at 14:18Z.
+- **LLM half:** 11 sessions launched by 14:18Z, with no failure, error or limit line. Concurrency stays 1:
+  240 units take about 35 h at 1, less than the baselines.
+- **p4-rehearsal pre-merge points 1-3** (engineer, on a 13:37Z copy of the LLM store):
+  - Legacy key: confirmed (`match 17 differ 0`) and pinned by a new test, 0de8220. My rerun: 7 of 7 pass.
+  - `store_check`, `session_check` and rescoring pass under the merged code.
+  - `replay_check` passes 0 of 10 under the merged code. harness/2 changes the tools by design, so harness/1
+    records are replayed at 900e66a (LOG 2026-10-29).
+  - LOG notes added: 85c586a, 0 lines removed.
+  - Engineer's checks: ruff clean, mypy `286 source files` clean, session-key tests `75 passed`.
+  - No src/ change, so neither tier was run.
+- Checks on v2 (docs only this session): ruff format and check clean.
+
+**Learned.**
+- Under the pilot's own code, AG-o replay passes 4 of 5. dev-003 s1 fails at step 51, because the agent's sandbox
+  code printed `time.time()-t0`. The pilot report must count such records apart from harness defects. This comes
+  from reading the record; that step was not replayed in isolation.
+- The older AG-o legacy-key test compared against the live sandbox text, so it could not catch a sandbox-block
+  change; the new pin can.
+- The FSD controls' CPU runs well above the estimate under contention. Calibrate alone used 1.77 h (A1) and 2.33 h
+  (B), against a worst case of about 1.1 and 1.6. So the 7.6 h ceiling should fire during test, around 16:00Z
+  at the current rate.
+
+**Next.**
+1. FSD controls: if `.cache/drafts/fsd-controls/STOP` exists, push a row `fsd-controls ceiling <c> CPU h`
+   (§6; $0), remove STOP, and restart each test unit with the §7 command and its own `--d0-commit`. The
+   command and env are in `.cache/fsdctl-test-launch.sh`. When both tests end, run score, then commit and
+   push the score files (§5 step 9).
+2. Baselines: check `grep to2 .cache/pilot-run.log` for the relaunch line and that `sci-pilot-baselines` runs.
+3. The `Telling` change (SPEC §4.2 option 2) waits for A1 and B to be scored.
+4. After the pilot finishes: rerun p4 points 1-2 on the full store, then the slow tier on p4-rehearsal.

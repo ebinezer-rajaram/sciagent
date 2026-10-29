@@ -1777,3 +1777,30 @@ a baselines-only store and an LLM-only store, merged, equal one driver's store c
 reran them: 9 passed). Cost: wall times reflect the two halves running together (cells and CPU times do not),
 and `replay_check` must run on `.cache/pilot-llm` itself to cover running or void sessions. To be red-teamed
 with the report, before PILOT.md.
+
+## 2026-10-29: Harness/1 records are replayed at the pilot's commit 900e66a, not under the merged harness/2 code
+
+Rehearsing the p4-deltas merge (local branch `p4-rehearsal`; engineer, lane session 20) on a 13:37Z copy of
+`.cache/pilot-llm` (10 sessions):
+- **What works under the merged code.** Keys, audit and rescoring carry over:
+  - the merged code re-derives all 17 cell addresses (`match 17 differ 0`);
+  - harness/1 session texts are byte-identical to 900e66a's for the four default arms, AG-o's sandbox block
+    included;
+  - `store_check` and `session_check` pass, and 4 rescored cells are identical.
+- **What does not.** `replay_check` passes 0 of 10 under the merged code; every record stops at step −1,
+  field `tools`. harness/2 changes the tool set by design: a `belief` tool, `stop_reason` on `submit`, and new
+  `run_experiment` and `predict` schemas.
+- **Decided.** Pilot (harness/1) records are replayed with the code at 900e66a, from a worktree or archive of that
+  commit, as p4's LOG already did with fit/4 (`p3-fit4`). The merge does not keep a frozen harness/1 tool layer.
+  - The lane does not push tags (AUTOPILOT), so the full sha is the reference.
+  - Follow-up with the integration, test first: `replay_check` refuses a record whose harness version differs
+    from the code's, with a message naming the commit to use.
+  - Why: a legacy tool layer inside harness/2 code is more than 5 files of instrument code kept alive only for
+    replay, and the pilot's commit already replays them (5 of 5 AG-c).
+- **Also found.** One AG-o record (dev-003 s1, `50037735…`) fails replay under its own code at step 51 (`digest`).
+  The agent's sandbox code prints `time.time()-t0`, and `sandbox/runner.py` documents agent nondeterminism as the
+  agent's own. The pilot report counts such AG-o records apart from replay defects, rather than as harness
+  failures. This rests on reading the recorded code; the step-51 replay was not run to isolate it.
+- **Pinned.** `tests/campaign/test_pilot_harness1_cells.py` (0de8220 on `p4-rehearsal`) pins the four 900e66a
+  digests and three real cell addresses. It caught a sandbox-block change in 4 of 7 tests. The older AG-o test
+  compared the legacy text against the live sandbox text, so it could not catch one.

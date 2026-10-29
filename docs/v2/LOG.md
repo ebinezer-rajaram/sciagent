@@ -1855,3 +1855,14 @@ over option 1. Refused as post hoc: counting telling's rate_after_mark_slope[sig
 in rung 0's D*₀, not rung 2's). Unexplained and not acted on: the red team noted that calibration fixes the
 diagnostic menu's arguments on seed 0 while test fixes them per seed (controls.py:1363, 1396 against 1534,
 1913), a possible cause of the transfer gap that nobody has tested. Any rerun under a later freeze is exploratory (§5).
+
+## 2026-10-29: After A1's failure: today's telling rule stays; option 2 is parked; the seed lead is tested first (delegated decision)
+
+Decided by the control room at 19:10Z under the owner's standing delegation ("You can do what is best", "Do
+all as suggested"; INBOX 2026-10-29 19:10Z), as the lane recommended. The pilot and the next experiment keep
+today's `Telling` rule. SPEC §4.2 option 2 is parked, not dropped. The red team's lead (calibrate fixes the
+diagnostic arguments on seed 0, test fixes them per seed) is tested first by §8's route, as exploratory work. If it
+explains A1's (ii) gap, the lane comes back with a new freeze, preregistered and red-teamed as before. Nothing in
+F₀'s criteria or thresholds changes, and A1 is not rescored. The SPEC §4.2 text amended this morning for option
+2 stays as written until the owner or the control room says otherwise. Whether to mark it as parked is noted for
+the control room, not edited by the lane, because a SPEC change is a stop point.

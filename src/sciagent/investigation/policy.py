@@ -82,8 +82,10 @@ from sciagent.investigation.prompts import PolicyName
 from sciagent.investigation.view import AgentView
 from sciagent.scoring.seeds import generator, policy_seed
 from sciagent.systems.v2.policies import (
+    BIC_WEIGHTS,
     ENTERTAINED_MAX,
     POLICY_HORIZON,
+    POLICY_MAX_EVENTS,
     RANDOM_INDEX,
     REPLICATES,
     DecisionContext,
@@ -96,6 +98,7 @@ from sciagent.systems.v2.policies import (
     Policy,
     PolicyError,
     RandomPolicy,
+    Weighting,
     design_menu,
     diagnostic_menu,
     fit_entertained,
@@ -135,21 +138,33 @@ def _names(value: object, what: str) -> tuple[str, ...] | None:
 
 @dataclass(frozen=True)
 class PolicySettings:
-    """Replicates and optional menu restrictions (by name, menu order kept).
+    """Replicates, the policies' event cap, EIG's weighting, and optional menu
+    restrictions (by name, menu order kept).
 
-    The defaults are the campaign's: ``REPLICATES`` replicates and the whole
-    menus. Recorded with the investigation (:meth:`as_json`) and part of
-    :func:`policy_config`.
+    The defaults are the policy core's: ``REPLICATES`` replicates, the
+    ``POLICY_MAX_EVENTS`` cap, BIC weights and the whole menus. The campaign
+    builds them from its arm settings
+    (:func:`~sciagent.campaign.plan.session_policy_settings`). Recorded with
+    the investigation (:meth:`as_json`) and part of :func:`policy_config`.
     """
 
     replicates: int = REPLICATES
     designs: tuple[str, ...] | None = None
     diagnostics: tuple[str, ...] | None = None
+    max_events: int = POLICY_MAX_EVENTS
+    weighting: Weighting = BIC_WEIGHTS
 
     def __post_init__(self) -> None:
         r = self.replicates
         if isinstance(r, bool) or not isinstance(r, int) or r < 2:
             raise PolicyModeError(f"replicates must be an integer >= 2, got {r!r}")
+        m = self.max_events
+        if isinstance(m, bool) or not isinstance(m, int) or m < 1:
+            raise PolicyModeError(f"max_events must be an integer >= 1, got {m!r}")
+        if not isinstance(self.weighting, Weighting):
+            raise PolicyModeError(
+                f"weighting must be a Weighting, got {self.weighting!r}"
+            )
         object.__setattr__(self, "designs", _names(self.designs, "designs"))
         diagnostics = _names(self.diagnostics, "diagnostics")
         if diagnostics is not None:
@@ -163,16 +178,31 @@ class PolicySettings:
             "replicates": self.replicates,
             "designs": None if self.designs is None else list(self.designs),
             "diagnostics": None if self.diagnostics is None else list(self.diagnostics),
+            "max_events": self.max_events,
+            "weighting": self.weighting.config,
         }
 
     @staticmethod
     def from_json(data: Mapping[str, Any]) -> PolicySettings:
+        """The settings of a record; a record from before the cap and the
+        weighting were settings has the defaults, which it ran under."""
         designs = data.get("designs")
         diagnostics = data.get("diagnostics")
+        weighting = data.get("weighting")
+        try:
+            weights = (
+                BIC_WEIGHTS
+                if weighting is None
+                else Weighting(weighting["kind"], weighting["temperature"])
+            )
+        except (PolicyError, KeyError, TypeError) as error:
+            raise PolicyModeError(f"bad weighting in record: {weighting!r}") from error
         return PolicySettings(
             replicates=data["replicates"],
             designs=None if designs is None else tuple(designs),
             diagnostics=None if diagnostics is None else tuple(diagnostics),
+            max_events=data.get("max_events", POLICY_MAX_EVENTS),
+            weighting=weights,
         )
 
 
@@ -180,14 +210,22 @@ DEFAULT_SETTINGS: Final = PolicySettings()
 
 
 def make_policy(name: PolicyName, seed: int, settings: PolicySettings) -> Policy:
-    """The committed core's policy for ``name``."""
+    """The committed core's policy for ``name``, with ``settings``' replicates
+    and event cap, and for EIG its weighting."""
     match name:
         case "random":
             return RandomPolicy(seed)
         case "EIG":
-            return EIGPolicy(seed, replicates=settings.replicates)
+            return EIGPolicy(
+                seed,
+                replicates=settings.replicates,
+                max_events=settings.max_events,
+                weighting=settings.weighting,
+            )
         case "FSD":
-            return FSDPolicy(seed, replicates=settings.replicates)
+            return FSDPolicy(
+                seed, replicates=settings.replicates, max_events=settings.max_events
+            )
 
 
 def policy_config(name: PolicyName, settings: PolicySettings = DEFAULT_SETTINGS) -> str:

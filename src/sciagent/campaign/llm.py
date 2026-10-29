@@ -63,6 +63,7 @@ from sciagent.campaign.plan import (
     CampaignError,
     TruthEntry,
     Unit,
+    session_policy_settings,
 )
 from sciagent.glm.canonical import canonicalise
 from sciagent.glm.syntax import render
@@ -211,6 +212,9 @@ def run_session(
             sandbox_root=sandbox_root,
             prompt_variant=arm.prompt_variant,
             policy=arm.policy,
+            policy_settings=None
+            if arm.policy is None
+            else session_policy_settings(config.policy),
         )
     except (SessionFailedError, ServedModelError, SandboxError) as error:
         return _retry(unit, error, start)

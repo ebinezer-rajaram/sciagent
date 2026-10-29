@@ -76,6 +76,8 @@ PINNED_BASELINES = {
 #: Session keys of four arms at 98205b4 (tiny_config with these arms). The
 #: AG-o key is re-pinned at the merge into v2: its harness/2 text ends with
 #: v2's sandbox block (``plan._with_sandbox``), as its harness/1 text did.
+#: The EIG and FSD keys are re-pinned when the arm settings' cap and EIG
+#: weighting reach AG-c-S: the recorded policy settings name both.
 PINNED_ARMS = (
     LLMArm("AG-c", "named"),
     LLMArm("AG-o", "anon"),
@@ -86,10 +88,10 @@ PINNED_SESSIONS = {
     "AG-c-H/named": "8b0c82b5f8a5e779e0223bb579214d67eb3b92d7033bb0bc80aac1ecf2e7b5e9",
     "AG-o-H/anon": "7d4148be9043e0b32ef16634ec006c9a482922e35c7a547fdfeba81b3f67ecb2",
     "AG-c-H/named+policy=EIG": (
-        "0642f2e4a363649246a1d65bb85a98799f66ed8df38cebfa090764a40f445462"
+        "aad5cbb7b9bab143d4c135566f5d18633f0f6781b0d2d275444789627ccb95f0"
     ),
     "AG-c-H/named+policy=FSD": (
-        "0975bf56c229280092f10419567c3cd1a7a426e6d4d06e4c4300b0b5b83dd266"
+        "2edb2baac5140c6608bf427e4b628ce87fc4116e625f87e20aa37829b2596896"
     ),
 }
 

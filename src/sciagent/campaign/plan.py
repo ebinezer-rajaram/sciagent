@@ -82,7 +82,7 @@ from sciagent.glm.simulate import MarkSampler
 from sciagent.glm.syntax import render
 from sciagent.harness.live import HARNESS_VERSION
 from sciagent.harness.record import canonical_json
-from sciagent.investigation.policy import policy_config
+from sciagent.investigation.policy import PolicySettings, policy_config
 from sciagent.investigation.prompts import (
     Arm,
     PromptError,
@@ -287,6 +287,18 @@ class _ConfigOnly:
         label: str = "experiment",
     ) -> Dataset:
         raise CampaignError("a configuration placeholder cannot simulate")
+
+
+def session_policy_settings(settings: PolicyArmSettings) -> PolicySettings:
+    """The policy settings of an AG-c-S policy session: the arm settings'
+    replicates, event cap and EIG weighting (as :func:`build_policy` gives the
+    B-sym policy arms), and the whole menus. The entertained-set size and the
+    telling unit's settings are not policy mode's."""
+    return PolicySettings(
+        replicates=settings.replicates,
+        max_events=settings.max_events,
+        weighting=settings.weighting,
+    )
 
 
 def build_policy(
@@ -647,10 +659,11 @@ def surface_digest(
     the environment's channels and anonymised names, the arm, the condition,
     the budgets, the prompt variant and the policy: no truth and no seed. A
     policy arm's digest also covers the policy's framework-only configuration
-    (:func:`~sciagent.investigation.policy.policy_config`: replicates, weights,
-    tie tolerance, quadrature, menus; P4 Δ11 decision 16), which the agent
-    never sees, so a change to it moves the key too. A non-policy arm's digest
-    is the surface's alone, as before.
+    (:func:`~sciagent.investigation.policy.policy_config`: replicates, event
+    cap, weights, tie tolerance, quadrature, menus; P4 Δ11 decision 16) under
+    the arm settings (:func:`session_policy_settings`), which the agent never
+    sees, so a change to it moves the key too. A non-policy arm's digest is the
+    surface's alone, as before.
     """
     if env.investigation is None:
         raise CampaignError("the environment has no investigation spec")
@@ -668,7 +681,14 @@ def surface_digest(
     if policy is None:
         return _sha(canonical_json(surface))
     return _sha(
-        canonical_json({"surface": surface, "policy_config": policy_config(policy)})
+        canonical_json(
+            {
+                "surface": surface,
+                "policy_config": policy_config(
+                    policy, session_policy_settings(config.policy)
+                ),
+            }
+        )
     )
 
 

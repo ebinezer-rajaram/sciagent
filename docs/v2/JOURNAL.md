@@ -1858,3 +1858,44 @@ hand-over. The owner's answers still gate the freeze, the pilot and P4 sizing.
 - **LLM half:** 12 launches by 14:24Z (11 sessions submitted), no error, limit or failure line. That is about
   12 min per unit, so 240 units take ~47 h, not the ~35 h estimated in session 20.
 - An engineer is adding the harness-version refusal to `replay_check` on `p4-rehearsal` (test first; not merged).
+
+## 2026-10-29: Lane session 21 (14:29 UTC) hand-over: FSD resume armed for the ceiling; replay_check refusal on p4-rehearsal
+
+**Done.**
+- **FSD ceiling.** Pushed the row `fsd-controls ceiling 12.0 CPU h` (b6a63d2, $0). `.cache/fsdctl-resume.sh` runs
+  in user unit `sci-fsdctl-resume` (14:31:46Z) and resumes both test units after the 7.6 h ceiling fires (see the
+  progress entry above). At 16:32Z it had not fired yet: total 25,433 CPU s against 27,360, no STOP, both test
+  units running. Runs files had 22,275 lines (A1) and 19,062 lines (B).
+- **`replay_check` refusal** (engineer, test first), `p4-rehearsal` 346676a, not merged and not pushed:
+  - a record whose config `harness_version` is not the running one is REFUSED. The message names both versions
+    and says to replay harness/1 at 900e66a. Refused records are counted apart, and the run exits 3 when nothing
+    failed.
+  - a record that names no version is a FAIL.
+  - On the 11 harness/1 records in `.cache/pilot-llm`: `refused: 11`, exit 3, with the `llm/` bytes unchanged.
+  - My rerun of `nice -n 10 uv run pytest tests/campaign/test_replay_check.py -m "not slow" -p no:xdist`: 14
+    passed (14 dots, no failure line). Ruff check and format are clean on the 3 files.
+  - Engineer's checks: mypy `286 source files` clean; with `tests/test_invariants.py` and
+    `tests/harness/test_replay.py`, `918 passed`.
+  - LOG 2026-10-29 records the decision.
+- Checks on v2 (docs and LEDGER only): `ruff format --check` gives 261 files formatted, and `ruff check` passes.
+  There was no src change on v2, so mypy and the test tiers were not rerun.
+
+**Learned.**
+- FSD test CPU per seed is about 661 CPU s, averaged over both controls up to 16:32Z: test CPU 10,642 s over
+  about 16.1 seeds done. The projected final total is about 9.6 CPU h, under the new 12 h ceiling.
+- Wall time slowed. A1 went from 6,045 to 22,275 lines in 123 min, about 3.2 seeds an hour. At that rate A1 ends
+  around 20:30Z and B later, not 17:20Z. Since about 14:40Z, agent-control's two `sealed_secondaries.py`
+  processes have taken 2 cores (load ~15).
+- LLM half: 15 launches and 12 scored `ok` by 16:32Z, with no limit, error or failure line. That is about 17 min
+  per unit, so 240 units would take more than 60 h at concurrency 1.
+- Baselines: still no `exit:` line after the 12:53Z unit. The unit in flight has run for 3 h 40 min, so
+  `sci-pilot-to2` is still waiting, as designed (the smoke's B-sym@10F dev-000 took 17,412 s).
+
+**Next.**
+1. FSD: `grep resume: .cache/fsdctl-test-launch.log`. Expect STOP around 17:00Z, then `STOP removed` and two
+   `restarted` lines. If it says `restarting nothing`, read why; the ceiling row is already pushed. When both
+   tests exit 0 (38,401 lines each per cost5's counts), run score for each control (§5 step 9) and commit the
+   score files.
+2. Baselines: check `grep to2 .cache/pilot-run.log` for the relaunch line.
+3. When the pilot finishes: merge `pilot-multiroot`, merge the stores, run the report, red team, PILOT.md. On
+   `p4-rehearsal`, the slow tier is still open (after the runs free the CPU).

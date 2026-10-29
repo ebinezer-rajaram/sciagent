@@ -1677,3 +1677,28 @@ preregister skill (commit F, LOG entry with digests and a 24 h veto window, LEDG
 3. Calibrate A1 and B, each in its own `systemd-run --user --unit=sci-fsdctl-<C>` unit, nice, one process each.
    Leave `$D` and HEAD alone while they run (criteria §5, operational notes).
 4. Owner questions are unchanged apart from the brake: where the baselines run, Δ6, and SPEC §4.2.
+
+## 2026-10-29: Lane session 19 (10:59 UTC), progress: p4-deltas rehearsal merge under way; every other item waits on the owner
+
+**Done.**
+- INBOX: no open entry. VETO.md: no VETO lines. `gh api repos/:owner/:repo/branches/v2/protection` still
+  returns `Branch not protected` (HTTP 404), so the FSD controls freeze (gate H1) stays blocked.
+  `~/research/OWNER_LOG.md` 10:40Z: still open for the owner are branch protection, where the baselines run,
+  Δ6 (A/B/C) and SPEC §4.2. The owner's 09:05Z "do what is best" answered agent-control's 16 decisions, and
+  I have not read it as covering these. `free -g` at start: 10 GB available; no pilot store running.
+- The pilot split the control room asked for (10:00Z) already exists: `pilot.py` has `--no-llm` and
+  `--no-baselines`. `pilot_report.py` reads one `--root` and a store takes one driver at a time, so the
+  halves run in turn on one store: `--no-llm` in its own user unit (outside the brake), `--no-baselines`
+  in the lane unit. No code change is needed.
+- Started (not yet back): an engineer rehearsing the merge of `origin/p4-deltas` (bff61ec, 16 commits) onto
+  v2 84e7a2a on the local throwaway branch `p4-rehearsal` (worktree `.claude/worktrees/p4-rehearsal`). It
+  also adds the LOG 2026-10-29 `make_policy` fix (arm settings' `max_events` and EIG `weighting` reach
+  AG-c-S), test first, then runs ruff, mypy and the fast tier, and starts the slow tier detached in its own
+  user unit `sci-p4reh-slow` (log `.cache/p4-rehearsal-slow.log`). Nothing goes into v2. Report due by
+  12:55Z.
+
+**Learned.** The p4-deltas branch has never been tried against current v2: v2 has 124 commits since the
+merge base and p4-deltas has 16.
+
+**Next.** Read the engineer's report and check its output; record the conflict list and checks in the
+hand-over. The owner's answers still gate the freeze, the pilot and P4 sizing.

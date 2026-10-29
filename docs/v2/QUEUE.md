@@ -269,6 +269,8 @@ Each item says when it is done. Move finished items to the bottom section after 
   Also with it (LOG 2026-10-29): `investigation/policy.py:make_policy` builds `EIGPolicy` and
   `FSDPolicy` from `seed` and `replicates` only; pass the arm settings' `max_events` and EIG's
   `weighting` through, test first.
+  2026-10-29 (session 19): rehearsal merge onto v2 84e7a2a running on local branch `p4-rehearsal`
+  (worktree `.claude/worktrees/p4-rehearsal`) with the `make_policy` fix; not merged into v2.
 - [x] 2026-10-27 **Cross-check the rebuilt defect-hunt checks against the originals** (7406810,
   LOG 2026-10-27): ported test-first `check_budgets`, `check_sessions` (`scripts/session_check.py`),
   `KEY_FIELDS` and the beats-truth flag (`hunt_gap.py --split`; making it fail the gate is a

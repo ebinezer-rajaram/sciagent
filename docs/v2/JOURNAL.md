@@ -1760,3 +1760,13 @@ hand-over. The owner's answers still gate the freeze, the pilot and P4 sizing.
    the LLM concurrency to 2 if no rate limit has appeared. On a usage-limit error, write the STOP file.
 3. When both halves finish: merge `pilot-multiroot` into v2, merge the stores, run the report and checks, red
    team, then PILOT.md.
+
+**Addendum, 13:25Z.**
+- Calibrate A1 exited 0 at 13:23:15Z after 1h 46min CPU (systemd), and pushed D = c0d1b8f
+  (`fsd-controls D0 ctlA1 under 8405509…`). The file is `D0-ctlA1.json`, named by the control id and not `D0-A1`.
+  Its sha256 on disk equals D's blob and the line in D's message (2fe5e7e4…).
+- v2 was fast-forwarded to c0d1b8f.
+- Calibrate B is still running (ledger total 12,784 CPU s at 13:23Z for both).
+- I did not start A1's test phase. Its `runs-ctlA1.jsonl` would be a new file in `$D` while B's calibrate has
+  yet to rerun its gate before its push, and §5's operational note says that loses a calibrate. Next session:
+  once B's D is on v2, start both test phases, each with its own `--d0-commit`.

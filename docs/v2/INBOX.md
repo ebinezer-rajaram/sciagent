@@ -33,3 +33,17 @@ entry, and marks it handled with the date and what was done. Newest last.
   (the v8 text and the controls.py code together, since v7's round was blocking), then freeze
   and calibrate at once. The preregister skill (team plugin, not in this repository) still
   describes the window; the lane does not edit it.
+
+## 2026-10-29, 11:27 UTC (owner, via the control-room session)
+
+- [ ] **The four open owner questions: all as the control room suggested.** Owner's words: "Do all
+  as suggested, please do your experiments". (1) The baselines run on dm-devbox, no AWS (non-LLM
+  runs in their own sci-<run> user units, as decided earlier today). (2) Delta-6: (A) link-neutral,
+  as the owner's pre-set rule picks. (3) SPEC 4.2: option 2 (d* chosen only among designs where
+  neither the truth nor the best member explodes, the exclusion computed once from telling's
+  replicates and shared, the explosion share reported as a separate number). (4) Branch
+  protection on v2: turned on by the control room at 11:27 UTC (gh api PUT
+  repos/ebinezer-rajaram/sciagent/branches/v2/protection: allow_force_pushes false,
+  allow_deletions false, enforce_admins true; no required reviews or checks, so ordinary pushes
+  work; `gh api repos/ebinezer-rajaram/sciagent/branches/v2 --jq .protected` gives true).
+  Gate H1 can pass: freeze the at-stop controls and calibrate now.

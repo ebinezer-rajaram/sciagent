@@ -54,7 +54,7 @@ def _session(
     policy: str | None,
     void: VoidStatus = CLEAN,
 ) -> Session:
-    return Session("t", seed, system, reading, {}, void, "env", policy)
+    return Session("t", seed, system, reading, {}, void, "env", f"d{seed}", policy)
 
 
 def test_a_policy_session_contributes_no_predictions_and_is_counted() -> None:

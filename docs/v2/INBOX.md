@@ -15,3 +15,16 @@ entry, and marks it handled with the date and what was done. Newest last.
   reviews, the Δ11, Δ6 and review-item drafts, four branch fixes); at 22:05 the machine reached
   load 28 and 2 GB available, so the helpers' test runs were stopped (JOURNAL session 5). The
   next session may continue the sprint until 02:00 with at most one helper running test tiers.
+
+## 2026-10-29, 09:12 UTC (owner, via the control-room session)
+
+- [ ] **No more 24-hour veto windows.** Owner's words: "Yes I waive the 24 hour veto I don't know
+  what this means and I don't think we should have this cos this is annoying. Do your best
+  judgement and launch it so you don't spend your whole time nuking my Claude usage". Standing
+  change from today for both projects: proposals and pre-registrations are still written,
+  red-teamed and frozen as before, then go ahead at once inside the money rules; no window to wait
+  for. Send the control room a short notice of each. Record it in docs/v2/LOG.md and update the
+  docs that mention the window.
+- [ ] **Spend Claude usage on what moves the work (owner, same message).** One red-team round before
+  a freeze or an owner-facing result; a second only if the first found something blocking. Keep
+  parallelism modest and stop refining items that are already good enough to run.

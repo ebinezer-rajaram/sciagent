@@ -12,3 +12,4 @@ date,item,provider,hours,usd,stage
 2026-10-28,S3 copy of the strata store logs and projection (24 objects; 1.2 MB; sciagent/p3-linux/strata-b953390/),aws-s3,0,0,p3
 2026-10-28,P3 far B-sym@10F CPU-timed run at 87b406f (dev-000 and dev-003 seed 1; --no-llm; 2 workers; nice 10; 17:30:36Z-23:04:21Z),dm-devbox,5.56,0,p3
 2026-10-28,S3 copy of the far10f store logs and projections (13 objects; 4.7 MB; sciagent/p3-linux/far10f-87b406f/),aws-s3,0,0,p3
+2026-10-29,fsd-controls freeze 84055094181dd1bdbfa09fa195f0d6979c5e485c ceiling 7.6 CPU h,dm-devbox,0,0,p4

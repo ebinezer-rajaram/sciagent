@@ -1407,3 +1407,26 @@ telling use different at-stop rules (a vs b).
    side, e.g. B-sym's real top fit, or a both-sides-cap pair), truthFSD at 16 truth replicates, and the
    WH truncating-mode content checks at the real cap. Only then a proposal (recommendation, red team,
    LOG with a 24 h veto window, push).
+
+## 2026-10-29: Lane session 16, addendum: the He² tie-order draft red-teamed, not ready
+
+**Done.** Red team of `.cache/drafts/fsd-ties/draft.md` (report `.cache/drafts/fsd-ties/redteam-s16.md`).
+Reproduced: the threshold (He² == 1.0 iff D ≥ 54 ln 2, 0 violations in 22,890 cells), the tie and
+agreement counts, and the control-5 figure (3 of 14). I checked the rule mismatch in the code: telling
+drops stopped runs and zeroes a design with a side all stopped (worktree `telling.py:148-156`); truthFSD
+goes through `fsd_table` (`policy_controls.py:59`), which sets None on every diagnostic
+(`policies.py:625-630`); the world truncates (`execute.py:437`). Verdict: **not ready**. Under (c),
+ranking by D puts the winner on a design whose reference side is fully truncated on 6 of 14 FSD and 8 of
+14 truthFSD tables, and telling's d* lands on a fully truncated truth design on 9 of 14 truths (the
+cliff telling's docstring rejects). The "variance floor" tie source is misattributed (a value-lattice
+or truncation effect). D cannot be recovered from `hellinger2` (BC underflows), so it needs a new
+log-space function: an instrument change, test first, `hellinger2` bytes unchanged. The split-half
+stability argument decides nothing (0 vs 3 discordant, p = 0.125). 3 of 14 is a decision-0, R = 4 proxy.
+
+**Learned.** The tie order is downstream of the rule question. Three at-stop rules are live (truthFSD
+(a), telling (b), world (c)), and adopting (c) for telling without excluding or flagging truncated designs
+brings back the cap artefacts.
+
+**Next.** Settle the at-stop rule first, with (c) treated explicitly and a decision on truncated designs
+in telling; a positive control with a known d* (SPEC §6.4) and one where (a) and (c) must differ; then the
+tie-break as a tested log-space function.

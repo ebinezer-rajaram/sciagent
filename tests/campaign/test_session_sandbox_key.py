@@ -24,10 +24,13 @@ from sciagent.campaign.plan import (
     CampaignError,
     LLMArm,
     Unit,
+    legacy_session_config_digest,
+    legacy_session_text_v1,
     session_config_digest,
     session_key,
     session_sandbox_text,
     session_text,
+    surface_digest,
 )
 from sciagent.campaign.store import ResultStore
 from sciagent.investigation import runner as investigation_runner
@@ -85,18 +88,21 @@ def test_every_sandbox_limits_field_has_an_altered_value() -> None:
 # --------------------------------------------------------------------------
 
 
-def test_an_ag_c_session_text_is_unchanged() -> None:
+def test_an_ag_c_legacy_session_text_is_unchanged() -> None:
+    """The harness/1 text (the pilot's sessions, found by the rescore) keeps
+    its bytes; an AG-c harness/2 text carries no sandbox."""
     config = CampaignConfig()
-    assert session_text(AG_C, config) == (
+    assert legacy_session_text_v1(AG_C, config) == (
         "model=claude-sonnet-5-5; arm=AG-c; condition=named; experiments=8; "
         "fits=40; max_turns=100; wall_time_s=3600.0; harness=harness/1"
     )
-    assert session_config_digest(AG_C, config) == (
+    assert legacy_session_config_digest(AG_C, config) == (
         "33163b9115947c622ab34f4329536ea3fd54dbbd0599827e7b528e6a7db989fb"
     )
-    assert session_config_digest(AG_C_ANON, config) == (
+    assert legacy_session_config_digest(AG_C_ANON, config) == (
         "1f88aa599e18490691a4dd12b42e61e9cc7c5730882a82bb701c5d2ad509668b"
     )
+    assert "sandbox=" not in session_text(AG_C, config, environment())
 
 
 # --------------------------------------------------------------------------
@@ -105,16 +111,22 @@ def test_an_ag_c_session_text_is_unchanged() -> None:
 
 
 def test_an_ag_o_session_text_carries_the_sandbox_the_runner_uses() -> None:
-    config = CampaignConfig()
-    text = session_text(AG_O, config)
-    prefix = (
-        "model=claude-sonnet-5-5; arm=AG-o; condition=named; experiments=8; "
-        "fits=40; max_turns=100; wall_time_s=3600.0; harness=harness/1; "
-    )
-    assert text.startswith(prefix)
+    config, env = CampaignConfig(), environment()
     sandbox = session_sandbox_text(
         run_sandbox_limits(), HANDOFF_HELPER_SHA256, image_tag(SANDBOX_CONTEXT)
     )
+    legacy_prefix = (
+        "model=claude-sonnet-5-5; arm=AG-o; condition=named; experiments=8; "
+        "fits=40; max_turns=100; wall_time_s=3600.0; harness=harness/1; "
+    )
+    assert legacy_session_text_v1(AG_O, config) == legacy_prefix + sandbox
+    prefix = (
+        "model=claude-sonnet-5-5; arm=AG-o; condition=named; prompt_variant=v1; "
+        "policy=none; experiments=8; fits=40; max_turns=100; wall_time_s=3600.0; "
+        f"harness=harness/2; surface={surface_digest(AG_O, config, env)}; "
+    )
+    text = session_text(AG_O, config, env)
+    assert text.startswith(prefix)
     assert text == prefix + sandbox
     assert HANDOFF_HELPER_SHA256 in sandbox
     assert image_tag(SANDBOX_CONTEXT) in sandbox
@@ -225,9 +237,13 @@ def test_an_image_change_moves_the_ag_o_key_only(
 def test_the_session_key_is_deterministic() -> None:
     config = tiny_config()
     assert _keys(config) == _keys(config)
-    assert session_text(AG_O, config) == session_text(AG_O, config)
-    digest = hashlib.sha256(session_text(AG_O, config).encode()).hexdigest()
-    assert session_config_digest(AG_O, config) == digest
+    assert session_text(AG_O, config, environment()) == session_text(
+        AG_O, config, environment()
+    )
+    digest = hashlib.sha256(
+        session_text(AG_O, config, environment()).encode()
+    ).hexdigest()
+    assert session_config_digest(AG_O, config, environment()) == digest
 
 
 # --------------------------------------------------------------------------
@@ -333,7 +349,7 @@ def test_the_image_build_lab_uses_is_the_one_the_key_names(
     lab = investigation_runner.build_lab(spec, _env(), sandbox_root=tmp_path / "r")
     assert lab.sandbox is not None
     assert returned == [lab.sandbox.image]
-    text = session_text(AG_O, CampaignConfig())
+    text = session_text(AG_O, CampaignConfig(), environment())
     assert text.endswith(f"; image={lab.sandbox.image}")
 
 
@@ -539,9 +555,9 @@ def test_a_broken_build_context_is_a_campaign_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(plan, "SANDBOX_CONTEXT", tmp_path)
-    assert session_text(AG_C, CampaignConfig())
+    assert session_text(AG_C, CampaignConfig(), environment())
     with pytest.raises(CampaignError, match="sandbox image"):
-        session_text(AG_O, CampaignConfig())
+        session_text(AG_O, CampaignConfig(), environment())
 
 
 def test_the_session_check_reports_a_broken_build_context(

@@ -73,7 +73,9 @@ PINNED_BASELINES = {
     "planted-hint": "9363d08e5b556689046f5c5978f78325b45924bbacd62b75dc246428c3d892c5",
     "B-sym@10F": "511ddc30fbb12f46920b989128258477c95094077b3a04eff5dad7cf9c8ba960",
 }
-#: Session keys of four arms at 98205b4 (tiny_config with these arms).
+#: Session keys of four arms at 98205b4 (tiny_config with these arms). The
+#: AG-o key is re-pinned at the merge into v2: its harness/2 text ends with
+#: v2's sandbox block (``plan._with_sandbox``), as its harness/1 text did.
 PINNED_ARMS = (
     LLMArm("AG-c", "named"),
     LLMArm("AG-o", "anon"),
@@ -82,7 +84,7 @@ PINNED_ARMS = (
 )
 PINNED_SESSIONS = {
     "AG-c-H/named": "8b0c82b5f8a5e779e0223bb579214d67eb3b92d7033bb0bc80aac1ecf2e7b5e9",
-    "AG-o-H/anon": "20072a02c10b3d9f11df9e7d95f8b3ece56eae8c3db34c23cb65123e070f58a6",
+    "AG-o-H/anon": "7d4148be9043e0b32ef16634ec006c9a482922e35c7a547fdfeba81b3f67ecb2",
     "AG-c-H/named+policy=EIG": (
         "0642f2e4a363649246a1d65bb85a98799f66ed8df38cebfa090764a40f445462"
     ),
@@ -396,7 +398,7 @@ def test_a_telling_and_a_policy_cell_round_trip_through_the_store(
     monkeypatch.setattr(execute, "telling_diagnostic", fake_telling)
     data = execute.observational_data(truth, 1, env)
     job = BaselineJob(truth, 1, (TELLING,), env, config)
-    told = execute._telling_unit(job, data, 0.0)
+    told = execute._telling_unit(job, data, 0.0, None)
     assert told.ok
     assert told.detail["design"] == design_menu(env.channels)[2].name
     target = told.detail["diagnostic"]

@@ -933,7 +933,7 @@ def check_sessions(
     try:
         # An AG-o digest names the sandbox image, read from its build context.
         digests = {
-            s: session_config_digest(config.arm_of(s), config)
+            s: session_config_digest(config.arm_of(s), config, env)
             for s in config.llm_systems()
         }
     except CampaignError as error:

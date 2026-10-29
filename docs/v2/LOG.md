@@ -1692,3 +1692,15 @@ mode (`systems/v2/models.py:358` raises), so it is an instrument change and need
 measurements first. Found for the p4-deltas integration: `investigation/policy.py:make_policy` builds both
 `EIGPolicy` and `FSDPolicy` from `seed` and `replicates` only, so neither the arm settings' cap nor
 EIG's `weighting` reaches AG-c-S (fix and test with the integration).
+
+## 2026-10-29: No veto windows; one red-team round per item (owner, INBOX 09:12Z)
+
+The owner waived the 24-hour veto windows for both projects from today, and asked for less paperwork per item.
+Proposals and preregistrations are still written, red-teamed and frozen, then go ahead at once inside the money
+rules, with a short notice to the control room; VETO.md stays as the way to stop or reverse one afterwards.
+One red-team round before a freeze or an owner-facing result, a second only if the first found something
+blocking; items good enough to run are not refined further. Why: the windows and repeated review rounds were
+spending the shared Max usage and wall time without changing outcomes (six rounds on the FSD control criteria,
+JOURNAL session 17). Not changed: stop points (SPEC changes, the P3 go/no-go, spend, AUTOPILOT §stop points)
+and choices the owner must make explicitly (Δ6 A/B/C) still wait for the owner. First use: the FSD control
+criteria v8 and `controls.py` get a single joint review, then the freeze and calibration.

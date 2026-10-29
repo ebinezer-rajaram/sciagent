@@ -297,7 +297,10 @@ Each item says when it is done. Move finished items to the bottom section after 
   no truth id). Owner's rule (2026-10-27): the lane writes a recommendation for each with its
   reasoning, has the red-team agent review it, records it in LOG.md with `veto window ends:
   <UTC>` 24 hours ahead, pushes the owner a summary, and adopts it after the window unless a
-  `VETO` line appears in docs/v2/VETO.md. Done when each is adopted or vetoed and logged.
+  `VETO` line appears in docs/v2/VETO.md. **Superseded 2026-10-29 09:12Z** (INBOX; LOG
+  2026-10-29): no veto window; red-team once (again only if blocking), record in LOG, adopt at
+  once, notify the control room. Δ6 still needs the owner's explicit A/B/C choice. Done when each
+  is adopted or vetoed and logged.
   Progress: decision 6 (C5 seeding) proposed and red-teamed 2026-10-27 (LOG, veto window ends
   2026-10-28T16:05Z); adopted 2026-10-28 16:06Z with no veto (LOG); implement with the p4-deltas integration.
   F5 (hand-written address text) proposed and red-teamed 2026-10-27 (LOG, veto window ends

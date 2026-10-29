@@ -18,13 +18,18 @@ entry, and marks it handled with the date and what was done. Newest last.
 
 ## 2026-10-29, 09:12 UTC (owner, via the control-room session)
 
-- [ ] **No more 24-hour veto windows.** Owner's words: "Yes I waive the 24 hour veto I don't know
+- [x] **No more 24-hour veto windows.** Owner's words: "Yes I waive the 24 hour veto I don't know
   what this means and I don't think we should have this cos this is annoying. Do your best
   judgement and launch it so you don't spend your whole time nuking my Claude usage". Standing
   change from today for both projects: proposals and pre-registrations are still written,
   red-teamed and frozen as before, then go ahead at once inside the money rules; no window to wait
   for. Send the control room a short notice of each. Record it in docs/v2/LOG.md and update the
   docs that mention the window.
-- [ ] **Spend Claude usage on what moves the work (owner, same message).** One red-team round before
+- [x] **Spend Claude usage on what moves the work (owner, same message).** One red-team round before
   a freeze or an owner-facing result; a second only if the first found something blocking. Keep
   parallelism modest and stop refining items that are already good enough to run.
+  Handled 2026-10-29 (lane session 18, ~09:20Z): LOG entry 2026-10-29 (both points); QUEUE's
+  owner's-rule text and VETO.md's header updated; the FSD controls criteria v8 gets one review
+  (the v8 text and the controls.py code together, since v7's round was blocking), then freeze
+  and calibrate at once. The preregister skill (team plugin, not in this repository) still
+  describes the window; the lane does not edit it.

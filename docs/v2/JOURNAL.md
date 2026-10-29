@@ -2066,7 +2066,7 @@ hand-over. The owner's answers still gate the freeze, the pilot and P4 sizing.
 3. With the FSD runs ended, the CPU is freer: run the slow tier on `p4-rehearsal` if MemAvailable allows (at
    most 2 workers, nice).
 
-## 2026-10-29: Lane session 23, addendum (19:55 UTC): delegated decision recorded; seed lead checked: undetermined, leaning against
+## 2026-10-29: Lane session 23, addendum (19:50 UTC): delegated decision recorded; seed lead checked: undetermined, leaning against
 
 **Done.**
 - INBOX 19:10Z (control room, delegated) handled. Today's telling rule stays for the pilot and the next

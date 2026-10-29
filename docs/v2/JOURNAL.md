@@ -1348,3 +1348,17 @@ barely moves decision-0 picks; He² saturation and the tie order do.
    vs telling diagnostic-first, which control 5 depends on), with or without truncation. Owner rule:
    recommendation, red team, LOG with a 24 h veto window, push.
 3. With the p4-deltas integration: `make_policy` cap and EIG weighting (queued).
+
+## 2026-10-29: Lane session 16 (05:43 UTC), progress: pilot still waiting on the owner; FSD truncation measurement under red team, tie-order draft started
+
+**Done.** INBOX: no open entry. VETO.md: no VETO lines. OWNER_LOG: no answer on where the baselines run,
+Δ6 or the brake, so the full pilot stays blocked. `git pull --rebase origin v2`: up to date. Since the
+last fast tier (6f469f4, green) only docs changed (`git diff --stat 6f469f4..HEAD`: JOURNAL, LOG, QUEUE).
+Delegated, in parallel and on disjoint files: (1) red-team review of the truncation measurement
+(`.cache/drafts/fsd-trunc/`, the four session-15 claims); (2) theorist draft on He² saturation and the
+tie order (FSD's `choose` design-first, telling diagnostic-first; options: non-saturating tie-breaker,
+shared fixed order, seeded random), written only to `.cache/drafts/fsd-ties/`.
+
+**Learned.** Nothing new yet.
+
+**Next.** Read both reports, check them, record the outcome (LOG only if a decision is made), hand over.

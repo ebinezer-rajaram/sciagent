@@ -1879,3 +1879,15 @@ result renders byte-identically. Why: P4 sizing and the report's cost row would 
 as zero, and they read low (AG-o median turns 19 against 26 on the interim store). No version constant moves.
 The cell readings are not changed now, because the pilot's code is frozen at 900e66a. The root fix in `llm.py`
 (store the counts as missing, or count them from the record) goes with the p4-deltas integration, test first.
+
+## 2026-10-29: The seed lead is closed; A1's calibration was optimistic by construction (exploratory, session 24)
+
+The seed-0-menu lead does not explain A1's (ii) gap. On a fresh pool it moves E[(ii)] by about 0.2, bounded at
+about 3 points (red team). The theorist's offline checks find calibrate and test identical in streams, rules
+and exclusions, and attribute D0's pass_ii of 0.99999775 to two things. First, a plug-in estimate from one fixed
+128-run pool, whose E[(ii)] has an across-pool sd of about 10 to 14. Second, testing only the first rung whose
+plug-in passes. Decided: option 2 stays parked, and no new freeze is proposed until its calibration carries pool
+uncertainty. The lane does not regenerate the real control streams outside controls.py's stream-id guard
+(check (b)) without the owner's or control room's word. Why: these findings are exploratory under F₀ §5; the
+guard exists so that control streams are drawn only by the preregistered path. A non-control check (a) is
+running to measure the law directly (`.cache/drafts/fsd-seedlead/pool/`).

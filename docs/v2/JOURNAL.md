@@ -2116,3 +2116,80 @@ hand-over. The owner's answers still gate the freeze, the pilot and P4 sizing.
   frozen at 900e66a.
 - Checked and not a defect: 4 of 11 AG-o cells store `foreign tool: python` voids. Each comes from a denied bare
   `python` call ("No such tool available: python"), which the analysis void policy excuses (LOG 2026-10-03).
+
+## 2026-10-29: Lane session 24 (20:01 UTC) hand-over: the seed lead does not explain A1's gap; calibration pool noise plus rung selection is the lead; report counts fix merged
+
+**Done.**
+- **Report fix merged:** 58d1ac2 (engineer, test first; LOG 2026-10-29). In the cost table of `pilot_report.py`,
+  a session whose stored record has no SDK `result` entry no longer counts as 0 turns and 0 tokens. On the
+  interim store, AG-o-S/named median turns go from 19 to 26 and out tokens from 2,866 to 3,950, both now
+  `(8/11 recorded)`. The AG-c row is byte-identical. The three such sessions are AG-o dev-005, dev-008 and
+  dev-012 at s1, all `wall_time` ends.
+- **Checks on v2 at 58d1ac2:**
+  - `ruff format --check`: 265 files formatted. `ruff check`: all passed.
+  - `mypy`: no issues in 254 files.
+  - `nice uv run pytest -m "not slow" -n 2`: 2,933 passed, 0 failed, exit 0 (`.cache/s24-fast.log`; the
+    summary line was suppressed by `-q`, so I counted from the progress dots).
+  - The engineer ran the slow report tests: 6 passed.
+- **Seed lead, step 3** (exploratory; `.cache/drafts/fsd-seedlead/step3-*.txt`, 356 CPU s, 0 truncated runs):
+  E[(ii)] is 82.4 under the seed-0 menu and 82.2 under each seed's own menu.
+  - Red team (one round, report returned in full; summary here): **stands with corrections**. The menu effect
+    is bounded at about 3 points on this pool, so the lead does not explain the gap.
+  - The pool's absolute 82 is not test-faithful. The bootstrap at B16 = 600 drew about 2.8 SE low, and the
+    pool's truthFSD side has no common random numbers across designs, where the test has them. It is not
+    quoted as agreement with 78.
+  - Common random numbers are not a calibration suspect: calibrate's p16 uses them as the test does.
+- **Why calibration said about 110** (theorist, offline, about 3 CPU min;
+  `.cache/drafts/fsd-seedlead/pool/notes.md`):
+  - A vectorised copy of the score rules reproduces score K3a exactly: 15/15 telling picks, 120/120 truthFSD
+    picks, (ii) = 78. Its copy of pass_ii reproduces D0's 0.99999775 (E 109.64).
+  - Calibrate and test use the same streams, rules and exclusions (controls.py line numbers in the notes), so
+    a calibrate/test mismatch is ruled out.
+  - Treating each test seed's runs as one 128-run pool, the single-pool estimate of E[(ii)] ranges from 70.4
+    to 109.8 (sd 13.7). Over 60 pools drawn from the pooled test runs: mean 91.5, sd 10.4. About 38% pass,
+    and given a pass the mean is 100.1. The law from the test's own runs gives E[(ii)] of about 92 to 94.
+  - So D0's 109.6 is a lucky pool, and the rung was tested only because its plug-in estimate passed. pass_ii
+    treats p32 and p16 as exact.
+  - Not explained: the test's 78 is itself low against that law (P 0.014 to 0.035). Almost all of the loss is
+    in telling's three rate_after flips, where about 1.0 was expected.
+- **Decisive check (a) launched:** one 1,024-replicate pool per run set under new stream ids (`fsd-poollaw-ind`,
+  `fsd-poollaw-crn`), with seed-0 menu, θ₊ 0.6 and designs 0,2..7.
+  - It runs in user unit `sci-fsd-poollaw` (`pool/poollaw-run.sh`; nice 15; one process; ceiling 3.0 CPU h,
+    exits 11 there and resumes on rerun). At 21:04Z: 3,808 of 28,672 runs, 0.165 CPU s per run, finish about
+    22:20Z.
+  - User unit `sci-fsd-poollaw-analyse` runs `poollaw_analyse.py` when the sim ends with `exit 0`. Its output
+    is `pool/poollaw-analysis.txt` and `.json`, with `watch:` lines in `pool/poollaw-progress.txt`.
+- **Not run: check (b).** It would regenerate calibrate's real rung-2 streams (`ctlA1-cal-r2`, `ctlA1-crn-r2`)
+  and replay its bootstrap (about 21 CPU min), which bypasses controls.py's stream-id guard on real control
+  ids. That is left for the owner (below).
+- **Pilot:**
+  - Baselines: 19 of 310 `ok`, 0 failed. With MemAvailable at 9.1 GiB, I re-armed `sci-pilot-to2` (STOP at
+    20:46:09Z). It relaunches with 2 workers if MemAvailable is at least 8 GiB when the unit in flight ends.
+  - LLM half: 25 scored `ok`. Still only the 3 initialize timeouts from 18:36-18:51Z; no new failure.
+- Checked and not a defect: 4 of 11 AG-o cells store `foreign tool: python` voids. These are denied bare
+  `python` calls, which the analysis void policy excuses (LOG 2026-10-03).
+
+**Learned.**
+- A wall-time end leaves no SDK `result`, so turns and tokens are missing, not zero. The root fix in `llm.py`
+  is queued with the p4-deltas integration. Session 23's interim AG-o means are low for this reason.
+- The A1 failure points at how the controls calibrate, not only at the telling rule. A plug-in pass_ii taken
+  from one fixed 128-run pool, followed by "test the first rung that passes", is optimistic by design. Any new
+  freeze needs a calibration that carries pool uncertainty: a larger pool, an interval on pass_ii, or a fresh
+  confirmation pool for the chosen rung.
+- Two launch failures this session: a relative path in `systemd-run`, and v2 lacking
+  `run_experiment_truncating`. The FSD drafts must run in the `fsd-dist` worktree with absolute paths.
+
+**Next.**
+1. Read `.cache/drafts/fsd-seedlead/pool/poollaw-progress.txt` for the `watch:` lines and then
+   `poollaw-analysis.txt`. If the sim exited 11 at the ceiling, rerun `poollaw-run.sh` in the same unit and
+   rerun the watcher. Then one red-team round on the analysis before any line in the journal calls it a
+   result. Option 2 stays parked. Bring a new freeze only with a calibration fix, and not before the owner or
+   control room has seen this.
+2. Pilot: `grep -E 'to2|exit:' .cache/pilot-run.log | tail -2` for the relaunch line and its worker count.
+   Check `.cache/pilot-llm/progress.log` for failures.
+3. With the CPU freer, run the slow tier on `p4-rehearsal` (at most 2 workers, nice), if MemAvailable allows.
+
+**Decision for the owner or control room:** may the lane regenerate A1's real calibration streams offline (check (b),
+about 21 CPU min, outside the stream-id guard, outputs only under `.cache/drafts/fsd-seedlead/`, declared
+exploratory) to confirm that D0's counts reproduce exactly? The lane recommends yes only if check (a) leaves
+the question open. A bug in calibrate would block every control.

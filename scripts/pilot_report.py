@@ -170,12 +170,46 @@ def pool_cpu(root: Path) -> PoolCpu:
     return PoolCpu(own, children, lines, of)
 
 
-def timed_text(values: Sequence[float | None], total: int) -> str:
-    """The median of the measured ``values``, and how many of ``total`` it has."""
+def _part_text(values: Sequence[float | None], total: int, what: str) -> str:
+    """The median of the known ``values``, and how many of ``total`` it has."""
     have = [v for v in values if v is not None]
     return fmt(median(have), ".0f") + (
-        "" if len(have) == total else f" ({len(have)}/{total} timed)"
+        "" if len(have) == total else f" ({len(have)}/{total} {what})"
     )
+
+
+def timed_text(values: Sequence[float | None], total: int) -> str:
+    """The median of the measured ``values``, and how many of ``total`` it has."""
+    return _part_text(values, total, "timed")
+
+
+def recorded_text(values: Sequence[float | None], total: int) -> str:
+    """The median of the SDK counts ``values`` (``None``: not recorded), and
+    how many of ``total`` it has."""
+    return _part_text(values, total, "recorded")
+
+
+def counts_recorded(root: Path, session: Any) -> bool:
+    """Whether the session's stored record has an SDK ``result`` entry, which
+    carries its turn count and token usage (a ``wall_time`` end has none).
+
+    Read from the record under ``root`` (the detail's ``record_dir`` and
+    ``record``), never from the outcome or a zero reading.
+    """
+    from sciagent.campaign.plan import CampaignError
+    from sciagent.harness.record import SessionRecord
+
+    detail = session.detail
+    if not isinstance(detail.get("record_dir"), str) or not isinstance(
+        detail.get("record"), str
+    ):
+        raise CampaignError(
+            f"session cell {session.digest} ({session.system} {session.truth} "
+            f"seed {session.seed}) names no record; its turn and token counts "
+            "cannot be told recorded or not"
+        )
+    path = root / detail["record_dir"] / detail["record"]
+    return bool(SessionRecord.load(path).of_kind("result"))
 
 
 def session_wall_times(root: Path, sessions: Sequence[Any]) -> dict[str, float]:
@@ -341,6 +375,112 @@ def interim_controls(tab: Any, resamples: int) -> list[str]:
             f"{'pass' if bc.passed else 'fail'}; inconclusive at n = {len(c10)}).",
         ]
     return [*out, ""]
+
+
+def cost_table(
+    root: Path, systems: Sequence[str], sessions: Sequence[Any]
+) -> list[str]:
+    """The LLM arms' cost and behaviour table: a row per arm with sessions.
+
+    Turns and tokens come from the SDK's ``result`` message only; a session
+    without one reads them as 0 (``campaign.llm.run_session``). They are
+    medians over the sessions whose record has a ``result`` entry
+    (:func:`counts_recorded`), with ``(n/total recorded)`` when some have
+    none, and a note then says so.
+    """
+    stimes = session_times(root, sessions)
+    crows = []
+    unrecorded = 0
+    for s in systems:
+        sess = [x for x in sessions if x.system == s]
+        if not sess:
+            continue
+        rd = [x.reading for x in sess]
+        recorded = [counts_recorded(root, x) for x in sess]
+        unrecorded += recorded.count(False)
+
+        def med(field: str, rd: Sequence[Mapping[str, float]] = rd) -> str:
+            return fmt(median([r.get(field, 0.0) for r in rd]), ".0f")
+
+        def counted(
+            field: str,
+            rd: Sequence[Mapping[str, float]] = rd,
+            recorded: Sequence[bool] = recorded,
+        ) -> str:
+            pairs = zip(rd, recorded, strict=True)
+            return recorded_text(
+                [r.get(field, 0.0) if ok else None for r, ok in pairs], len(rd)
+            )
+
+        outcomes: dict[str, int] = {}
+        for x in sess:
+            o = str(x.detail.get("outcome"))
+            outcomes[o] = outcomes.get(o, 0) + 1
+        lines = [stimes.get(x.digest, {}) for x in sess]
+        wall_text = timed_text([line.get("wall_s") for line in lines], len(sess))
+        cpu_text = timed_text([_cpu(line, "cpu_s") for line in lines], len(sess))
+        child_text = timed_text(
+            [_cpu(line, "cpu_children_s") for line in lines], len(sess)
+        )
+        evaluated = sum(r.get("predictions_evaluated", 0.0) for r in rd)
+        covered = sum(r.get("predictions_covered", 0.0) for r in rd)
+        crows.append(
+            [
+                s,
+                str(len(sess)),
+                ", ".join(f"{k} {v}" for k, v in sorted(outcomes.items())),
+                counted("turns"),
+                med("tool_calls"),
+                counted("output_tokens"),
+                counted("input_tokens"),
+                counted("cache_read_input_tokens"),
+                wall_text,
+                cpu_text,
+                child_text,
+                med("fits_used"),
+                med("experiments_used"),
+                pct(sum(r.get("experiments_used", 0.0) == 0.0 for r in rd) / len(rd)),
+                pct(sum(r.get("predictions", 0.0) > 0.0 for r in rd) / len(rd)),
+                str(sum(x.void.void for x in sess)),
+                str(sum(x.void.stored_void for x in sess)),
+                str(sum(x.void.unknown_tool_attempts for x in sess)),
+                f"{int(covered)}/{int(evaluated)}",
+            ]
+        )
+    out = table(
+        [
+            "arm",
+            "sessions",
+            "outcomes",
+            "turns",
+            "tool calls",
+            "out tokens",
+            "in tokens",
+            "cache read",
+            "wall s",
+            "cpu s",
+            "child cpu s",
+            "fits",
+            "experiments",
+            "no experiment",
+            "any prediction",
+            "void (policy)",
+            "void (stored)",
+            "unknown-tool attempts",
+            "predictions covered/evaluated",
+        ],
+        crows,
+    )
+    if not unrecorded:
+        return out
+    return [
+        *out,
+        f"Turns and tokens: {unrecorded} session(s) ended with no `result` "
+        "message from the SDK (e.g. a wall-time end), so their counts were not "
+        "recorded; those medians are over the sessions with one, and "
+        "`(n/m recorded)` says how many.",
+        "",
+    ]
 
 
 def main() -> None:
@@ -739,76 +879,7 @@ def main() -> None:
 
     # -- LLM ---------------------------------------------------------------
     L += ["## LLM arms: cost and behaviour (under Max)", ""]
-    stimes = session_times(args.root, tab.sessions)
-    crows = []
-    for s in llm_systems:
-        sess = [x for x in tab.sessions if x.system == s]
-        if not sess:
-            continue
-        rd = [x.reading for x in sess]
-
-        def med(field: str, rd: Sequence[Mapping[str, float]] = rd) -> str:
-            return fmt(median([r.get(field, 0.0) for r in rd]), ".0f")
-
-        outcomes: dict[str, int] = {}
-        for x in sess:
-            o = str(x.detail.get("outcome"))
-            outcomes[o] = outcomes.get(o, 0) + 1
-        lines = [stimes.get(x.digest, {}) for x in sess]
-        wall_text = timed_text([line.get("wall_s") for line in lines], len(sess))
-        cpu_text = timed_text([_cpu(line, "cpu_s") for line in lines], len(sess))
-        child_text = timed_text(
-            [_cpu(line, "cpu_children_s") for line in lines], len(sess)
-        )
-        evaluated = sum(r.get("predictions_evaluated", 0.0) for r in rd)
-        covered = sum(r.get("predictions_covered", 0.0) for r in rd)
-        crows.append(
-            [
-                s,
-                str(len(sess)),
-                ", ".join(f"{k} {v}" for k, v in sorted(outcomes.items())),
-                med("turns"),
-                med("tool_calls"),
-                med("output_tokens"),
-                med("input_tokens"),
-                med("cache_read_input_tokens"),
-                wall_text,
-                cpu_text,
-                child_text,
-                med("fits_used"),
-                med("experiments_used"),
-                pct(sum(r.get("experiments_used", 0.0) == 0.0 for r in rd) / len(rd)),
-                pct(sum(r.get("predictions", 0.0) > 0.0 for r in rd) / len(rd)),
-                str(sum(x.void.void for x in sess)),
-                str(sum(x.void.stored_void for x in sess)),
-                str(sum(x.void.unknown_tool_attempts for x in sess)),
-                f"{int(covered)}/{int(evaluated)}",
-            ]
-        )
-    L += table(
-        [
-            "arm",
-            "sessions",
-            "outcomes",
-            "turns",
-            "tool calls",
-            "out tokens",
-            "in tokens",
-            "cache read",
-            "wall s",
-            "cpu s",
-            "child cpu s",
-            "fits",
-            "experiments",
-            "no experiment",
-            "any prediction",
-            "void (policy)",
-            "void (stored)",
-            "unknown-tool attempts",
-            "predictions covered/evaluated",
-        ],
-        crows,
-    )
+    L += cost_table(args.root, llm_systems, tab.sessions)
     L += [
         "Medians per investigation. Prediction coverage is SPEC §4.4 calibration "
         "raw; falsification-seeking, revision and stopping need a belief timeline "

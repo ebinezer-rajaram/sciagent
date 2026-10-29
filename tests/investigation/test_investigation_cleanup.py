@@ -18,7 +18,7 @@ import shutil
 from pathlib import Path
 
 import pytest
-from investigation_support import clean_environment, scripted_run
+from investigation_support import BELIEF, STOP, clean_environment, scripted_run
 
 from sciagent.harness.scripted import Step
 from sciagent.investigation import runner as runner_module
@@ -27,9 +27,14 @@ from sciagent.sandbox import Sandbox, SandboxError
 SUBMIT = (
     Step(
         calls=(
+            BELIEF,
             (
                 "submit",
-                {"structure": "Excite(ExpK, Mark(size), all)", "report": "done"},
+                {
+                    "structure": "Excite(ExpK, Mark(size), all)",
+                    "report": "done",
+                    **STOP,
+                },
             ),
         )
     ),

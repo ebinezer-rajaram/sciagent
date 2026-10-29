@@ -177,7 +177,23 @@ def test_replay_check_passes_a_recorded_session_and_names_a_forged_one(
     root = tmp_path / "s"
     script = (
         Step(calls=(("fit", {"structure": STRUCTURE, "data_ids": ["obs"]}),)),
-        Step(calls=(("submit", {"structure": STRUCTURE, "report": "done"}),)),
+        Step(
+            calls=(
+                # P4 Δ4: a belief before the submit, and a stop reason.
+                (
+                    "belief",
+                    {"favoured": STRUCTURE, "rivals": ["null"], "confidence": 0.5},
+                ),
+                (
+                    "submit",
+                    {
+                        "structure": STRUCTURE,
+                        "report": "done",
+                        "stop_reason": "confident",
+                    },
+                ),
+            )
+        ),
     )
     outcome = run(
         env,
@@ -203,7 +219,7 @@ def test_replay_check_passes_a_recorded_session_and_names_a_forged_one(
     done = _check(monkeypatch, "--root", root, "--split", SPLIT)
     assert done.returncode == 1, done.stdout + done.stderr
     honest = f"PASS {outcome.record_path.relative_to(root)} AG-c named dev-006 s1: "
-    assert honest + "steps=2 budgets={'experiments': 0, 'fits': 1, 'submit': 1}" in (
+    assert honest + "steps=3 budgets={'experiments': 0, 'fits': 1, 'submit': 1}" in (
         done.stdout
     )
     assert f"FAIL {forged_path.relative_to(root)} AG-c named dev-006 s1: " in (

@@ -1362,3 +1362,48 @@ shared fixed order, seeded random), written only to `.cache/drafts/fsd-ties/`.
 **Learned.** Nothing new yet.
 
 **Next.** Read both reports, check them, record the outcome (LOG only if a decision is made), hand over.
+
+## 2026-10-29: Lane session 16 (05:43 UTC) hand-over: truncation measurement red-teamed (claim 2 withdrawn), He² saturation and tie-order draft written
+
+**Done.**
+- INBOX: no open entry; VETO.md: no VETO lines; no owner answer on where the baselines run, Δ6 or the
+  brake. The full pilot stays blocked. No code changed this session (only `.cache/drafts/` and docs).
+- Red team of the truncation measurement (`.cache/drafts/fsd-trunc/redteam-s16.md`). Reproduced: rerun of
+  dev-002 (wh, truth, replicate 0) 16/16 lines byte-identical excluding CPU timings; independent rebuild
+  of the (a)/(b)/(c) tables and picks 0 mismatches; crosscheck 3,812 match, 0 mismatch; the WH copy
+  differs from `models.py:339-411` only by the truncation lines. Verdicts: claim 2 (27 of 28 picks
+  unchanged) count holds, evidence close to empty: 11 of 28 cases have no truncation on either side;
+  9 of the other 17 pick (truncated design, `mean_rate`), which the cap forces (`mean_rate` = 15000/τ,
+  min 8.017 against a GLM max of 1.881); the one change is a rounding tie. I checked it in
+  `tables-full.json`: truthFSD dev-006, rule a T[2][20] = 1.0 and T[3][32] = 1.0, rule c T[2][20] =
+  0.9999999999999997. The GLM side never truncates, so the both-sides-cap regime was never sampled.
+  Claim 3 holds with a caveat (saturation is set by the cap; for FSD it can come from WH alone, dev-005).
+  Claim 4 holds, but rule choice moves the picked diagnostic more than tie order: `choose` under a or c
+  vs b differ on 5 of 14 (FSD) and 8-9 of 14 (truthFSD). Claim 1 holds with gaps: no WH self-check run
+  reached the cap; the cap prefix check compares times only, not marks or `endogenous`; the
+  τ-in-excluded-window branch never ran (0 of 142).
+- Theorist draft (`.cache/drafts/fsd-ties/draft.md`, scripts and outputs beside it; unreviewed).
+  `hellinger2` is an undefined atom plus a moment-matched Gaussian per side; He² is exactly 1.0 when
+  D = -ln(1 - He²) ≥ 54 ln 2 = 37.43 (I checked the double-precision threshold). Ties come from the
+  atom under (a), and from extreme separations or the variance floor under (c); well-separated
+  distributions (≤ 8 sd) almost never reach exactly 1 (P ≤ 0.001 at R = 16/16 and 16/4). Recommendation,
+  conditional: rank by D (He²'s own order without rounding) in both `choose` and `Telling.from_table`,
+  then one shared documented order, only with rule (c) for both; under (a) a shared fixed order is
+  enough. On these tables truthFSD vs telling-order agreement on the diagnostic is 10/11/10 of 14 under
+  a/b/c and 14 of 14 with any tie option (`ties-out.txt:618-623`). Control 5 as built (truthFSD under (a)
+  against telling d* under (b)) agrees on 3 of 14 truths, at most 6 of 14 under any tie option
+  (`ties-out.txt:624`). Weakest point: ranking by D is less stable across split halves (7 vs 10 of 14
+  under (c)), and `spectral_peak_frequency` wins 9 of 84 tables on its value grid and the variance floor.
+
+**Learned.** Session 15's "the at-stop rule barely moves decision-0 picks" is withdrawn: the measurement
+could not see a difference where one would arise. A comparison of two rules needs a positive control
+first (SPEC §6.4), as for systems. The bigger issue for control 5 is not tie order but that truthFSD and
+telling use different at-stop rules (a vs b).
+
+**Next.**
+1. Owner, unchanged: where the baselines run (the full pilot waits on it); Δ6 (A/B/C); the brake and
+   pilot-unit question.
+2. FSD: red-team the ties draft; then the positive control the red team asked for (a capping parametric
+   side, e.g. B-sym's real top fit, or a both-sides-cap pair), truthFSD at 16 truth replicates, and the
+   WH truncating-mode content checks at the real cap. Only then a proposal (recommendation, red team,
+   LOG with a 24 h veto window, push).

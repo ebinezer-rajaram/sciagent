@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Final
 
 import pytest
-from campaign_support import entry, environment, tiny_config
+from campaign_support import FINGERPRINT, entry, environment, tiny_config
 
 from sciagent.campaign import driver as driver_module
 from sciagent.campaign import plan
@@ -340,6 +340,7 @@ def test_a_pilot_format_harness_1_cell_is_found_and_rescored(
             config,
             [truth],
             DriverSettings(workers=0, poll_s=0.05, run_baselines=False, **settings),
+            fingerprint=FINGERPRINT,
         )
 
     with monkeypatch.context() as old:

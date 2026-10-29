@@ -272,6 +272,7 @@ def test_an_executed_foreign_tool_is_stored_void_and_not_scored(
             run_baselines=False,
             driver_factory=lambda u: ScriptedDriver(executed),
         ),
+        fingerprint=FINGERPRINT,
     )
     c.run()
     unit = Unit("hawkes", 1, "AG-c-H/named")

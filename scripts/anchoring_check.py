@@ -38,8 +38,14 @@ def main() -> None:
     args = p.parse_args()
 
     from sciagent.campaign.driver import Campaign, DriverSettings
-    from sciagent.campaign.plan import ORACLE, CampaignConfig, LLMArm
+    from sciagent.campaign.plan import ORACLE, CampaignConfig, CampaignError, LLMArm
 
+    # The store's code-fingerprint guard (F5), as scripts/pilot.py does it.
+    try:
+        fingerprint = pilot.code_fingerprint()
+    except CampaignError as error:
+        raise SystemExit(f"refused: {error}") from error
+    print(f"code fingerprint: {fingerprint}", flush=True)
     split = pilot.load_split(args.split)
     records = pilot.select(split, None, args.ids)
     config = CampaignConfig(
@@ -57,13 +63,17 @@ def main() -> None:
         llm_limit=args.llm_limit,
         max_heavy=1,
     )
-    campaign = Campaign(
-        args.root,
-        pilot.pointproc_environment(split),
-        config,
-        pilot.truth_entries(records),
-        settings,
-    )
+    try:
+        campaign = Campaign(
+            args.root,
+            pilot.pointproc_environment(split),
+            config,
+            pilot.truth_entries(records),
+            settings,
+            fingerprint=fingerprint,
+        )
+    except CampaignError as error:
+        raise SystemExit(f"refused: {error}") from error
     try:
         summary = campaign.run()
     finally:

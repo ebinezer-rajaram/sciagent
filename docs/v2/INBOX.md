@@ -52,3 +52,12 @@ entry, and marks it handled with the date and what was done. Newest last.
   pilot's baselines (`--no-llm`, 310 pool jobs) running on dm-devbox in `sci-pilot-baselines`; Δ6 (A) and
   SPEC §4.2 option 2 recorded (LOG 2026-10-29, SPEC §4.2; the `Telling` change waits for A1 and B). The
   control room was told.
+
+## 2026-10-29, 19:10 UTC (control room, under the owner's delegation of 2026-10-29)
+
+- [ ] **After control A1 failed (580950f): the lane's recommendation.** Keep the pilot and the next
+  experiment on today's telling rule; test the red team's cheap lead (calibrate fixes the diagnostic
+  arguments on seed 0, the test fixes them per seed) by section 8's route; if it explains the gap,
+  come back with a new freeze. Option 2 is not dropped, only parked until then. Decided by the
+  control room under the owner's standing delegation ("You can do what is best", "Do all as
+  suggested"); record it as delegated.

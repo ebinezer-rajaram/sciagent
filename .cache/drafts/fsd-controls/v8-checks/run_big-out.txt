@@ -1,0 +1,3 @@
+theta+=0.5 n=200000: miss 12 border_miss 3 border_trunc 4 tau q(0,.5,.99,1) (832.0, 880.0, 1028.0, 1218.0) cpu 26s
+theta+=0.4 n=50000: miss 425 border_miss 101 border_trunc 132 tau q(0,.5,.99,1) (843.0, 933.0, 1170.0, 1231.0) cpu 8s
+theta+=0.6 n=200000: miss 0 border_miss 0 border_trunc 0 tau q(0,.5,.99,1) (824.0, 858.0, 963.0, 1171.0) cpu 19s

@@ -1,0 +1,7 @@
+m=1.10 q=7.50e-05: A1 P1 pass 0.9623; A1 P(VOID|tested) 6.94e-04
+m=1.05 q=1.05e-02: A1 P1 pass 0.0045; A1 P(VOID|tested) 1.00e+00
+m=1.15 q=1.50e-05: A1 P1 pass 0.9923; A1 P(VOID|tested) 6.13e-06
+B rung m=1.10: P1 pass (512 rung + 256 ref) 0.9440; P(VOID|tested) 3.66e-03
+B rung m=1.05: P1 pass (512 rung + 256 ref) 0.0044; P(VOID|tested) 1.00e+00
+B rung m=1.15: P1 pass (512 rung + 256 ref) 0.9735; P(VOID|tested) 6.94e-04
+95% bound from 0/512 clean: 5.83e-03 ; from 0/200000: 1.5e-05

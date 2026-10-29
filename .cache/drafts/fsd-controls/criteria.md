@@ -1,16 +1,69 @@
-# Positive controls for the at-stop rule (FSD, truthFSD, telling): preregistered criteria, v7
+# Positive controls for the at-stop rule (FSD, truthFSD, telling): preregistered criteria, v8
 
-v7 (2026-10-29) is v6 (`criteria-v6.md`, sha256 3e30503f…) with `redteam-s17f.md`'s fixes:
-- the freeze chain is read from origin/v2 after a fetch, and F and D must be on origin/v2;
-- "has test data" is now per freeze interval;
-- the score files record the chain and every D;
-- the test-time P1-breach rule is restored;
-- exit codes are distinct;
-- §8 B's evidence is the per-rung h_F.
+v8 (2026-10-29, theorist) is v7 (`criteria-v7.md`, sha256 9c15e47e…, commit ecb909a) with `redteam-s18.md`'s four blocking fixes, its cheap non-blocking fixes, and the engineer's seven v7 gaps (coordinator 09:20Z). Following the owner (LOG 2026-10-29, d550bc4), there are no veto windows: v7 had no veto wait, and v8 adds none. There is one review, joint with the controls.py code review. §0's rules, §1 and §2's controls, thresholds and seeds are unchanged; the one addition there is a third reading for B rungs (E2). New evidence is in $D/v8-checks/: `breach_model.py`, `run_big-out.txt`, `pvoid-out.txt`, and the scratch-git scripts `lib8.sh`, `scen8.sh`, `s2diag.sh`, `refined.sh`, `s8.sh`, and `lib8c.sh` with `refined-c.sh` (v8's exact content-compare C7). These were written for /tmp/fsd-v8-check and /tmp/fsd-v8-theory; copy them there before rerunning. They use local bare repositories only.
 
-v6 (2026-10-29) is v5 (`criteria-v5.md`, sha256 64fcabe2…) with `redteam-s17e.md`'s fixes: N1 restores the outcome readings (§8); N2 adds the freeze chain and the mechanical test-data rule (§5); N3 makes the 99% clause buildability and reads a failure through h (§0, §2); N4 adds the run command and environment (§7); plus its small gaps.
+**Changelog v7 → v8 (each item and its disposition).**
+- **s18 blocking 1 (merge topology, deleted LEDGER rows): adopted, with changes (§5).**
+  - The chain is every non-merge commit that ever changed controls.py, as the red team proposed.
+  - The rows count if they were ever added, read with `--full-history --no-merges`.
+  - The test-data rule is the red team's.
+  - Changed after the scratch check: the "nothing after F touches frozen files" check compares content (F = O = HEAD = working tree), not history. The history form refused an honest merge (scen8 S2).
+  - D-candidates are restricted to non-merge commits whose tree holds the file.
+  - Added: the force-push assumption is now an owner precondition (H1) plus a detection check on GitHub's activity log (H2).
+- **s18 blocking 2 (D0 seen without a push): adopted (calibrate pushes D itself, by plumbing), with changes (§5 "D").**
+  - Up to 20 attempts, not 1.
+  - Success means D is an ancestor of a refetched tip, so a push whose reply was lost still counts.
+  - The gate is rerun just before D is built.
+  - Nothing reaches stdout, stderr or the CPU ledger before the push either.
+  - calibrate refuses if a D already exists, and the restore recipe is given.
+  - The two alternatives are rejected with reasons in §5.
+- **s18 blocking 3 (failed fetch; racing fetches): adopted, with changes.**
+  - The fetch goes into a private ref, `refs/fsd-controls/v2`, which the lane never touches, with `--no-write-fetch-head`.
+  - O is held in memory.
+  - A flock on `git.lock` serialises the two processes.
+  - A fetch failure exits 10.
+- **s18 blocking 4 (an honest re-freeze cannot rerun): adopted.**
+  - F's tree holds no run output.
+  - A re-freeze first removes tracked D0 and score files and archives the untracked outputs.
+  - Added: runs files carry an {F, D} header, so test never resumes F's runs under F′.
+- **s18 non-blocking 1 (exit codes): adopted.**
+  - `result` is authoritative; any other exit code is a crash.
+  - Every git or gh failure exits 10.
+  - B's reference-check VOID exits 12.
+  - calibrate exits 0, 12 or 13.
+  - score exits the terminal code, 15 taking precedence over 14. This changes v7, where score exited 0 on an untested control; it now exits 12 or 13.
+- **s18 non-blocking 2 (breach VOID unpriced): priced (§0).** A reduced branching model gives these per-run miss rates:
+  - 7.5e-5 at θ = 0.5;
+  - 1.05e-2 at θ = 0.4;
+  - ≤ 1.5e-5 at θ = 0.6.
 
-Theorist, 2026-10-29. Self-contained: no earlier version is needed to read or implement it. Supersedes v1–v4 (`criteria-v1.md` … `criteria-v4.md`; v4 sha256 42828142…). Fixes `redteam-s17d.md` items 1–4, settles 5, 7, 8 and 10, and defers A2 (item 6). Item 9 (JOURNAL wording) is the coordinator's. No control stream has been drawn. Evidence, all in $D: `probe*-out.txt`, `power2-out.txt`, `power3-out.txt`, `a2band-out.txt`, `bench-out.txt`, `cost5-out.txt`, `random-picks.txt` (sha256 33f80c78…).
+  P(VOID by breaches | tested) is about 7e-4 (A1) and 3.7e-3 (B) on rung 0. The θ = 0.4 rung fails P1 with P ≈ 0.996, so no truncation probe is needed before freeze. v4's "a VOID writes its evidence and no rule results" is restored, and L77 is corrected.
+- **s18 non-blocking 3 (ceiling and resume): adopted.**
+  - There is no `--cpu-ceiling-h` flag; the ceiling is read from LEDGER rows.
+  - A resume is a `fsd-controls ceiling <c> CPU h` row.
+  - cpu-total.txt is created once, before F₀.
+- **s18 non-blocking 4 (stale version numbers): fixed.** §5 no longer names a version.
+- **s18 non-blocking 5: all adopted.**
+  - Internal functions refuse the real control ids without the gate's token.
+  - Score files are committed, and runs files are copied to S3.
+  - Every F changes controls.py, which holds `CRITERIA_SHA256`.
+  - D has a single parent.
+  - The LEDGER column is `item`.
+  - The stub-test list matches the contract.
+  - The contract is updated.
+- **Engineer E1 (`python -I` ignores PYTHONDONTWRITEBYTECODE and PYTHONPYCACHEPREFIX): adopted as the engineer built it (§7).** controls.py sets `sys.dont_write_bytecode` and `sys.pycache_prefix` before any import from $D or $WT, and the gate requires `sys.flags.isolated`.
+- **E2 (a B rung with h, h_F ≥ 0.95 failing only pass_iii_F fits no reading): closed.** It is now a **separation shortfall** (§0), which ranks no rule.
+- **E3 (resume rows): settled with s18 non-blocking 3.** A freeze sha may appear in more than one row, and is no longer refused. Ceiling rows never contain `freeze`.
+- **E4 (calibration runs kept in `runs-<C>-cal.jsonl` and resumed): rejected.** That file is as revealing as D0 and would reopen blocking 2. calibrate keeps everything in memory and is not resumable; a STOP or crash before the push loses at most about 1.1 (A1) or 1.6 (B) CPU h.
+- **E5: adopted.** `cpu-total.txt.tmp` and `git.lock` are run outputs.
+- **E6: adopted as built.**
+  - `"status"` is "preregistered" or "exploratory deviation"; the outcome is `"result": {"code", "name"}`.
+  - calibrate exits 0, 12 or 13; 15 beats 14.
+  - A missing cpu-total exits 10.
+  - score on an unfinished test exits 11.
+- **E7 (excluded designs removed from the argmax; candidates.py zeroed them; parity is 72/72 either way): confirmed (removal).** Parity cannot tell the two apart, so a stub test must (§7).
+
+Earlier versions: v7 `criteria-v7.md` (9c15e47e…); v6 `criteria-v6.md` (3e30503f…); v5 (64fcabe2…); v4 (42828142…). The red-team record is `redteam-s17*.md` and `redteam-s18.md`. No control stream has been drawn. Evidence, all in $D: `probe*-out.txt`, `power2-out.txt`, `power3-out.txt`, `a2band-out.txt`, `bench-out.txt`, `cost5-out.txt`, `random-picks.txt` (sha256 33f80c78…), `v8-checks/`.
 
 ## 0. Definitions
 
@@ -74,22 +127,52 @@ Telling's argmax is d-major (`Telling.from_table`: the first d whose column maxi
 **Rungs and their reading (redteam-s17d 3, 7).**
 - Every rung of A1 and of B is calibrated, and every rung's P1, P2 and P3 (or P3-B) values go into `D0-<C>.json`.
 - The test uses the first rung, in ladder order, that passes all its preconditions.
-- A rung is **unbuildable** if it fails P1, P2 or the 99% clause (N3). The control is VOID only if every rung is unbuildable.
+- A rung is **unbuildable** if it fails P1, P2 or the 99% clause (N3).
+- Calibration makes a control VOID (12) only if every rung is unbuildable or, for B, the reference check fails at both θ₊ = 0.5 and 0.6. Test and score can VOID it later (14, 15).
 - A buildable rung that fails the rest of P3 (A1: h, pass_ii or pass_iii) is a measured **R = 16 shortfall**: truthFSD at R = 16 would not reproduce telling's label at the required rate.
-- A buildable B rung that fails P3-B is read through B's own h (from p₁₆, as in A1):
-  - it is a **cost of Fx's exclusion** only if h ≥ 0.95 > h_F;
-  - if h < 0.95, it is an R = 16 shortfall, as in A1.
+- A buildable B rung that fails P3-B is read through B's own h (from p₁₆, as in A1), in this order:
+  - if h < 0.95, it is an R = 16 shortfall, as in A1;
+  - otherwise, if h_F < 0.95, it is a **cost of Fx's exclusion**;
+  - otherwise (h, h_F ≥ 0.95, so pass_iii_F < 0.95), it is a **separation shortfall**. Fx keeps telling's label at the required per-decision rate, but B3's McNemar test against random's fixed picks has no power at 15 seeds. It ranks no rule. (v8, E2.)
 - If no rung passes everything but at least one is buildable, the test is not run, and the buildable rungs' values are the control's result.
-- **Exit statuses (every phase).** These are distinct from Python's own 1 (crash) and 2 (usage error), which are never used for an outcome.
-  - 0 done; 10 gate refusal; 11 STOP (INCOMPLETE);
-  - 12 every rung unbuildable (VOID); 13 no rung passes, but at least one is buildable (not tested);
-  - 14 VOID by test-time P1 breaches; 15 VOID by a determinism mismatch found by score.
-  - calibrate always writes D0 with every rung's values and its status.
-  - test exits 12 or 13 at once, drawing nothing; score then writes `score-<C>.json`/`.txt` from D0 alone and exits 0.
-  - score writes its files before exiting 14 or 15.
+- **Result and exit codes (every phase).**
+  - Every output has two fields:
+    - `"status"`: "preregistered" or "exploratory deviation" (§5);
+    - `"result"`: {"code", "name"}.
+  - `result` is authoritative; exit codes only signal it.
+  - The codes:
+    - 0 done;
+    - 10 gate refusal: any failed check, any failed git, gh, fetch or push, and a missing or unparseable cpu-total.txt;
+    - 11 STOP or INCOMPLETE (this includes score on a control whose test has not finished);
+    - 12 VOID at construction (above);
+    - 13 not tested: no rung passes, at least one is buildable;
+    - 14 VOID by test-time P1 breaches;
+    - 15 VOID by a determinism mismatch.
+  - Any other exit code means the process crashed: Python's 1 and 2, uv's 2, or a signal's 128 + n. A crash's partial outputs are not results. The phase is rerun (test resumes; calibrate starts over, §5). A crash that needs a code change needs F′.
+  - calibrate exits 0, 12 or 13, after D is on origin/v2 and D0 is written (§5).
+  - test exits 12 or 13 at once, drawing nothing, if that is D0's result.
+  - score exits with the control's terminal code (0, 12, 13, 14 or 15), after writing its files.
+    - It checks determinism first and breaches second, so 15 takes precedence over 14.
+    - On 14 or 15, the score files hold only the result and its evidence: the mismatching lines, and the breaches by seed. No rule is scored (restored from v4).
+    - On 12 or 13, they hold D0's per-rung values.
 - **Test-time P1 breach** (restored from v4). This is a truncation, cut0 or stop where calibration had none, or a run that does not truncate where calibration had 256/256.
   - It is scored as observed under every rule and listed by seed in the score files.
-  - If breaches touch more than 2 of the 15 seeds, the control is VOID: score writes its files and exits 14.
+  - If breaches touch more than 2 of the 15 seeds, the control is VOID (14).
+- **The breach rule's price (s18 non-blocking 2).** The model is a reduced one (`v8-checks/breach_model.py`), not the simulator.
+  - **What calibration alone can show.** 512 clean planned runs per rung bound the per-run miss rate only to ≤ 5.8e-3 (95%). Keeping P(VOID) ≤ 0.05 needs ≤ 3.7e-4 (A1: 160 planned runs per seed).
+  - **The model.** It is a linear Hawkes process: μ = 0.15, kernel m·e^{−t}, every event sign + in the intervention window [800, 1200) of the 2,000 horizon, cap 15,000, simulated exactly and seeded.
+    - It reproduces probe3's earliest τ: 832 against 833 at θ₊ = 0.5, and 824 against 831 at θ₊ = 0.6.
+    - Its per-run miss rates are:
+      - 7.5e-5 at in-window branching 1.10 (θ = 0.5; 15 in 200,000);
+      - 1.05e-2 at 1.05 (θ = 0.4; 526 in 50,000);
+      - none in 200,000 at 1.15 (θ = 0.6; ≤ 1.5e-5).
+    - The same rates hold for B's θ₋ rungs (`run_big-out.txt`).
+  - **What follows (`pvoid-out.txt`).**
+    - θ = 0.5: P1 passes with P ≈ 0.96 (A1) and 0.94 (B, with the reference check). P(VOID by breaches | tested) ≈ 7e-4 (A1) and 3.7e-3 (B).
+    - θ = 0.4: P1 fails with P ≈ 0.996, so this rung is almost always unbuildable; it wastes about 0.35 CPU h of calibration per control. Being built and then VOIDed has P ≤ 0.0045.
+    - θ = 0.6: P(VOID | tested) ≤ 7e-4.
+  - **Decision.** No truncation probe is needed before freeze. Dropping the θ = 0.4 rung would change §1 and §2 (not a blocking fix), so it is left to the coordinator.
+  - **Unpriced.** Stops (none has been observed), cut0 on the planned design, and the model's late tail. probe3's latest τ at θ₊ = 0.6 (1052 in 64 runs) lies beyond the model's 99th percentile (963), so the model may understate late truncation.
 
 ## 1. Control A1 (known d\*)
 
@@ -155,6 +238,7 @@ Telling's argmax is d-major (`Telling.from_table`: the first d whose column maxi
 **Outcome table (redteam-s17d 7), using §0's rung reading.**
 - A buildable θ₋ rung that fails P3-B with h ≥ 0.95 > h_F: Fx misses telling's label when the artefact sits on the truth's top design (a cost of Fx's exclusion). With h < 0.95, it is an R = 16 shortfall.
 - A buildable size rung that fails P3-B is read the same way, through h. There the artefact is off the top design, so the most likely reading is plain R = 16 resolution; no stronger cost is claimed.
+- A buildable rung (θ₋ or size) with h ≥ 0.95 and h_F ≥ 0.95 that fails P3-B, so pass_iii_F alone fails, is a separation shortfall (§0, v8). It ranks no rule.
 - Mixed failures: the P3-B failures of buildable rungs are reported; unbuildable rungs are listed.
 - A B1–B3 pass on the size rung holds only for truths whose best design is not the artefact design.
 
@@ -180,113 +264,299 @@ A2 is not part of this preregistration. It drew no verdict, it had no power calc
 - telling's d\* is identical under K4 and K5;
 - they differ only in truthFSD, so only in control 5.
 
-## 5. Procedure: sequence, gate, deviations (redteam-s17d 1, 2)
+
+## 5. Procedure: sequence, gate, deviations (redteam-s17d 1, 2; s17f 1; s18 1–4)
+
+**What the gate guarantees.**
+- The documented sequence is the only one that passes. Every shortcut red teams s17f and s18 found is either refused or labelled exploratory.
+- Every D0 that controls.py shows is already on origin/v2.
+- The label is computed from origin/v2's history, which branch protection (H1) and the activity check (H2) keep append-only.
+- It is not a security boundary. The stream seeds are in this file, so anyone can draw the streams with their own code, read a process's memory or watch its CPU time. Those are outside the guarantee.
+
+**Notation.**
+- $P = `.cache/drafts/fsd-controls` (the path as git prints it; `git -C $R` resolves it from $R).
+- URL = `https://github.com/ebinezer-rajaram/sciagent.git`.
+- O = the sha of v2 on GitHub, as this process fetched it (below).
+- **Rows ever added** = the `+` lines (not `+++`) of `git -C $R log --full-history --no-merges -p --format= O -- docs/v2/LEDGER.csv`, read as CSV. A row's `item` is its second field. Editing or deleting a row later changes nothing.
+
+**Owner precondition (owner action; not yet done; nothing runs until it is).**
+- The owner turns on GitHub branch protection for v2:
+  - no force pushes;
+  - no deletion;
+  - enforced for administrators. The machine's gh token has admin rights, so without enforcement it could still force-push.
+- The command is below; the equivalent is a rule for v2 in Settings → Branches with "Do not allow bypassing the above settings" ticked. Direct pushes to v2, the lane's and calibrate's, stay allowed.
+
+  ```sh
+  gh api -X PUT repos/ebinezer-rajaram/sciagent/branches/v2/protection --input - <<'EOF'
+  {"required_status_checks":null,"enforce_admins":true,"required_pull_request_reviews":null,"restrictions":null,"allow_force_pushes":false,"allow_deletions":false}
+  EOF
+  ```
+- State on 2026-10-29 at 09:18Z:
+  - `gh api repos/ebinezer-rajaram/sciagent/branches/v2 --jq .protected` printed `false`;
+  - `…/branches/v2/protection` returned 404 "Branch not protected";
+  - the activity log held 0 force pushes and 0 branch deletions in 86 v2 activities, back to the branch's creation on 2026-10-02.
+- F₀ may be committed before the owner acts, but every phase exits 10 at H1 until then.
 
 **Sequence.**
-1. The coordinator commits v5 as the design record.
-2. The engineer writes `controls.py`, `test_controls.py` and `parity/` in $D to §7. `controls.py` is never committed before F, because the gate requires F to be the only commit that ever touched it. The tests pass, and their output is `test_controls-out.txt`.
-3. A code red team (a fresh reviewer) checks `controls.py` and its tests against v5. Its fixes go in before F; if a fix needs this file to change, that is v6 and a design red team.
-4. F, one commit (`git add -f`), holds every file in $D except the run outputs: `__pycache__/`, `*-err.txt`, `cpu-total.txt`, `cpu-total.lock`, `cpu-ledger.csv`, `STOP`, `D0-*.json`, `runs-*.jsonl`, `score-*.*`. F's message carries `criteria.md sha256: <h>` and `controls.py sha256: <h>`.
-5. F is pushed (`git push origin v2`). The coordinator then adds a `docs/v2/LEDGER.csv` row whose description contains `fsd-controls freeze <F's full sha>`, with the 7.6 CPU h ceiling and $0, and creates `cpu-total.txt` containing `0.0`.
-6. calibrate writes `D0-<C>.json`. D is a commit containing only that file, and it is pushed.
-7. test writes `runs-<C>.jsonl`.
-8. score writes `score-<C>.json` and `score-<C>.txt`.
+1. The coordinator commits this file as the design record. This is not a freeze.
+2. The engineer writes `controls.py`, `ctl_gate.py`, `test_controls.py` and `parity/` in $D to §7.
+   - `controls.py` is never committed before F₀, because every commit that ever touched it must be a freeze (C1–C3).
+   - The tests pass, and their output is `test_controls-out.txt`.
+3. One review, joint with the controls.py code review (owner, LOG 2026-10-29). Its fixes go in before F₀ and are listed in this file's changelog. There is no further design round.
+4. Before F₀ only, the coordinator creates `$D/cpu-total.txt` containing `0.0`. This is never repeated (§6).
+5. F (F₀, or a later F′ per Deviations) is one non-merge commit (`git add -f`).
+   - It changes controls.py and holds every file in $D except the run outputs: `__pycache__/`, `.ruff_cache/`, `*-err.txt`, `cpu-total.txt`, `cpu-total.txt.tmp`, `cpu-total.lock`, `cpu-ledger.csv`, `git.lock`, `STOP`, `D0-*.json`, `runs-*.jsonl`, `score-*.*`.
+   - F's tree under $P holds no run-output path.
+   - F's message carries `criteria.md sha256: <h>` and `controls.py sha256: <h>`.
+   - controls.py holds the constants `VERSION` (this file's version) and `CRITERIA_SHA256` (this file's hash), so every new version of this file changes controls.py and makes a new freeze.
+6. F is pushed (`git push origin v2`, plain). The coordinator then pushes a LEDGER row:
+   - `item` = `fsd-controls freeze <F's full sha> ceiling <c> CPU h`, where c is the cumulative ceiling (7.6 for F₀);
+   - hours 0 and usd 0. The CPU used gets its own row afterwards.
+   - There is no veto wait: calibrate may start once the row is on origin/v2 (owner, LOG 2026-10-29, d550bc4).
+7. calibrate computes D0 in memory, pushes D itself, and only then writes D0 (below).
+8. test writes `runs-<C>.jsonl`.
+9. score writes `score-<C>.json` and `score-<C>.txt`. The coordinator then:
+   - commits the two score files (`git add -f`, nothing else) and pushes them;
+   - copies `runs-<C>.jsonl` to `s3://delaymargin-results-482913/sciagent/fsd-controls/<F short sha>/` and adds the usual LEDGER row. The score files hold the runs file's sha256.
 
-**Gate** (every phase; any failure raises a typed error naming the check, and the process exits 10).
-- `--freeze-commit F` is given explicitly; test and score also take `--d0-commit D`.
-- The sha256 of `criteria.md` and `controls.py` **on disk** equal the lines in F's message.
-- `git -C $R diff --quiet F -- <frozen>` (working tree against F), where `<frozen>` = `git -C $R ls-tree -r --name-only F -- $D`.
-- **The freeze chain (N2; redteam-s17f 1).**
-  - Every phase first runs `git -C $R fetch origin`.
-  - F₀, F₁, … are the freeze commits, in order. They are read from `git -C $R show origin/v2:docs/v2/LEDGER.csv` (never the working tree): one row each, whose description contains `fsd-controls freeze <full sha>`.
-  - F must be the newest freeze in the chain, and `git -C $R merge-base --is-ancestor F origin/v2` must hold.
-  - `git -C $R log --format=%H -- $D/controls.py` must print exactly the chain's commits, newest first: every commit that ever touched `controls.py` is a recorded freeze.
-  - `git -C $R log --format=%H F..HEAD -- <frozen>` must be empty.
-- `git -C $R status --porcelain --ignored -- $D` lists only `!!` entries matching the run-output patterns in step 4.
-- `git -C $WT rev-parse HEAD` = bff61ecba3daed876e55896e329000704fb9626b, and `git -C $WT status --porcelain --ignored -- src` lists nothing but `!!` entries ending in `__pycache__/`. Those exist today from earlier imports: 21 directories (redteam-s17e). The environment is checked as well: `OPENBLAS_NUM_THREADS`, `OMP_NUM_THREADS` and `MKL_NUM_THREADS` are `1`; `PYTHONDONTWRITEBYTECODE=1`; and `PYTHONPYCACHEPREFIX` is set to a directory outside $R, so no stale or planted .pyc in an allowed `__pycache__/` is ever loaded (§7).
-- test and score also need:
-  - F a strict ancestor of D (`merge-base --is-ancestor F D`, F ≠ D), and D an ancestor of origin/v2 (`merge-base --is-ancestor D origin/v2`, after the fetch). D must be pushed before test runs;
-  - `git -C $R show --name-only --format= D` = exactly `.cache/drafts/fsd-controls/D0-<C>.json` (git prints paths relative to the repository root);
-  - `git -C $R diff --quiet D -- $D/D0-<C>.json`;
-  - `git -C $R log --format=%H D..HEAD -- $D/D0-<C>.json` empty.
-- The environment: numpy and scipy versions and the sha256 of `$WT/uv.lock` are recorded in D0, and test and score refuse if they differ.
-- D0 and the score files record F, D (in score), the whole freeze chain with every D0 commit found on origin/v2 for each interval F_j..F_{j+1} (in score, so anyone can recompute the test-data label), the sha256 of `criteria.md`, `controls.py`, `uv.lock` and (in score) `runs-<C>.jsonl`, $WT's HEAD, and the library versions.
+**Fetch (every phase, first; s18 3).**
+- Under an exclusive `fcntl.flock` on `$D/git.lock`, controls.py runs `git -C $R fetch --no-tags --no-write-fetch-head URL +refs/heads/v2:refs/fsd-controls/v2`, with a 120 s timeout.
+  - Both controls.py processes take the lock; the lane's git commands do not.
+  - In calibrate, the lock is also held while D is built and pushed.
+- A nonzero exit or a timeout refuses (10).
+- O = `git -C $R rev-parse refs/fsd-controls/v2`, read under the lock and held in memory.
+- Every check below uses the sha O. Nothing reads `origin/v2`, `FETCH_HEAD` or the configured remote, so a hand-moved ref or a re-pointed remote changes nothing (scratch S7).
+
+**History (every phase; owner precondition and detection).**
+- H1: `gh api repos/ebinezer-rajaram/sciagent/branches/v2/protection --jq '[.allow_force_pushes.enabled,.allow_deletions.enabled,.enforce_admins.enabled]'` prints `[false,false,true]`.
+- H2: `gh api 'repos/ebinezer-rajaram/sciagent/activity?ref=refs/heads/v2&activity_type=force_push&per_page=100' --jq length` prints `0`, and so does the same call with `activity_type=branch_deletion`.
+  - This is the detection layer. It holds even if protection was off for a while, since an admin token can switch protection off.
+- Any `gh` failure refuses (10). H1's and H2's outputs go into D0 and the score files.
+
+**Freeze chain (every phase; s18 1).**
+- C1: the freezes F₀, F₁, …, F_k are `git -C $R rev-list --full-history --no-merges --topo-order --reverse O -- $P/controls.py`: every non-merge commit on origin/v2 that ever changed controls.py, oldest first. There is at least one.
+- C2: each F_j is an ancestor of F_{j+1} (`git -C $R merge-base --is-ancestor`).
+- C3: each F_j is named by a row ever added whose `item` contains `fsd-controls freeze <F_j full sha>`.
+  - A sha may be named by more than one row.
+  - Rows naming any other sha are listed in the outputs and otherwise ignored.
+- C4: `--freeze-commit F` equals F_k, the newest freeze.
+- C5: the sha256 of criteria.md and controls.py on disk equal the lines in F's message, and criteria.md's hash equals controls.py's `CRITERIA_SHA256`.
+- C6: `<frozen>` = `git -C $R ls-tree -r --name-only F -- $P`. No path in it matches a run-output pattern.
+- C7: the frozen files are identical in F, O, HEAD and the working tree:
+  - `git -C $R diff --quiet F O -- <frozen>`;
+  - `git -C $R diff --quiet F HEAD -- <frozen>`;
+  - `git -C $R diff --quiet F -- <frozen>`.
+
+  This compares content, not history. A history form refuses an honest merge of F (scratch S2). A change and revert in between is harmless, because C1–C3 catch any commit that touches controls.py.
+- C8: `git -C $R status --porcelain --ignored -- $P` lists only `!!` entries matching the run-output patterns. Tracked, unmodified D0 or score files (after a pull) are not listed.
+- C9: $WT and the runtime:
+  - `git -C $WT rev-parse HEAD` = bff61ecba3daed876e55896e329000704fb9626b;
+  - `git -C $WT status --porcelain --ignored -- src` lists nothing but `!!` entries ending in `__pycache__/`. Those exist today from earlier imports: 21 directories (redteam-s17e);
+  - the runtime checks in §7 (isolated mode, bytecode, thread variables).
+- Any git command that fails refuses (10).
+
+**Test-data status (every phase; s18 1).**
+- Under F = F_k, control C has test data from an earlier freeze iff some commit X in `git -C $R rev-list --full-history O -- $P/D0-<C>.json` is not a descendant of F (`git -C $R merge-base --is-ancestor F X` fails).
+- If so, every output of every phase under F carries `"status": "exploratory deviation"`; otherwise `"status": "preregistered"`.
+- The score files list every such X with its descent flag, so the status can be recomputed from origin/v2.
+- Why it is sound:
+  - Under the D rule below, a D0 becomes visible only once it is on origin/v2.
+  - calibrate builds D on a tip it has just checked, at which F is the newest freeze. So a D made under F descends from F and never counts.
+  - A D made under an earlier F_j cannot descend from F: calibrate under F_j would have failed C4 at its last fetch.
+  - Merges and deletions are counted by the same rule. A deletion follows an addition, which already counts, so it never changes the status.
+- Scratch checks (`scen8.sh`; `refined-c.sh` with v8's exact C7):
+
+  | case | result |
+  |---|---|
+  | linear re-freeze after a pushed D | exploratory |
+  | F′ made on a branch and merged | exploratory |
+  | F′ branched from before F₀ | refused (C2) |
+  | calibrate killed before its push, then rerun under the same F | preregistered |
+  | calibrate killed before its push, then a re-freeze | preregistered |
+
+**D, the D0 commit (calibrate; s18 2).**
+- **calibrate refuses (10) at start if a D under F exists.** A D under F is a non-merge commit X in `git -C $R rev-list --full-history --no-merges O -- $P/D0-<C>.json` that descends from F and whose tree holds the file (`git -C $R cat-file -e X:$P/D0-<C>.json`). calibrate prints X, and the coordinator restores D0 with `git -C $R show X:$P/D0-<C>.json > $D/D0-<C>.json` (scratch S9).
+- **Nothing is shown before D is on origin/v2.**
+  - calibrate holds every run, outcome, rung value and result in memory. None of them reaches a file, stdout or stderr until D is on origin/v2.
+  - Its progress lines carry counts only. Its CPU-ledger lines carry no outcome (§6).
+  - There is no calibration runs file, and calibrate is not resumable (E4).
+- **The D build.** When the computation ends, under `git.lock`:
+  1. Fetch (as above), and rerun every gate check at the new O. Any failure exits 10, with nothing written.
+  2. Build D without touching HEAD, the index or the working tree. With `GIT_INDEX_FILE` a temporary file outside $R:
+     - `read-tree O`;
+     - `hash-object -w --stdin` (D0's bytes);
+     - `update-index --add --cacheinfo 100644,<blob>,$P/D0-<C>.json`;
+     - `write-tree`;
+     - `commit-tree <tree> -p O`, with first line `fsd-controls D0 <C> under <F full sha>` and a line `D0-<C>.json sha256: <h>`.
+  3. `git -C $R push URL <D>:refs/heads/v2`, plain (never `+`, never `--force`), with a 120 s timeout.
+  4. Fetch again. The push succeeded iff D is an ancestor of the new O. This also catches a push the server accepted but whose reply was lost.
+  5. Otherwise, release the lock, wait 30 s, and repeat from 1, at most 20 times.
+     - A rejected non-fast-forward push is the normal case when the lane or the other control pushed first.
+     - D is rebuilt on the new tip and never conflicts, since no other commit touches D0-<C>.json (scratch S6: rejected once, then pushed with one parent and only D0 in its diff).
+     - After 20 failures, calibrate exits 10 with nothing written.
+- **After a successful push**, calibrate writes D0 to $D (a temporary file, then `os.replace`), prints D's sha and exits with D0's result (0, 12 or 13).
+- **Interruptions.**
+  - A calibrate that crashes, is killed or hits STOP before step 4 succeeds leaves no value anywhere. Its CPU stays charged.
+  - Rerunning calibrate under the same F is a clean restart. D0 records no time and not O, so its bytes repeat; only CPU is lost, at most about 1.1 CPU h for A1 and 1.6 for B (cost5's worst calibration).
+  - If the push landed but D0 was not written, the rerun refuses and prints D's sha; restore D0 as above.
+- **The lane and git.** On the lane's next `git pull --rebase`, D arrives, and git overwrites an untracked D0-<C>.json without notice (scratch S8). That is harmless, because the file then holds D's bytes. The gate never relies on git to protect D0.
+- **Why not the alternatives.**
+  - *Encrypt D0, or withhold it until a manual push.* The key or the file must be on this machine for the push to happen later. It is then as readable as plain D0, and a manual push is v7's hole.
+  - *Count every calibrate start recorded on origin.* calibrate is controls.py's first real-simulator run, so a crash there is the likeliest event, and its fix needs F′. Every such honest restart would then be labelled exploratory although no value was seen. Pushing D first makes "seen" equal "on origin/v2" exactly.
+  - *Costs of the choice.* controls.py gets a push path (git credentials and the network), and a crash before the push loses calibrate's CPU.
+  - *Residual.* A crash's traceback can show where calibrate stopped (for example a rung index), but not a value. The F′ review sees the crash.
+
+**test and score also need** (`--d0-commit D`):
+- the D-candidates under F are exactly {D};
+- D has one parent, `git -C $R show --name-only --format= D` prints exactly `$P/D0-<C>.json`, and D's first line names F;
+- the sha256 of `$D/D0-<C>.json` on disk equals that of `git -C $R cat-file blob D:$P/D0-<C>.json`.
+  - This is a byte compare. `git diff --quiet D -- <file>` cannot be used, because D0 stays untracked locally until D is pulled, and it then exits 1 even on identical bytes (scratch S10).
+- D0's recorded F, its criteria.md and controls.py sha256, its numpy and scipy versions and its uv.lock sha256 equal the current ones.
+
+**Records.**
+- D0 records:
+  - F;
+  - the chain with each freeze's rows, and every other `fsd-controls` row;
+  - H1 and H2;
+  - the status, with every X and its descent flag;
+  - the sha256 of criteria.md, controls.py and `$WT/uv.lock`;
+  - $WT's HEAD;
+  - the numpy and scipy versions.
+- D0 records no time and not O. It cannot record D, whose sha depends on D0's bytes.
+- The score files record the same, plus O, D and the sha256 of `runs-<C>.jsonl`.
 
 **Deviations.**
-- After F, any change to a frozen file, including a `controls.py` bug fix, needs a new version of this file, a red team and a new F′, recorded in LEDGER.csv.
-- "Has test data" is mechanical (redteam-s17f 1). Under the current freeze F_k, a control has test data from an earlier freeze iff, for some j < k, `git -C $R log --format=%H F_j..F_{j+1} -- .cache/drafts/fsd-controls/D0-<C>.json` is non-empty. Every F is on origin/v2, so these commits are pushed.
-  - A pushed D counts as test data whether or not runs were drawn, because runs files are never committed.
-  - A D made under F_k itself never counts, so a clean restart is not mislabelled.
-  - An unpushed local D cannot be tested on (the test gate requires D on origin/v2), so it can never be hidden.
-- A control without test data under an earlier freeze restarts from calibrate under F′ as preregistered.
-- A control with test data keeps its earlier-freeze result as the preregistered one (or INCOMPLETE). controls.py labels every output it produces under F′ `"status": "exploratory deviation"` automatically, and it is never reported as the preregistered result.
+- After F, any change to a frozen file, including a controls.py bug fix, needs a new version of this file, its review and a new freeze F′ (Sequence 5–6).
+- Before F′ is pushed:
+  - score every control whose test finished under F, because F′ makes F unusable (C4);
+  - in a commit before F′, `git rm` any tracked `$P/D0-*.json` and `$P/score-*.*`;
+  - move the untracked `D0-*`, `runs-*` and `score-*` files to `$R/.cache/fsd-controls-archive/<F short sha>/`.
 
-## 6. CPU: ledger, ceiling, stop (redteam-s17d 8)
+  `cpu-total.txt`, `cpu-ledger.csv`, the lock files and `STOP` stay where they are.
+- `runs-<C>.jsonl` starts with a header line {control, F, D}. test resumes only a file whose header matches, and refuses (10) otherwise.
+- A control without test data from an earlier freeze restarts from calibrate under F′ and is preregistered.
+- A control with test data keeps its earlier result as the preregistered one (or INCOMPLETE). Everything controls.py writes for it under F′ carries `"status": "exploratory deviation"`, and none of it is ever reported as the preregistered result.
 
-**Estimate** (`cost5-out.txt`; medians of per-run CPU, so an estimate, not a bound): expected A1 2.57 + B 3.32 = 5.89 CPU h; worst 2.81 + 3.78 = 6.58 CPU h. **Ceiling 7.6 CPU h** (worst + 15%). The stop rule below enforces it, with an overshoot of at most one step plus 30 CPU s per process.
+## 6. CPU: ledger, ceiling, stop (redteam-s17d 8; s18 non-blocking 3)
+
+**Estimate** (`cost5-out.txt`; medians of per-run CPU, so an estimate, not a bound): expected A1 2.57 + B 3.32 = 5.89 CPU h; worst 2.81 + 3.78 = 6.58 CPU h. **F₀'s ceiling is 7.6 CPU h** (worst + 15%). The stop rule below enforces it, with an overshoot of at most one step plus 30 CPU s per process.
+
+**Ceiling.**
+- There is no CLI flag. The ceiling in force is the largest c over rows ever added (§5) whose `item` is either:
+  - `fsd-controls freeze <sha> ceiling <c> CPU h`, or
+  - `fsd-controls ceiling <c> CPU h`.
+- Each phase reads it after its fetch. It is cumulative over every freeze.
 
 **Ledger.**
-- `cpu-total.txt` holds one decimal number of CPU seconds. It is created as `0.0` at step 5 and never reset or deleted. If it is missing or unparseable, the process refuses to start; there is no silent reset.
-- Update: take an exclusive `fcntl.flock` on `cpu-total.lock`; read the total; add this process's `getrusage(RUSAGE_SELF)` plus `RUSAGE_CHILDREN` (user + sys) since its last update; write to a temporary file and `os.replace` it; release the lock. Then append an audit line to `cpu-ledger.csv` (phase, control, unit, delta, total, pid, UTC time), which is never re-read.
-- Updates happen after each run, at least every 30 CPU s inside non-simulation loops, and at exit.
+- `cpu-total.txt` holds one decimal number of CPU seconds. It is created as `0.0` once, before F₀ (§5 Sequence 4); it is carried across freezes and never reset or deleted. If it is missing or unparseable, the process refuses (10).
+- Update:
+  - take an exclusive `fcntl.flock` on `cpu-total.lock`;
+  - read the total;
+  - add this process's `getrusage(RUSAGE_SELF)` plus `RUSAGE_CHILDREN` (user + sys) since its last update;
+  - write `cpu-total.txt.tmp` and `os.replace` it;
+  - release the lock;
+  - then append an audit line to `cpu-ledger.csv` (phase, control, unit, delta, total, pid, UTC time), which is never re-read.
+- When updates happen:
+  - test and score: after each run, at least every 30 CPU s inside non-simulation loops, and at exit;
+  - calibrate: only every 30 CPU s and at exit, with `unit` a step counter. Per-run CPU would show which runs truncated before D is pushed.
 
 **Stop.**
 - Before each step, read the total. At or above the ceiling, write `STOP` (holding the total and the time).
-- Every process checks `STOP` before each step. On STOP it updates the ledger and exits with status 11 (INCOMPLETE).
-- score is charged but exempt from STOP (about 0.003 CPU h per control, `cost5.py`). It runs only for a control whose test phase finished; otherwise that control is INCOMPLETE.
-- Resuming after STOP needs a new LEDGER.csv row raising the ceiling. The coordinator adds the row and removes `STOP`; no process removes it. A resumed test redraws nothing already stored: runs are keyed and the streams are fixed.
+- Every process checks `STOP` before each step. On STOP it updates the ledger and exits 11.
+- A calibrate stopped this way writes nothing (§5).
+- score is charged but exempt from STOP (about 0.003 CPU h per control, `cost5.py`). On a control whose test has not finished, it exits 11 (INCOMPLETE).
+- **Resume.** The coordinator pushes a row `fsd-controls ceiling <c> CPU h`, with c above the current total, and then removes `STOP`; no process removes it.
+  - A ceiling row never contains `freeze`, so it cannot affect the chain.
+  - A resumed test redraws nothing already stored: runs are keyed, the streams are fixed and the header matches.
+  - A resumed calibrate starts over.
 
-## 7. Implementation contract (`controls.py`)
+## 7. Implementation contract (`controls.py`, `ctl_gate.py`)
 
-**CLI.** `controls.py --worktree $WT --freeze-commit F [--d0-commit D] --control {A1,B} --phase {calibrate,test,score} --cpu-ceiling-h 7.6`. Seeds, R, ids, rungs and thresholds are constants from this file, not flags.
+**CLI.** `controls.py --worktree $WT --freeze-commit F [--d0-commit D] --control {A1,B} --phase {calibrate,test,score}`. Seeds, R, ids, rungs, thresholds, URL and the ceiling rule are constants or rules from this file, not flags.
+
+**Runtime (E1).**
+- `python -I` ignores every `PYTHON*` variable. So the first statements of controls.py, before any import from $D or $WT:
+  - set `sys.dont_write_bytecode = True`;
+  - set `sys.pycache_prefix = os.environ["PYTHONPYCACHEPREFIX"]`.
+- Python then reads and writes bytecode only under that prefix, never in a `__pycache__/` beside a source file.
+- check_runtime refuses (10) unless:
+  - `sys.flags.isolated == 1`;
+  - the prefix is set, exists and lies outside $R;
+  - `OPENBLAS_NUM_THREADS`, `OMP_NUM_THREADS` and `MKL_NUM_THREADS` are `1`;
+  - every imported `sciagent` or `environments` module's `__file__` lies under $WT/src.
 
 **Outputs.**
 - JSON is canonical: `json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False)` plus `"\n"`. Floats are Python's shortest round-trip repr, and non-finite values are never written (they become None).
-- `runs-<C>.jsonl` has one line per (seed, arm ∈ {telling, decision k}, design, side, replicate): outcome, τ, n_events, the 35 values, none_other and nonfinite.
-- Resumable: a torn last line is cut, and stored keys are skipped.
+- `runs-<C>.jsonl`:
+  - a header line {control, F, D};
+  - then one line per (seed, arm ∈ {telling, decision k}, design, side, replicate): outcome, τ, n_events, the 35 values, none_other and nonfinite.
+- Resumable (test only): a torn last line is cut, stored keys are skipped, and a mismatched header refuses.
 - `score-<C>.txt` is a fixed-order rendering of `score-<C>.json`.
 
 **Determinism.**
 - Before F: a real-simulator unit on the probe-only id `ctl-det` is run twice, and the outputs are compared with `cmp`.
-- After test: score reruns seed 101's (A1) or 301's (B) telling runs on the truth's truncating design (A1: e1; B: e2, or e3 on the size rung), so the truncation path is exercised, and compares them byte for byte with the stored lines. A mismatch makes the control VOID ("nondeterministic"): it is written to the score files, and score exits 15.
-- The stub tests and the pre-F `ctl-det` run call `controls.py`'s internal functions directly. They do not use the CLI, so they need neither the gate nor `cpu-total.txt`. No CLI flag or environment variable bypasses the gate.
+- After test: score reruns seed 101's (A1) or 301's (B) telling runs on the truth's truncating design (A1: e1; B: e2, or e3 on the size rung), so that the truncation path is exercised. It compares them byte for byte with the stored lines. A mismatch makes the control VOID (15, "nondeterministic").
+- The stub tests and the pre-F `ctl-det` run call internal functions directly, without the gate.
+  - The functions that draw runs refuse the ids "ctlA1" and "ctlB", and every id derived from them, unless they are passed the token that only a passed gate constructs.
+  - This guards against accidental draws of the real streams in tests and debugging. It is not a security boundary (§5).
+  - No CLI flag or environment variable bypasses the gate.
 
-**Parity.** `$D/parity/` holds copies, with source sha256s in a manifest, of:
-- the `fsd-trunc/trunc-s1-d0.jsonl` lines and `.truths.jsonl` records for dev-002, dev-005, dev-006 and dev-015;
-- the `fsd-rule/candidates.json` picks for them.
-`controls.py`'s K0–K4 must reproduce those picks with 0 mismatches.
+**Parity.**
+- `$D/parity/` holds copies, with source sha256s in a manifest, of:
+  - the `fsd-trunc/trunc-s1-d0.jsonl` lines and `.truths.jsonl` records for dev-002, dev-005, dev-006 and dev-015;
+  - the `fsd-rule/candidates.json` picks for them.
+- `controls.py`'s K0–K4 must reproduce those picks with 0 mismatches.
+- Exclusion removes a design from the argmax (§0). candidates.py zeroed it instead, and parity is 72/72 either way (E7), so parity does not test this point; a stub test does.
 
 **Stub tests** (`test_controls.py`), on stub tables and stub run lists:
-- K0–K5 and Fa, Fc, Fz, Fx exactly as §0, including: K5's X shared and truthFSD keeping its own truncated runs outside X; Fx skipping a design on 1 truncation or stop in 16; Fz zeroing only where a side truncates; K3a against K4 on an all-stopped design.
-- Exclude-all for every arm, telling included; cut0 and non-finite values.
-- Each gate refusal in §5, in a scratch git repo.
-- Ledger: no lost update with two processes; loops charged; a missing total refused; STOP firing.
-- Canonical JSON bytes.
-- X never reaching `FSDPolicy`, the tool layer or any record an agent can read (invariant 2).
+- **Rules.**
+  - K0–K5 and Fa, Fc, Fz, Fx exactly as §0, including:
+    - K5's X shared, and truthFSD keeping its own truncated runs outside X;
+    - Fx skipping a design on 1 truncation or stop in 16;
+    - Fz zeroing only where a side truncates;
+    - K3a against K4 on an all-stopped design.
+  - Removal, not zeroing: a table whose remaining cells are all 0, where zeroing would pick the excluded design by menu order.
+  - Exclude-all for every arm, telling included; cut0 and non-finite values.
+- **Readings and codes.**
+  - The rung reading, including the separation shortfall.
+  - P1 breaches.
+  - Every result code, with score's 15 taking precedence over 14, and the evidence-only score files on 14 and 15.
+- **Gate and D, in a scratch git repo with a local bare origin.**
+  - Each gate refusal in §5: the fetch failure, C1–C9, the D checks, and H1 and H2 with the gh reader injected.
+  - The status in s18's S1–S3 and in the S4–S5 restarts.
+  - The D build and push against a concurrent pusher.
+  - Nothing in a file, stdout or stderr after a calibrate killed before its push.
+  - The runs-header refusal, and the ceiling read from rows.
+- **Ledger.** No lost update with two processes; loops charged; a missing total refused (10); STOP firing; calibrate's coarse updates.
+- **Other.**
+  - Canonical JSON bytes.
+  - The internal functions refusing the real ids without the token.
+  - X never reaching `FSDPolicy`, the tool layer or any record an agent can read (invariant 2).
 
-**Run command and environment (N4).** Runs go in `tmux -L sciagent`, with at most 2 processes, one per control. The gate checks the variables:
+**Run command.** Runs go in `tmux -L sciagent`, with at most 2 processes, one per control. The process needs git push credentials for calibrate, and `gh` for H1 and H2:
 
 ```sh
 R=/home/ubuntu/lanes/sciagent; D=$R/.cache/drafts/fsd-controls; WT=$R/.claude/worktrees/fsd-dist
-env OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=$(mktemp -d) \
+env OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 PYTHONPYCACHEPREFIX=$(mktemp -d) \
   nice -n 10 uv run --project $WT --no-sync python -I $D/controls.py --worktree $WT --freeze-commit <F> \
-  [--d0-commit <D>] --control {A1,B} --phase {calibrate,test,score} --cpu-ceiling-h 7.6
+  [--d0-commit <D>] --control {A1,B} --phase {calibrate,test,score}
 ```
 
 ## 8. Reading the outcome (fixed now; redteam-s17e N1)
 
 **A1** (on the tested rung).
-- If K0 fails, K1 and K2z fail (i), and the exclusion rules (K3a, K3h, K4, K5) pass, the instrument resolves the planted label under the exclusion position at real R. Per §3, this is not evidence for that position.
+- If K0 fails, K1 and K2z fail (i), and the exclusion rules (K3a, K3h, K4, K5) pass, then the instrument resolves the planted label under the exclusion position at real R. Per §3, this is not evidence for that position.
 - If an exclusion rule fails A1 (any of (i)–(iii)), no candidate is ready. He² resolution comes first (the (He², D) ordering from the ties draft), and the thresholds are not changed.
-- If A1 is not tested (status 13, an R = 16 shortfall on every buildable rung), control 5 cannot be read at R = 16 on this truth. That ranks no rule.
+- If A1 is not tested (13: an R = 16 shortfall on every buildable rung), control 5 cannot be read at R = 16 on this truth. That ranks no rule.
 
 **B** (on the tested rung, for each pair of FSD rule and telling rule).
-- If Fx passes B1–B3 while Fa, Fc and Fz fail B1, FSD needs its own exclusion, whatever the telling rule. B1 holds by construction (§3), Fa's B1 failure follows nearly from the atom row, and B3 is gated by P3-B. **The evidence is the per-rung h_F.**
+- If Fx passes B1–B3 while Fa, Fc and Fz fail B1, FSD needs its own exclusion, whatever the telling rule. B1 holds by construction (§3), Fa's B1 failure follows almost directly from the atom row, and B3 is gated by P3-B. **The evidence is the per-rung h_F.**
 - If (Fa or Fc) with K1 fails B2, K1 needs design-aware matching before it can be adopted.
 - A θ₋-rung cost of Fx's exclusion (h ≥ 0.95 > h_F) is reported beside any B result. It means Fx loses telling's label when the artefact hides the truth's top design.
+- A separation shortfall (§0) is reported and ranks no rule.
 
 **Throughout.**
-- VOID and INCOMPLETE favour nothing.
+- VOID (12, 14, 15) and INCOMPLETE (11) favour nothing.
 - Unpredicted patterns are reported, and no rule is chosen on them.
 - No control here favours option 2 over option 1 (§3).
 - Results produced under a later freeze for a control that already has test data are exploratory (§5).
@@ -296,5 +566,11 @@ env OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 PYTHONDONTWRITEBY
 - He²(mean_rate) = 1.0 on truncated rows is measured, and proved only for the exact He².
 - The K2z and Fz labels at R = 32, and the size rung beyond R = 8, are unprobed.
 - The calibration powers are plug-in estimates (§0).
+- The breach price comes from a reduced model, not the simulator. Its late-τ tail may be light (§0), and stops and cut0 are unpriced.
 - Neither control uses a real Wiener–Hopf reference, a fitted B-lib member or a B-sym top fit.
 - Only one cap, horizon and environment are covered.
+- **The gate.**
+  - It is not a security boundary (§5).
+  - H2 relies on GitHub's activity log, whose retention is not documented. It held every v2 activity back to 2026-10-02 on 2026-10-29.
+  - H1 is the owner's to switch on, and has not been.
+  - The v8 gate rules were checked only in scratch repos with local bare origins (`v8-checks/`). The hash-in-message, status, $WT, runtime, H1 and H2 checks were not transcribed there. Nothing was tested against GitHub, and the protection command above has not been run.

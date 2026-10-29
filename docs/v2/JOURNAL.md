@@ -1612,3 +1612,22 @@ criterion's own success probability (an outcome-dependent VOID); and readings le
 
 **Next.** As in the hand-over above: an engineer writes `controls.py` to v7, then a code red team, then the
 freeze, then the veto window, then calibrate.
+
+## 2026-10-29: Lane session 18 (08:45 UTC), progress: criteria v7 committed; controls.py and a v7 review under way
+
+**Done.**
+- INBOX: no open entry. VETO.md: no VETO lines. No owner answer yet on where the baselines run, Δ6 (A/B/C),
+  the brake and pilot-unit question, or SPEC §4.2 (options 1/2/3), so the full pilot, PILOT.md, P4 sizing
+  and the p4-deltas integration stay blocked. `free -g` at start: 10 GB available; no pilot store running.
+- Contract step (1): criteria v7 and the engineer contract committed with `git add -f` (ecb909a, pushed;
+  sha256 9c15e47e… and 405095af…, unchanged from session 17's addendum). Not a freeze.
+- Running, not yet back: an engineer writing `controls.py`, `test_controls.py` and `parity/` in
+  `.cache/drafts/fsd-controls/` to v7 (scratch only, no src edits, no commit, no real phases; report due by
+  11:30Z); and a fresh red team of v7's changes only (§5 gate and freeze chain, §7, the restored P1-breach
+  rule, exit codes), asked to try to game the test-data rule.
+
+**Learned.** Nothing new yet; this entry records the state while helpers run.
+
+**Next.** Read both reports. If the red team finds a blocking item in v7, write v8 before the code red team
+and tell the engineer. Then: the code red team of `controls.py` against v7 (or v8), then the freeze per the
+preregister skill (commit F, LOG entry with digests and a 24 h veto window, LEDGER row, push, notify).

@@ -270,7 +270,7 @@ Each item says when it is done. Move finished items to the bottom section after 
   LOG 2026-10-27): ported test-first `check_budgets`, `check_sessions` (`scripts/session_check.py`),
   `KEY_FIELDS` and the beats-truth flag (`hunt_gap.py --split`; making it fail the gate is a
   proposal, veto window ends 2026-10-28T13:00Z). Coverage table in JOURNAL 2026-10-27.
-- [ ] **Hunt-check leftovers** (from the cross-check): (a) ~~beats-truth red team~~
+- [x] 2026-10-29 **Hunt-check leftovers** (from the cross-check; all five done): (a) ~~beats-truth red team~~
   done 2026-10-27: adopt at +0.01 with a digest check (merged 4677b57; LOG 2026-10-27),
   adoption after its veto window; (b) ~~peak worker memory~~ done 2026-10-27:
   `scripts/mem_sampler.py` (`/proc` VmHWM per pool worker, STOP brake below 2 GB available;
@@ -284,10 +284,10 @@ Each item says when it is done. Move finished items to the bottom section after 
   5ef1db7 = the same on `merge-rehearsal` plus `fingerprint=FINGERPRINT` (10 passed, mypy clean).
   Next: merge sixth, after fingerprint-guard, from `guard-on-rehearsal`'s two commits (the v2
   version fails on top of fingerprint-guard: `Campaign` needs `fingerprint`);
-  (e) ~~explicit hash-seed baseline pair and report-on-a-copy~~ done 2026-10-28 on branch
-  `hunt-e-hashseed-report` (not merged; LOG 2026-10-28): the pair passed at once; report-on-a-copy
-  found readers opening the store read-write (a lost trigger was put back), fixed with
-  `ResultStore(root, read_only=True)`.
+  (e) ~~explicit hash-seed baseline pair and report-on-a-copy~~ done 2026-10-29, merged 9b1f92c
+  (session 14; LOG 2026-10-28): the pair passed at once; report-on-a-copy found readers opening
+  the store read-write (a lost trigger was put back), fixed with `ResultStore(root,
+  read_only=True)`; red team: merge with one fix (`check_store` on a missing `details/`), made.
 - [ ] **Decisions open since 2026-10-06** (HANDOFF-2026-10-06): the prompt variant freeze
   (Δ6), EIG weights (Δ11), an event cap for FSD, hand-written address text (F5), the
   review items, and decision 6 of HANDOFF-2026-10-09 (C5 random-arm seeding: `policy_seed` has
@@ -301,7 +301,7 @@ Each item says when it is done. Move finished items to the bottom section after 
   2026-10-28T19:15Z): the guard above before the pilot; derived address text with the p4-deltas
   integration. Δ11 (EIG weights) proposed 2026-10-27 after the red team rejected the first
   draft's tie rule (LOG, veto window ends 2026-10-28T21:40Z). Drafts of the FSD event cap and the
-  five review items are in `.cache/drafts/`; review items proposed (LOG, window ends 2026-10-28T21:45Z); Δ6: `link-neutral` not adopted, a link-balanced variant recommended pending its own red team (LOG); 2026-10-28: link-balanced red-teamed, **needs the owner's explicit choice** (A/B/C; no veto window, since (C) sets aside rule (A) after the numbers; LOG 2026-10-28); FSD cap: draft not adopted, measurement first (LOG). 2026-10-28 (session 13): measurement prepared (LOG 2026-10-28); pass 1 running in `tmux -L sciagent` `fsd-dist`, output `.cache/drafts/fsd-dist/dist-s1-d0.jsonl`; then summary, pass 2, a cap draft and its red team.
+  five review items are in `.cache/drafts/`; review items proposed (LOG, window ends 2026-10-28T21:45Z); Δ6: `link-neutral` not adopted, a link-balanced variant recommended pending its own red team (LOG); 2026-10-28: link-balanced red-teamed, **needs the owner's explicit choice** (A/B/C; no veto window, since (C) sets aside rule (A) after the numbers; LOG 2026-10-28); FSD cap: draft not adopted, measurement first (LOG). 2026-10-28 (session 13): measurement prepared (LOG 2026-10-28); pass 1 running in `tmux -L sciagent` `fsd-dist`, output `.cache/drafts/fsd-dist/dist-s1-d0.jsonl`; then summary, pass 2, a cap draft and its red team. 2026-10-29 (session 14): pass 1 done (1,280 lines, exit 0; `.cache/drafts/fsd-dist/summary-pass1.txt`): 6 of 160 WH (truth, design) cells stop at 15,000 on every replicate, no GLM stop, 0.31 CPU h; pass 2 (all 16 replicates) running in `fsd-dist` since 00:04Z, about 1 CPU h. Next: summary on the full file, then the cap draft and its red team.
 - [ ] **Remaining P4 work packages**: WP9 (1327de9), WP10 (98205b4), WP11 controls 4-6
   (6ac6142) and WP12 LOG entries (f4a38e0) are committed on `origin/p4-deltas`
   (HANDOFF-2026-10-09); its slow tier was never run. Folded into the integration item above.

@@ -1244,3 +1244,53 @@ moves. Read the slow tier's tail.
   worktree, targeted tests only (the machine is loaded: load 11.8, agent-control running tiers).
 
 **Next.** When pass 1 exits: summary mode, then pass 2. Review and merge (e) after the fast tier.
+
+## 2026-10-29: Lane session 14 (23:18 UTC) hand-over: store readers read-only (hunt leftovers closed), FSD pass 1 measured, pass 2 running
+
+**Done.**
+- Hunt-check leftover (e), the last one, merged into v2 (86bd10b, ab91ed3, 9b1f92c; fast-forward).
+  The engineer found that every store reader (`pilot_report.py`, `session_check.py`,
+  `hunt_gap.py`, `audit.check_store`, `check_budgets`) opened the store read-write. On a ledger
+  missing an append-only trigger they put it back, so the audit reported the tampering once and then
+  passed. Readers now open with `ResultStore(root, read_only=True)` (sqlite `mode=ro`); the driver
+  is unchanged. The hash-seed pair (B-lib on `hawkes` seed 1 under `PYTHONHASHSEED` 0, 1, random)
+  passed at once. LOG 2026-10-28 "Readers open the store read-only".
+- Red team (fresh context): merge with one fix. It confirmed no reader writes under a store root
+  (store_check left `.cache/mini-a` and `.cache/smoke` byte-identical) and that driver output is
+  byte-identical to base 4a791ad. It also checked that each new test fails when its reader is made
+  read-write again. The fix: `check_store` crashed with `FileNotFoundError` on a store without
+  `details/`. I made it test first: the new test failed with that error, and `check_store` now
+  reports `missing_details_dir`. Accepted and logged: a reader now raises a typed `RegistryError`
+  on a hot journal left by a crashed driver, until the driver reopens the store.
+- Checks: on ab91ed3 (rebased on 4a791ad), ruff format and check clean, mypy `250 source files`
+  clean, fast tier `2905 passed, 3 skipped, 3 warnings`, exit 0 (`.cache/s14/fast-e.log`; the
+  warnings are cvxpy's "Solution may be inaccurate"). After the fix (9b1f92c), I ran only targeted
+  tests: reader, audit and audit-script tests (fast) `48 passed`; reader, audit-script and
+  hash-seed tests (slow) `7 passed`; ruff and mypy clean. **The full fast tier was not rerun on
+  9b1f92c.** The fix touches one function in `audit.py`.
+- FSD pass 1 finished (exit 0, 1,280 lines, 0.31 CPU h; summary at
+  `.cache/drafts/fsd-dist/summary-pass1.txt`). Results:
+  - WH side: 6 of 160 (truth, design) cells stop at the 15,000 cap on every replicate (3.75%).
+    These are dev-002, dev-005 and dev-011 `inject_sign_high`; dev-004 `inject_sign_low`; dev-009
+    and dev-010 `inject_size_high`.
+  - GLM side: no stop.
+  - `clamp_release`: 97.5% (GLM) and 98.8% (WH) of runs exceed 3,000, and none exceeds 4,000.
+  - The one-side-always-stops list is 8 cells at caps 3,000 and 4,000 and 6 cells from 6,000 to
+    15,000.
+  - This is well under the README's 20% re-plan line. Pass 2 (all 16 replicates, resuming into the
+    same file) has been running in `tmux -L sciagent` `fsd-dist` since 00:04Z, at bff61ec in a
+    clean worktree, projected at about 1 CPU h.
+
+**Learned.** A read-write open is not harmless for an auditor: `CREATE ... IF NOT EXISTS` repairs
+exactly the tampering the audit looks for. Pass 1's cap-stopping cells are all `inject_*` designs
+on the WH side, and the WH reference does not change with the decision. So these cells are the
+degenerate He² = 1 picks the earlier red team predicted. They are not random explosions.
+
+**Next.**
+1. Owner, unchanged: where the baselines run (about 51 h on a quiet dm-devbox, 85 to 95 h at this
+   week's load, or AWS m6i.xlarge at about $9 to 11); Δ6 (A/B/C); the brake and pilot-unit
+   question. The full pilot waits on the first of these.
+2. When `.cache/drafts/fsd-dist/dist-s1-d0.log` shows `pass2-exit:`, run the summary (README),
+   draft the cap choice using the one-side-always-stops cells, and red-team the draft (LOG
+   2026-10-27 FSD event cap).
+3. The next session that runs the full fast tier for other work covers 9b1f92c too.

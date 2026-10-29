@@ -1536,3 +1536,58 @@ come first, and it is preregistered before the test split.
 **Decision needed.** Option 1, 2 or 3 for SPEC §4.2 (or another reading). Option 2 changes the SPEC
 text. Options 1 and 3 keep it and change only code (1 moves telling and truthFSD to (c), 3 moves
 truthFSD to (b)).
+
+## 2026-10-29: Lane session 17 (06:46 UTC) hand-over: SPEC §4.2 question pushed; FSD at-stop controls designed and red-teamed to v6 (not frozen)
+
+**Done.**
+- INBOX: no open entry. VETO.md: no VETO lines. There is no owner answer on where the baselines run, on Δ6 or on
+  the brake, so the full pilot stays blocked. No code changed and no run was launched; the only CPU used
+  was small probes (under 10 CPU min in total).
+- Stop point: the SPEC §4.2 question went to the owner (entry above, c065f99). The desktop notification was
+  sent; the mobile push was not (Remote Control was inactive).
+- Theorist: preregistration criteria for the positive controls of the at-stop rule, in
+  `.cache/drafts/fsd-controls/criteria.md`. Each version was kept as `criteria-vN.md`, with its red-team
+  report saved as `redteam-s17{,b,c,d,e,f}.md`:
+  - v1 (21a01721…): not ready. A2 could not fail K5; K5 is not R-independent; power was overstated; stream ids
+    were not pinned.
+  - v2 (178e1147…): ready after fixes, N1-N8. A2's family was probably VOID at calibration, and Δ's sign
+    could be predicted from it.
+  - v3 (0123093f…): a fresh reviewer found it not ready, with 5 blocking items. The analysis code was not
+    pinned; the 11 h ceiling was not a bound (the ledger re-read was quadratic); P3-B's exclusion depended
+    on the outcome; A2's verdict was circular; one seed was left open.
+  - v4 (42828142…): ready with fixes, 4 blocking items. The gate compared commits, not files on disk; F was
+    whatever the operator typed; A1 repeated B's P3 error; the (iii)-only escape hatch. It was also not
+    yet implementable.
+  - v5 (64fcabe2…): ready with fixes, 1 blocking item (the outcome readings had been dropped).
+  - v6 (3e30503f02b3fff759893da504bc6867aabb5ef28527b1c58c20849bb331cb95): see below.
+- What v6 contains:
+  - Controls: A1 (planted d* with a truth-only-capping design, seeds 101-115) and B (the dev-005 shape: WH
+    caps while the truth matches the member, seeds 301-315, with a size-gated fallback rung). A2 (K4 against
+    K5) is deferred: it drew no verdict and cost 2.85 CPU h.
+  - Ceiling 7.6 CPU h on dm-devbox ($0 marginal). The figure is an estimate built from median run costs; the
+    shared getrusage stop rule is what makes it a cap.
+  - Freeze: `controls.py` and its stub tests come first, then a code red team, then the freeze commit F (with
+    the directory force-added), then the LEDGER row and F pushed, then calibrate with D0 committed alone, then
+    test, then score. The gate hashes files on disk against F and the F-chain.
+  - The engineer contract is `.cache/drafts/fsd-controls/engineer-contract.md` (07ebe4e8…).
+
+**Correction to the stop-point entry above** (red teams s17c item 11 and s17e N1):
+- Option 2's "computed once, independently of R" should read "computed once from telling's 32 replicates and
+  shared". No finite-sample exclusion is R-independent; the 1-of-R cliff stays, at telling's R.
+- "Option 2, provided the two controls … pass" overstates what the controls can show. By construction none of
+  them can favour option 2 over option 1 (criteria v6 §3). They can show only that option 2 can be built at
+  real R, and what it costs (A1), and whether FSD needs its own exclusion whatever the telling rule (B). The
+  lane's lean to option 2 rests on the argument in that entry, not on the controls.
+
+**Learned.** Six review rounds were needed, and each fresh reviewer found blocking items the previous one
+had passed (v3 and v4 above), so a fresh reviewer is worth more than a re-check by the same one. The recurring
+failures were: gates that check commits rather than the files that run; preconditions that are the
+criterion's own success probability (an outcome-dependent VOID); and readings left open until after the data.
+
+**Next.**
+1. Owner, unchanged: where the baselines run (the full pilot waits on it); Δ6 (A/B/C); the brake and pilot-unit
+   question; and now SPEC §4.2 (options 1/2/3).
+2. FSD controls: the engineer writes `controls.py` and `test_controls.py` to `engineer-contract.md` and
+   criteria v6 (scratch, in `.cache/drafts/fsd-controls/`, no src edits). Then a code red team, then the freeze
+   per the preregister skill: commit F, a LOG entry with the digests and `veto window ends` 24 h later, push,
+   notify. Calibrate only after the window.

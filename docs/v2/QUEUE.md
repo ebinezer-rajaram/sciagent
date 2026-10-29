@@ -317,6 +317,11 @@ Each item says when it is done. Move finished items to the bottom section after 
   (3) dated notes in the merged LOG (85c586a, 0 lines removed).
   Left: (4) trailers (none on 0de8220 or 85c586a), (5) the slow tier, rerunning (1)-(2) on the finished pilot
   store, and the anon-arm digests against stored cells.
+  2026-10-29 (session 21): the `replay_check` refusal is done on `p4-rehearsal` 346676a (engineer, test first; not
+  merged, not pushed): a record whose config `harness_version` is not the running one is REFUSED (both versions
+  named; harness/1 at 900e66a) and counted apart, exit 3 when nothing failed; a record naming no version is a
+  FAIL. On the 11 harness/1 records of `.cache/pilot-llm`: `refused: 11`, exit 3. Lead's rerun of
+  `tests/campaign/test_replay_check.py -m "not slow"`: 14 passed; ruff clean (LOG 2026-10-29).
 - [x] 2026-10-27 **Cross-check the rebuilt defect-hunt checks against the originals** (7406810,
   LOG 2026-10-27): ported test-first `check_budgets`, `check_sessions` (`scripts/session_check.py`),
   `KEY_FIELDS` and the beats-truth flag (`hunt_gap.py --split`; making it fail the gate is a
@@ -377,6 +382,12 @@ Each item says when it is done. Move finished items to the bottom section after 
   (27,360 s) should fire around 16:00Z. Next: if `$D/STOP` exists, push the ceiling row and resume the test
   units, each with its own D: A1 c0d1b8f123fde746e9cf8497b2c9a919a479a4a2, B
   8d079f47cbd5e3a6b82547c32b796f6cd1039fd5.
+  2026-10-29 (session 21): test runs at ~706 (A1) and ~810 (B) CPU s per seed, about 1.9x cost5, so the projected
+  total is ~10.4 CPU h. Row `fsd-controls ceiling 12.0 CPU h` pushed (b6a63d2). `.cache/fsdctl-resume.sh` in
+  unit `sci-fsdctl-resume` restarts each test unit that exits 11 once STOP is present, the row is on origin/v2 and
+  the total is under 12 h (log lines `resume:` in `.cache/fsdctl-test-launch.log`). Tests should end ~17:20Z.
+  Next: check both units finished (exit 0, 38,401 lines per runs file: header + 15 x 2,560), then score each
+  control (§5 step 9) and commit the score files.
 - [ ] **Remaining P4 work packages**: WP9 (1327de9), WP10 (98205b4), WP11 controls 4-6
   (6ac6142) and WP12 LOG entries (f4a38e0) are committed on `origin/p4-deltas`
   (HANDOFF-2026-10-09); its slow tier was never run. Folded into the integration item above.

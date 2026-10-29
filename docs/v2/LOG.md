@@ -1804,3 +1804,15 @@ Rehearsing the p4-deltas merge (local branch `p4-rehearsal`; engineer, lane sess
 - **Pinned.** `tests/campaign/test_pilot_harness1_cells.py` (0de8220 on `p4-rehearsal`) pins the four 900e66a
   digests and three real cell addresses. It caught a sandbox-block change in 4 of 7 tests. The older AG-o test
   compared the legacy text against the live sandbox text, so it could not catch one.
+
+## 2026-10-29: `replay_check` refuses a record of another harness (on `p4-rehearsal`, 346676a)
+
+Decided in session 21: under the merged P4 code (harness/2), `scripts/replay_check.py` reports a record whose
+config `harness_version` differs from the running `HARNESS_VERSION` as REFUSED, naming both versions and where
+to replay it (harness/1 at 900e66a, per the entry above), counts it apart from PASS and FAIL, and exits 3 when
+nothing failed; any failure still exits 1. A record that names no harness version is a FAIL, not a refusal:
+the live loop has written the field since P2 (558d600), so such a record comes from no harness this project
+ran, and treating it as REFUSED would let a record leave the failure count by losing a field. Why: without
+this, the pilot's harness/1 records read as 0 of 10 replay failures under the merged code, which looks like a
+harness defect but is by design. The new errors sit in `sciagent.harness.errors` beside `RecordError`
+(that module's own rule), still under `SciAgentError`.

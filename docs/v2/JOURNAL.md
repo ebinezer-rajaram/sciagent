@@ -1458,3 +1458,30 @@ explodes there; the "any replicate" threshold is not identified; the member side
 design, where K4 must return the planted d* and K1 visibly fail; both sides capping with different mark
 laws plus the same-law null; a threshold sweep). The rule is a design decision for telling and control 5:
 owner's rule applies (recommendation, red team, LOG with a 24 h veto window, push).
+
+## 2026-10-29: Lane session 16, addendum 3: the shared at-stop rule draft red-teamed, not ready
+
+**Done.** Red team of `.cache/drafts/fsd-rule/draft.md` (`.cache/drafts/fsd-rule/redteam-s16.md`). The
+numbers reproduced (42 picks, 0 mismatches; reruns byte-identical); the reasoning did not hold:
+- K4 changes SPEC §4.2's most-telling (design, diagnostic) to "largest discrepancy on designs that never
+  cap or stop", a SPEC change (stop point), and makes control 5 nearly circular (truthFSD under K4
+  scores the same He² of the same two simulators as telling; its 3 misses are 1.0 vs 1.0 ties that would
+  repeat on all 8 decisions).
+- "Any replicate" exclusion runs on each side's own replicates (truthFSD R = 16, telling R = 32). At a
+  cap probability of 0.05 per run, they exclude with probability 0.56 and 0.806 (I checked); on
+  independent streams they disagree on 46% of such designs (the review's 25% is only the difference).
+- The case for FSD needing no exclusion is selection on FSD's own picks. On dev-005 inject_sign_high
+  (WH caps 16/16, truth 0/4), FSD avoided that design only by menu order.
+- The proof of He² = 1 under capping holds on the data, but not on censor designs or when τ falls in an
+  excluded window; neither path ran. Picks flip on 8 of 42 with the variance convention (a plateau
+  near 1.0).
+- The draft's controls do not separate the candidates and have no preset pass criteria.
+
+**Learned.** Every rule tried so far either lets the cap decide (a, c) or shifts the cliff
+somewhere else (b, K4). The open question is what most-telling should mean when the truth explodes
+under an intervention. That is a SPEC §4.2 question for the owner, not something the lane decides.
+
+**Next.** Write the question for the owner (SPEC §4.2: how the most-telling definition treats designs
+where the truth or the member explodes), with the three drafts and their reviews as evidence, and push
+it. Meanwhile, controls with preset pass criteria (known d*; WH caps while the truth matches the
+member), and an R-independent exclusion computed once and shared, if that option is kept.

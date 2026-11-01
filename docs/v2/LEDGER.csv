@@ -16,3 +16,6 @@ date,item,provider,hours,usd,stage
 2026-10-29,fsd-controls ceiling 12.0 CPU h,dm-devbox,0,0,p4
 2026-10-29,FSD at-stop controls A1 and B under F0 8405509 (calibrate test and score; 11:29Z-18:57Z; 33093.5 CPU s by the controls' ledger; nice 10),dm-devbox,9.19,0,p4
 2026-10-29,S3 copy of the FSD controls outputs (9 objects; 69.7 MB; sciagent/fsd-controls/8405509/),aws-s3,0,0,p4
+2026-11-01,P3 full pilot non-LLM half at 900e66a (430 units recorded; 1 worker, 2 from 2026-10-30T12:54Z; nice 10; 2026-10-29T11:31Z-2026-11-01T05:07Z elapsed 65.6 h incl. 15.5 h idle between the STOP at 21:23Z and the 2-worker relaunch; units' wall sum 90.09 h; CPU 87.61 h from timing.jsonl),dm-devbox,65.6,0,p3
+2026-11-01,P3 full pilot LLM half at 900e66a (240 units scored under the Max subscription; concurrency 1; 2026-10-29T12:09Z-2026-10-30T12:54Z elapsed 24.8 h),dm-devbox,24.8,0,p3
+2026-11-01,S3 copy of the full pilot stores and logs (1164 store objects + 4 logs; 49 MB; sciagent/p3-linux/pilot-900e66a/ pilot-llm-900e66a/ logs-900e66a/),aws-s3,0,0,p3

@@ -246,7 +246,10 @@ Each item says when it is done. Move finished items to the bottom section after 
   Far B-sym@10F costs 14255.4 s CPU per unit (near 2121.5 s). Red-teamed figure: quiet machine,
   whole pool with LLM scoring, about 51 h (45-58 h), just over the line; this week's load about
   85-95 h (floor 78 h). `.cache/s13/projection-*.txt`, JOURNAL session 13. Still the owner's choice.
-- [~] **Full pilot** (pilot-runner). 2026-10-29 (session 19): the non-LLM half is running since
+- [x] 2026-11-01 **Full pilot** (pilot-runner; runs finished: baselines 430 `ok` at 2026-11-01T05:07Z, LLM half 240
+  scored at 2026-10-30T12:54Z, 0 failed; `.cache/pilot` STORE OK and GATE PASS; `.cache/pilot-llm` has one budget
+  issue, fits_used 35 vs 34 charged, to explain before PILOT.md; on S3 under `p3-linux/*-900e66a/`; JOURNAL session 25;
+  the coverage table comes with PILOT.md). 2026-10-29 (session 19): the non-LLM half is running since
   11:31:27Z: `.cache/pilot-run.sh 1` (`--no-llm`, plan 310 pool jobs) at v2 900e66a in the detached
   worktree `.claude/worktrees/pilot` (dev split copied in, sha256 checked), user unit
   `sci-pilot-baselines`, store `.cache/pilot`, log `.cache/pilot-run.log`, memory
@@ -324,7 +327,8 @@ Each item says when it is done. Move finished items to the bottom section after 
   10 under the merged code (harness/2 tools, by design), so harness/1 records are replayed at 900e66a (LOG
   2026-10-29); add the version-mismatch refusal to `replay_check`, test first.
   (3) dated notes in the merged LOG (85c586a, 0 lines removed).
-  Left: (4) trailers (none on 0de8220 or 85c586a), (5) the slow tier, rerunning (1)-(2) on the finished pilot
+  Left: (4) trailers (none on 0de8220 or 85c586a), (5) the slow tier (running on 346676a since 2026-11-01 10:46Z,
+  unit `sci-p4-slow`, log `.cache/p4-slow.log`), rerunning (1)-(2) on the finished pilot
   store, and the anon-arm digests against stored cells.
   2026-10-29 (session 21): the `replay_check` refusal is done on `p4-rehearsal` 346676a (engineer, test first; not
   merged, not pushed): a record whose config `harness_version` is not the running one is REFUSED (both versions

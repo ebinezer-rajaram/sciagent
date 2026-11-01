@@ -67,7 +67,7 @@ entry, and marks it handled with the date and what was done. Newest last.
 
 ## 2026-11-01, 11:00 UTC (owner, via the control-room session)
 
-- [ ] **One short session, then hold until the reset (Wed 4 Nov 02:00 UTC).** The weekly Claude reading is
+- [x] **One short session, then hold until the reset (Wed 4 Nov 02:00 UTC).** The weekly Claude reading is
   92%; the owner wants the machine busy until Wednesday without spending Claude usage. In this one
   session (one hour at most, two helpers at most): start, in their own `sci-<run>` user units,
   every frozen or ready CPU-only run that needs no LLM calls and no Claude session (the pilot
@@ -75,3 +75,7 @@ entry, and marks it handled with the date and what was done. Newest last.
   frozen), sized to keep dm-devbox's cores busy until Wednesday (nice 10; leave two cores free).
   Nothing that calls an LLM (that uses the owner's Claude plan) until the reset. No code beyond
   what a launch needs, no reviews, no drafting. Journal what you started and stop.
+  Handled 2026-11-01 (lane session 25, 10:44-10:55Z): both pilot halves had already finished, and so had
+  seed-lead check (a). The only ready CPU-only work, the p4-rehearsal slow tier, was started in `sci-p4-slow`.
+  The pilot stores were checked and copied to S3. Nothing else is frozen, so the machine stays mostly idle
+  until the reset. JOURNAL session 25.

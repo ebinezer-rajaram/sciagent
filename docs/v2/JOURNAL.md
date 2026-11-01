@@ -2193,3 +2193,49 @@ hand-over. The owner's answers still gate the freeze, the pilot and P4 sizing.
 about 21 CPU min, outside the stream-id guard, outputs only under `.cache/drafts/fsd-seedlead/`, declared
 exploratory) to confirm that D0's counts reproduce exactly? The lane recommends yes only if check (a) leaves
 the question open. A bug in calibrate would block every control.
+
+## 2026-11-01: Lane session 25 (10:44 UTC), short CPU-only session for the owner's hold until the reset
+
+INBOX 2026-11-01 11:00Z (one short session, CPU-only runs, then hold until Wed 4 Nov 02:00Z): handled. Nothing
+here calls an LLM, and no code was changed.
+
+**State found.** Both halves of the full pilot had already finished at 900e66a:
+- Baselines exited at 2026-11-01T05:07:46Z. 430 units are `ok` in `.cache/pilot/progress.log` (20 × 3 × 7 plus 10
+  B-sym@10F), 0 failed, bugs 0.
+- The LLM half exited at 2026-10-30T12:54:32Z with 240 scored (60 per arm), 0 failed and 3 retries.
+- Check (a) of the seed lead finished on 2026-10-29: sim exit 0 at 22:05:54Z, analysis exit 0 at 22:15:03Z
+  (`.cache/drafts/fsd-seedlead/pool/poollaw-analysis.txt`). It is not red-teamed, so it is not a result yet.
+  As printed: the full-pool law gives test (ii) mean 90.2 (jackknife 95% CI 83.1-97.4). In 400 calibrate-style
+  pools of 128, none reached D0's E_ii of 109.64 (`share >= D0 109.64: 0.0000`).
+- No `sci-*` user units were running. Load was 0.5.
+
+**Done.**
+- **Started:** the slow tier on `p4-rehearsal` 346676a (queue: p4-deltas item, point 5).
+  - User unit `sci-p4-slow`, `nice -n 10 uv run pytest -m slow -n 2`.
+  - Log `.cache/p4-slow.log`; its last line is `exit: <code> <UTC>`.
+  - This is the only frozen or ready CPU-only work there was.
+- **Store checks** (`scripts/store_check.py --store`, `scripts/hunt_gap.py --env fit/5 --split data/v2/truths/dev`):
+  - `.cache/pilot`: `STORE OK`. `hunt_gap` reports 0 above truth by +0.01, `oracle_underfit: 0 flagged ... of 60`,
+    `GATE PASS`.
+  - `.cache/pilot-llm`: `STORE INCONSISTENT` on one budget issue: `ISSUE reading_used bd3dc4c4…: fits_used 35.0 != 34
+    charged`. Cells 480, issues 0. Not investigated, since the INBOX asks for no reviews this session. This is a
+    budget-accounting instrument, so it must be explained before PILOT.md.
+- **S3:** both stores were copied to `s3://delaymargin-results-482913/sciagent/p3-linux/pilot-900e66a/` and
+  `pilot-llm-900e66a/`. Object counts match the local stores (435 and 729). The run and memory logs went to
+  `logs-900e66a/`. Three LEDGER rows were added.
+- Pilot cost from the store: units' wall time sums to 90.09 h and CPU time to 87.61 h (`timing.jsonl`). Elapsed time
+  was 65.6 h, which includes 15.5 h idle: the 1-worker run stopped at 2026-10-29T21:23Z and the 2-worker relaunch
+  came at 2026-10-30T12:54Z.
+
+**Not started, and why.** The hold leaves the machine mostly idle until Wednesday, because nothing else is frozen:
+- Check (b) of the seed lead (about 21 CPU min) still waits for the owner's yes (session 24's decision), and it
+  needs a script written.
+- Check (a)'s 0-of-400 reading makes check (b) more relevant, because a calibrate defect would block every
+  control.
+- Everything else open needs code, review, drafting or an LLM.
+
+**Next (after the reset).**
+1. Read the tail of `.cache/p4-slow.log`.
+2. Explain the `pilot-llm` fits_used 35 vs 34 issue.
+3. `store_merge.py` the two pilot stores, then the PILOT.md report (analyst) and its red team.
+4. Red-team check (a), and ask the owner again about check (b).

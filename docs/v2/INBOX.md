@@ -64,3 +64,14 @@ entry, and marks it handled with the date and what was done. Newest last.
   Handled 2026-10-29 (lane session 23, 19:13Z): recorded as delegated in LOG 2026-10-29; the queue's FSD item says
   option 2 is parked; the seed lead was given to the theorist as an exploratory check (output
   `.cache/drafts/fsd-seedlead/`, nothing written in the frozen directory). The pilot runs on today's telling, unchanged.
+
+## 2026-11-01, 11:00 UTC (owner, via the control-room session)
+
+- [ ] **One short session, then hold until the reset (Wed 4 Nov 02:00 UTC).** The weekly Claude reading is
+  92%; the owner wants the machine busy until Wednesday without spending Claude usage. In this one
+  session (one hour at most, two helpers at most): start, in their own `sci-<run>` user units,
+  every frozen or ready CPU-only run that needs no LLM calls and no Claude session (the pilot
+  baselines with --no-llm, the seed-lead test of section 8 if it is CPU only, anything else already
+  frozen), sized to keep dm-devbox's cores busy until Wednesday (nice 10; leave two cores free).
+  Nothing that calls an LLM (that uses the owner's Claude plan) until the reset. No code beyond
+  what a launch needs, no reviews, no drafting. Journal what you started and stop.

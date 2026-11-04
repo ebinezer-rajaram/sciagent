@@ -2348,3 +2348,32 @@ The INBOX has no open entry. This is a progress entry; the hand-over follows. Th
 
 **Done.** Red team's seven blocking and non-blocking items applied: PILOT.md's stress sentence replaced, QUEUE corrected, LOG correction appended, INBOX item left open with a note. Review scripts copied to S3 (28 objects). `t2-pin` held off v2.
 **Next.** Read the two engineers' reports; the control room's answer; the replay exit lines.
+
+## 2026-11-04: Lane session 27 (07:03 UTC) hand-over: stress test withdrawn; go/no-go held for a miss check whose rule is not yet ready; PILOT.md's scripts committed
+
+**Stop point, still open.** The answer in one line: the computed GO on the stored numbers stands, but it is not put to the owner as final until misses on every pilot unit are checked, and that check's rule failed review.
+- Evidence: INBOX e7c6431; LOG 2026-11-04 (last entries); `docs/v2/redteam/2026-11-04_pilot-search-misses.md`.
+- Caveats: nothing shows the GO is wrong. The size of misses on pilot units is unmeasured, apart from dev-015 s3.
+- Recommendation: finish the rule; the run takes about 1 to 2 days of wall time at most 2 workers once frozen, and waits for memory.
+- Decision needed from the owner: still the go/no-go after the transcripts, and check (b). Both were relayed by the control room; neither is decided. My first two control-room messages (the second at 07:58Z) were acted on; my third, on the not-ready verdict, is in its inbox with no answer seen.
+
+**Done.**
+- `pilot_report.py` text fixes and `scripts/p3_report/` on v2 (a4bd9cf, 5bd54ed); PILOT.md's [draft] tags replaced, sections regenerated, verdict `go`. The engineer compared 57 figures against PILOT.md: 0 misses. Not red-teamed.
+- Stress test withdrawn; failed-inputs entry corrected (LOG 2026-11-04); review scripts on S3.
+- Pre-registration drafted and red-teamed: **not ready**, 7 blocking, not frozen. The leak at `t2_ref.py` line 26 confirmed by me. No pilot unit searched by this check.
+- `p4-rehearsal`: state in QUEUE. I read the merge commit, the ancestor check and the running units; the test tails are the engineer's, not rerun by me.
+- Replay at 09:08Z, still running: AG-c 101 PASS, 0 FAIL; AG-o 82 PASS, 1 FAIL (dev-003 s1, as the rule expected). PILOT.md's paragraph says 98 and 81, from 08:58Z. LEDGER rows for the replay and the p4 units wait for their end.
+
+**Checks.** v2's `src/` is unchanged this session. ruff clean, mypy `Success: no issues found in 260 source files`, the two new test files `25 passed`, exit 0. The full fast tier `2972 passed` is the engineer's, on `pilot-leftovers` before the cherry-pick; v2 differs from it in docs only. I did not rerun it on v2. The slow tier was run only for the two report-related files, and no src changed.
+
+**Learned.**
+- My error, twice over: unreviewed numbers went to the control room unlabelled and a decision was made on them; and in-sample T2 gaps cannot be read as held-out shifts.
+- A sizing script that shares state with its search can leak the answer without any argument carrying it. A test blind by signature does not catch this.
+- `nice` does not appear to set the CPU split between user units, each with its own cgroup share (the engineer's inference: nice 15 got 83% of a core against pytest's 35%). `CPUWeight` does the job.
+- Memory is at the 6 GB floor with the four units running, so no new long job until some end.
+
+**Next.**
+1. Read `sci-p4-tier`'s result: `grep -E '^(FAILED|ERROR)|^exit:' .cache/drafts/p4-s27/slow.log`, and name and diagnose both failures.
+2. Prereg: decide K against the blind rates, split the label, fix the seven (QUEUE has the order), second round, freeze.
+3. Replay: when both units exit, final counts and paragraph, then LEDGER rows, including the p4 units.
+4. PID 219453 looks like session 26's leftover `p4-rehearsal` process, idle: check it before anything else uses that tree. Left alone.

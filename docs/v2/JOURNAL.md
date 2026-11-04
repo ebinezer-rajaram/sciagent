@@ -2465,3 +2465,14 @@ Checkpoint, not the hand-over. Nothing here is a result of the miss check.
 1. Check `systemctl --user is-active sci-search-misses` and `cpu.json` only. No `journal.jsonl`.
 2. When it ends: `decision.json`, S3 copy, LEDGER hours, `uv run python scripts/p3_report/miss_note.py --records <dir>`, hand-filled lines, red team, then the stop point.
 3. Meanwhile: SPEC §2.2's shares in `pilot_report.py`, test first (QUEUE, PILOT.md leftovers).
+
+
+## 2026-11-04: Lane session 30 (14:52 UTC), progress: miss check still running; SPEC §2.2's shares with the engineer
+
+Checkpoint, not the hand-over. Nothing here is a result of the miss check.
+
+**Done.** Oriented: no new INBOX entry (e7c6431 stays open until the check reports); v2 clean at 3e31bc2. Status read from `systemctl --user is-active sci-search-misses` and `cpu.json` only; `journal.jsonl` not read. The transcript picks are already in PILOT.md and TRANSCRIPTS.md. Queue read for unblocked work: only SPEC §2.2's shares (PILOT.md leftovers, red team finding 3). The go/no-go, check (b), the test split and T2's list wait on the owner or the miss check; the p4-deltas merge stays after the pilot closes.
+
+**Running.** An engineer on branch `spec22-shares`, test first, in its own worktree, not on v2. No code from it has been read or checked yet.
+
+**Next.** Read its report, check it, splice PILOT.md's generated lines, then the hand-over.

@@ -83,6 +83,11 @@ same. The result adds the design (in the agent's names and units) and the
 chosen diagnostic's value on the new dataset; the decision, with its scores,
 weights and degeneracy summary, is in the output's ``record`` only, under
 ``policy``. Without a policy every schema, text and record is as before.
+
+Read-outs. A handler changes the lab as it goes, before the layer logs its call,
+and a handler running when a session is cut cannot be stopped. So the runner
+reads :class:`Committed`, taken whenever the layer commits a call, and never
+the live state: a call the session's record does not hold moves no read-out.
 """
 
 from __future__ import annotations
@@ -125,6 +130,7 @@ from sciagent.harness.record import canonical_json as record_json
 from sciagent.harness.tools import (
     BudgetMeter,
     Handler,
+    ToolCall,
     ToolLayer,
     ToolOutput,
     ToolSpec,
@@ -180,6 +186,7 @@ __all__ = [
     "MAX_NOTE",
     "MAX_RIVALS",
     "SUMMARY_DIAGNOSTICS",
+    "Committed",
     "Lab",
     "LabError",
     "PredictionOutcome",
@@ -330,6 +337,19 @@ class _State:
     belief_structures: tuple[tuple[str, Structure], ...] = ()
 
 
+@dataclass(frozen=True)
+class Committed:
+    """What the lab's read-outs say as of its last committed call (module
+    docstring). Calls are serial, so this is the state between two handlers."""
+
+    fits_used: int = 0
+    experiments_used: int = 0
+    submitted: Structure | None = None
+    report: str | None = None
+    prediction_outcomes: tuple[PredictionOutcome, ...] = ()
+    infrastructure_faults: tuple[str, ...] = ()
+
+
 class Lab:
     """One investigation's tools over a world, for one arm and one view."""
 
@@ -377,6 +397,7 @@ class Lab:
         self.fit_config = replace(FIT_CONFIG, workers=fit_workers)
         self.ledger = PredictionLedger()
         self.state = _State()
+        self.committed = Committed()
         #: The experiment-choice policy (P4 Δ11); None: the agent designs.
         self.policy: PolicyName | None = policy_name
         self.policy_mode: PolicyMode | None = None
@@ -398,23 +419,38 @@ class Lab:
 
     @property
     def submitted(self) -> Structure | None:
-        return self.state.submitted
+        return self.committed.submitted
 
     @property
     def report(self) -> str | None:
-        return self.state.report
+        return self.committed.report
 
     @property
     def prediction_outcomes(self) -> tuple[PredictionOutcome, ...]:
-        return tuple(self.state.outcomes)
+        return self.committed.prediction_outcomes
 
     @property
     def infrastructure_faults(self) -> tuple[str, ...]:
-        return tuple(self.state.infrastructure_faults)
+        return self.committed.infrastructure_faults
 
     @property
     def fits_used(self) -> int:
-        return len(self.state.fits)
+        return self.committed.fits_used
+
+    @property
+    def experiments_used(self) -> int:
+        return self.committed.experiments_used
+
+    def _commit(self, _call: ToolCall) -> None:
+        """Take the read-outs: the layer has just committed a call."""
+        self.committed = Committed(
+            fits_used=len(self.state.fits),
+            experiments_used=self.world.experiments_run,
+            submitted=self.state.submitted,
+            report=self.state.report,
+            prediction_outcomes=tuple(self.state.outcomes),
+            infrastructure_faults=tuple(self.state.infrastructure_faults),
+        )
 
     # -- data helpers -------------------------------------------------------------
 
@@ -1164,7 +1200,9 @@ class Lab:
         )
 
     def layer(self) -> ToolLayer:
-        return ToolLayer(self.specs(), self.budgets(), footer=self._footer)
+        return ToolLayer(
+            self.specs(), self.budgets(), footer=self._footer, on_commit=self._commit
+        )
 
 
 def tool_specs(

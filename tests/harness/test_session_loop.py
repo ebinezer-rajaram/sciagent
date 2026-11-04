@@ -171,6 +171,50 @@ def test_the_wall_time_limit_stops_the_session() -> None:
     assert result.record.entries[-1].kind == "outcome"
 
 
+def test_a_tool_call_running_at_the_wall_time_never_reaches_the_record() -> None:
+    """The real timer. The worker thread outlives the cancelled await, so the
+    handler finishes after the run is over; nothing it does may commit, and a
+    second call queued behind it must not start."""
+    entered = threading.Event()
+    release = threading.Event()
+    runs: list[str] = []
+
+    def held(args: Mapping[str, Any]) -> ToolOutput:
+        runs.append(str(args["n"]))
+        entered.set()
+        assert release.wait(30.0)
+        return ToolOutput("late")
+
+    schema = {
+        "type": "object",
+        "properties": {"n": {"type": "string"}},
+        "required": ["n"],
+    }
+    layer = ToolLayer([ToolSpec("slow", "s", schema, held, budget="B")], {"B": 5})
+    script = (Step(calls=(("slow", {"n": "1"}), ("slow", {"n": "2"}))),)
+
+    async def play() -> Any:
+        result = await arun_investigation(
+            _config(wall_time_s=0.2), layer, driver=ScriptedDriver(script)
+        )
+        release.set()
+        return result
+
+    result = run_investigation_outside(play)
+    assert result.outcome == "wall_time"
+    assert entered.is_set()
+    assert result.record.of_kind("tool_call") == ()
+    assert result.record.of_kind("outcome")[-1].body["tool_calls"] == 0
+    assert layer.calls == ()
+    assert layer.meter("B").used == 0
+    assert runs == ["1"]
+
+
+def run_investigation_outside(play: Any) -> Any:
+    """``asyncio.run``, which joins the worker threads before returning."""
+    return asyncio.run(play())
+
+
 def test_a_refusal_is_recorded_as_an_outcome() -> None:
     script = (Step(text="I won't."),)
     driver = ScriptedDriver(script, stop_reason="refusal")

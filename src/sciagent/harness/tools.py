@@ -33,6 +33,15 @@ The layer is serialised by a lock, so a runner that dispatches handlers to
 worker threads still gets one well-defined call order, and that order -- the
 ``index`` of each :class:`ToolCall` -- is the order replay re-issues.
 
+Closing. A worker thread cannot be cancelled, so a session cut at its wall time
+can leave a handler running and more calls queued on the lock.
+:meth:`ToolLayer.close` ends the log at once: it does not wait for the running
+handler, whose output is then dropped uncharged, and a queued call runs nothing.
+Neither is logged. Commits and :meth:`~ToolLayer.close` share a short gate, so
+every call is either wholly in the log (and so in the session's record) or
+not there at all. ``on_commit`` is called inside that gate with each logged
+call, so what a caller keeps from it stops moving when the layer closes.
+
 This module imports nothing from the Agent SDK.
 """
 
@@ -61,6 +70,8 @@ __all__ = [
 #: Tool names become ``mcp__<server>__<name>``; keep them to what every layer of
 #: that pipeline accepts.
 _NAME = re.compile(r"^[a-z][a-z0-9_]{0,47}$")
+#: The refusal after a terminal tool has succeeded, or after the layer closed.
+_ENDED = "the investigation has ended; no further tools run"
 
 
 @dataclass(frozen=True)
@@ -152,10 +163,13 @@ class ToolLayer:
 
     __slots__ = (
         "_calls",
+        "_closed",
         "_finished",
         "_footer",
+        "_gate",
         "_lock",
         "_meters",
+        "_on_commit",
         "_specs",
         "_submission",
     )
@@ -166,6 +180,7 @@ class ToolLayer:
         budgets: Mapping[str, int],
         *,
         footer: Footer | None = None,
+        on_commit: Callable[[ToolCall], None] | None = None,
     ) -> None:
         names = [s.name for s in specs]
         if len(set(names)) != len(names):
@@ -192,7 +207,12 @@ class ToolLayer:
         self._finished = False
         self._submission: ToolCall | None = None
         self._footer = footer
+        self._on_commit = on_commit
+        self._closed = False
+        #: Held for the whole of a call, handler included.
         self._lock = threading.Lock()
+        #: Held only to commit or to close, so closing never waits for a handler.
+        self._gate = threading.Lock()
 
     # -- introspection ------------------------------------------------------
 
@@ -228,43 +248,74 @@ class ToolLayer:
     # -- the one door -------------------------------------------------------
 
     def call(self, name: str, args: Mapping[str, Any]) -> ToolOutput:
-        """Run one tool call through every check; log it; return its output."""
+        """Run one tool call through every check; log it; return its output.
+
+        On a closed layer nothing runs and nothing is logged, and a call that
+        was running when the layer closed is dropped (module docstring).
+        """
         with self._lock:
+            if self._closed:
+                return _refusal(_ENDED)
             output, charged, spec = self._dispatch(name, args)
-            if charged is not None:
-                meter = self._meters[charged]
-                self._meters[charged] = BudgetMeter(
-                    meter.name, meter.limit, meter.used + 1
-                )
-            if self._footer is not None:
-                line = self._footer(dict(self._meters))
-                output = ToolOutput(
-                    f"{output.text}\n{line}", output.is_error, output.record
-                )
-            logged = ToolCall(
-                index=len(self._calls),
-                name=name,
-                args=dict(args),
-                output=output,
-                charged=charged,
-                budgets_after={n: m.used for n, m in self._meters.items()},
+            with self._gate:
+                if self._closed:
+                    return _refusal(_ENDED)
+                return self._commit(name, args, output, charged, spec)
+
+    def close(self) -> None:
+        """End the log now, without waiting for a running handler. Idempotent."""
+        with self._gate:
+            self._closed = True
+
+    def idle(self, wait_s: float) -> bool:
+        """Whether no handler is running, waiting up to ``wait_s`` for one to end.
+
+        On a closed layer the answer stays true once it is true.
+        """
+        if not self._lock.acquire(timeout=wait_s):
+            return False
+        self._lock.release()
+        return True
+
+    def _commit(
+        self,
+        name: str,
+        args: Mapping[str, Any],
+        output: ToolOutput,
+        charged: str | None,
+        spec: ToolSpec | None,
+    ) -> ToolOutput:
+        """Charge and log one call; return the output as logged."""
+        if charged is not None:
+            meter = self._meters[charged]
+            self._meters[charged] = BudgetMeter(meter.name, meter.limit, meter.used + 1)
+        if self._footer is not None:
+            line = self._footer(dict(self._meters))
+            output = ToolOutput(
+                f"{output.text}\n{line}", output.is_error, output.record
             )
-            self._calls.append(logged)
-            if spec is not None and spec.terminal and not output.is_error:
-                self._finished = True
-                self._submission = logged
-            return output
+        logged = ToolCall(
+            index=len(self._calls),
+            name=name,
+            args=dict(args),
+            output=output,
+            charged=charged,
+            budgets_after={n: m.used for n, m in self._meters.items()},
+        )
+        self._calls.append(logged)
+        if spec is not None and spec.terminal and not output.is_error:
+            self._finished = True
+            self._submission = logged
+        if self._on_commit is not None:
+            self._on_commit(logged)
+        return output
 
     def _dispatch(
         self, name: str, args: Mapping[str, Any]
     ) -> tuple[ToolOutput, str | None, ToolSpec | None]:
         """Return (output, budget charged, spec) without mutating the log."""
         if self._finished:
-            return (
-                _refusal("the investigation has ended; no further tools run"),
-                None,
-                None,
-            )
+            return _refusal(_ENDED), None, None
         spec = self._specs.get(name)
         if spec is None:
             return (

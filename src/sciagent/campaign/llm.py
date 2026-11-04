@@ -98,6 +98,9 @@ OUTCOMES: Final = (
 #: Seconds past the session's wall time before an isolated session's process
 #: is killed (:func:`run_session_isolated`).
 HARD_TIMEOUT_GRACE_S: Final = 600.0
+#: Seconds an isolated session's process has to exit once it has answered,
+#: before it is killed (:func:`_run_isolated`).
+EXIT_GRACE_S: Final = 10.0
 #: Outcomes that are retried rather than recorded (module docstring).
 RETRY_OUTCOMES: Final = ("session_error",)
 #: What a session outcome carries beside its cell, for its ``timing.jsonl``
@@ -413,7 +416,12 @@ def run_session_isolated(
     session gets ``wall_time_s + grace_s``; past that its process is killed and
     the unit is recorded as ``hard_timeout`` (void, nothing scored, no record
     saved), so one runaway experiment cannot block the campaign. A process
-    that dies without an answer is retryable.
+    that dies without an answer is retryable. A process that has answered gets
+    :data:`EXIT_GRACE_S` to exit and is then killed: its outcome and record are
+    in hand, and all that can keep it alive is a tool call that outlived the
+    session, which interpreter exit would join however long it runs. Measured
+    in the pilot: two wall-time sessions held their slot 1,034 s and 1,455 s
+    past the end of their records, both past the hard deadline.
 
     An AG-o session gets a sandbox root of its own (an opaque temporary
     directory under ``sandbox_root``). A killed process leaves its sandbox
@@ -479,6 +487,7 @@ def _run_isolated(
     grace_s: float,
     *,
     target: SessionTarget = _child,
+    exit_grace_s: float = EXIT_GRACE_S,
 ) -> SessionOutcome:
     """The process part of :func:`run_session_isolated`.
 
@@ -498,7 +507,9 @@ def _run_isolated(
     try:
         if receive.poll(deadline):
             outcome: SessionOutcome = receive.recv()
-            process.join()
+            process.join(exit_grace_s)
+            if process.is_alive():
+                _kill_session(process)
             # The driver's clock, spawn included, as for a hard timeout below,
             # so the unit's wall time is one measurement whatever the outcome.
             return dataclasses.replace(outcome, wall_s=time.perf_counter() - start)

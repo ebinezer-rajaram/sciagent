@@ -7,6 +7,7 @@ what keeps the count.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Mapping
 from typing import Any
 
@@ -125,7 +126,9 @@ def test_handlers_reach_state_only_through_the_layer() -> None:
         "budgets",
         "call",
         "calls",
+        "close",
         "finished",
+        "idle",
         "meter",
         "names",
         "schemas",
@@ -175,3 +178,107 @@ def test_a_footer_is_appended_to_every_output_after_charging() -> None:
 def test_without_a_footer_outputs_are_unchanged() -> None:
     layer = ToolLayer([ToolSpec("probe", "p", EMPTY, Counting(), budget="E")], {"E": 1})
     assert layer.call("probe", {}).text == "call 1"
+
+
+class Holding:
+    """A handler that stays inside its call until the test lets it go."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def __call__(self, args: Mapping[str, Any]) -> ToolOutput:
+        self.calls += 1
+        self.entered.set()
+        assert self.release.wait(30.0)
+        return ToolOutput(f"call {self.calls}")
+
+
+def _closing_layer(
+    handler: Holding, commits: list[int] | None = None
+) -> tuple[ToolLayer, threading.Thread]:
+    """A layer with ``handler`` running in a thread, the way a session runs it."""
+    layer = ToolLayer(
+        [ToolSpec("probe", "p", EMPTY, handler, budget="E")],
+        {"E": 3},
+        on_commit=None if commits is None else lambda c: commits.append(c.index),
+    )
+    thread = threading.Thread(target=layer.call, args=("probe", {}))
+    thread.start()
+    assert handler.entered.wait(30.0)
+    return layer, thread
+
+
+def test_close_does_not_wait_for_a_running_handler() -> None:
+    handler = Holding()
+    layer, thread = _closing_layer(handler)
+    layer.close()  # the handler is still inside: this returning is the test
+    assert thread.is_alive()
+    handler.release.set()
+    thread.join(30.0)
+
+
+def test_a_handler_that_finishes_after_close_commits_nothing() -> None:
+    handler = Holding()
+    commits: list[int] = []
+    layer, thread = _closing_layer(handler, commits)
+    layer.close()
+    handler.release.set()
+    thread.join(30.0)
+    assert not thread.is_alive()
+    assert layer.calls == ()
+    assert layer.meter("E").used == 0
+    assert commits == []
+
+
+def test_a_closed_layer_runs_no_handler_and_logs_nothing() -> None:
+    handler = Counting()
+    layer = ToolLayer([ToolSpec("probe", "p", EMPTY, handler, budget="E")], {"E": 2})
+    assert not layer.call("probe", {}).is_error
+    layer.close()
+    out = layer.call("probe", {})
+    assert out.is_error and "ended" in out.text
+    assert handler.calls == 1
+    assert len(layer.calls) == 1
+    assert layer.meter("E").used == 1
+
+
+def test_a_terminal_call_after_close_does_not_finish_the_run() -> None:
+    layer = toy_layer(1)
+    layer.close()
+    assert layer.call("submit", {"answer": "a", "report": "r"}).is_error
+    assert not layer.finished and layer.submission is None
+
+
+def test_close_is_idempotent() -> None:
+    layer = toy_layer(1)
+    layer.close()
+    layer.close()
+    assert layer.calls == ()
+
+
+def test_every_committed_call_is_announced_in_order_refusals_too() -> None:
+    commits: list[tuple[int, str, int]] = []
+    handler = Counting()
+    layer = ToolLayer(
+        [ToolSpec("probe", "p", EMPTY, handler, budget="E")],
+        {"E": 1},
+        on_commit=lambda c: commits.append(
+            (c.index, c.name, int(c.budgets_after["E"]))
+        ),
+    )
+    layer.call("probe", {})
+    layer.call("probe", {})  # refused: budget spent
+    layer.call("nothing", {})  # refused: unknown tool
+    assert commits == [(0, "probe", 1), (1, "probe", 1), (2, "nothing", 1)]
+
+
+def test_idle_says_whether_a_handler_is_still_running() -> None:
+    handler = Holding()
+    layer, thread = _closing_layer(handler)
+    layer.close()
+    assert not layer.idle(0.0)
+    handler.release.set()
+    thread.join(30.0)
+    assert layer.idle(0.0)

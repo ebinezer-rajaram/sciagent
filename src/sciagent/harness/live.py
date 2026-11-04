@@ -49,6 +49,13 @@ planted-hint positive control (SPEC §6.4) can be run.
 Tool handlers run in a worker thread (``asyncio.to_thread``), so a sandbox call
 that takes seconds does not stall the SDK's message pump; the layer's lock fixes
 the call order.
+
+The end of the session is a line in the layer's log. The wall time cancels the
+await, not the thread, so the loop closes the layer as soon as the stream has
+ended and before it decides anything: every call the layer logged by then is
+in the record (:meth:`_Session.flush`), and a call still running or queued has
+no ``tool_call`` entry and never commits. The outcome is decided from the
+closed layer, so the record cannot be told a submission it has no call for.
 """
 
 from __future__ import annotations
@@ -524,6 +531,7 @@ class _Session:
                 self.append_call(call, None, None)
 
     def finish(self, reason: str, extra: Mapping[str, Any] | None = None) -> None:
+        self.layer.close()
         self.flush()
         submission = self.layer.submission
         self.append(
@@ -646,6 +654,7 @@ class _Session:
                 f"{type(error).__name__}: {error}",
                 record=self.record,
             ) from error
+        self.layer.close()
         if self.fault is not None:
             self.finish("harness_fault", {"error": type(self.fault).__name__})
             raise HarnessFaultError(

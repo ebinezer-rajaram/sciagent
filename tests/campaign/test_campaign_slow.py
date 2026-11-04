@@ -9,6 +9,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from multiprocessing.connection import Connection
 from pathlib import Path
@@ -248,4 +249,42 @@ def test_an_isolated_session_is_timed_by_the_driver_with_its_spawn(
     )
     assert out.detail["outcome"] == "submitted"
     assert out.wall_s > 0.0
+    assert out.timing == _TIMING
+
+
+def _answers_and_leaves_a_thread_behind(
+    conn: Connection,
+    unit: Unit,
+    truth: TruthEntry,
+    env: CampaignEnvironment,
+    config: CampaignConfig,
+    out_dir: Path,
+    sandbox_root: Path | None,
+) -> None:
+    """Stands in for a session cut with a fit still running: the outcome goes
+    out, and a non-daemon thread keeps the process from exiting."""
+    threading.Thread(target=threading.Event().wait).start()
+    _answers_at_once(conn, unit, truth, env, config, out_dir, sandbox_root)
+
+
+def test_a_thread_outliving_the_answer_does_not_hold_the_campaign(
+    tmp_path: Path,
+) -> None:
+    """Pilot dev-005 s1: the record ended at 3,606 s and the unit at 5,061 s,
+    past the hard deadline, because the parent joined the process with no
+    limit once it had the outcome, and the process waited for a fit thread.
+    The outcome is all the parent needs: past a short grace the process goes.
+    """
+    out = llm._run_isolated(
+        Unit("hawkes", 1, "AG-c-H/named"),
+        entry("hawkes"),
+        environment(),
+        tiny_config(seeds=(1,)),
+        tmp_path,
+        None,
+        60.0,
+        target=_answers_and_leaves_a_thread_behind,
+        exit_grace_s=0.5,
+    )
+    assert out.detail["outcome"] == "submitted"
     assert out.timing == _TIMING

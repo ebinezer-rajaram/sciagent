@@ -131,6 +131,10 @@ OUT_OF_BOUNDS: Final = (
 #: spec's defaults, and what :func:`run` gives every AG-o run.
 SANDBOX_WALL_SECONDS: Final = 60.0
 SANDBOX_MEMORY_MB: Final = 2048
+#: Seconds a finished session waits for a tool call that outlived it before
+#: cleanup. ``asyncio.run`` has already joined the worker threads for up to
+#: 300 s by then, so this is only the last call's way out of the layer.
+IDLE_WAIT_S: Final = 5.0
 
 
 def run_sandbox_limits() -> SandboxLimits:
@@ -571,7 +575,16 @@ def run(
     or FSD in an environment without a mark law is refused before anything
     runs. An AG-o sandbox is recovered and removed afterwards
     (:func:`_discard_sandbox`); if that fails, the record is still saved and
-    the run is void for an infrastructure fault (``sandbox cleanup``).
+    the run is void for an infrastructure fault (``sandbox cleanup``). A tool
+    call that outlives the session (a worker thread cannot be cancelled) leaves
+    the sandbox in place, since removing it under a running call could fail
+    and void the run for a call the record does not hold: the session's owner
+    recovers it once the process is gone
+    (:func:`sciagent.campaign.llm.run_session_isolated`).
+
+    Everything returned is read from the record or from the lab's committed
+    read-outs (:class:`~sciagent.investigation.tools.Committed`), so a call
+    with no ``tool_call`` entry reaches no field of the outcome.
     """
     try:
         variant = as_variant(prompt_variant)
@@ -618,8 +631,9 @@ def run(
     )
     out_dir.mkdir(parents=True, exist_ok=True)
     cleanup_fault: str | None = None
+    layer = lab.layer()
     try:
-        result = run_investigation(config, lab.layer(), driver=driver)
+        result = run_investigation(config, layer, driver=driver)
     except (
         HarnessFaultError,
         HermeticityError,
@@ -629,8 +643,16 @@ def run(
         error.record.save(out_dir / f"aborted-{error.record.head[:16]}.json")
         raise
     finally:
+        layer.close()
         if lab.sandbox is not None:
-            cleanup_fault = _discard_sandbox(lab.sandbox, keep=keep_sandbox)
+            if layer.idle(IDLE_WAIT_S):
+                cleanup_fault = _discard_sandbox(lab.sandbox, keep=keep_sandbox)
+            else:
+                _log.warning(
+                    "a tool call outlived the session; %s is left for the "
+                    "session's owner to recover",
+                    lab.sandbox.run_dir,
+                )
     record = result.record
     path = out_dir / f"investigation-{record.head[:16]}.json"
     record.save(path)
@@ -656,7 +678,7 @@ def run(
         outcome=result.outcome,
         submission=lab.submitted,
         report=lab.report,
-        experiments_used=lab.world.experiments_run,
+        experiments_used=lab.experiments_used,
         fits_used=lab.fits_used,
         void=verdict.void,
         void_reasons=verdict.reasons,

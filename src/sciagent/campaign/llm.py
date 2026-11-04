@@ -6,7 +6,10 @@ scripted driver), then reads the saved, hash-chained record back for what the
 campaign keeps: outcome, cost (turns, tokens), budgets used,
 predictions (SPEC §4.4), tool-call counts, the submitted structure and every
 charged fit's structure in fit order (native DSL, for the efficiency curve in
-:func:`sciagent.campaign.execute.run_score_job`).
+:func:`sciagent.campaign.execute.run_score_job`). Turns and tokens are the
+SDK's own figures, from the record's ``result`` entry; a session with none (a
+wall-time end) has no such reading fields. Old cells hold 0 there instead, so
+whether a session has them is read from its record, not from a zero.
 
 **What is recorded and what is retried.** A session that ran to an outcome
 (submitted, max turns, wall time, ended without submit, refused, output
@@ -270,6 +273,9 @@ def run_session(
             unit, True, {}, detail, None, (), time.perf_counter() - start, {}
         )
     evaluated = [p for p in outcome.predictions if p.value is not None]
+    # Turns and tokens exist only in the SDK's ``result`` message. A session
+    # with none (a wall-time end) has no such reading, rather than a 0 that
+    # would read as a session that cost nothing.
     reading = {
         "status": 1.0,
         "outcome": float(OUTCOMES.index(outcome.outcome))
@@ -278,14 +284,14 @@ def run_session(
         "submitted": 0.0 if outcome.submission is None else 1.0,
         "void": 1.0 if outcome.void else 0.0,
         "unknown_tool_attempts": float(outcome.unknown_tool_attempts),
-        "turns": float(outcome.num_turns or 0),
+        **({"turns": float(outcome.num_turns or 0)} if results else {}),
         "fits_used": float(outcome.fits_used),
         "experiments_used": float(outcome.experiments_used),
         "tool_calls": float(sum(counts.values())),
         "predictions": float(len(outcome.predictions)),
         "predictions_evaluated": float(len(evaluated)),
         "predictions_covered": float(sum(p.covered for p in evaluated)),
-        **_usage(outcome.usage),
+        **(_usage(outcome.usage) if results else {}),
     }
     return SessionOutcome(
         unit,

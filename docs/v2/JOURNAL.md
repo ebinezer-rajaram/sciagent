@@ -2311,3 +2311,7 @@ The weekly usage reset has passed and the INBOX has no open entry. This is a pro
 3. PILOT.md leftovers (queue): the [draft] scripts, `pilot_report.py`'s three text fixes, test first.
 
 **Decisions for the owner or control room:** (1) P3 go/no-go after the transcripts; (2) check (b), red team and lane recommend yes, about 14 CPU min, needs the token for `ctlA1-boot-r2`, which is the guard bypass you would be approving; (3) fit/5 losses: pin T2 and document, restate the bound under a rule written first, or fit/6; this blocks the p4-deltas slow tier. Evidence: LOG 2026-11-04 (three entries) and PILOT.md's search-miss bullet.
+
+**Addendum to the hand-over (03:22Z).**
+- The stop-point push was attempted and not delivered (`Mobile push not sent (Remote Control inactive)`), so the owner has not been reached by it. The control room should raise the three decisions above.
+- Engineer on `p4-rehearsal` (local, not merged, not pushed): efbd014 (a reading follows the tool layer's commits, not the lab after the cut), 3e191dd (a session with no SDK `result` has no turns or tokens in its reading), 147e0bb (LOG). I read the source diff and reran five affected test files: `50 passed`, exit 0. It also adds a limit of 10 s on the exit of a process that has answered, beyond its brief, which covers the analyst's `process.join()` follow-up. Its fast tier had not finished at this time, so the branch is not yet checked as a whole.

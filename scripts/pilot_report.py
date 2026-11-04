@@ -321,6 +321,28 @@ def control_1_headline(
     return "**PASS** (" + "; ".join(parts) + ")"
 
 
+def verdict_line(outcome: str) -> str:
+    """The §7.1 headline of a complete store: the rules' output, named as that."""
+    return (
+        f"**Verdict (computed): {outcome.upper()}.** This is what the rules "
+        "compute. It is not the decision: P4-PROPOSAL §2.4 closes P3 on a GO plus "
+        "the owner's transcript read."
+    )
+
+
+def control_3_scope(
+    kept: Sequence[str], srows: Sequence[Any], *, declared: bool
+) -> str:
+    """The truths control 3 reads, against the kept ones: the kept truths with a
+    B-sym@10F score (``analysis.verdict``), which a declared subset narrows."""
+    from sciagent.campaign.plan import B_SYM_10F
+
+    have = {r.truth for r in srows if r.system == B_SYM_10F}
+    read = sum(t in have for t in kept)
+    which = "its declared subset" if declared else "those with a result"
+    return f"{read} of the {len(kept)} kept truths ({which})"
+
+
 def interim_controls(tab: Any, resamples: int) -> list[str]:
     """§6.4 controls on completed units only, without the drop rule (interim)."""
     import numpy as np
@@ -645,7 +667,7 @@ def main() -> None:
     # -- verdict -----------------------------------------------------------
     L += ["## Go/no-go (SPEC §7.1)", ""]
     if complete:
-        L += [f"**Verdict: {verdict.outcome.upper()}**", ""]
+        L += [verdict_line(verdict.outcome), ""]
     else:
         L += [
             "**Verdict: PENDING.** The §7.1 read needs every non-LLM system on "
@@ -743,7 +765,13 @@ def main() -> None:
         L += ["**2. Planted hint beats B-rand**: not computable (inconclusive).", ""]
     if verdict.bsym is not None:
         L += [
-            "**3. B-sym at 10xF approaches ORACLE**: median over kept truths of the "
+            "**3. B-sym at 10xF approaches ORACLE**: median over "
+            + control_3_scope(
+                verdict.kept,
+                analysis.score_rows(rows, tab.truths),
+                declared=config.control_truths is not None,
+            )
+            + " of the "
             f"per-truth gap = {fmt(verdict.bsym.median_gap)} (pass if ≥ "
             f"-{gonogo.BSYM_TOLERANCE}) → "
             f"**{'PASS' if verdict.bsym.passed else 'FAIL'}** "
@@ -760,10 +788,7 @@ def main() -> None:
     L += [
         "Recovery and close shares are truth-weighted; gaps and similarity are over "
         "units (truth x seed) that produced a score. B-np proposes no structure, so "
-        "its recovery is 0 by construction and its distance is not shown. B-sparse "
-        "often submits `Gate(Excite, PhaseWindow)` for a `Product(Excite, Periodic)` "
-        "truth, a predictive equivalent: read its gap closed beside its exact "
-        "recovery.",
+        "its recovery is 0 by construction and its distance is not shown.",
         "",
     ]
     srows = []

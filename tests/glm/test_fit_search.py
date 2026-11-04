@@ -24,7 +24,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from hypothesis import HealthCheck, Phase, given, settings
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from environments.pointproc import v2
@@ -338,28 +338,24 @@ def t2_gap(which: int, link: str, seed: int) -> float:
     return best - result.log_likelihood
 
 
+#: Seeds T2's example list.
+T2_SEED = 20261104
+
+
 def t2_examples(n: int) -> list[tuple[int, str, int]]:
-    """The first ``n`` examples of a fixed derandomised Hypothesis profile."""
-    out: list[tuple[int, str, int]] = []
-
-    @settings(
-        max_examples=n,
-        deadline=None,
-        derandomize=True,
-        database=None,
-        phases=[Phase.generate],
-        suppress_health_check=list(HealthCheck),
-    )
-    @given(
-        which=st.integers(0, len(BIG) - 1),
-        link=st.sampled_from([Link.EXP, Link.SOFTPLUS]),
-        seed=st.integers(0, 2**32 - 1),
-    )
-    def collect(which: int, link: Link, seed: int) -> None:
-        out.append((which, link.value, seed))
-
-    collect()
-    return list(dict.fromkeys(out))
+    """The first ``n`` examples of a fixed list. From a seeded generator, not
+    Hypothesis: a derandomised Hypothesis list moved with the running context
+    (LOG 2026-11-04), so a pass was a pass on an unknown sample."""
+    rng = np.random.default_rng(T2_SEED)
+    links = (Link.EXP.value, Link.SOFTPLUS.value)
+    return [
+        (
+            int(rng.integers(len(BIG))),
+            links[int(rng.integers(len(links)))],
+            int(rng.integers(2**32)),
+        )
+        for _ in range(n)
+    ]
 
 
 #: T2 cases fit/5's search once lost (LOG 2026-10-03), kept as regressions.

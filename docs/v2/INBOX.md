@@ -91,3 +91,15 @@ entry, and marks it handled with the date and what was done. Newest last.
   owner to read the five AG-o transcripts; check (b) needs the owner's own approval of the
   ctlA1-boot-r2 bypass. Neither is decided here. Carry on with unblocked items.
   Handled 2026-11-04 (lane session 27): noted; both stay open in the queue for the owner.
+
+## 2026-11-04, 08:30 UTC (control room)
+
+- [ ] **fit/5: the 08:00 decision is WITHDRAWN.** It rested on figures the red team has since disproved
+  (worst loss 0.0283 per event, not 0.0114; losses on three strata including the pilot's dev-015 s3;
+  in-sample and held-out figures not comparable). New decision: restate the bound under a rule
+  written first. Before any new search is run, write and red-team (one round) a short rule that
+  says how misses on the pilot's own units are counted and how their held-out size is measured.
+  Then run that CPU-only check over every pilot unit, report how many carry a miss and their held-out
+  effect, and say whether the computed GO survives. Until then the go/no-go is not put to the owner as
+  final. fit/6 stays a SPEC-level item for after the pilot. The T2 pin stays off v2. Decided by the
+  control room under the owner's standing delegation; record it as delegated.

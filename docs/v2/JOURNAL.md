@@ -2406,7 +2406,7 @@ Checkpoint, not the hand-over. No pilot unit has been searched, and nothing here
 - Replay at 11:47Z: AG-c 119 PASS, 0 FAIL; AG-o 119 PASS, 1 FAIL (dev-003 s1, as the rule expected). One replay unit had exited by then, the other had not; final counts are for the next session.
 - LEDGER rows added for the p4 tier and the spike. Not yet: the replay units.
 
-**Checks.** At `R`: `ruff format --check .` `273 files already formatted`; `ruff check .` clean; mypy `no issues found in 262 source files`; `tests/test_invariants.py` plus the new test, `1146 passed`, exit 0. The new test's slow tier `24 passed` is the engineer's, before the constants were set; I did not rerun it. The repository's fast tier was started at `R`, result in `.cache/drafts/prereg-s28/fast-R.log`; it had not finished when this was written, so it is not claimed. No file under `src/` changed. The script past its guards has never run: that needs the launch.
+**Checks.** At `R`: `ruff format --check .` `273 files already formatted`; `ruff check .` clean; mypy `no issues found in 262 source files`; `tests/test_invariants.py` plus the new test, `1146 passed`, exit 0. The new test's slow tier `24 passed` is the engineer's, before the constants were set; I did not rerun it. The repository's fast tier was started at `R`, result in `.cache/drafts/prereg-s28/fast-R.log`: `3282 passed, 47 warnings in 141.01s`, exit 0. No file under `src/` changed. The script past its guards has never run: that needs the launch.
 
 **Learned.**
 - 0.782 sweeps per start came from grids that fill up. On fresh profiles it ran 0.34 to 1.10 over 48 starts, one log per shape, and higher over few starts. On many fits R1 will stop short of 48 starts, so the record gives the count.
@@ -2416,7 +2416,7 @@ Checkpoint, not the hand-over. No pilot unit has been searched, and nothing here
 - The research-team guard refuses inline Bash writes whose text names lane controls, even when the target is a doc; the Edit tool is the route for docs.
 
 **Next.**
-1. `grep -E '^(FAILED|ERROR)|^exit:| passed' .cache/drafts/prereg-s28/fast-R.log`; fix any failure before launching (a change to the script is an amendment).
+1. A change to the script from here on is an amendment (section 2.10).
 2. `git worktree add --detach .claude/worktrees/misses 5e5a169`, check MemAvailable is at least 8 GiB, launch by section 8's line, LEDGER row.
 3. Replay: when both units exit, final counts, `replay_paragraph.sh`, LEDGER rows.
 4. While the run goes: write the section 10 note's frame; nobody reads `journal.jsonl` before the end.

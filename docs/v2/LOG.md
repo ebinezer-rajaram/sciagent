@@ -1942,3 +1942,18 @@ from the cell; 1,902 events, 0.0024 nats per event) on an `exp` truth with no `P
 (2) "Only one of the two unanswered fits reached the lab" is an inference from the join, not an observation: the layer lock serialises concurrent calls too, so
 order equality does not show one-at-a-time dispatch. Under a stress test that adds T2's 0.0065 nats per event to every unit, no §7.1 outcome moves; that is a stress test,
 not an estimate of the rate or size of misses. Not changed by this: no §7.1 number, and no rule.
+
+## 2026-11-04: The 19 `run_experiment` inputs that failed were the agents' own; no harness defect (exploratory, session 27)
+
+All 19 are hand-typed `force_events` interventions, and all 19 were followed by a `run_experiment` that reached the layer, so none cost a
+session its experiment. Of the 14 "could not be parsed as JSON", 9 have one surplus closing brace as their last character (`json.loads`: "Extra data" at
+length-1). The other 5 are over 2,048 bytes and the raw input is recorded only to 2,048, so their fault is not visible. The 5 "Input validation error" are the tool's schema
+refusing what it should: `horizon` inside `intervention` (3), a stray `times_note` (1), a list too long (1). Those 5 are all anon-arm sessions; with counts this small and no control
+covering an LLM arm, that is an observation and nothing more. Nothing changes in the harness. Scripts: `.cache/drafts/unmatched_s27.py`, `unmatched2_s27.py`.
+
+## 2026-11-04: The search-miss stress test rerun at the largest loss found: no §7.1 outcome moves (exploratory, session 27)
+
+The focused sweep ended at 115 of 400 cases with 3 losses: 0.27, 0.59 and 2.08 nats, on 203, 194 and 183 events; 0.0114 nats per event at worst, above the 0.0065 the red team
+used. Shifting every unit by 0.0114 gives B-sparse out-of-dictionary 33% against 70%, and C1 and C2 stay above their limits. The uniform shift that fires too-easy is 0.0227;
+C2's lower end reaches 0 at 0.0148 by subtraction. A raised B-lib side was tried too, up to 0.0114: shares fall by at most 0.07 and too-hard is far away. Larger values of that direction make
+the closing ratio's denominator negative, so they say nothing. This does not change the owner's question (what T2 should assert, and whether P4 runs on fit/5); it bounds how far it reaches into the pilot's read.

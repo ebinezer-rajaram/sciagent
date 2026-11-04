@@ -2319,3 +2319,19 @@ The weekly usage reset has passed and the INBOX has no open entry. This is a pro
 **Second addendum (03:33Z).**
 - **Engineer finished; its checks are partial.** ruff clean, `mypy` no issues in 288 files. No single clean fast-tier tail: the full run hit the engineer's own 1,500 s limit at 66%, and the rest was covered in two reruns. One failure, `tests/nonparam/test_wiener_hopf.py::test_runtime_n2000`, 2.09 s against a 2.0 s limit in code with no diff; my rerun passed in 0.78 s at load about 12, so it is a load effect there. That the `F` in the killed run is this test is inferred. `test_pilot_harness1_cells.py` passed inside my 50-test rerun. The rest of `test_campaign_slow.py` was not run. Not tested: real SDK cancellation and real Docker. A scripted session's reading and detail are byte-identical on 346676a and the fix. Only `fits_used` in one session was wrong in the pilot; the others were exposed, not wrong.
 - **Focused sweep, not final (`sci-t2-b0` ends about 03:34Z):** 3 losses in 106 BIG[0] softplus cases, 0.27, 0.59 and 2.08 nats (Clopper-Pearson 95% 0.6% to 8.1%). This stratum loses more often than the broad sweep's 1 of 376 suggested; it is the hardest grid of four and is not a pilot rate. PILOT.md's stress test used 0.0065 nats per event; a 2.08-nat loss may exceed that, so a next red-team pass should rerun the stress test with the largest per-event miss found. This strengthens decision (3).
+
+## 2026-11-04: Lane session 27 (07:03 UTC), progress: the 19 failed inputs answered; stress test rerun, red team pending; decisions sent to the control room
+
+The INBOX has no open entry. This is a progress entry; the hand-over follows. The numbers below are exploratory and **not yet red-teamed**, and the stress-test sentence for PILOT.md is held out of the file until they are (`.cache/drafts/p3-report/s27-pilot-stress.patch`).
+
+**Done.**
+- **Stop point re-sent the handbook's way.** Session 26 tried only a phone push, which fails from a lane; `~/research/CONTROL.md` says lanes message the control room. The three decisions went to session `agent-control-b6` by cross-session message. It reached the inbox; that it was read is not known.
+- **Focused sweep final:** `sci-t2-b0` exit 0 at 03:34:12Z, 115 of 400 cases, 3 losses (0.27, 0.59, 2.08 nats). LEDGER row added.
+- **Stress test rerun** (`.cache/drafts/t2-drift/stress_s27.py`): largest per-event loss 0.0114, 2.0819 nats on 183 events; at that shift B-sparse out-of-dictionary reads 33% against 70%. It reaches 70% at 0.0227 (LOG 2026-11-04).
+- **The 19 `run_experiment` inputs answered** (`.cache/drafts/unmatched_s27.py`, `unmatched2_s27.py`; LOG 2026-11-04): 9 surplus closing brace, 5 over the record's 2,048 bytes and not visible, 5 schema refusals; each was followed by a call that reached the layer.
+- **Replay at 07:03Z, still running:** AG-c 83 PASS, 0 FAIL; AG-o 55 PASS, 1 FAIL of 120 each. The FAIL is dev-003 s1, step 51, field `digest`, the record the notes' rule expected apart. PILOT.md's replay paragraph is not updated; it waits for the exit lines.
+- **Delegated, running:** engineer on `pilot-leftovers` (scripts and `pilot_report.py` text), engineer on `p4-rehearsal` (merge v2, fast and slow tiers, finished-store checks, the `t2-pin` list), red team on the two exploratory items above.
+
+**Learned.** Lane pushes cannot reach the owner while Remote Control is inactive, so stop points go to the control room by message.
+
+**Next.** Read the three reports and check them; apply the red team's corrections; apply the patch to PILOT.md; then the hand-over entry.

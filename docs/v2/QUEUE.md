@@ -295,12 +295,14 @@ Each item says when it is done. Move finished items to the bottom section after 
   not LLM calls, so `max_turns` bounds tool calls and §7.1 sizing must use distinct message ids; 19 `run_experiment` tool_uses
   never reached the layer, none charged: all have an `unmatched_tool_result`, 14 `InputValidationError ... could not be parsed as JSON`, 5 `Input validation error`
   (corrected by the red team, session 26): why the model's input failed to parse is the open question.
+  2026-11-04 (session 27): answered, no harness defect (LOG 2026-11-04): 9 of the 14 end in one surplus closing brace, 5 are over the record's 2,048-byte cap and not visible, the 5 validation errors are the schema refusing bad input; all 19 were followed by a `run_experiment` that reached the layer. `process.join()` limit: `EXIT_GRACE_S` on `p4-rehearsal`. Left: the merge.
 - [ ] **fit/5 search losses and T2's list (needs the owner; LOG 2026-11-04).** T2's examples drift with context, and a seeded
   sweep found 1 loss in 376 (1.32 nats, (0, softplus, 103648458)); 0.004 nats at (0, softplus, 1074). This fails the slow tier
   on `p4-rehearsal`, so it blocks the p4-deltas merge check. Options: pin the list by a seeded generator (test only) and keep the
   known losses as documented failures, restate the bound under a rule written first, or fit/6 (SPEC-level; would not
   apply to the pilot). Found so far: 3 of the first 106 cases of a focused BIG[0] softplus sweep (0.27, 0.59, 2.08 nats), and ORACLE dev-015 s3 in the pilot store
   (4.53 nats, `exp`, no `Periodic`), so the miss is not confined to BIG[0]. `t2-pin` 9fef563 holds the pinned list, not merged.
+  2026-11-04 (session 27): focused sweep final, 3 of 115; worst 0.0114 nats per event; stress test rerun, no §7.1 outcome moves (LOG 2026-11-04). Still the owner's.
 - [ ] **PILOT.md leftovers** (red team, session 26). Finish the replay paragraph when the units exit (`replay_paragraph.sh`, sort any FAIL by the
   notes' rule). Commit the [draft] scripts lint-clean or drop their sentences (S3 `sciagent/p3-linux/report-900e66a/`; commit wall_time_audit, sizing,
   independent_recompute with truths.json, sandbox_nondeterminism; drop dispatch_order; five figures have no printing script). Fix `pilot_report.py`, test first:
@@ -446,6 +448,7 @@ Each item says when it is done. Move finished items to the bottom section after 
 - [ ] **Size P4 from the Linux pilot** (SPEC §7.1, last bullet): LLM calls and wall time per
   investigation under Max at this lane's share, for Haiku, Sonnet and Opus, named and
   anonymised, on the 40 x 2 test design. Done when the estimate is in the journal.
+  2026-11-04: the estimate is in JOURNAL session 26 with Sonnet measured; Haiku and Opus are guesses until P4.0, so this stays open for them.
 - [ ] **Test split and the §6.1 freeze: stop point.** Generate the test split outside the
   repository (records kept on dm-devbox and under the S3 prefix; only the sha256 committed) and
   prepare the single freeze commit of SPEC §6.1. The owner approves before any agent touches

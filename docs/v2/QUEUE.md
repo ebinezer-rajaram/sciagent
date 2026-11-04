@@ -307,6 +307,7 @@ Each item says when it is done. Move finished items to the bottom section after 
   notes' rule). Commit the [draft] scripts lint-clean or drop their sentences (S3 `sciagent/p3-linux/report-900e66a/`; commit wall_time_audit, sizing,
   independent_recompute with truths.json, sandbox_nondeterminism; drop dispatch_order; five figures have no printing script). Fix `pilot_report.py`, test first:
   the C3 line's "median over kept truths" (line 746), the B-sparse sentence (line 765), and label "Verdict: GO" as computed.
+  2026-11-04 (session 27): scripts and the three text fixes done on v2 (a4bd9cf, 5bd54ed; `scripts/p3_report/`); PILOT.md's [draft] tags replaced and its generated sections regenerated. Not red-teamed. Left: the replay paragraph, and `[red team, rv_*.py]` citations, which stay on S3 only.
 - [~] **Measure search misses on every pilot unit (control room, INBOX e7c6431; rule first).** Only dev-015 s3 has a known size. Pre-register (`docs/v2/prereg/2026-11-04_pilot-search-misses.md`), one red-team round, freeze, then a CPU-only check over every pilot unit: how many carry a miss, their held-out effect, and whether the computed GO survives. Until then the go/no-go is not put to the owner as final.
 - [!] **P3 go/no-go read: stop point.** SPEC §7.1 under the re-read rules of P4-PROPOSAL §2.4;
   blocked also on the item above (INBOX e7c6431);

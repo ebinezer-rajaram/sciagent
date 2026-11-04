@@ -1973,3 +1973,7 @@ Corrects the three session 27 entries above and the stress sentence of the sessi
 ## 2026-11-04: fit/5: pin-and-document withdrawn; the bound is restated under a rule written first (delegated: control room, under the owner's standing delegation)
 
 INBOX e7c6431 replaces aa83c36, whose figures were wrong. Before any new search: a short rule, red-teamed once, for how misses on the pilot's own units are counted and how their held-out size is measured. Then a CPU-only check over every pilot unit, reporting how many carry a miss, their held-out effect, and whether the computed GO survives. Until then the go/no-go is not put to the owner as final. fit/6 stays a SPEC-level item for after the pilot, and the T2 pin stays off v2, so the p4-deltas slow tier keeps T2 as its one expected failure.
+
+## 2026-11-04: PILOT.md's report wording: the verdict is labelled computed, and C3 counts what it reads
+
+`pilot_report.py` now labels every computed outcome as the rules' output and not the decision (PENDING is unchanged), and C3's line counts the truths it reads by `analysis.verdict`'s own rule. The B-sparse sentence is dropped whole, its advice included, because that advice had no support once the equivalence claim went. Text only: the regenerated output differs in those three lines, and no number moves.

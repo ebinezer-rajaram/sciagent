@@ -299,7 +299,8 @@ Each item says when it is done. Move finished items to the bottom section after 
   sweep found 1 loss in 376 (1.32 nats, (0, softplus, 103648458)); 0.004 nats at (0, softplus, 1074). This fails the slow tier
   on `p4-rehearsal`, so it blocks the p4-deltas merge check. Options: pin the list by a seeded generator (test only) and keep the
   known losses as documented failures, restate the bound under a rule written first, or fit/6 (SPEC-level; would not
-  apply to the pilot). Lead: both losses are BIG[0], softplus, generating period 100, fit at period 5.
+  apply to the pilot). Found so far: 3 of the first 106 cases of a focused BIG[0] softplus sweep (0.27, 0.59, 2.08 nats), and ORACLE dev-015 s3 in the pilot store
+  (4.53 nats, `exp`, no `Periodic`), so the miss is not confined to BIG[0]. `t2-pin` 9fef563 holds the pinned list, not merged.
 - [ ] **PILOT.md leftovers** (red team, session 26). Finish the replay paragraph when the units exit (`replay_paragraph.sh`, sort any FAIL by the
   notes' rule). Commit the [draft] scripts lint-clean or drop their sentences (S3 `sciagent/p3-linux/report-900e66a/`; commit wall_time_audit, sizing,
   independent_recompute with truths.json, sandbox_nondeterminism; drop dispatch_order; five figures have no printing script). Fix `pilot_report.py`, test first:
@@ -331,6 +332,8 @@ Each item says when it is done. Move finished items to the bottom section after 
   stay rescorable); (2) run `replay_check` and the audit on the Linux pilot's harness/1 records under the
   merged code; (3) reconcile p4's LOG entries (its open decisions and 6,000-cap draft are settled in v2's LOG);
   (4) strip the engineer's `Co-Authored-By` trailers if these commits are replayed; (5) run the slow tier.
+  2026-11-04 (session 26): slow tier on 346676a: 1 failed (T2, its own item below), 307 passed. Wall-time fixes on `p4-rehearsal` efbd014, 3e191dd, 147e0bb (not merged, not pushed): `Committed` read-outs,
+  `ToolLayer.close`, `EXIT_GRACE_S` 10 s, no turns or tokens without a `result`. Before merging: one clean fast tier, the rest of `test_campaign_slow.py`, 58d1ac2's `counted()` comes with the merge; decide whether the 5-18 s cut tests stay in the fast tier.
   Also: the pinned AG-c EIG/FSD session addresses move even at defaults (no store holds one).
   2026-10-29 (session 20): points (1)-(3) done on `p4-rehearsal` (engineer; not merged, not pushed), all on a
   13:37Z copy of `.cache/pilot-llm` (10 sessions):

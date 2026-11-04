@@ -2335,3 +2335,16 @@ The INBOX has no open entry. This is a progress entry; the hand-over follows. Th
 **Learned.** Lane pushes cannot reach the owner while Remote Control is inactive, so stop points go to the control room by message.
 
 **Next.** Read the three reports and check them; apply the red team's corrections; apply the patch to PILOT.md; then the hand-over entry.
+
+## 2026-11-04: Lane session 27, correction: the stress test is withdrawn, and the control room decided on wrong figures
+
+**Stop point (AUTOPILOT stop 5: a result that bears on what the project can claim).** The answer in one line: session 27's "no §7.1 outcome moves" is withdrawn, and how far search misses reach into the go/no-go is unmeasured.
+- Evidence: LOG 2026-11-04 (last entry). Pinned T2 list: 1 loss in 300, 9.000695672681786 nats on 318 events at (2, exp, 1499614403), reproduced by me on v2. T2's in-sample gaps cannot be read as held-out shifts.
+- Caveats: the computed verdict on the stored numbers stands; the sensitivities in PILOT.md are one-sided shifts, not estimates.
+- Recommendation: measure misses on the units §7.1 turns on, under a rule written first (new queue item), before the owner leans on the computed line.
+- Decision needed: whether pin-and-document still stands (control room, messaged 07:58Z; not known to be read).
+
+**My error.** I sent unreviewed numbers to the control room without labelling them, and it decided on them within minutes. The progress entry above and my first stop-point message carry the wrong figures; they stay as written and this entry corrects them.
+
+**Done.** Red team's seven blocking and non-blocking items applied: PILOT.md's stress sentence replaced, QUEUE corrected, LOG correction appended, INBOX item left open with a note. Review scripts copied to S3 (28 objects). `t2-pin` held off v2.
+**Next.** Read the two engineers' reports; the control room's answer; the replay exit lines.

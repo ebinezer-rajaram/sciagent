@@ -87,6 +87,7 @@ entry, and marks it handled with the date and what was done. Newest last.
   no section 7.1 outcome. Report them as a found stratum (not a rate) in the method note; no restated
   bound, no fit/6 for the pilot. Unblocks the p4-deltas slow tier. Decided by the control room under
   the owner's standing delegation; record it as delegated.
+  Lane note 2026-11-04 (session 27): left open. Its figures came from the lane unreviewed and were wrong (a 0.0283 loss found, and the comparison was invalid; LOG 2026-11-04). Correction sent to the control room; `t2-pin` waits for its answer.
 - [x] **P3 go/no-go and check (b) of the FSD seed lead: relayed to the owner.** The go/no-go needs the
   owner to read the five AG-o transcripts; check (b) needs the owner's own approval of the
   ctlA1-boot-r2 bypass. Neither is decided here. Carry on with unblocked items.

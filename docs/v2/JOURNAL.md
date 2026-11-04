@@ -2434,3 +2434,34 @@ Checkpoint, not the hand-over. Nothing here is a result of the miss check.
 **Running.** An engineer on the section 10 note generator (side branch, toy records only), a red team on PILOT.md since 4dc2ff5, and a timed rerun of `sci-p4-tier`'s wall-time failure (`.cache/drafts/s29/p4-cap.log`).
 
 **Next.** Read those three, then the hand-over.
+
+
+## 2026-11-04: Lane session 29 (11:59 UTC) hand-over: the miss check is running; PILOT.md reviewed and fixed
+
+**Stop point, still open.** The answer in one line: the computed GO stays held, because the miss check is running and has no label yet.
+- Evidence: unit `sci-search-misses`, active at 12:42Z, `cpu.json` 1.31 CPU hours over 0.70 wall hours, so about 1.9 cores; `docs/v2/redteam/2026-11-04_pilot-md.md`.
+- Caveats: no output of the check has been read, and no number from it exists. The run past its guards had never been exercised before today, so a late bug is possible.
+- Recommendation: wait for the label. At this rate tier 1 ends sooner than the prereg's 24 to 44 hours only if the per-point rates hold, which is not known yet.
+- Decision needed from the owner: unchanged, the go/no-go after the transcripts, and check (b).
+
+**Done.**
+- Miss check launched (checkpoint above).
+- Replay final in PILOT.md; LEDGER rows in. The launch row's hours are filled at the end.
+- Red team on PILOT.md since 4dc2ff5: **ready with fixes**, no number or the computed GO changed. It regenerated the generated sections byte-identical and reproduced the figures. Fixed: finding 1 (blocking; the "every other fit" clause against the LOG, now 267, 318 and 85 of 670 rows), finding 2 (the hold beside the verdict, and only `GO_SURVIVES_FOUND_MISSES` releases it), 4, 5, 6, three of the nits. I confirmed finding 1's LOG quote, `e1057af` off v2, and the 2 uncertified rows by running `independent_recompute.py` (exit line `uncertified rows by system: {'AG-c-S/named': 1, 'AG-o-S/named': 1}`). The gap figures of finding 6 and the dev-003 s1 gap are the red team's; finding 6's agree with the stated gap-closed values. Line 50's stale commit is left, as harmless.
+- Its rerun of the failing replay record, past each divergence, closed the paragraph's two limits: only calls 51, 54 and 58 differ, in the timing number alone. I cite that as a review rerun: I did not repeat it, its script was not kept, and the other 239 records rest on their log lines. PILOT.md's fixes were not sent back for a second review.
+- `scripts/p3_report/miss_note.py` and its test on v2 (884ba01; engineer, toy records only, no pilot record read). Exploratory table defined before any number (LOG). I read its imports and grep for what it opens, not all 1,092 lines. Never run on real records.
+- `p4-rehearsal` wall-time failure timed: 49.45 s and 65.28 s against the tier's 405.08 s. Cause still not shown (QUEUE).
+
+**Checks.** v2: `ruff format --check .` `275 files already formatted`; `ruff check .` `All checks passed!`; mypy `no issues found in 264 source files`; fast tier `3368 passed, 47 warnings in 169.20s`, exit 0; `tests -k p3_report` `19 passed`. Slow tier not run: no file under `src/` changed. No check covers PILOT.md's prose beyond the red team's read. `find .cache/pilot-merged -newermt '2026-11-04 11:50:00'` is empty, so the reads beside the run left the store as its manifest took it.
+
+**Learned.**
+- `.cache/drafts/p3-report/notes.md` has drifted from PILOT.md: six of nine edits found no match. Splicing from it would undo reviewed text.
+- `OPENBLAS_NUM_THREADS` unset costs that test about a third more CPU (66.9 s against 51.5 s), not the factor of 8.
+- A `cd` into a worktree carries to the Stop hook, which then reads the wrong branch. Use `git -C` or a subshell.
+- The red team's replay used sandbox containers, which `nice` does not reach: load peaked near 3.4 beside the run for about 21 minutes. Its scratch `/tmp/rv-pilot-OOfw` (108K) is still there; its removal was refused and I left it.
+- PID 219453 still idle, left alone.
+
+**Next.**
+1. Check `systemctl --user is-active sci-search-misses` and `cpu.json` only. No `journal.jsonl`.
+2. When it ends: `decision.json`, S3 copy, LEDGER hours, `uv run python scripts/p3_report/miss_note.py --records <dir>`, hand-filled lines, red team, then the stop point.
+3. Meanwhile: SPEC §2.2's shares in `pilot_report.py`, test first (QUEUE, PILOT.md leftovers).

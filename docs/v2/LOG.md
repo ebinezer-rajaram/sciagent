@@ -1891,3 +1891,44 @@ uncertainty. The lane does not regenerate the real control streams outside contr
 (check (b)) without the owner's or control room's word. Why: these findings are exploratory under F₀ §5; the
 guard exists so that control streams are drawn only by the preregistered path. A non-control check (a) is
 running to measure the law directly (`.cache/drafts/fsd-seedlead/pool/`).
+
+## 2026-11-04: Check (a) corrects session 24's reading of A1's calibration; "optimistic by construction" and "lucky pool" are withdrawn as facts (exploratory)
+
+The red team reviewed check (a) (session 26; review scripts in `.cache/drafts/fsd-seedlead/pool/review-s26/`, runs sha
+e045f23c, `poollaw_analyse.py` 79ab70dd, `poollaw_sim.py` a5ff2b70): it stands with corrections, and no code defect was
+found in it. This entry corrects the entry of 2026-10-29 ("The seed lead is closed"), which is left as written. Its across-pool
+sd of 10 to 14 came from pools giving p32 and p16 the same 128 runs; calibrate's sets are disjoint, and that structure
+gives about 9. Recorded, under F₀ §5 as exploratory: at the seed-0 menu, on 28,672 complete runs, E[(ii)] is about 90
+(jackknife 95% CI 83 to 97), p32(MG) 0.935, p16(MG) 0.794, and plug-in pass_ii 0.85 against D0's 0.99999775. Conditioning on
+a pass (115 of 400 pools) raises the mean to 99.0, so selection explains about 9 of the 19.7-point gap. None of 400 pools
+reached 109.64 (maximum 108.5): P < 0.75% for this pool, and roughly 0.2% to 0.5% allowing for pool and law uncertainty
+(order of magnitude; approximations, and any tail reading is post hoc because no tail threshold was set first). The 38%
+of session 24 and the 0 of 400 measure different events and do not conflict. Leads only, not results: that D0's pool
+was lucky, that calibrate has no defect, that A1's failure was mostly chance, why the test drew low, the CRN effect size,
+rung multiplicity, and any design for a calibration fix. Nothing has reproduced a D0 count from runs. Only check (b) can,
+so the lane now recommends it to the owner, as the missing positive control rather than because a defect looks likely
+(scope and result table in JOURNAL session 26). A1 stays failed as scored; §8's reading and the parking of option 2 are unchanged.
+
+## 2026-11-04: Readings taken from lab state after a wall-time cut are not the record's; the pilot's cell stays, and the record is what counts
+
+`fits_used` of pilot session bd3dc4c4 (AG-o-S/named dev-012 s1, `wall_time`) reads 35; its hash-chained record charges 34.
+The timeout cancels the await and not the worker thread, `asyncio.run` then joins the executor for up to 300 s
+(`THREAD_JOIN_TIMEOUT`, checked), and `runner.py` reads the lab afterwards, so a tool call that finished in that window
+reaches the reading with no `tool_call` entry. Only one of the two unanswered fits reached the lab (the reading would
+otherwise be 36). Analyst, all 240 sessions against their records: this is the only disagreement, the three `wall_time`
+sessions have no submission, and no score moves; the other two match by timing, not because the read is safe. Decided: the store stays as
+it is (append-only), `STORE INCONSISTENT` on this one issue is explained rather than cleared, and the audit is not relaxed. PILOT.md
+states it, and 34 is the true count. Root fix goes on `p4-rehearsal` with the p4-deltas integration: a session's numbers are what the record says.
+
+## 2026-11-04: T2's example list is not fixed, and fit/5's search does lose: the "0 misses" of D3 was a statement about one sample (exploratory)
+
+The slow tier on `p4-rehearsal` failed `test_fit_beats_random_grid_points` on (0, softplus, 1074), 0.00397 nats. It is no merge
+regression: the gap is identical on v2, and `src/sciagent/glm` is unchanged since 900e66a. The test's list drifts instead: with
+the same test source, lists from different scripts, pytest and the two trees differ by 3 to 73 of 300 examples, cause not
+established (Hypothesis's local constants fit, but no context tried reproduced 1074). A seeded list of 400 cases, of which 376 ran
+before the ceiling (`.cache/drafts/t2-drift/sweep.jsonl`), found 1 loss above the test's tolerance, 1.3249 nats at (0, softplus,
+103648458), reproduced by hand: fit -247.1402, generating point -245.8153, both certified, 204 events. That is 1 of 376
+(Clopper-Pearson 95% 0.007% to 1.5%). Both known losses are BIG[0] (two gated features, 14,400 grid points) under softplus, with
+the fit at period 5 where the generating point has 100: a lead from two cases. The grid point that wins is the generating ψ, so
+each loss is a search miss on a θ-refitted point. No decision yet: fit/5 is the frozen instrument of the pilot and a fit/6 is
+SPEC-level, so this goes to the owner. The test is neither loosened nor edited until then, so it passes or fails with its sample.

@@ -2471,7 +2471,7 @@ Checkpoint, not the hand-over. Nothing here is a result of the miss check.
 
 Checkpoint, not the hand-over. Nothing here is a result of the miss check.
 
-**Done.** Oriented: no new INBOX entry (e7c6431 stays open until the check reports); v2 clean at 3e31bc2. Status read from `systemctl --user is-active sci-search-misses` and `cpu.json` only; `journal.jsonl` not read. The transcript picks are already in PILOT.md and TRANSCRIPTS.md. Queue read for unblocked work: only SPEC §2.2's shares (PILOT.md leftovers, red team finding 3). The go/no-go, check (b), the test split and T2's list wait on the owner or the miss check; the p4-deltas merge stays after the pilot closes.
+**Done.** Oriented: no new INBOX entry (e7c6431 stays open until the check reports); v2 clean at 3e31bc2. Status read from `systemctl --user is-active sci-search-misses` and `cpu.json` only; `journal.jsonl` not read. The transcript picks are already in PILOT.md (section "AG-o transcripts to read in full"). Corrected from this entry's first version, which also named TRANSCRIPTS.md: that file is the 2026-10-03 behaviour report and holds no picks. Queue read for unblocked work: only SPEC §2.2's shares (PILOT.md leftovers, red team finding 3). The go/no-go, check (b), the test split and T2's list wait on the owner or the miss check; the p4-deltas merge stays after the pilot closes.
 
 **Running.** An engineer on branch `spec22-shares`, test first, in its own worktree, not on v2. No code from it has been read or checked yet.
 

@@ -2151,3 +2151,44 @@ must switch protection on. Found by the engineer: `python -I` ignores `PYTHONDON
 `PYTHONPYCACHEPREFIX`, so `controls.py` sets `sys.dont_write_bytecode` and `sys.pycache_prefix` itself and the gate
 requires `-I`. One joint review of v8 and the code (s18b): ready to freeze; its non-blocking fixes are in v8.1
 (963d1495…), with no rule, threshold or seed changed.
+
+## 2026-11-04: A session's reading follows the layer's commits; the layer closes when the stream ends
+
+`store_check` flagged pilot session bd3dc4c4 (AG-o-S/named dev-012 s1, `wall_time`): `fits_used` 35 against 34
+charged. The wall time cancels the await, not the worker thread. `asyncio.run` then joins the executor for up to
+300 s, and only then does `runner.run` read the lab, so a fit ending in that window was counted with no `tool_call`
+entry (that session's process ended 267 s after its record). Decided: `ToolLayer.close()` ends the log when the
+stream ends, before the outcome is classified. It does not wait for the running handler, whose output is dropped
+uncharged; a queued call runs nothing; a short gate shared by commit and close makes each call wholly logged or not
+at all. Closing alone is not enough, because a handler changes the lab before it commits (`World.run` moves
+`experiments_run` long before the cut can arrive), so `Lab`'s read-outs are now a `Committed` value taken at each
+commit (`on_commit`), never the live state. Chosen over deriving each field from the record: stopped experiments'
+prediction outcomes and the fault messages are not in the record, and adding them would change record bytes; a
+snapshot taken at the commit also leaves a non-wall-time reading identical by construction. `audit.py` stays the
+independent check of cell against record. No version moves: the record's meaning, `FIT_VERSION`, `METRIC_VERSION`
+and every address are unchanged, and the pilot's stored cells stay as they are, bd3dc4c4's 35 included.
+
+## 2026-11-04: A session that has answered gets 10 s to exit; a sandbox with a call still in it is left to the owner
+
+Two more consequences of the same thread. `_run_isolated` joined the process with no limit after receiving its
+outcome, and interpreter exit joins executor threads, so a leftover fit held the unit's slot past the hard deadline:
+pilot dev-005 s1 and dev-008 s1 ended their records at 3,606 s and 3,610 s and their units at 5,061 s and 4,645 s.
+Each had a fit in flight, and fits outlasting the 300 s join would explain why their `fits_used` is right and only
+dev-012's is not (inferred from the times; no log shows the threads). The parent now
+gives an answered process `EXIT_GRACE_S` (10 s) and kills its group; the outcome and record are already in hand, and
+`_release_session_root` recovers what is left. Cleanup could also race a leftover `run_experiment` writing under the
+run directory, and a failed `rmtree` voids the run over a call the record does not hold, so `runner.run` skips
+`_discard_sandbox` while a handler is running and leaves the directory to the session root's recovery (outside a
+campaign, `scripts/investigate.py` leaves it behind with a warning). The up-to-300 s join in `asyncio.run` stays: it
+is what lets an in-flight `python` call end cleanly, at the price of that much CPU after the cut.
+
+## 2026-11-04: A session with no SDK `result` has no turns or tokens in its reading
+
+Queued from session 24. `campaign/llm.py` stored 0 for turns and the four token counts when the record has no
+`result` entry (a wall-time end). They are now left out of the reading; every other field is unchanged, and a
+session with a `result` keeps the same keys and bytes. Missing, not counted from the record: assistant entries are
+per content block and carry the usage of a partly streamed message (dev-012's last turn shows 5 output tokens on all
+three entries), so a count would be another measurement under the same name, mixed into the same medians. The only
+readers are the driver's progress line (prints `None`) and `pilot_report.py`. Old cells keep their 0s; v2's
+`counts_recorded` (58d1ac2, not on this branch yet) decides from the record, so it reads both forms the same, and
+until that merges this branch's report still takes a missing field as 0, as it took the stored 0.

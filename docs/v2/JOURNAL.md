@@ -2377,3 +2377,14 @@ The INBOX has no open entry. This is a progress entry; the hand-over follows. Th
 2. Prereg: decide K against the blind rates, split the label, fix the seven (QUEUE has the order), second round, freeze.
 3. Replay: when both units exit, final counts and paragraph, then LEDGER rows, including the p4 units.
 4. PID 219453 looks like session 26's leftover `p4-rehearsal` process, idle: check it before anything else uses that tree. Left alone.
+
+
+## 2026-11-04: Lane session 28 (09:19 UTC), progress: miss-check rule revised for round 2, not frozen
+
+Checkpoint, not the hand-over. No pilot unit has been searched, and nothing here is a result.
+
+**Done.** `docs/v2/prereg/2026-11-04_pilot-search-misses.md` revised against round 1's findings. It is still a draft: the hunt's rule, cap and cost are placeholders until a synthetic-log spike reports. Main decisions: K = 48 with a cap of 16,000 solves, chosen against round 1's blind rates and `count5.py`; two evidence classes (exact, and searched, unvalidated), so the survival label speaks only of found misses; H1 is at least 5 of 6 T2 cases plus dev-015 s3 on R1's own best, and a failed control no longer stops the run; ceiling 84 CPU hours, kept by the kernel's count across units; `F` then `R` for the freeze.
+
+**Running.** An engineer on the synthetic spike, and an engineer on the script and test in a worktree (toy data only). `sci-p4-tier` and both replay units have not exited.
+
+**Next.** Fill the hunt, second red-team round, freeze, `R`, launch once memory allows. Read `sci-p4-tier`'s two failures when it exits.

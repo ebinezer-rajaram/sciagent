@@ -79,3 +79,14 @@ entry, and marks it handled with the date and what was done. Newest last.
   seed-lead check (a). The only ready CPU-only work, the p4-rehearsal slow tier, was started in `sci-p4-slow`.
   The pilot stores were checked and copied to S3. Nothing else is frozen, so the machine stays mostly idle
   until the reset. JOURNAL session 25.
+
+## 2026-11-04, 08:00 UTC (control room)
+
+- [ ] **fit/5 search losses: pin T2 and document the known losses.** Three losses in 115 BIG[0]
+  softplus cases, worst 0.0114 nats per event, below the 0.0227 that would flip too-easy and moving
+  no section 7.1 outcome. Report them as a found stratum (not a rate) in the method note; no restated
+  bound, no fit/6 for the pilot. Unblocks the p4-deltas slow tier. Decided by the control room under
+  the owner's standing delegation; record it as delegated.
+- [ ] **P3 go/no-go and check (b) of the FSD seed lead: relayed to the owner.** The go/no-go needs the
+  owner to read the five AG-o transcripts; check (b) needs the owner's own approval of the
+  ctlA1-boot-r2 bypass. Neither is decided here. Carry on with unblocked items.

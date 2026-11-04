@@ -1957,3 +1957,8 @@ The focused sweep ended at 115 of 400 cases with 3 losses: 0.27, 0.59 and 2.08 n
 used. Shifting every unit by 0.0114 gives B-sparse out-of-dictionary 33% against 70%, and C1 and C2 stay above their limits. The uniform shift that fires too-easy is 0.0227;
 C2's lower end reaches 0 at 0.0148 by subtraction. A raised B-lib side was tried too, up to 0.0114: shares fall by at most 0.07 and too-hard is far away. Larger values of that direction make
 the closing ratio's denominator negative, so they say nothing. This does not change the owner's question (what T2 should assert, and whether P4 runs on fit/5); it bounds how far it reaches into the pilot's read.
+
+## 2026-11-04: fit/5 search losses: T2 is pinned and the known losses documented (delegated: control room, under the owner's standing delegation)
+
+Decided in INBOX aa83c36, of the three options put to it: pin T2's list by a seeded generator and document the known losses, reported as a found stratum and not a rate. No restated bound and no fit/6 for the pilot.
+The test is not loosened: known losses are named in a table and the test asserts that set exactly, so a new loss fails it. The decision cites the session 27 stress numbers, which were not yet red-teamed when it was made; any correction goes back to the control room. The go/no-go and check (b) stay with the owner.

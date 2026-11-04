@@ -1,0 +1,5 @@
+e1 (inject_sign_high) row, rule (c): rate_after_mark_slope[sign] 1.0000; mark_intensity_correlation[sign] 0.9989; mark_gap_correlation[sign] 0.9972; count_autocorrelation 0.9799
+e1 (inject_sign_high) row, truncated runs dropped: rate_after_mark_slope[sign] 1.0000; mark_intensity_correlation[sign] 0.9989; mark_gap_correlation[sign] 0.9972; count_autocorrelation 0.9799
+top off e1, rule (c): inject_sign_low/mark_gap_correlation[sign] 0.9564; censor_marked_burst/rate_after_mark_slope[sign] 0.9119; inject_size_low/rate_after_mark_slope[sign] 0.9052; burst/rate_after_mark_slope[sign] 0.8901
+e1 truth non-truncated event counts: median 4244; member median 1981
+probe5 CPU 96.6s

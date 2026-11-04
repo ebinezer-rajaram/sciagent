@@ -194,7 +194,8 @@ Each item says when it is done. Move finished items to the bottom section after 
   the combined tree (session 9: `tests/campaign tests/investigation tests/sandbox -m slow -n 1`
   on 9dcb2cd `40 passed, 1 warning in 6762.88s`, exit 0; `.cache/slow-rehearsal/run.log`). A CPU-timed rerun of the mini-pilot plan runs on 21e7947 (`sci-minicpu`,
   store `.cache/mini-cpu`), for the projection below.
-- [!] **Where the baselines run** (needs the owner: stop point, projection above 48 h; JOURNAL session 10 stop point). From the mini-pilot's per-unit times, project the full plan
+- [x] 2026-10-29 **Where the baselines run**: dm-devbox, in their own user unit (owner, INBOX 11:27Z;
+  LOG 2026-10-29). History below. (Was: needs the owner: stop point, projection above 48 h; JOURNAL session 10 stop point). From the mini-pilot's per-unit times, project the full plan
   at 2 workers. At about 48 hours or less, run on dm-devbox. Above that, stop point: the owner
   chooses between the longer dm-devbox run and the AWS CPU option (LOG 2026-10-27: m6i.xlarge,
   about $9-11), which also needs sciagent launch tooling and a byte check of the instance
@@ -245,16 +246,65 @@ Each item says when it is done. Move finished items to the bottom section after 
   Far B-sym@10F costs 14255.4 s CPU per unit (near 2121.5 s). Red-teamed figure: quiet machine,
   whole pool with LLM scoring, about 51 h (45-58 h), just over the line; this week's load about
   85-95 h (floor 78 h). `.cache/s13/projection-*.txt`, JOURNAL session 13. Still the owner's choice.
-- [ ] **Full pilot** (pilot-runner): `nice -n 10 uv run python scripts/pilot.py --root
+- [x] 2026-11-01 **Full pilot** (pilot-runner; runs finished: baselines 430 `ok` at 2026-11-01T05:07Z, LLM half 240
+  scored at 2026-10-30T12:54Z, 0 failed; `.cache/pilot` STORE OK and GATE PASS; `.cache/pilot-llm` has one budget
+  issue, fits_used 35 vs 34 charged, to explain before PILOT.md; on S3 under `p3-linux/*-900e66a/`; JOURNAL session 25;
+  the coverage table comes with PILOT.md). 2026-10-29 (session 19): the non-LLM half is running since
+  11:31:27Z: `.cache/pilot-run.sh 1` (`--no-llm`, plan 310 pool jobs) at v2 900e66a in the detached
+  worktree `.claude/worktrees/pilot` (dev split copied in, sha256 checked), user unit
+  `sci-pilot-baselines`, store `.cache/pilot`, log `.cache/pilot-run.log`, memory
+  `.cache/pilot-mem.csv`. It runs 1 worker because of the 6 GB floor. Go to 2 when MemAvailable is 8 GiB or
+  more (STOP, wait for the units in flight, delete STOP, `systemd-run --user --unit=sci-pilot-baselines
+  --setenv=PATH=$PATH bash .cache/pilot-run.sh 2`). The LLM half is running since 12:09:29Z:
+  `.cache/pilot-llm-run.sh 1` (`--no-baselines --llm-concurrency 1 --workers 1`, plan 240 LLM units) at
+  the same commit in the worktree `.claude/worktrees/pilot-llm`, store `.cache/pilot-llm`, tmux `-L sciagent`
+  session `sci-pilot-llm` (inside the lane unit, so braked). Raise to concurrency 2 only if no rate limit has
+  appeared. On a usage-limit error: `touch .cache/pilot-llm/STOP` and record it. For the report: ~~merge
+  `pilot-multiroot` (6b970b6, `scripts/store_merge.py`) into v2~~ (merged 2026-10-29 session 22 with the red
+  team's fixes, LOG 2026-10-29), then `store_merge.py .cache/pilot
+  .cache/pilot-llm --out <new>` and run the report there (LOG 2026-10-29, two stores).
+  2026-10-29 (session 20): at 13:34Z 7 baseline units `ok` (the last at 12:53Z, so one unit in flight),
+  10 LLM sessions submitted and 7 scored `ok`, no failure or rate-limit line, MemAvailable 8.68 GiB. The move
+  to 2 workers is automated: `.cache/pilot-to2.sh` in user unit `sci-pilot-to2` wrote STOP at 13:35:36Z,
+  waits for the unit in flight (the run log's next `exit:` line and `sci-pilot-baselines` inactive), deletes
+  STOP and relaunches `pilot-run.sh` in `sci-pilot-baselines` with 2 workers if MemAvailable ≥ 8 GiB then,
+  else 1; it logs `to2: relaunch with N workers` in `.cache/pilot-run.log`. Next session: check that line
+  and that the unit is running. LLM concurrency stays 1: 10 sessions in 87 min is about 35 h for 240 units,
+  shorter than the baselines' ~51 h at 2 workers, so a second session would only spend Max usage faster.
+  2026-10-29 (session 23): LLM half 19 scored `ok` by 19:05Z. Three `Control request timeout: initialize` failures
+  18:36-18:51Z (retryable; load ~20; five-hour usage 76%, no brake) paused launches 900 s; launches resumed 19:06Z. AG-o
+  dev-008 s1 ended `wall_time` (4,645 s, turns=0 out_tokens=0 logged). Baselines: still 7 of 310 at 19:10Z.
+  Original item: `nice -n 10 uv run python scripts/pilot.py --root
   .cache/pilot --truths 20 --seeds 1,2,3 --b10f-truths 10 --workers 2 --llm-concurrency 1` in
   tmux, exactly the SPEC §7 P3 plan: 20 dev truths x 3 seeds; AG-c-S and AG-o-S, named and
   anonymised, live under Max; B-lib, B-rand, B-sym, B-sparse, B-np, ORACLE, planted-hint;
   B-sym@10F on seed 1 of dev-000 to dev-009 as declared. Raise LLM concurrency to 2 only if
   no rate limit has appeared. Done when the coverage table shows every planned unit scored or
   failed with a reason.
-- [ ] **Regenerate PILOT.md** (analyst) with `scripts/pilot_report.py` from the Linux store;
+- [x] 2026-11-04 **Regenerate PILOT.md** (analyst) with `scripts/pilot_report.py` from the Linux store;
   rewrite the notes block for the Linux run (the Windows notes stay in git history; say so).
   Red team before the commit. Done when committed with the red team's findings addressed.
+  Note for the report (session 20; LOG 2026-10-29): an AG-o record whose own sandbox code prints wall time
+  fails `replay_check` under the pilot's code (dev-003 s1, step 51). Count such records apart from harness
+  replay defects, and run `replay_check` at 900e66a.
+  Note (session 24; LOG 2026-10-29): wall-time sessions have no SDK `result`, so their turns and tokens are
+  "not recorded"; the report counts them apart since 58d1ac2. Session 23's interim AG-o turn and token means
+  include one as zeros, so use the report's figures, not those, for P4 sizing.
+- [ ] **Wall-time and sizing follow-ups from the pilot** (analyst, session 26; with the p4-deltas integration): `process.join()` after
+  the outcome arrives has no limit, so dev-005 and dev-008 ran past the 4,200 s deadline without being killed; `turns` is tool_uses + 1,
+  not LLM calls, so `max_turns` bounds tool calls and §7.1 sizing must use distinct message ids; 19 `run_experiment` tool_uses
+  never reached the layer, none charged: all have an `unmatched_tool_result`, 14 `InputValidationError ... could not be parsed as JSON`, 5 `Input validation error`
+  (corrected by the red team, session 26): why the model's input failed to parse is the open question.
+- [ ] **fit/5 search losses and T2's list (needs the owner; LOG 2026-11-04).** T2's examples drift with context, and a seeded
+  sweep found 1 loss in 376 (1.32 nats, (0, softplus, 103648458)); 0.004 nats at (0, softplus, 1074). This fails the slow tier
+  on `p4-rehearsal`, so it blocks the p4-deltas merge check. Options: pin the list by a seeded generator (test only) and keep the
+  known losses as documented failures, restate the bound under a rule written first, or fit/6 (SPEC-level; would not
+  apply to the pilot). Found so far: 3 of the first 106 cases of a focused BIG[0] softplus sweep (0.27, 0.59, 2.08 nats), and ORACLE dev-015 s3 in the pilot store
+  (4.53 nats, `exp`, no `Periodic`), so the miss is not confined to BIG[0]. `t2-pin` 9fef563 holds the pinned list, not merged.
+- [ ] **PILOT.md leftovers** (red team, session 26). Finish the replay paragraph when the units exit (`replay_paragraph.sh`, sort any FAIL by the
+  notes' rule). Commit the [draft] scripts lint-clean or drop their sentences (S3 `sciagent/p3-linux/report-900e66a/`; commit wall_time_audit, sizing,
+  independent_recompute with truths.json, sandbox_nondeterminism; drop dispatch_order; five figures have no printing script). Fix `pilot_report.py`, test first:
+  the C3 line's "median over kept truths" (line 746), the B-sparse sentence (line 765), and label "Verdict: GO" as computed.
 - [!] **P3 go/no-go read: stop point.** SPEC §7.1 under the re-read rules of P4-PROPOSAL §2.4;
   the owner reads a few AG-o transcripts in full. Prepare the evidence and transcript picks,
   push the owner, wait. Done when the owner has decided.
@@ -269,6 +319,39 @@ Each item says when it is done. Move finished items to the bottom section after 
   Also with it (LOG 2026-10-29): `investigation/policy.py:make_policy` builds `EIGPolicy` and
   `FSDPolicy` from `seed` and `replicates` only; pass the arm settings' `max_events` and EIG's
   `weighting` through, test first.
+  Also (LOG 2026-10-29, session 24): `campaign/llm.py:267` and `_usage` store turns and tokens as 0 when the
+  record has no SDK `result` (a wall-time end); store them as missing or count them from the record, test first.
+  2026-10-29 (session 19): rehearsal merge done on local branch `p4-rehearsal` (worktree
+  `.claude/worktrees/p4-rehearsal`, from v2 84e7a2a; not merged into v2, not pushed). 3642c3c merge (8 files,
+  17 hunks; v2's fixes kept, p4 added), then 0872a7f, 1d8a7ec, 6561868 and ce4c167 (merge fixes) and f3da328
+  (`make_policy`: `PolicySettings` gains `max_events` and `weighting` at their defaults, and the session key
+  includes them; test `tests/campaign/test_policy_arm_settings_agcs.py`, 7 passed on the lead's rerun).
+  Engineer's checks: ruff clean, mypy `Success: no issues found in 285 source files`, fast tier `3525 passed,
+  3 warnings`. The slow tier was not run (only `test_replay_check.py`, 4 passed). Before the real merge:
+  (1) confirm the legacy key, so that harness/1 = v2's pre-merge text with the AG-o sandbox block (the pilot's AG-o sessions
+  stay rescorable); (2) run `replay_check` and the audit on the Linux pilot's harness/1 records under the
+  merged code; (3) reconcile p4's LOG entries (its open decisions and 6,000-cap draft are settled in v2's LOG);
+  (4) strip the engineer's `Co-Authored-By` trailers if these commits are replayed; (5) run the slow tier.
+  2026-11-04 (session 26): slow tier on 346676a: 1 failed (T2, its own item below), 307 passed. Wall-time fixes on `p4-rehearsal` efbd014, 3e191dd, 147e0bb (not merged, not pushed): `Committed` read-outs,
+  `ToolLayer.close`, `EXIT_GRACE_S` 10 s, no turns or tokens without a `result`. Before merging: one clean fast tier, the rest of `test_campaign_slow.py`, 58d1ac2's `counted()` comes with the merge; decide whether the 5-18 s cut tests stay in the fast tier.
+  Also: the pinned AG-c EIG/FSD session addresses move even at defaults (no store holds one).
+  2026-10-29 (session 20): points (1)-(3) done on `p4-rehearsal` (engineer; not merged, not pushed), all on a
+  13:37Z copy of `.cache/pilot-llm` (10 sessions):
+  (1) the merged code re-derives the 17 cell addresses (`match 17 differ 0`), and the harness/1 texts are
+  byte-identical to 900e66a's; pinned by `tests/campaign/test_pilot_harness1_cells.py` (0de8220; lead's rerun
+  7 of 7 pass).
+  (2) `store_check` and `session_check` pass, and the rescored cells are identical. `replay_check` passes 0 of
+  10 under the merged code (harness/2 tools, by design), so harness/1 records are replayed at 900e66a (LOG
+  2026-10-29); add the version-mismatch refusal to `replay_check`, test first.
+  (3) dated notes in the merged LOG (85c586a, 0 lines removed).
+  Left: (4) trailers (none on 0de8220 or 85c586a), (5) the slow tier (running on 346676a since 2026-11-01 10:46Z,
+  unit `sci-p4-slow`, log `.cache/p4-slow.log`), rerunning (1)-(2) on the finished pilot
+  store, and the anon-arm digests against stored cells.
+  2026-10-29 (session 21): the `replay_check` refusal is done on `p4-rehearsal` 346676a (engineer, test first; not
+  merged, not pushed): a record whose config `harness_version` is not the running one is REFUSED (both versions
+  named; harness/1 at 900e66a) and counted apart, exit 3 when nothing failed; a record naming no version is a
+  FAIL. On the 11 harness/1 records of `.cache/pilot-llm`: `refused: 11`, exit 3. Lead's rerun of
+  `tests/campaign/test_replay_check.py -m "not slow"`: 14 passed; ruff clean (LOG 2026-10-29).
 - [x] 2026-10-27 **Cross-check the rebuilt defect-hunt checks against the originals** (7406810,
   LOG 2026-10-27): ported test-first `check_budgets`, `check_sessions` (`scripts/session_check.py`),
   `KEY_FIELDS` and the beats-truth flag (`hunt_gap.py --split`; making it fail the gate is a
@@ -307,7 +390,56 @@ Each item says when it is done. Move finished items to the bottom section after 
   2026-10-28T19:15Z): the guard above before the pilot; derived address text with the p4-deltas
   integration. Δ11 (EIG weights) proposed 2026-10-27 after the red team rejected the first
   draft's tie rule (LOG, veto window ends 2026-10-28T21:40Z). Drafts of the FSD event cap and the
-  five review items are in `.cache/drafts/`; review items proposed (LOG, window ends 2026-10-28T21:45Z); Δ6: `link-neutral` not adopted, a link-balanced variant recommended pending its own red team (LOG); 2026-10-28: link-balanced red-teamed, **needs the owner's explicit choice** (A/B/C; no veto window, since (C) sets aside rule (A) after the numbers; LOG 2026-10-28); FSD cap: draft not adopted, measurement first (LOG). 2026-10-28 (session 13): measurement prepared (LOG 2026-10-28); pass 1 running in `tmux -L sciagent` `fsd-dist`, output `.cache/drafts/fsd-dist/dist-s1-d0.jsonl`; then summary, pass 2, a cap draft and its red team. 2026-10-29 (session 14): pass 1 done (1,280 lines, exit 0; `.cache/drafts/fsd-dist/summary-pass1.txt`): 6 of 160 WH (truth, design) cells stop at 15,000 on every replicate, no GLM stop, 0.31 CPU h; pass 2 (all 16 replicates) running in `fsd-dist` since 00:04Z, about 1 CPU h. Next: summary on the full file, then the cap draft and its red team. 2026-10-29 (session 15): pass 2 done (5,120 lines, 1.105 CPU h sim) and truth side on replicates 0-1 (348 runs); the drop-rule draft (`.cache/drafts/fsd-cap-draft2.md`) was red-teamed **do not adopt** (the world truncates at the cap, it does not return None) and is withdrawn; the cap stays 15,000; the at-stop rule stays open (LOG 2026-10-29). Truncation option measured the same session (`.cache/drafts/fsd-trunc/`, 1.36 CPU h, unreviewed): it changes the decision-0 pick in 1 of 28 (truth, policy) cases; He² saturates at 1.000 and menu-order ties decide, with FSD's `choose` design-first and telling diagnostic-first (JOURNAL session 15). Next: red-team that measurement, then a theorist draft on saturation and the tie order before any proposal. 2026-10-29 (session 16): red-teamed (`.cache/drafts/fsd-trunc/redteam-s16.md`): numbers reproduce (0 mismatches, rerun byte-identical) but "1 of 28 picks change" is near-empty evidence (11 of 28 have no truncation, 9 more are forced by the cap via `mean_rate`, the one change is a 3e-16 rounding tie), and the regime where (a) and (c) differ most (both sides cap) was never sampled; session 15's "barely moves picks" is withdrawn. Theorist draft (`.cache/drafts/fsd-ties/draft.md`, unreviewed): He² is exactly 1 when D = -ln(1-He²) ≥ 54 ln 2 (atom, >~17 sd, or variance floor); recommends breaking ties by D in both `choose` and `Telling.from_table`, conditional on rule (c) for both; found control 5 as built compares truthFSD under (a) with telling under (b), agreeing on the diagnostic in 3 of 14 truths. Next: (1) red-team the ties draft; (2) a positive control where (a) and (c) must differ (a capping parametric side, e.g. B-sym's real top fit), truthFSD at 16 truth replicates, and the WH truncating-mode content checks the red team listed; then a proposal. Session 16, later: the ties draft red-teamed **not ready** (`.cache/drafts/fsd-ties/redteam-s16.md`): rule (c) for telling would put d* on fully truncated truth designs on 9 of 14 truths, ranking by D under (c) rewards cap artefacts, the floor source is misattributed, D needs a new log-space function (instrument change, test first; `hellinger2` unchanged). Three at-stop rules are in play: truthFSD (a), telling (b), world (c). Next: settle the rule question first with (c) treated explicitly and truncated designs excluded or flagged for telling; a positive control with a known d*; only then tie-breaking. Session 16, later: rule draft (`.cache/drafts/fsd-rule/draft.md`, unreviewed): (c) for every simulation; telling and truthFSD leave out of the argmax any design where the truth or member truncates or stops on any replicate (K4), and report the share of runs on such designs beside the telling rate; FSD keeps all designs. Proxy (decision 0, R = 4): telling d* on a truth-truncated design 0 of 14 (9 of 14 under (c) everywhere), control-5 agreement 11 of 14 (3 of 14 today). Red-teamed the same session: **not ready** (`.cache/drafts/fsd-rule/redteam-s16.md`): K4 redefines SPEC §4.2's d* (a SPEC change, so a stop point) and makes control 5 nearly circular; "any replicate" exclusion on each side's own streams (R = 16 vs 32) excludes different designs; the FSD no-exclusion argument is selection (dev-005 saved by menu order); the listed controls do not separate the candidates. Next: an R-independent exclusion computed once and shared, or a design that keeps exploding designs as evidence; controls with preset pass criteria (known d*; WH caps but truth matches member); control 5 at real R; any SPEC §4.2 change goes to the owner. 2026-10-29 (session 17): SPEC §4.2 question pushed to the owner (JOURNAL stop point, options 1/2/3; lane leans 2). Control criteria for A1 (planted d*) and B (dev-005 shape) written and red-teamed six rounds to v6, then v7 fixing the last blocking item (`.cache/drafts/fsd-controls/criteria.md` sha256 9c15e47e…, v7 changes unreviewed; A2 deferred; ceiling 7.6 CPU h); not frozen. Next: engineer writes `controls.py` + stub tests to `engineer-contract.md`, code red team, then freeze (preregister skill, 24 h veto window), then calibrate. 2026-10-29 (session 18): v7 red-teamed **not ready** (s18: freeze chain gameable through merges and deleted LEDGER rows); v8 fixes it (calibrate pushes D before D0 is readable; private-ref fetch; branch protection gate H1); `controls.py`, `ctl_gate.py`, `test_controls.py` written to v8, joint red team s18b **ready to freeze**, its non-blocking fixes made (criteria v8.1 963d1495…, controls.py c0895289…, 90 tests, 16 of 16 mutants caught). No veto window any more (LOG 2026-10-29). **Freeze blocked on the owner turning on GitHub branch protection for v2** (gate H1; command sent to the control room). Next: when `gh api repos/ebinezer-rajaram/sciagent/branches/v2 --jq .protected` is `true`, freeze per criteria §5 (create cpu-total.txt, commit F with `git add -f` and both hashes, LEDGER row with the ceiling, push, notify the control room), then calibrate A1 and B in their own `systemd-run --user` units.
+  five review items are in `.cache/drafts/`; review items proposed (LOG, window ends 2026-10-28T21:45Z); Δ6: `link-neutral` not adopted, a link-balanced variant recommended pending its own red team (LOG); 2026-10-28: link-balanced red-teamed, **needs the owner's explicit choice** (A/B/C; no veto window, since (C) sets aside rule (A) after the numbers; LOG 2026-10-28); FSD cap: draft not adopted, measurement first (LOG). 2026-10-28 (session 13): measurement prepared (LOG 2026-10-28); pass 1 running in `tmux -L sciagent` `fsd-dist`, output `.cache/drafts/fsd-dist/dist-s1-d0.jsonl`; then summary, pass 2, a cap draft and its red team. 2026-10-29 (session 14): pass 1 done (1,280 lines, exit 0; `.cache/drafts/fsd-dist/summary-pass1.txt`): 6 of 160 WH (truth, design) cells stop at 15,000 on every replicate, no GLM stop, 0.31 CPU h; pass 2 (all 16 replicates) running in `fsd-dist` since 00:04Z, about 1 CPU h. Next: summary on the full file, then the cap draft and its red team. 2026-10-29 (session 15): pass 2 done (5,120 lines, 1.105 CPU h sim) and truth side on replicates 0-1 (348 runs); the drop-rule draft (`.cache/drafts/fsd-cap-draft2.md`) was red-teamed **do not adopt** (the world truncates at the cap, it does not return None) and is withdrawn; the cap stays 15,000; the at-stop rule stays open (LOG 2026-10-29). Truncation option measured the same session (`.cache/drafts/fsd-trunc/`, 1.36 CPU h, unreviewed): it changes the decision-0 pick in 1 of 28 (truth, policy) cases; He² saturates at 1.000 and menu-order ties decide, with FSD's `choose` design-first and telling diagnostic-first (JOURNAL session 15). Next: red-team that measurement, then a theorist draft on saturation and the tie order before any proposal. 2026-10-29 (session 16): red-teamed (`.cache/drafts/fsd-trunc/redteam-s16.md`): numbers reproduce (0 mismatches, rerun byte-identical) but "1 of 28 picks change" is near-empty evidence (11 of 28 have no truncation, 9 more are forced by the cap via `mean_rate`, the one change is a 3e-16 rounding tie), and the regime where (a) and (c) differ most (both sides cap) was never sampled; session 15's "barely moves picks" is withdrawn. Theorist draft (`.cache/drafts/fsd-ties/draft.md`, unreviewed): He² is exactly 1 when D = -ln(1-He²) ≥ 54 ln 2 (atom, >~17 sd, or variance floor); recommends breaking ties by D in both `choose` and `Telling.from_table`, conditional on rule (c) for both; found control 5 as built compares truthFSD under (a) with telling under (b), agreeing on the diagnostic in 3 of 14 truths. Next: (1) red-team the ties draft; (2) a positive control where (a) and (c) must differ (a capping parametric side, e.g. B-sym's real top fit), truthFSD at 16 truth replicates, and the WH truncating-mode content checks the red team listed; then a proposal. Session 16, later: the ties draft red-teamed **not ready** (`.cache/drafts/fsd-ties/redteam-s16.md`): rule (c) for telling would put d* on fully truncated truth designs on 9 of 14 truths, ranking by D under (c) rewards cap artefacts, the floor source is misattributed, D needs a new log-space function (instrument change, test first; `hellinger2` unchanged). Three at-stop rules are in play: truthFSD (a), telling (b), world (c). Next: settle the rule question first with (c) treated explicitly and truncated designs excluded or flagged for telling; a positive control with a known d*; only then tie-breaking. Session 16, later: rule draft (`.cache/drafts/fsd-rule/draft.md`, unreviewed): (c) for every simulation; telling and truthFSD leave out of the argmax any design where the truth or member truncates or stops on any replicate (K4), and report the share of runs on such designs beside the telling rate; FSD keeps all designs. Proxy (decision 0, R = 4): telling d* on a truth-truncated design 0 of 14 (9 of 14 under (c) everywhere), control-5 agreement 11 of 14 (3 of 14 today). Red-teamed the same session: **not ready** (`.cache/drafts/fsd-rule/redteam-s16.md`): K4 redefines SPEC §4.2's d* (a SPEC change, so a stop point) and makes control 5 nearly circular; "any replicate" exclusion on each side's own streams (R = 16 vs 32) excludes different designs; the FSD no-exclusion argument is selection (dev-005 saved by menu order); the listed controls do not separate the candidates. Next: an R-independent exclusion computed once and shared, or a design that keeps exploding designs as evidence; controls with preset pass criteria (known d*; WH caps but truth matches member); control 5 at real R; any SPEC §4.2 change goes to the owner. 2026-10-29 (session 17): SPEC §4.2 question pushed to the owner (JOURNAL stop point, options 1/2/3; lane leans 2). Control criteria for A1 (planted d*) and B (dev-005 shape) written and red-teamed six rounds to v6, then v7 fixing the last blocking item (`.cache/drafts/fsd-controls/criteria.md` sha256 9c15e47e…, v7 changes unreviewed; A2 deferred; ceiling 7.6 CPU h); not frozen. Next: engineer writes `controls.py` + stub tests to `engineer-contract.md`, code red team, then freeze (preregister skill, 24 h veto window), then calibrate. 2026-10-29 (session 18): v7 red-teamed **not ready** (s18: freeze chain gameable through merges and deleted LEDGER rows); v8 fixes it (calibrate pushes D before D0 is readable; private-ref fetch; branch protection gate H1); `controls.py`, `ctl_gate.py`, `test_controls.py` written to v8, joint red team s18b **ready to freeze**, its non-blocking fixes made (criteria v8.1 963d1495…, controls.py c0895289…, 90 tests, 16 of 16 mutants caught). No veto window any more (LOG 2026-10-29). **Freeze blocked on the owner turning on GitHub branch protection for v2** (gate H1; command sent to the control room). Next: when `gh api repos/ebinezer-rajaram/sciagent/branches/v2 --jq .protected` is `true`, freeze per criteria §5 (create cpu-total.txt, commit F with `git add -f` and both hashes, LEDGER row with the ceiling, push, notify the control room), then calibrate A1 and B in their own `systemd-run --user` units. 2026-10-29 (session 19): the owner
+  answered (INBOX 11:27Z): Δ6 **(A) `link-neutral` adopted** (with the p4-deltas integration); SPEC §4.2
+  **option 2 adopted**, with the SPEC amended and the `Telling` code to follow, test first, only after A1 and B
+  pass. v2 is protected. **F₀ 8405509 frozen**, LEDGER row 900e66a (ceiling 7.6 CPU h). **Calibrate A1 and B
+  running** since 11:29Z (units `sci-fsdctl-A1-calibrate` and `sci-fsdctl-B-calibrate`; status with
+  `systemctl --user status`, logs with `journalctl --user -u`). Each pushes its own D commit
+  (`fsd-controls D0 <C> under 8405509…`) and then writes `D0-<C>.json`. Next: after a pull brings D, run the
+  test phase per criteria §5 with `--d0-commit <D>`, then score, then commit the score files.
+  2026-10-29 (session 20): A1's D is c0d1b8f (calibrate exited 13:23:15Z; D0-ctlA1.json sha256 2fe5e7e4… on
+  disk equals D's blob). B's calibrate still running at 13:34Z; ledger total 13,450 CPU s (3.74 of the 7.6
+  CPU h ceiling). Both test phases start automatically: `.cache/fsdctl-test-launch.sh` in user unit
+  `sci-fsdctl-watch` waits for B's calibrate unit to end, takes B's D from its journal line, checks each D's
+  subject names F₀ and each D0 on disk equals its D blob, then starts `sci-fsdctl-A1-test` and
+  `sci-fsdctl-B-test` with the §7 command; log `.cache/fsdctl-test-launch.log`. If B ends without a D line it
+  starts nothing. Expect the 7.6 CPU h ceiling to fire during test (exit 11, `STOP` in $D); resume per §6 with
+  a pushed `fsd-controls ceiling <c> CPU h` row, then remove STOP and rerun test. Then score per §5 step 9.
+  Session 20, later: B's calibrate exited 13:57Z (2h 20min CPU, systemd) and pushed D = 8d079f4 (D0-ctlB.json
+  da7c6de1…, equal to D's blob). The watcher's checks passed, and both test units started 13:57:49Z and wrote
+  runs files. At 14:18Z: ledger total 16,863 CPU s (4.68 h), about 100 CPU s a minute, so the 7.6 h ceiling
+  (27,360 s) should fire around 16:00Z. Next: if `$D/STOP` exists, push the ceiling row and resume the test
+  units, each with its own D: A1 c0d1b8f123fde746e9cf8497b2c9a919a479a4a2, B
+  8d079f47cbd5e3a6b82547c32b796f6cd1039fd5.
+  2026-10-29 (session 21): test runs at ~706 (A1) and ~810 (B) CPU s per seed, about 1.9x cost5, so the projected
+  total is ~10.4 CPU h. Row `fsd-controls ceiling 12.0 CPU h` pushed (b6a63d2). `.cache/fsdctl-resume.sh` in
+  unit `sci-fsdctl-resume` restarts each test unit that exits 11 once STOP is present, the row is on origin/v2 and
+  the total is under 12 h (log lines `resume:` in `.cache/fsdctl-test-launch.log`). Tests should end ~17:20Z.
+  Next: check both units finished (exit 0, 38,401 lines per runs file: header + 15 x 2,560), then score each
+  control (§5 step 9) and commit the score files.
+  2026-10-29 (session 22): the ceiling fired at 17:04:58Z and `fsdctl-resume.sh` restarted both tests at 17:05Z.
+  `.cache/fsdctl-score-launch.sh` in unit `sci-fsdctl-score` starts the score phase for each control whose test exits 0
+  (log `score:` lines in `.cache/fsdctl-test-launch.log`). Next: commit the score files, S3 copy, LEDGER row, §8 read, red team.
+  2026-10-29 (session 23): scored 18:57Z (exit 0 both; files 7386536; S3 `fsd-controls/8405509/`; LEDGER 9.19 CPU h).
+  **A1 fails under every rule**: exclusion rules (i) 12/15, (ii) 78/120 < 84, (iii) p 0.035; D0's pass_ii was 0.99999775.
+  B (size rung 3; θ₋ rungs unbuildable) as predicted: Fx passes with K0/K3a/K3h/K4/K5; Fa, Fc, Fz fail B1. Red team: read
+  stands (LOG 2026-10-29). By §8 no candidate is ready: He² resolution first, thresholds unchanged, no rerun. **Option 2's
+  `Telling` change does not proceed; returned to the owner** (stop point, JOURNAL session 23). Open lead, untested: calibrate
+  fixes diagnostic arguments on seed 0, test per seed (controls.py:1363/1396 vs 1534/1913).
+  Decided 19:10Z (control room, delegated; LOG): today's telling stays; option 2 **parked**; the seed lead is tested first
+  (theorist, exploratory, `.cache/drafts/fsd-seedlead/`); a new freeze only if it explains the gap.
+  Seed lead, first pass: undetermined, leaning against (flips sit on mark_gap_correlation, whose menu entry is
+  seed-independent); step 3 simulation unrun, and the fixed 128-run calibration pool is a second untested candidate
+  (JOURNAL session 23 addendum). Next: step 3 with a 40-minute-plus timeout, then a fresh-pool check.
+  2026-10-29 (session 24): step 3 run (E[(ii)] 82.4 seed-0 menu vs 82.2 own menus; red team: lead bounded at
+  ~3 points, **does not explain the gap**). Theorist: calibrate and test match; D0's 109.6 is single-pool noise
+  (sd ~10-14) plus selection of the first passing rung; test-runs law ~92-94; the observed 78 is still low (P ~0.02).
+  Check (a) running (`sci-fsd-poollaw`, analysis chained in `sci-fsd-poollaw-analyse`, `.cache/drafts/fsd-seedlead/pool/`).
+  Check (b) (real calibration streams, outside the stream-id guard) awaits the owner. Next: read the analysis,
+  red-team it, then a calibration fix before any new freeze (JOURNAL session 24).
+  2026-11-04 (session 26): check (a) red-teamed: stands with corrections (LOG 2026-11-04 replaces the sd of 10 to 14 and withdraws
+  "lucky pool" and "optimistic by construction" as facts). Check (b) recommended, as the missing positive control; waits for the owner.
 - [ ] **Remaining P4 work packages**: WP9 (1327de9), WP10 (98205b4), WP11 controls 4-6
   (6ac6142) and WP12 LOG entries (f4a38e0) are committed on `origin/p4-deltas`
   (HANDOFF-2026-10-09); its slow tier was never run. Folded into the integration item above.

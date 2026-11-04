@@ -1,0 +1,35 @@
+  inject_sign_high truth: trunc 5/48 stop 0/48
+A2 new family theta_all=0.49: top cells off e1 at R=48: burst/rate_after_mark_slope[sign] 0.882; inject_sign_low/rate_after_mark_slope[sign] 0.880; burst/mark_gap_correlation[sign] 0.841; inject_size_low/rate_after_mark_slope[sign] 0.820; inject_sign_low/mark_gap_correlation[sign] 0.805
+crude p32 {'rate_after_mark_slope[sign]': 0.8000000000000006, 'spectral_peak_frequency': 0.11500000000000003, 'mark_gap_correlation[sign]': 0.085}
+crude p16 {'spectral_peak_frequency': 0.4550000000000003, 'rate_after_mark_slope[sign]': 0.41500000000000026, 'mark_gap_correlation[sign]': 0.13000000000000003}
+crude a0 = 0.395 (overlapping subsamples of 48; 200 draws)
+A2 part CPU 115.6s
+link=identity; Excite(ExpK, Mark(size), all) + Excite(ExpK, One, all): canonical=False
+link=identity; Excite(ExpK, One, all) + Excite(ExpK, Mark(size), all): canonical=True
+
+=== Bs: obs n=2356, R=8 per side, probe streams ===
+  burst                truth  trunc 0/8 stop 0/8 tau [] n_med 1821 cpu med 0.12 max 0.17
+  burst                member trunc 0/8 stop 0/8 tau [] n_med 2100 cpu med 0.09 max 0.11
+  inject_sign_high     truth  trunc 0/8 stop 0/8 tau [] n_med 1980 cpu med 0.12 max 0.15
+  inject_sign_high     member trunc 0/8 stop 0/8 tau [] n_med 2005 cpu med 0.09 max 0.12
+  inject_sign_low      truth  trunc 0/8 stop 0/8 tau [] n_med 2005 cpu med 0.12 max 0.14
+  inject_sign_low      member trunc 0/8 stop 0/8 tau [] n_med 2111 cpu med 0.10 max 0.12
+  inject_size_high     truth  trunc 8/8 stop 0/8 tau [827, 829, 832] n_med 15000 cpu med 0.76 max 0.77
+  inject_size_high     member trunc 0/8 stop 0/8 tau [] n_med 1876 cpu med 0.09 max 0.11
+  inject_size_low      truth  trunc 0/8 stop 0/8 tau [] n_med 1640 cpu med 0.11 max 0.14
+  inject_size_low      member trunc 0/8 stop 0/8 tau [] n_med 2143 cpu med 0.10 max 0.13
+  clamp_release        truth  trunc 0/8 stop 0/8 tau [] n_med 3202 cpu med 0.14 max 0.22
+  clamp_release        member trunc 0/8 stop 0/8 tau [] n_med 3270 cpu med 0.12 max 0.12
+  silence_release      truth  trunc 0/8 stop 0/8 tau [] n_med 1632 cpu med 0.10 max 0.14
+  silence_release      member trunc 0/8 stop 0/8 tau [] n_med 1509 cpu med 0.08 max 0.10
+  censor_marked_burst  truth  trunc 0/8 stop 0/8 tau [] n_med 1719 cpu med 0.15 max 0.18
+  censor_marked_burst  member trunc 0/8 stop 0/8 tau [] n_med 1735 cpu med 0.11 max 0.14
+  top cells on designs where no run truncated or stopped (rank by D):
+    burst                mark_gap_correlation[size]         He2=0.978334 D=3.83
+    inject_sign_low      mark_gap_correlation[size]         He2=0.966533 D=3.40
+    inject_size_low      mark_gap_correlation[size]         He2=0.949022 D=2.98
+    clamp_release        rate_after_mark_slope[size]        He2=0.915268 D=2.47
+    inject_size_low      next_gap_after_large_mark[size]    He2=0.912499 D=2.44
+    inject_sign_high     mark_gap_correlation[size]         He2=0.877874 D=2.10
+  capped design inject_size_high: He2(mean_rate)=1.0, He2==1 on 7/35
+total probe4 CPU 135.1s

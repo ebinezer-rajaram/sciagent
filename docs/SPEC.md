@@ -336,6 +336,20 @@ diagnostic for each truth (defined per truth by the oracle: the diagnostic with
 the largest truth-vs-best-library discrepancy) was ever observed. That second
 number is the generalised 0/112.
 
+**Exploding designs** (amended 2026-10-29 by the owner, option 2 of the lane's
+stop point in `docs/v2/JOURNAL.md`, session 17). The telling diagnostic is
+chosen only among designs on which neither the truth nor the best library
+member explodes: a design is excluded when either side has at least one run
+that truncates at the event cap or stops, among telling's own replicates (rule
+K5 of the FSD at-stop controls, `.cache/drafts/fsd-controls/criteria.md`
+v8.1, frozen at 8405509). The exclusion is computed once and shared, so
+truthFSD excludes exactly the same designs. Beside the telling rate, a
+separate number is reported: the share of investigations that ran a design on
+which the truth explodes and the best member does not. Explosion is evidence
+about stability, not about which diagnostic exposes the mechanism. The code
+(`Telling`, an instrument; tests first) follows only after positive controls
+A1 and B pass under this rule; if either fails, the rule returns to the owner.
+
 ### 4.3 Scoring (four numbers, reported separately)
 
 1. **Held-out predictive gap.** Per-event log-likelihood of the submitted model

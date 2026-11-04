@@ -1,0 +1,52 @@
+control ctlB  status preregistered
+result 0 scored
+  controls_sha256: "c08952898feee2e16f4e157d9a35b1d88799b72f3336abdc38dad3d33488d876"
+  criteria_sha256: "963d14959d746242adb82ebc21350b0a028482599dd8b3de9cf348ea71386b41"
+  d0_commit: "8d079f47cbd5e3a6b82547c32b796f6cd1039fd5"
+  freeze_chain: [{"freeze": "84055094181dd1bdbfa09fa195f0d6979c5e485c", "rows": ["fsd-controls freeze 84055094181dd1bdbfa09fa195f0d6979c5e485c ceiling 7.6 CPU h"]}]
+  freeze_commit: "84055094181dd1bdbfa09fa195f0d6979c5e485c"
+  h1: "[false,false,true]"
+  h2: {"branch_deletion": "0", "force_push": "0"}
+  numpy: "2.5.1"
+  o: "c6baa21a3b8a0b0b25865a938bdab3f13e4e4808"
+  other_rows: ["fsd-controls ceiling 12.0 CPU h"]
+  runs_sha256: "764626fd211cc7b44b370ae991da6c34a109ca1c5dbcae6114067bab48e1257c"
+  scipy: "1.18.0"
+  status_commits: [{"commit": "40598b2057f5d3ba45543073c52bd8e4c84d8263", "descends_from_F": true}, {"commit": "8d079f47cbd5e3a6b82547c32b796f6cd1039fd5", "descends_from_F": true}]
+  uv_lock_sha256: "93dcfa3e5ef4d7cfa72725e83227b6b6e4b1af7d01230c7a94c32d3e3a133396"
+  worktree_head: "bff61ecba3daed876e55896e329000704fb9626b"
+rung 0 unbuildable: p1=True p2=False clause99=True h=0.9842569218261344 h_f=0.9888741618372597 pass_iii_f=0.9999999991838504 D*0=['mark_gap_correlation[sign]']
+rung 1 unbuildable: p1=False p2=True clause99=True h=0.981296326116184 h_f=0.9850612123367476 pass_iii_f=0.999999791982705 D*0=['mark_gap_correlation[sign]', 'rate_after_mark_slope[sign]']
+rung 2 unbuildable: p1=True p2=False clause99=True h=0.9637103212120092 h_f=0.996436251331298 pass_iii_f=0.9999999992121443 D*0=['mark_gap_correlation[sign]']
+rung 3 passes: p1=True p2=True clause99=True h=0.9492802613717619 h_f=0.9522977262797887 pass_iii_f=0.9960227711633283 D*0=['mark_gap_correlation[size]', 'rate_after_mark_slope[size]']
+tested rung 3
+Fa|K0: pass=False B1 0/120 B2 only-e1 [] B3 credited 0/15 p=1
+Fa|K1: pass=False B1 0/120 B2 only-e1 [301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315] B3 credited 15/15 p=0.0004883
+Fa|K2z: pass=False B1 0/120 B2 only-e1 [] B3 credited 0/15 p=1
+Fa|K3a: pass=False B1 0/120 B2 only-e1 [] B3 credited 0/15 p=1
+Fa|K3h: pass=False B1 0/120 B2 only-e1 [] B3 credited 0/15 p=1
+Fa|K4: pass=False B1 0/120 B2 only-e1 [] B3 credited 0/15 p=1
+Fa|K5: pass=False B1 0/120 B2 only-e1 [] B3 credited 0/15 p=1
+Fc|K0: pass=False B1 0/120 B2 only-e1 [] B3 credited 0/15 p=1
+Fc|K1: pass=False B1 0/120 B2 only-e1 [301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315] B3 credited 15/15 p=0.0004883
+Fc|K2z: pass=False B1 0/120 B2 only-e1 [] B3 credited 0/15 p=1
+Fc|K3a: pass=False B1 0/120 B2 only-e1 [] B3 credited 0/15 p=1
+Fc|K3h: pass=False B1 0/120 B2 only-e1 [] B3 credited 0/15 p=1
+Fc|K4: pass=False B1 0/120 B2 only-e1 [] B3 credited 0/15 p=1
+Fc|K5: pass=False B1 0/120 B2 only-e1 [] B3 credited 0/15 p=1
+Fx|K0: pass=True B1 120/120 B2 only-e1 [] B3 credited 15/15 p=0.0009766
+Fx|K1: pass=False B1 120/120 B2 only-e1 [] B3 credited 0/15 p=1
+Fx|K2z: pass=False B1 120/120 B2 only-e1 [] B3 credited 0/15 p=1
+Fx|K3a: pass=True B1 120/120 B2 only-e1 [] B3 credited 15/15 p=0.0009766
+Fx|K3h: pass=True B1 120/120 B2 only-e1 [] B3 credited 15/15 p=0.0009766
+Fx|K4: pass=True B1 120/120 B2 only-e1 [] B3 credited 15/15 p=0.0009766
+Fx|K5: pass=True B1 120/120 B2 only-e1 [] B3 credited 15/15 p=0.0009766
+Fz|K0: pass=False B1 0/120 B2 only-e1 [] B3 credited 0/15 p=1
+Fz|K1: pass=False B1 0/120 B2 only-e1 [] B3 credited 0/15 p=1
+Fz|K2z: pass=False B1 0/120 B2 only-e1 [312] B3 credited 1/15 p=0.875
+Fz|K3a: pass=False B1 0/120 B2 only-e1 [] B3 credited 0/15 p=1
+Fz|K3h: pass=False B1 0/120 B2 only-e1 [] B3 credited 0/15 p=1
+Fz|K4: pass=False B1 0/120 B2 only-e1 [] B3 credited 0/15 p=1
+Fz|K5: pass=False B1 0/120 B2 only-e1 [] B3 credited 0/15 p=1
+P1 breaches by seed: {}
+determinism: {"design": 3, "mismatches": [], "ok": true, "runs": 64, "seed": 301}

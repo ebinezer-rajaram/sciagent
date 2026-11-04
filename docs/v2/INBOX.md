@@ -33,3 +33,49 @@ entry, and marks it handled with the date and what was done. Newest last.
   (the v8 text and the controls.py code together, since v7's round was blocking), then freeze
   and calibrate at once. The preregister skill (team plugin, not in this repository) still
   describes the window; the lane does not edit it.
+
+## 2026-10-29, 11:27 UTC (owner, via the control-room session)
+
+- [x] **The four open owner questions: all as the control room suggested.** Owner's words: "Do all
+  as suggested, please do your experiments". (1) The baselines run on dm-devbox, no AWS (non-LLM
+  runs in their own sci-<run> user units, as decided earlier today). (2) Delta-6: (A) link-neutral,
+  as the owner's pre-set rule picks. (3) SPEC 4.2: option 2 (d* chosen only among designs where
+  neither the truth nor the best member explodes, the exclusion computed once from telling's
+  replicates and shared, the explosion share reported as a separate number). (4) Branch
+  protection on v2: turned on by the control room at 11:27 UTC (gh api PUT
+  repos/ebinezer-rajaram/sciagent/branches/v2/protection: allow_force_pushes false,
+  allow_deletions false, enforce_admins true; no required reviews or checks, so ordinary pushes
+  work; `gh api repos/ebinezer-rajaram/sciagent/branches/v2 --jq .protected` gives true).
+  Gate H1 can pass: freeze the at-stop controls and calibrate now.
+  Handled 2026-10-29 (lane session 19, 11:27-11:45Z): protection checked (H1 `[false,false,true]`); F₀
+  8405509 and its LEDGER row 900e66a pushed; calibrate A1 and B running in their own user units; the
+  pilot's baselines (`--no-llm`, 310 pool jobs) running on dm-devbox in `sci-pilot-baselines`; Δ6 (A) and
+  SPEC §4.2 option 2 recorded (LOG 2026-10-29, SPEC §4.2; the `Telling` change waits for A1 and B). The
+  control room was told.
+
+## 2026-10-29, 19:10 UTC (control room, under the owner's delegation of 2026-10-29)
+
+- [x] **After control A1 failed (580950f): the lane's recommendation.** Keep the pilot and the next
+  experiment on today's telling rule; test the red team's cheap lead (calibrate fixes the diagnostic
+  arguments on seed 0, the test fixes them per seed) by section 8's route; if it explains the gap,
+  come back with a new freeze. Option 2 is not dropped, only parked until then. Decided by the
+  control room under the owner's standing delegation ("You can do what is best", "Do all as
+  suggested"); record it as delegated.
+  Handled 2026-10-29 (lane session 23, 19:13Z): recorded as delegated in LOG 2026-10-29; the queue's FSD item says
+  option 2 is parked; the seed lead was given to the theorist as an exploratory check (output
+  `.cache/drafts/fsd-seedlead/`, nothing written in the frozen directory). The pilot runs on today's telling, unchanged.
+
+## 2026-11-01, 11:00 UTC (owner, via the control-room session)
+
+- [x] **One short session, then hold until the reset (Wed 4 Nov 02:00 UTC).** The weekly Claude reading is
+  92%; the owner wants the machine busy until Wednesday without spending Claude usage. In this one
+  session (one hour at most, two helpers at most): start, in their own `sci-<run>` user units,
+  every frozen or ready CPU-only run that needs no LLM calls and no Claude session (the pilot
+  baselines with --no-llm, the seed-lead test of section 8 if it is CPU only, anything else already
+  frozen), sized to keep dm-devbox's cores busy until Wednesday (nice 10; leave two cores free).
+  Nothing that calls an LLM (that uses the owner's Claude plan) until the reset. No code beyond
+  what a launch needs, no reviews, no drafting. Journal what you started and stop.
+  Handled 2026-11-01 (lane session 25, 10:44-10:55Z): both pilot halves had already finished, and so had
+  seed-lead check (a). The only ready CPU-only work, the p4-rehearsal slow tier, was started in `sci-p4-slow`.
+  The pilot stores were checked and copied to S3. Nothing else is frozen, so the machine stays mostly idle
+  until the reset. JOURNAL session 25.

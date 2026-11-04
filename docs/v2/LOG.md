@@ -2152,6 +2152,212 @@ must switch protection on. Found by the engineer: `python -I` ignores `PYTHONDON
 requires `-I`. One joint review of v8 and the code (s18b): ready to freeze; its non-blocking fixes are in v8.1
 (963d1495…), with no rule, threshold or seed changed.
 
+## 2026-10-29: The owner's four answers (baselines on dm-devbox, Δ6 (A), SPEC §4.2 option 2, v2 protected); at-stop controls frozen
+
+The owner answered all four open questions as the lane and the control room suggested ("Do all as suggested,
+please do your experiments"; INBOX 11:27Z). (1) **The P3 baselines run on dm-devbox**, not AWS, in their own
+user unit outside the usage brake. Started 11:31:27Z: `pilot.py --truths 20 --seeds 1,2,3 --b10f-truths 10
+--no-llm` (plan: 310 pool jobs) at v2 900e66a in the detached worktree `pilot`, unit `sci-pilot-baselines`, store
+`.cache/pilot`, with 1 worker, because at launch 8.7 GiB was available with both calibrates and a test run going,
+and a second worker (about 2 GB at peak) would breach AUTOPILOT's 6 GB floor. The LLM half follows with
+`--no-baselines` from the same commit. `pilot_report.py` reads one `--root` and a store takes one driver, so the
+two halves run in turn on this store unless the report learns to read two stores (open). (2) **Δ6: (A)
+`link-neutral`** is the P4 prompt variant, by the owner's pre-set rule (p4-deltas `investigation/prompts.py`). It
+lands with the p4-deltas integration; the guard, arm matching and reader listed on 2026-10-28 stay required.
+(3) **SPEC §4.2, option 2**: the telling diagnostic is chosen among designs on which neither the truth nor the
+best member explodes (K5: at least one truncated or stopped run among telling's replicates on either side; one
+shared exclusion, also used by truthFSD), and the explosion share is reported as its own number. The SPEC text
+is amended now. As recommended, the code change to `Telling` (an instrument, tests first) waits for controls A1
+and B to pass under the rule, and a failure returns it to the owner. (4) **Branch protection** on v2 was switched
+on by the control room at 11:27Z (H1 reads `[false,false,true]`). The at-stop controls were then frozen with no
+window: F₀ 8405509 (criteria v8.1 963d1495…, controls.py c0895289…) and its LEDGER row (900e66a, ceiling 7.6 CPU h,
+$0) were pushed plainly to the protected branch. Calibrate A1 and B started 11:29Z in the units
+`sci-fsdctl-A1-calibrate` and `sci-fsdctl-B-calibrate`; both passed the gate.
+
+## 2026-10-29: The P3 pilot runs as two drivers on two stores from one commit, merged into a third store for the report
+
+Decided so that the LLM half need not wait 2-4 days for the non-LLM half. One store takes one driver, and the
+brake rule puts LLM runs in the lane unit and non-LLM runs in their own unit. No unit reads another unit's cell
+(engineer, from the code: `_plan_baselines` and `_plan_llm` look up only their own addresses; `_launch_llm` gets
+no store; `run_score_job` simulates its own data; `session_void` reads only its own record). The halves meet only
+when the report reads ORACLE and B-lib beside the LLM gaps. So both halves run at v2 900e66a: `--no-llm` into
+`.cache/pilot` (unit `sci-pilot-baselines`, 11:31Z) and `--no-baselines --llm-concurrency 1 --workers 1` into
+`.cache/pilot-llm` (tmux `-L sciagent` `sci-pilot-llm`, inside the lane unit, 12:09Z; plan 240 LLM units). For
+the report, `scripts/store_merge.py` (local branch `pilot-multiroot` 6b970b6, written test first, not yet merged
+into v2) copies both stores into a new one. It refuses unless every source has exactly one established
+fingerprint and they are equal, the cells are disjoint, there is one truth digest per id, and every detail is in
+canonical bytes. The report and every analyst check then run unchanged on one root. This was chosen over teaching
+five readers several roots: no instrument code is edited, and the merge only copies bytes. Its positive control:
+a baselines-only store and an LLM-only store, merged, equal one driver's store cell for cell (9 tests; the lead
+reran them: 9 passed). Cost: wall times reflect the two halves running together (cells and CPU times do not),
+and `replay_check` must run on `.cache/pilot-llm` itself to cover running or void sessions. To be red-teamed
+with the report, before PILOT.md.
+
+## 2026-10-29: Harness/1 records are replayed at the pilot's commit 900e66a, not under the merged harness/2 code
+
+Rehearsing the p4-deltas merge (local branch `p4-rehearsal`; engineer, lane session 20) on a 13:37Z copy of
+`.cache/pilot-llm` (10 sessions):
+- **What works under the merged code.** Keys, audit and rescoring carry over:
+  - the merged code re-derives all 17 cell addresses (`match 17 differ 0`);
+  - harness/1 session texts are byte-identical to 900e66a's for the four default arms, AG-o's sandbox block
+    included;
+  - `store_check` and `session_check` pass, and 4 rescored cells are identical.
+- **What does not.** `replay_check` passes 0 of 10 under the merged code; every record stops at step −1,
+  field `tools`. harness/2 changes the tool set by design: a `belief` tool, `stop_reason` on `submit`, and new
+  `run_experiment` and `predict` schemas.
+- **Decided.** Pilot (harness/1) records are replayed with the code at 900e66a, from a worktree or archive of that
+  commit, as p4's LOG already did with fit/4 (`p3-fit4`). The merge does not keep a frozen harness/1 tool layer.
+  - The lane does not push tags (AUTOPILOT), so the full sha is the reference.
+  - Follow-up with the integration, test first: `replay_check` refuses a record whose harness version differs
+    from the code's, with a message naming the commit to use.
+  - Why: a legacy tool layer inside harness/2 code is more than 5 files of instrument code kept alive only for
+    replay, and the pilot's commit already replays them (5 of 5 AG-c).
+- **Also found.** One AG-o record (dev-003 s1, `50037735…`) fails replay under its own code at step 51 (`digest`).
+  The agent's sandbox code prints `time.time()-t0`, and `sandbox/runner.py` documents agent nondeterminism as the
+  agent's own. The pilot report counts such AG-o records apart from replay defects, rather than as harness
+  failures. This rests on reading the recorded code; the step-51 replay was not run to isolate it.
+- **Pinned.** `tests/campaign/test_pilot_harness1_cells.py` (0de8220 on `p4-rehearsal`) pins the four 900e66a
+  digests and three real cell addresses. It caught a sandbox-block change in 4 of 7 tests. The older AG-o test
+  compared the legacy text against the live sandbox text, so it could not catch one.
+
+## 2026-10-29: `replay_check` refuses a record of another harness (on `p4-rehearsal`, 346676a)
+
+Decided in session 21: under the merged P4 code (harness/2), `scripts/replay_check.py` reports a record whose
+config `harness_version` differs from the running `HARNESS_VERSION` as REFUSED, naming both versions and where
+to replay it (harness/1 at 900e66a, per the entry above), counts it apart from PASS and FAIL, and exits 3 when
+nothing failed; any failure still exits 1. A record that names no harness version is a FAIL, not a refusal:
+the live loop has written the field since P2 (558d600), so such a record comes from no harness this project
+ran, and treating it as REFUSED would let a record leave the failure count by losing a field. Why: without
+this, the pilot's harness/1 records read as 0 of 10 replay failures under the merged code, which looks like a
+harness defect but is by design. The new errors sit in `sciagent.harness.errors` beside `RecordError`
+(that module's own rule), still under `SciAgentError`.
+
+## 2026-10-29: `store_merge.py` merged into v2 with the red team's three fixes
+
+The store merge for the pilot's two stores (LOG above, "two drivers on two stores") had one red-team round in
+session 22: **merge with fixes**. Before merging, three fixes were made test first (9d452fa):
+- the merged store is built in a sibling `.<name>.merging-<pid>` directory and renamed into place only when
+  complete, so a merge killed partway leaves no store that passes `check_store`;
+- a detail whose reading differs from its source ledger row is refused, using the comparison `check_store` itself
+  uses (`audit.detail_reading_is_ledgers`), because the merged ledger is rebuilt from the details;
+- only the timing lines of copied cells are kept, so a cell committed after the ledger snapshot adds no line to
+  the report's wall-time n or pool CPU. A timing line that is not JSON is refused.
+
+Kept as known, with no code change:
+- The test called the positive control uses fake jobs, so the claim that real cells do not depend on which half
+  ran them rests on reading the code (`_plan_baselines` and `_plan_llm` look up only their own addresses).
+- The merged store records no provenance, so `replay_check` runs on `.cache/pilot-llm` itself.
+
+The branch's first commit carried a `Co-Authored-By` trailer, so both commits were replayed without trailers
+(40d5d0c, 9d452fa; the tree equals d72ba3c) before the merge.
+
+## 2026-10-29: FSD at-stop controls A1 and B scored under F₀ 8405509: A1 fails under every rule, so SPEC §4.2 option 2's `Telling` change does not proceed and returns to the owner
+
+Score ran at 18:56-18:57Z (both exit 0, determinism rerun OK, no P1 breaches; score files 7386536; S3
+`sciagent/fsd-controls/8405509/`; 33,093.5 CPU s, under the 12.0 h ceiling). Read under criteria §8, as frozen;
+one red-team round: **read stands**, counts reproduced from the per-seed records and, for a sample, from the
+raw runs. **A1** (tested rung 2, θ₊ = 0.6) fails under every rule. The four exclusion rules (K3a, K3h, K4, K5)
+give identical results: (i) 12/15 (at the floor), (ii) **78/120 against 84**, (iii) p = 0.0352 (pass); K0 fails
+(ii) 0/120 and (iii); K1 and K2z fail (i) 0/15. D0's calibrated pass_ii at that rung was 0.99999775 and pass_iii
+0.99988 (Fix 4 requires reporting them): the calibration did not transfer to the test streams (expected (ii)
+about 110 under D0's own counts). By §8, "no candidate is ready; He² resolution comes first, and the thresholds
+are not changed"; Fix 4 rules out a rerun or extension. **B** (tested rung 3, the size rung; the three θ₋ rungs
+were unbuildable, so the dev-005 shape itself was not tested) came out as predicted: Fx passes with K0, K3a, K3h,
+K4 and K5 (B1 120/120, B3 15/15, p = 9.8e-4, h_F = 0.952); Fa, Fc and Fz fail B1 (0/120); Fa|K1 and Fc|K1 fail
+B2; Fx|K1 and Fx|K2z fail B3. By §8, FSD needs its own exclusion and K1 needs design-aware matching; per §2 this
+holds only for truths whose best design is not the artefact design, and per §3 nothing here favours option 2
+over option 1. Refused as post hoc: counting telling's rate_after_mark_slope[sign] picks (seeds 102, 114, 115;
+in rung 0's D*₀, not rung 2's). Unexplained and not acted on: the red team noted that calibration fixes the
+diagnostic menu's arguments on seed 0 while test fixes them per seed (controls.py:1363, 1396 against 1534,
+1913), a possible cause of the transfer gap that nobody has tested. Any rerun under a later freeze is exploratory (§5).
+
+## 2026-10-29: After A1's failure: today's telling rule stays; option 2 is parked; the seed lead is tested first (delegated decision)
+
+Decided by the control room at 19:10Z under the owner's standing delegation ("You can do what is best", "Do
+all as suggested"; INBOX 2026-10-29 19:10Z), as the lane recommended. The pilot and the next experiment keep
+today's `Telling` rule. SPEC §4.2 option 2 is parked, not dropped. The red team's lead (calibrate fixes the
+diagnostic arguments on seed 0, test fixes them per seed) is tested first by §8's route, as exploratory work. If it
+explains A1's (ii) gap, the lane comes back with a new freeze, preregistered and red-teamed as before. Nothing in
+F₀'s criteria or thresholds changes, and A1 is not rescored. The SPEC §4.2 text amended this morning for option
+2 stays as written until the owner or the control room says otherwise. Whether to mark it as parked is noted for
+the control room, not edited by the lane, because a SPEC change is a stop point.
+
+## 2026-10-29: A session with no SDK `result` message has turns and tokens "not recorded", not 0
+
+A session that ends on `wall_time` gets no SDK `result` message. `campaign/llm.py` then stores turns and every
+token count as 0 (`num_turns or 0`, `_usage(None)`). In the pilot, three AG-o-S/named sessions (dev-005,
+dev-008 and dev-012, seed 1) hold 42, 83 and 83 assistant entries but read 0. Decided: `pilot_report.py`'s cost
+table takes turns and token medians over the sessions whose stored record has a `result` entry. This is decided
+from the record, not from the outcome name or a zero value. It prints `(n/m recorded)` the way missing wall
+times are shown, with a note only when that happens (58d1ac2, test first). A store where every session has a
+result renders byte-identically. Why: P4 sizing and the report's cost row would otherwise count missing counts
+as zero, and they read low (AG-o median turns 19 against 26 on the interim store). No version constant moves.
+The cell readings are not changed now, because the pilot's code is frozen at 900e66a. The root fix in `llm.py`
+(store the counts as missing, or count them from the record) goes with the p4-deltas integration, test first.
+
+## 2026-10-29: The seed lead is closed; A1's calibration was optimistic by construction (exploratory, session 24)
+
+The seed-0-menu lead does not explain A1's (ii) gap. On a fresh pool it moves E[(ii)] by about 0.2, bounded at
+about 3 points (red team). The theorist's offline checks find calibrate and test identical in streams, rules
+and exclusions, and attribute D0's pass_ii of 0.99999775 to two things. First, a plug-in estimate from one fixed
+128-run pool, whose E[(ii)] has an across-pool sd of about 10 to 14. Second, testing only the first rung whose
+plug-in passes. Decided: option 2 stays parked, and no new freeze is proposed until its calibration carries pool
+uncertainty. The lane does not regenerate the real control streams outside controls.py's stream-id guard
+(check (b)) without the owner's or control room's word. Why: these findings are exploratory under F₀ §5; the
+guard exists so that control streams are drawn only by the preregistered path. A non-control check (a) is
+running to measure the law directly (`.cache/drafts/fsd-seedlead/pool/`).
+
+## 2026-11-04: Check (a) corrects session 24's reading of A1's calibration; "optimistic by construction" and "lucky pool" are withdrawn as facts (exploratory)
+
+The red team reviewed check (a) (session 26; review scripts in `.cache/drafts/fsd-seedlead/pool/review-s26/`, runs sha
+e045f23c, `poollaw_analyse.py` 79ab70dd, `poollaw_sim.py` a5ff2b70): it stands with corrections, and no code defect was
+found in it. This entry corrects the entry of 2026-10-29 ("The seed lead is closed"), which is left as written. Its across-pool
+sd of 10 to 14 came from pools giving p32 and p16 the same 128 runs; calibrate's sets are disjoint, and that structure
+gives about 9. Recorded, under F₀ §5 as exploratory: at the seed-0 menu, on 28,672 complete runs, E[(ii)] is about 90
+(jackknife 95% CI 83 to 97), p32(MG) 0.935, p16(MG) 0.794, and plug-in pass_ii 0.85 against D0's 0.99999775. Conditioning on
+a pass (115 of 400 pools) raises the mean to 99.0, so selection explains about 9 of the 19.7-point gap. None of 400 pools
+reached 109.64 (maximum 108.5): P < 0.75% for this pool, and roughly 0.2% to 0.5% allowing for pool and law uncertainty
+(order of magnitude; approximations, and any tail reading is post hoc because no tail threshold was set first). The 38%
+of session 24 and the 0 of 400 measure different events and do not conflict. Leads only, not results: that D0's pool
+was lucky, that calibrate has no defect, that A1's failure was mostly chance, why the test drew low, the CRN effect size,
+rung multiplicity, and any design for a calibration fix. Nothing has reproduced a D0 count from runs. Only check (b) can,
+so the lane now recommends it to the owner, as the missing positive control rather than because a defect looks likely
+(scope and result table in JOURNAL session 26). A1 stays failed as scored; §8's reading and the parking of option 2 are unchanged.
+
+## 2026-11-04: Readings taken from lab state after a wall-time cut are not the record's; the pilot's cell stays, and the record is what counts
+
+`fits_used` of pilot session bd3dc4c4 (AG-o-S/named dev-012 s1, `wall_time`) reads 35; its hash-chained record charges 34.
+The timeout cancels the await and not the worker thread, `asyncio.run` then joins the executor for up to 300 s
+(`THREAD_JOIN_TIMEOUT`, checked), and `runner.py` reads the lab afterwards, so a tool call that finished in that window
+reaches the reading with no `tool_call` entry. Only one of the two unanswered fits reached the lab (the reading would
+otherwise be 36). Analyst, all 240 sessions against their records: this is the only disagreement, the three `wall_time`
+sessions have no submission, and no score moves; the other two match by timing, not because the read is safe. Decided: the store stays as
+it is (append-only), `STORE INCONSISTENT` on this one issue is explained rather than cleared, and the audit is not relaxed. PILOT.md
+states it, and 34 is the true count. Root fix goes on `p4-rehearsal` with the p4-deltas integration: a session's numbers are what the record says.
+
+## 2026-11-04: T2's example list is not fixed, and fit/5's search does lose: the "0 misses" of D3 was a statement about one sample (exploratory)
+
+The slow tier on `p4-rehearsal` failed `test_fit_beats_random_grid_points` on (0, softplus, 1074), 0.00397 nats. It is no merge
+regression: the gap is identical on v2, and `src/sciagent/glm` is unchanged since 900e66a. The test's list drifts instead: with
+the same test source, lists from different scripts, pytest and the two trees differ by 3 to 73 of 300 examples, cause not
+established (Hypothesis's local constants fit, but no context tried reproduced 1074). A seeded list of 400 cases, of which 376 ran
+before the ceiling (`.cache/drafts/t2-drift/sweep.jsonl`), found 1 loss above the test's tolerance, 1.3249 nats at (0, softplus,
+103648458), reproduced by hand: fit -247.1402, generating point -245.8153, both certified, 204 events. That is 1 of 376
+(Clopper-Pearson 95% 0.007% to 1.5%). Both known losses are BIG[0] (two gated features, 14,400 grid points) under softplus, with
+the fit at period 5 where the generating point has 100: a lead from two cases. The grid point that wins is the generating ψ, so
+each loss is a search miss on a θ-refitted point. No decision yet: fit/5 is the frozen instrument of the pilot and a fit/6 is
+SPEC-level, so this goes to the owner. The test is neither loosened nor edited until then, so it passes or fails with its sample.
+
+## 2026-11-04: Red team on PILOT.md: two statements of today's LOG corrected; the search miss is in the pilot's own store
+
+Commit with fixes: every headline number recomputed, four blocking text faults fixed before the commit (a clause that went past a computed output, an LLM-arm
+comparison no control supports, "rules applied as written" for C3, which reads a declared subset, and T2's absence). Two corrections to the entries above, which stay as
+written. (1) "Both known losses are BIG[0] under softplus" is incomplete: ORACLE dev-015 s3 in the pilot store lost 4.53 nats (search -781.9771, truth-ψ -777.4489, read
+from the cell; 1,902 events, 0.0024 nats per event) on an `exp` truth with no `Periodic`. Control 1's truth-ψ check rescued it as designed, but only ORACLE has that rescue.
+(2) "Only one of the two unanswered fits reached the lab" is an inference from the join, not an observation: the layer lock serialises concurrent calls too, so
+order equality does not show one-at-a-time dispatch. Under a stress test that adds T2's 0.0065 nats per event to every unit, no §7.1 outcome moves; that is a stress test,
+not an estimate of the rate or size of misses. Not changed by this: no §7.1 number, and no rule.
+
 ## 2026-11-04: A session's reading follows the layer's commits; the layer closes when the stream ends
 
 `store_check` flagged pilot session bd3dc4c4 (AG-o-S/named dev-012 s1, `wall_time`): `fits_used` 35 against 34
@@ -2192,3 +2398,13 @@ three entries), so a count would be another measurement under the same name, mix
 readers are the driver's progress line (prints `None`) and `pilot_report.py`. Old cells keep their 0s; v2's
 `counts_recorded` (58d1ac2, not on this branch yet) decides from the record, so it reads both forms the same, and
 until that merges this branch's report still takes a missing field as 0, as it took the stored 0.
+
+## 2026-11-04: Merging v2 into `p4-rehearsal`: `cost_table` takes the `Table`; `counted()` and the left-out fields are one rule
+
+v2 moved the LLM cost table into `cost_table(root, systems, sessions)` while p4 had changed the same rows to
+`analysis.prediction_tally(tab, s)`. `cost_table` now takes the `Table`, because `behaviour_sessions` stays the one
+place the policy-arm rule is applied. `counted()` and 3e191dd agree and do not count twice: both key on the record's
+`result` entries, so a cell with 0s and a cell with the fields left out render byte-identically, and each session
+counts once in `(n/m recorded)` and in the note (`tests/campaign/test_pilot_report_counts.py`, also on real
+`run_session` output). This closes the last sentence of the entry above: the report no longer takes a missing field
+as 0.

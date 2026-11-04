@@ -1677,3 +1677,645 @@ preregister skill (commit F, LOG entry with digests and a 24 h veto window, LEDG
 3. Calibrate A1 and B, each in its own `systemd-run --user --unit=sci-fsdctl-<C>` unit, nice, one process each.
    Leave `$D` and HEAD alone while they run (criteria §5, operational notes).
 4. Owner questions are unchanged apart from the brake: where the baselines run, Δ6, and SPEC §4.2.
+
+## 2026-10-29: Lane session 19 (10:59 UTC), progress: p4-deltas rehearsal merge under way; every other item waits on the owner
+
+**Done.**
+- INBOX: no open entry. VETO.md: no VETO lines. `gh api repos/:owner/:repo/branches/v2/protection` still
+  returns `Branch not protected` (HTTP 404), so the FSD controls freeze (gate H1) stays blocked.
+  `~/research/OWNER_LOG.md` 10:40Z: still open for the owner are branch protection, where the baselines run,
+  Δ6 (A/B/C) and SPEC §4.2. The owner's 09:05Z "do what is best" answered agent-control's 16 decisions, and
+  I have not read it as covering these. `free -g` at start: 10 GB available; no pilot store running.
+- The pilot split the control room asked for (10:00Z) already exists: `pilot.py` has `--no-llm` and
+  `--no-baselines`. `pilot_report.py` reads one `--root` and a store takes one driver at a time, so the
+  halves run in turn on one store: `--no-llm` in its own user unit (outside the brake), `--no-baselines`
+  in the lane unit. No code change is needed.
+- Started (not yet back): an engineer rehearsing the merge of `origin/p4-deltas` (bff61ec, 16 commits) onto
+  v2 84e7a2a on the local throwaway branch `p4-rehearsal` (worktree `.claude/worktrees/p4-rehearsal`). It
+  also adds the LOG 2026-10-29 `make_policy` fix (arm settings' `max_events` and EIG `weighting` reach
+  AG-c-S), test first, then runs ruff, mypy and the fast tier, and starts the slow tier detached in its own
+  user unit `sci-p4reh-slow` (log `.cache/p4-rehearsal-slow.log`). Nothing goes into v2. Report due by
+  12:55Z.
+
+**Learned.** The p4-deltas branch has never been tried against current v2: v2 has 124 commits since the
+merge base and p4-deltas has 16.
+
+**Next.** Read the engineer's report and check its output; record the conflict list and checks in the
+hand-over. The owner's answers still gate the freeze, the pilot and P4 sizing.
+
+## 2026-10-29: Lane session 19 (10:59 UTC) hand-over: owner unblocked everything; FSD controls frozen and calibrating; the full P3 pilot is running (both halves)
+
+**Done.**
+- INBOX 11:27Z (owner, through the control room): "Do all as suggested, please do your experiments". Handled and
+  ticked. I checked that v2 is protected: `gh api …/branches/v2/protection` gives force-push false, deletion false,
+  admins true; `.protected` gives `true`.
+- **FSD at-stop controls frozen** per criteria §5:
+  - `cpu-total.txt` = `0.0`, then F₀ 8405509 (`git add -f` of 54 files; criteria v8.1 963d1495…, controls.py
+    c0895289…, both in the message), then its LEDGER row 900e66a (`fsd-controls freeze 8405509… ceiling 7.6 CPU h`,
+    $0). Both pushed plainly to the protected branch.
+  - Calibrate A1 and B started 11:29Z in the user units `sci-fsdctl-A1-calibrate` and `sci-fsdctl-B-calibrate`.
+    Both passed the gate. At 13:02Z they were still running at 1.43 CPU h each (`cpu-ledger.csv`), with no D
+    pushed yet.
+  - The control room was told.
+- **SPEC §4.2 amended (option 2)** and LOG entry written. Δ6 is (A) `link-neutral`, with the integration. The
+  `Telling` code waits for A1 and B to pass. Desktop notification sent (no phone: Remote Control is off).
+- **P3 pilot, non-LLM half** running since 11:31:27Z:
+  - `.cache/pilot-run.sh 1` at v2 900e66a in the detached worktree `pilot`, unit `sci-pilot-baselines`,
+    store `.cache/pilot`, plan 310 pool jobs, 1 worker (6 GB floor).
+  - My first launch failed at once: the new worktree had no git-ignored dev split. I copied it in (sha256
+    604acec5…, the same as the main checkout's) and relaunched; nothing had been written.
+  - 7 baseline units were `ok` by 13:02Z, including B-rand dev-000 s1 at 2650.3 s.
+- **P3 pilot, LLM half** running since 12:09:29Z:
+  - Engineer 2 found from the code that no unit reads another's cell, so the halves can run in parallel on two
+    stores (LOG 2026-10-29).
+  - `.cache/pilot-llm-run.sh 1` in the worktree `pilot-llm` at the same commit, store `.cache/pilot-llm`,
+    `tmux -L sciagent` `sci-pilot-llm` (inside the lane unit, so braked). Plan 240 LLM units, concurrency 1,
+    and no API key in its environment.
+  - By 13:02Z, 7 sessions submitted and 6 scored `ok`, with no failure line.
+- **p4-deltas rehearsal** (engineer 1), local branch `p4-rehearsal`:
+  - A merge plus 5 fixes, and the `make_policy` fix done test first.
+  - Engineer's checks: ruff clean, mypy `285 source files` clean, fast tier `3525 passed`. My rerun of the new
+    test: 7 passed.
+  - The slow tier was not run; I stopped it to keep CPU for the runs. The open points are in the queue.
+- **Store merge** (engineer 2), local branch `pilot-multiroot` 6b970b6: `scripts/store_merge.py`, written test
+  first, with 9 tests and a positive control. Engineer's checks: mypy clean, fast tier `2927 passed`. My rerun:
+  9 passed. Not merged; it gets its red team with the report.
+- Checks this session on v2: docs-only commits, ruff clean. No src change was made on v2, so I did not rerun
+  mypy or the tests there.
+
+**Learned.**
+- A new worktree needs the git-ignored dev split copied in before `pilot.py` can run.
+- Calibrate CPU is above the criteria's per-calibrate figures: 1.43 CPU h each and still running, against "about
+  1.1 for A1 and 1.6 for B". The most likely cause is contention (load 9-10 on 4 vCPU most of the session), but I
+  did not measure it. The total ceiling of 7.6 CPU h may stop a test phase before it ends; §6's resume rule (a
+  `fsd-controls ceiling <c> CPU h` row) covers that.
+- The LLM sessions are quick so far: 17-67 turns, 138-341 s per session.
+
+**Next.**
+1. Calibrate: check `systemctl --user status sci-fsdctl-{A1,B}-calibrate` and `journalctl --user -u …`. After the
+   D commits arrive with `git pull --rebase`, check that `D0-<C>.json`'s bytes equal `D:$P/D0-<C>.json`. Then run
+   the test phase for each control in its own unit, with the §7 command plus `--d0-commit <D>`. Do not add files
+   to `.cache/drafts/fsd-controls` while they run.
+2. Pilot: watch both progress logs. Move the baselines to 2 workers when MemAvailable is at least 8 GiB, and raise
+   the LLM concurrency to 2 if no rate limit has appeared. On a usage-limit error, write the STOP file.
+3. When both halves finish: merge `pilot-multiroot` into v2, merge the stores, run the report and checks, red
+   team, then PILOT.md.
+
+**Addendum, 13:25Z.**
+- Calibrate A1 exited 0 at 13:23:15Z after 1h 46min CPU (systemd), and pushed D = c0d1b8f
+  (`fsd-controls D0 ctlA1 under 8405509…`). The file is `D0-ctlA1.json`, named by the control id and not `D0-A1`.
+  Its sha256 on disk equals D's blob and the line in D's message (2fe5e7e4…).
+- v2 was fast-forwarded to c0d1b8f.
+- Calibrate B is still running (ledger total 12,784 CPU s at 13:23Z for both).
+- I did not start A1's test phase. Its `runs-ctlA1.jsonl` would be a new file in `$D` while B's calibrate has
+  yet to rerun its gate before its push, and §5's operational note says that loses a calibrate. Next session:
+  once B's D is on v2, start both test phases, each with its own `--d0-commit`.
+
+## 2026-10-29: Lane session 20 (13:33 UTC), progress: both runs moving; watchers set for 2 workers and the FSD test phases
+
+- INBOX: nothing open.
+- State at 13:34Z:
+  - Baselines: 7 units `ok`, one in flight since 12:53Z.
+  - LLM half: 10 sessions submitted, 7 scored `ok`, no failure or rate-limit line.
+  - Calibrate B still running (FSD controls ledger 13,450 CPU s in total).
+  - MemAvailable 8.68 GiB; load 3.4.
+- **Baselines to 2 workers.** The queue's rule (≥ 8 GiB) is met, but the unit in flight may run for hours
+  (the smoke's B-sym@10F dev-000 took 17,412 s). So `.cache/pilot-to2.sh` runs in its own user unit
+  `sci-pilot-to2`:
+  - it wrote STOP at 13:35:36Z and waits for the in-flight unit and `sci-pilot-baselines` to end;
+  - it then relaunches in the same unit, with 2 workers if MemAvailable ≥ 8 GiB at that moment.
+  - I checked that a user unit can start another (`systemd-run` nested: `inner-ok`).
+- **LLM concurrency stays 1.** At 10 sessions in 87 min, 240 units take about 35 h, less than the baselines.
+  A second concurrent session would only spend Max usage faster.
+- **FSD test phases.** `.cache/fsdctl-test-launch.sh` runs in user unit `sci-fsdctl-watch`.
+  - It waits for B's calibrate to end and checks both D commits and D0 bytes.
+  - It then starts both test units with the §7 command.
+  - A1's test is not started earlier because of §5's operational note: a new file in $D during B's pre-push
+    gate loses B's calibrate.
+  - The script's D-line parsing and byte check give the right answer on A1 (c0d1b8f; 2fe5e7e4… both sides).
+- An engineer is on the p4-rehearsal pre-merge points (1) legacy key, (2) replay and audit on a copy of the
+  LLM store, (3) LOG reconciliation.
+
+## 2026-10-29: Lane session 20 (13:33 UTC) hand-over: FSD test phases running; baselines go to 2 workers after the unit in flight; p4 pre-merge points 1-3 done
+
+**Done.**
+- **Watchers in their own user units.**
+  - `sci-pilot-to2` wrote STOP at 13:35:36Z. When the in-flight unit and `sci-pilot-baselines` end, it
+    relaunches the baselines with 2 workers if MemAvailable ≥ 8 GiB, else 1.
+  - `sci-fsdctl-watch` waited for calibrate B.
+- **Calibrate B** exited at 13:57Z after 2h 20min CPU (systemd) and pushed D = 8d079f4. D0-ctlB.json is
+  da7c6de1…, equal to D's blob before and after my `git pull --rebase`.
+  - The watcher checked both D subjects and D0 bytes, then started `sci-fsdctl-A1-test` and `sci-fsdctl-B-test`
+    at 13:57:49Z. Both passed the gate and are writing runs files: 3,700 and 3,246 lines at 14:18Z.
+  - The ledger total was 16,863 CPU s at 14:18Z.
+- **LLM half:** 11 sessions launched by 14:18Z, with no failure, error or limit line. Concurrency stays 1:
+  240 units take about 35 h at 1, less than the baselines.
+- **p4-rehearsal pre-merge points 1-3** (engineer, on a 13:37Z copy of the LLM store):
+  - Legacy key: confirmed (`match 17 differ 0`) and pinned by a new test, 0de8220. My rerun: 7 of 7 pass.
+  - `store_check`, `session_check` and rescoring pass under the merged code.
+  - `replay_check` passes 0 of 10 under the merged code. harness/2 changes the tools by design, so harness/1
+    records are replayed at 900e66a (LOG 2026-10-29).
+  - LOG notes added: 85c586a, 0 lines removed.
+  - Engineer's checks: ruff clean, mypy `286 source files` clean, session-key tests `75 passed`.
+  - No src/ change, so neither tier was run.
+- Checks on v2 (docs only this session): ruff format and check clean.
+
+**Learned.**
+- Under the pilot's own code, AG-o replay passes 4 of 5. dev-003 s1 fails at step 51, because the agent's sandbox
+  code printed `time.time()-t0`. The pilot report must count such records apart from harness defects. This comes
+  from reading the record; that step was not replayed in isolation.
+- The older AG-o legacy-key test compared against the live sandbox text, so it could not catch a sandbox-block
+  change; the new pin can.
+- The FSD controls' CPU runs well above the estimate under contention. Calibrate alone used 1.77 h (A1) and 2.33 h
+  (B), against a worst case of about 1.1 and 1.6. So the 7.6 h ceiling should fire during test, around 16:00Z
+  at the current rate.
+
+**Next.**
+1. FSD controls: if `.cache/drafts/fsd-controls/STOP` exists, push a row `fsd-controls ceiling <c> CPU h`
+   (§6; $0), remove STOP, and restart each test unit with the §7 command and its own `--d0-commit`. The
+   command and env are in `.cache/fsdctl-test-launch.sh`. When both tests end, run score, then commit and
+   push the score files (§5 step 9).
+2. Baselines: check `grep to2 .cache/pilot-run.log` for the relaunch line and that `sci-pilot-baselines` runs.
+3. The `Telling` change (SPEC §4.2 option 2) waits for A1 and B to be scored.
+4. After the pilot finishes: rerun p4 points 1-2 on the full store, then the slow tier on p4-rehearsal.
+
+## 2026-10-29: Lane session 21 (14:29 UTC), progress: FSD ceiling raised to 12.0 CPU h with an automatic resume; replay_check refusal delegated
+
+- INBOX: nothing open. All four runs alive at 14:30Z: `sci-fsdctl-A1-test`, `sci-fsdctl-B-test`,
+  `sci-pilot-baselines` (1 worker; `sci-pilot-to2` still waits for the unit in flight since 12:53Z) and the LLM
+  half in `tmux -L sciagent` `sci-pilot-llm`. MemAvailable 8 GiB, load 4.8.
+- **FSD test CPU runs ~1.9x the estimate.** From `cpu-ledger.csv` at 14:29Z: test has charged 1,666 CPU s (A1)
+  and 1,678 CPU s (B) for 6,044 and 5,306 runs lines. Each seed is 2,560 lines (cost5.py's counts), so about
+  706 CPU s per A1 seed and 810 per B seed, against cost5's ~365. Projected total at the end of both tests:
+  14,791 (calibrate) + 15 x 706 + 15 x 810 ≈ 37,500 CPU s ≈ 10.4 CPU h, above F₀'s 7.6 h ceiling (27,360 s),
+  which should fire around 15:45Z. Ledger total 18,068 CPU s at 14:29:50Z.
+- **Ceiling row pushed: `fsd-controls ceiling 12.0 CPU h`** (b6a63d2; $0; projection + ~15%). Running processes
+  read the ceiling only at their gate, so they still stop at 7.6 h. `.cache/fsdctl-resume.sh` in user unit
+  `sci-fsdctl-resume` waits for both test units to end, then, only if `$D/STOP` exists, origin/v2's LEDGER holds
+  the row and the total is below 12 h, removes STOP (the coordinator's step, §6) and restarts each unit that
+  exited 11 with the §7 command and its own D. Log lines start `resume:` in `.cache/fsdctl-test-launch.log`.
+  At ~13.6 min wall per seed both tests end around 17:20Z, after this session; score is next session's.
+- **LLM half:** 12 launches by 14:24Z (11 sessions submitted), no error, limit or failure line. That is about
+  12 min per unit, so 240 units take ~47 h, not the ~35 h estimated in session 20.
+- An engineer is adding the harness-version refusal to `replay_check` on `p4-rehearsal` (test first; not merged).
+
+## 2026-10-29: Lane session 21 (14:29 UTC) hand-over: FSD resume armed for the ceiling; replay_check refusal on p4-rehearsal
+
+**Done.**
+- **FSD ceiling.** Pushed the row `fsd-controls ceiling 12.0 CPU h` (b6a63d2, $0). `.cache/fsdctl-resume.sh` runs
+  in user unit `sci-fsdctl-resume` (14:31:46Z) and resumes both test units after the 7.6 h ceiling fires (see the
+  progress entry above). At 16:32Z it had not fired yet: total 25,433 CPU s against 27,360, no STOP, both test
+  units running. Runs files had 22,275 lines (A1) and 19,062 lines (B).
+- **`replay_check` refusal** (engineer, test first), `p4-rehearsal` 346676a, not merged and not pushed:
+  - a record whose config `harness_version` is not the running one is REFUSED. The message names both versions
+    and says to replay harness/1 at 900e66a. Refused records are counted apart, and the run exits 3 when nothing
+    failed.
+  - a record that names no version is a FAIL.
+  - On the 11 harness/1 records in `.cache/pilot-llm`: `refused: 11`, exit 3, with the `llm/` bytes unchanged.
+  - My rerun of `nice -n 10 uv run pytest tests/campaign/test_replay_check.py -m "not slow" -p no:xdist`: 14
+    passed (14 dots, no failure line). Ruff check and format are clean on the 3 files.
+  - Engineer's checks: mypy `286 source files` clean; with `tests/test_invariants.py` and
+    `tests/harness/test_replay.py`, `918 passed`.
+  - LOG 2026-10-29 records the decision.
+- Checks on v2 (docs and LEDGER only): `ruff format --check` gives 261 files formatted, and `ruff check` passes.
+  There was no src change on v2, so mypy and the test tiers were not rerun.
+
+**Learned.**
+- FSD test CPU per seed is about 661 CPU s, averaged over both controls up to 16:32Z: test CPU 10,642 s over
+  about 16.1 seeds done. The projected final total is about 9.6 CPU h, under the new 12 h ceiling.
+- Wall time slowed. A1 went from 6,045 to 22,275 lines in 123 min, about 3.2 seeds an hour. At that rate A1 ends
+  around 20:30Z and B later, not 17:20Z. Since about 14:40Z, agent-control's two `sealed_secondaries.py`
+  processes have taken 2 cores (load ~15).
+- LLM half: 15 launches and 12 scored `ok` by 16:32Z, with no limit, error or failure line. That is about 17 min
+  per unit, so 240 units would take more than 60 h at concurrency 1.
+- Baselines: still no `exit:` line after the 12:53Z unit. The unit in flight has run for 3 h 40 min, so
+  `sci-pilot-to2` is still waiting, as designed (the smoke's B-sym@10F dev-000 took 17,412 s).
+
+**Next.**
+1. FSD: `grep resume: .cache/fsdctl-test-launch.log`. Expect STOP around 17:00Z, then `STOP removed` and two
+   `restarted` lines. If it says `restarting nothing`, read why; the ceiling row is already pushed. When both
+   tests exit 0 (38,401 lines each per cost5's counts), run score for each control (§5 step 9) and commit the
+   score files.
+2. Baselines: check `grep to2 .cache/pilot-run.log` for the relaunch line.
+3. When the pilot finishes: merge `pilot-multiroot`, merge the stores, run the report, red team, PILOT.md. On
+   `p4-rehearsal`, the slow tier is still open (after the runs free the CPU).
+
+## 2026-10-29: Lane session 22 (16:43 UTC), progress: store merge rehearsed on live snapshots; its red team running
+
+- INBOX: nothing open. All runs alive at 16:44Z: `sci-fsdctl-A1-test`, `sci-fsdctl-B-test`, `sci-fsdctl-resume`,
+  `sci-pilot-baselines` (1 worker, `.cache/pilot/STOP` from `sci-pilot-to2`; the unit in flight since 12:53Z
+  has no `exit:` line yet) and the LLM half (`sci-pilot-llm`, no STOP). MemAvailable 8 GiB, load 15.4.
+- **FSD:** ledger total 26,522 CPU s at 16:51Z against the 27,360 s ceiling (7.6 h); no STOP yet. Runs files
+  24,852 (A1) and 21,299 (B) lines. The resume script will act when the ceiling fires.
+- **Store-merge rehearsal** (`pilot-multiroot` 6b970b6, not merged): `store_merge.py .cache/pilot
+  .cache/pilot-llm --out .cache/s22/merged-snap` gave `merged 2 stores (7 + 29 cells) ... 15 record dirs, 36
+  timing lines`, exit 0. On the merged root: `store_check.py` `STORE OK` (15 sessions audited, 0 budget
+  issues); `session_check.py` `sessions: 15; found: 15; ... issues: 0; warnings: 2` (`void_reclassified` on
+  AG-o-S/named dev-003 s1 and dev-005 s1: stored void, policy not void); `pilot_report.py --interim` renders
+  (`.cache/s22/report-snap.md`, 7 baseline units and 15 sessions scored). `hunt_gap.py --env fit/5` gives
+  `units: 21`, `gap above +0.01: 0`, `submitted without a finite ORACLE: 11`, so `GATE FAIL`. That is expected
+  mid-run: ORACLE exists only for dev-000 s1. On a copy of the baselines store alone it is `GATE PASS`
+  (`.cache/s22/hunt-snap.log`). Note: `hunt_gap.py` needs `--env fit/5`. With `--env pointproc` it finds 0 units.
+- A red-team review of `pilot-multiroot` is running (code only, no writes to live stores). It merges into v2
+  only if the verdict allows it.
+- **Red team on `pilot-multiroot`: merge with fixes.** The cells match what one driver would have written:
+  its 9 tests pass, two merges are byte-identical, and the ledger, store and fingerprint code is unchanged since
+  900e66a. Three fixes are needed:
+  1. A merge killed partway leaves a store that passes `check_store`. This one should be fixed before use.
+  2. The rebuilt ledger is not checked against each source's ledger readings.
+  3. `timing.jsonl` is read after the ledger snapshot, so it can copy orphan lines that `pilot_report` would
+     count.
+  Two findings need no code fix. The "positive control" test uses fake jobs, so it checks the copy, not the
+  real two-driver split; that claim rests on reading the code. The merged store records no provenance, and
+  `replay_check` must run on `.cache/pilot-llm` itself. The engineer is fixing 1-3 test first on the branch,
+  with no trailer, no push and no merge.
+
+## 2026-10-29: Lane session 22 (16:43 UTC) hand-over: store merge in v2; FSD resumed past the ceiling; score watcher armed
+
+**Done.**
+- **`store_merge.py` merged into v2** (40598b2, then the LOG and queue update 6bbf8f9).
+  - One red-team round gave "merge with fixes" (progress entry above).
+  - The engineer made fixes 1-3 test first. The three new tests failed before the fix and pass after; the file
+    gives `12 passed`.
+  - `audit.py` only moved code: `check_store`'s reading comparison became `detail_reading_is_ledgers`, with no
+    change in behaviour. I read the diff.
+  - The branch's first commit (6b970b6, session 19) carried a `Co-Authored-By` trailer. I undid my local merge
+    (`git reset --keep`, never pushed) and replayed both commits without trailers as 40d5d0c and 9d452fa. Their
+    tree equals the engineer's d72ba3c.
+  - Rerun on the live stores: `merged 2 stores (7 + 31 cells) ... 16 record dirs, 38 timing lines`. On the
+    merged store `STORE OK`, no build-directory path inside, and `fingerprint.jsonl` the same as before.
+  - Checks on v2 after the merge:
+    - `ruff format --check`: 264 files formatted; `ruff check`: all checks passed.
+    - `mypy`: `Success: no issues found in 253 source files`.
+    - `nice uv run pytest -m "not slow" -n 2 -q`: exit 0 with 2,930 dots and no F, E or s mark. Pytest
+      printed no summary line, so this rests on the exit code and the dot count (`.cache/s22/fast.log`).
+    - The affected slow files (`test_hash_seed_pair.py`, `test_store_readers.py`, `-m slow`) gave exit 0 with
+      3 dots. Of the slow files, only these two use `check_store`.
+    - The full slow tier was not run, because the runs hold the CPU.
+- **FSD ceiling resume worked.**
+  - The 7.6 h ceiling fired at 17:04:58Z. Both test units exited 11.
+  - `fsdctl-resume.sh` removed STOP at 27,361 CPU s and restarted both units at 17:05:08-09Z.
+  - The ledger kept growing under new processes. At 17:32Z: total 28,870 CPU s; runs files A1 30,787 and
+    B 26,254 lines, of 38,401 each.
+- **Score watcher armed:** `.cache/fsdctl-score-launch.sh` in user unit `sci-fsdctl-score` (17:31:55Z).
+  - It waits for both test units to end and logs each exit status and runs-file line count.
+  - It starts `sci-fsdctl-<C>-score` with the §7 command and that control's D only when the test exited 0
+    and no STOP is present. The gate needs `--d0-commit` for score (`ctl_gate.py:537`).
+  - Log lines start `score:` in `.cache/fsdctl-test-launch.log`.
+  - Committing the score files, the S3 copy and the LEDGER row stay the coordinator's (§5 step 9).
+
+**Learned.**
+- Since the restart, FSD tests run at about 3.3 seeds an hour (A1: +3,854 lines in 27 min), faster than session
+  21's slow patch. At that rate A1 ends around 18:30Z and B around 19:00Z. Projected total about 34,000 CPU s
+  (9.4 h), under the 12 h ceiling.
+- `hunt_gap.py` needs `--env fit/5`. With `--env pointproc` it reports 0 units and `GATE FAIL`.
+- Baselines half: still only 7 of 430 units scored. The unit in flight since 12:53Z had no `exit:` line at
+  17:32Z (4 h 39 min), and `sci-pilot-to2` is waiting for it, as designed.
+- LLM half: 17 scores `ok`, and no limit, error or failure line in `progress.log`.
+
+**Next.**
+1. FSD: `grep score: .cache/fsdctl-test-launch.log`. If both say `started`, check `score-ctlA1.*` and
+   `score-ctlB.*` in `$D` and the units' exit status. Then, per §5 step 9:
+   - commit the score files (`git add -f`, nothing else) and push;
+   - copy the runs files to `s3://delaymargin-results-482913/sciagent/fsd-controls/8405509/`;
+   - add the CPU LEDGER row.
+   Then read the outcome with §8 and red-team it before any adoption (SPEC §4.2 option 2's `Telling` code
+   waits on A1 and B).
+   If a test exited non-zero, `score:` says so and nothing was started.
+2. Baselines: `grep to2 .cache/pilot-run.log` for the 2-worker relaunch.
+3. When the pilot finishes: `store_merge.py .cache/pilot .cache/pilot-llm --out <new>`, then the report and
+   checks on it, then `replay_check` on `.cache/pilot-llm` itself (harness/1 at 900e66a), then the red team,
+   then PILOT.md.
+
+## 2026-10-29: Lane session 23 (17:51 UTC), progress: waiting on the FSD control scores; interim LLM sizing
+
+- INBOX: nothing open. At 17:51Z all runs were alive: `sci-fsdctl-A1-test` and `sci-fsdctl-B-test` (restarted 17:05Z
+  past the 7.6 h ceiling), `sci-fsdctl-score` (watching), `sci-pilot-baselines` (1 worker, STOP from `sci-pilot-to2`),
+  and the LLM half in `sci-pilot-llm`. MemAvailable 7 GiB, load 15.5.
+- **FSD:** runs files at 17:52Z had A1 33,912 and B 28,992 lines, of 38,401 each. The score watcher starts score
+  when both test units end.
+- **Baselines:** still 7 of 310 jobs `ok`. The worker running since 12:53Z had VmHWM 2.02 GB at 17:52Z
+  (`.cache/pilot-mem.csv`). It is still waiting on that unit, as designed.
+- **Interim P4 sizing, LLM half** (`.cache/pilot-llm/timing.jsonl` and `progress.log`, 17 Sonnet sessions, all
+  named, seed 1). This is a partial read, not the queue item's estimate:
+  - AG-c-S/named, n 9: session wall mean 929 s (median 341, max 2,687), API time mean 73 s; turns mean 31.7 (max
+    67), output tokens mean 6,479, fits mean 19.7, experiments mean 1.1; score wall mean 277 s.
+  - AG-o-S/named, n 8: session wall mean 1,204 s (median 442, max 5,061), API time mean 98 s (one session has
+    none recorded); turns mean 27.1 (max 70), output tokens mean 10,602, fits mean 18.1, experiments mean 0.5;
+    score wall mean 721 s.
+  - The model's API time is under a tenth of the session wall time. Most of the wall time is the framework's fits
+    under this week's load, so the P4 estimate must separate the two.
+
+## 2026-10-29: Lane session 23 (17:51 UTC) hand-over and STOP POINT: FSD control A1 fails under every rule, so option 2's `Telling` change goes back to the owner
+
+**Stop point (AUTOPILOT 5: a queue item conditioned on the owner's choice).**
+- **Answer in one line:** control A1 fails under every telling rule, including the four exclusion rules that put
+  SPEC §4.2 option 2 into code (criterion (ii): 78 of 120 against 84). Under the frozen §8, no candidate is
+  ready, so the `Telling` change does not proceed. Control B came out as predicted.
+- **Evidence:**
+  - `.cache/drafts/fsd-controls/score-ctlA1.txt` and `score-ctlB.txt` (commit 7386536; S3
+    `sciagent/fsd-controls/8405509/`).
+  - Criteria v8.1 §1, §2 and §8 (frozen in F₀ 8405509). LOG 2026-10-29, "FSD at-stop controls A1 and B scored".
+  - A1 tested rung 2 (θ₊ 0.6). Under K3a, K3h, K4 and K5 alike: (i) 12/15 (the floor), (ii) 78/120 (needs
+    84), (iii) p 0.0352 (pass). K0 fails (ii) 0/120. K1 and K2z fail (i) 0/15.
+  - B tested rung 3 (the size rung). Fx passes with K0, K3a, K3h, K4 and K5 (B1 120/120, B3 15/15,
+    p 9.8e-4). Fa, Fc and Fz fail B1 0/120.
+- **Caveats:**
+  - D0 calibrated pass_ii at 0.99999775, so the calibration did not transfer to the test streams (expected (ii)
+    about 110). The red team found one candidate cause, untested and outside the preregistration: calibrate
+    fixes the diagnostics' arguments on seed 0, test per seed (controls.py:1363 and 1396 against 1534 and 1913).
+  - B's three θ₋ rungs were unbuildable, so the dev-005 shape itself was not tested, and B's pass holds only
+    for truths whose best design is not the artefact design.
+  - Per §3, nothing here favours option 2 over option 1.
+  - One red-team round: **read stands**, counts reproduced, the run as preregistered (records, hashes, H1 and
+    H2 checked).
+- **Recommendation:** keep the pilot and P4 on the current `Telling` code. Per §8, take up He² resolution next
+  (the (He², D) ordering from the session 16 ties draft, which its red team found not ready). Test the
+  seed-0-arguments lead first, as a cheap exploratory check (§5 makes any rerun under a later freeze
+  exploratory). Then come back to the owner with a new freeze if it explains the gap.
+- **Decision needed:** whether option 2 waits for He² resolution as §8 says (lane's recommendation), or the
+  owner drops option 2 for now and keeps today's telling for P4.
+
+**Done.**
+- Both FSD tests finished at 38,401 lines each (A1 18:21Z, B about 18:55Z). The score watcher started both
+  scores at 18:56:03Z; both exited 0. Score files committed alone and pushed (7386536). Nine output files copied
+  to S3. LEDGER rows: 9.19 CPU h (33,093.5 CPU s by the controls' ledger) and the 69.7 MB S3 copy.
+- One red-team round on the read: READ STANDS, with no blocking finding.
+- The control room asked for fewer notices: only launches, results, failures that need the owner, and money
+  beyond what is approved. Followed from now on.
+- No src or scripts change this session, so mypy and the test tiers were not rerun. Ruff was run (below).
+
+**Learned.**
+- A1's (ii) shortfall is far outside the calibrated law (red team: P((ii) ≤ 78) about 1e-7 under D0's counts),
+  so the calibration step, not the rule alone, is in question.
+- LLM half: three `Control request timeout: initialize` failures between 18:36 and 18:51Z, with load at about
+  20 and five-hour usage at 76% (no brake). The driver paused launches for 900 s, and launches resumed at
+  19:06Z with a submitted session. AG-o dev-008 s1 ended on `wall_time` after 4,645 s, logging turns=0
+  out_tokens=0. Check that this is how a wall-time end is logged and not a lost count. By 19:05Z, 19 sessions
+  had scored `ok`.
+- Baselines: still 7 of 310 at 19:10Z. The worker running since 12:53Z (VmHWM 2.02 GB) is presumably a far
+  B-sym@10F unit (about 4 h CPU each).
+
+**Next.**
+1. Check the owner's answer in INBOX. Meanwhile, as an exploratory check with no adoption: the theorist or
+   engineer tests whether the seed-0-arguments difference explains A1's (ii) gap (reading controls.py and a
+   small offline recount; do not run controls.py phases, and do not modify anything in
+   `.cache/drafts/fsd-controls/`).
+2. Pilot: `grep -E 'to2|exit:' .cache/pilot-run.log | tail`. Check LLM `progress.log` for further initialize
+   timeouts or units failed after 3 attempts.
+3. With the FSD runs ended, the CPU is freer: run the slow tier on `p4-rehearsal` if MemAvailable allows (at
+   most 2 workers, nice).
+
+## 2026-10-29: Lane session 23, addendum (19:50 UTC): delegated decision recorded; seed lead checked: undetermined, leaning against
+
+**Done.**
+- INBOX 19:10Z (control room, delegated) handled. Today's telling rule stays for the pilot and the next
+  experiment. Option 2 is parked, not dropped. The seed lead is tested first, and a new freeze follows only if
+  it explains the gap. Recorded in LOG 2026-10-29 and the queue (f807d5a).
+- Theorist, exploratory, nothing adopted. Scripts and outputs are in `.cache/drafts/fsd-seedlead/`. Nothing was
+  written in `fsd-controls/`: `git status --ignored` on it shows only `!!` entries.
+  - Step 1 (`menus.py`, `menus-out.txt`): the label lists are identical for seed 0 and seeds 101-115. Of the 35
+    diagnostics, 19 have identical arguments, including mark_gap_correlation[sign]. The other 16 scale with the
+    mean gap. rate_after_mark_slope[sign]'s window is 1.639 at seed 0 and 1.638-2.723 at test.
+  - Step 2 (`stored.py`, `stored-out.txt`), on the stored test runs: telling's three flips (seeds 102, 114 and
+    115) come from mark_gap_correlation running low (0.785, 0.786 and 0.828, against a mean of about 0.865).
+    rate_after's value there is in the range of the seeds that did not flip. Spearman(window, rate_after
+    column max) = 0.011 (p 0.97). One post-hoc hint goes the other way: truthFSD's rate_after picks are 1 of 40
+    below a window of 1.96 and 13 of 80 above it (Fisher p 0.02). The split was chosen after seeing the data.
+  - Step 3 (re-reading one run pool under all 16 menus) did not finish. It was stopped at 19:47Z under load of
+    about 18, after about 9 CPU minutes, with no output.
+- **Answer: undetermined, leaning against.** The menu difference is real, but the flips sit on a diagnostic
+  whose menu entry does not change. The other candidate the theorist named: p32 and p16 are estimated by
+  subsampling one fixed pool of 128 calibration runs, so a fresh independent pool would show whether that pool
+  was unrepresentative. Neither candidate is tested.
+
+**Next.**
+1. Run step 3 with a timeout of 40 minutes or more (`sim.py 128 <out.json> 0,2,3,4`, then `analyse.py <out.json>
+   1000 600`; nice, one process). Then the fresh-pool check, sized first. Only if one explains the gap: a new
+   freeze, preregistered and red-teamed, under which a rerun is exploratory (§5).
+2. As in the hand-over entry above: the pilot's two halves, LLM initialize timeouts, and the slow tier on
+   `p4-rehearsal`.
+
+## 2026-10-29: Lane session 24 (20:01 UTC), progress: seed-lead step 3 running; wall-time sessions log zero turns and tokens
+
+- INBOX: nothing open. Tree clean, v2 up to date with origin.
+- **Runs at 20:01Z.** Baselines: 15 of 310 `ok`, 0 failed. `to2` relaunched at 1 worker at 18:48:58Z because
+  MemAvailable was 7 GiB, under the 8 GiB rule. LLM half: 22 scored `ok`. No retryable failure since 18:51Z.
+  Load about 14, mostly the other lane.
+- **Seed lead step 3** is running in user unit `sci-seedlead-step3`
+  (`.cache/drafts/fsd-seedlead/step3-run.sh`: `sim.py 128 … 0,2,3,4`, then `analyse.py … 1000 600`; nice 15,
+  one process). It runs in the `fsd-dist` worktree (bff61ec), because v2 has no `run_experiment_truncating`.
+  Two launches failed before it started (a relative path, then that import); neither ran any simulation.
+  Design 0 finished at 88.6 CPU s.
+- **Found:** a session that ends on `wall_time` has no SDK `result` entry. `campaign/llm.py:267` and `_usage` then
+  store turns=0 and tokens=0, so these are missing counts written as zeros. The pilot store has two such sessions
+  (AG-o-S/named dev-005 s1 and dev-008 s1), whose records hold 42 and 83 assistant entries. Session 23's interim
+  AG-o turn and token means include one of them as zeros, so those means are low. `pilot_report.py`'s medians
+  read the same zeros. The engineer is fixing the report test-first on a local branch `report-unrecorded-counts`
+  (no src change). The root fix in `llm.py` goes with the p4-deltas integration, because the pilot's code is
+  frozen at 900e66a.
+- Checked and not a defect: 4 of 11 AG-o cells store `foreign tool: python` voids. Each comes from a denied bare
+  `python` call ("No such tool available: python"), which the analysis void policy excuses (LOG 2026-10-03).
+
+## 2026-10-29: Lane session 24 (20:01 UTC) hand-over: the seed lead does not explain A1's gap; calibration pool noise plus rung selection is the lead; report counts fix merged
+
+**Done.**
+- **Report fix merged:** 58d1ac2 (engineer, test first; LOG 2026-10-29). In the cost table of `pilot_report.py`,
+  a session whose stored record has no SDK `result` entry no longer counts as 0 turns and 0 tokens. On the
+  interim store, AG-o-S/named median turns go from 19 to 26 and out tokens from 2,866 to 3,950, both now
+  `(8/11 recorded)`. The AG-c row is byte-identical. The three such sessions are AG-o dev-005, dev-008 and
+  dev-012 at s1, all `wall_time` ends.
+- **Checks on v2 at 58d1ac2:**
+  - `ruff format --check`: 265 files formatted. `ruff check`: all passed.
+  - `mypy`: no issues in 254 files.
+  - `nice uv run pytest -m "not slow" -n 2`: 2,933 passed, 0 failed, exit 0 (`.cache/s24-fast.log`; the
+    summary line was suppressed by `-q`, so I counted from the progress dots).
+  - The engineer ran the slow report tests: 6 passed.
+- **Seed lead, step 3** (exploratory; `.cache/drafts/fsd-seedlead/step3-*.txt`, 356 CPU s, 0 truncated runs):
+  E[(ii)] is 82.4 under the seed-0 menu and 82.2 under each seed's own menu.
+  - Red team (one round, report returned in full; summary here): **stands with corrections**. The menu effect
+    is bounded at about 3 points on this pool, so the lead does not explain the gap.
+  - The pool's absolute 82 is not test-faithful. The bootstrap at B16 = 600 drew about 2.8 SE low, and the
+    pool's truthFSD side has no common random numbers across designs, where the test has them. It is not
+    quoted as agreement with 78.
+  - Common random numbers are not a calibration suspect: calibrate's p16 uses them as the test does.
+- **Why calibration said about 110** (theorist, offline, about 3 CPU min;
+  `.cache/drafts/fsd-seedlead/pool/notes.md`):
+  - A vectorised copy of the score rules reproduces score K3a exactly: 15/15 telling picks, 120/120 truthFSD
+    picks, (ii) = 78. Its copy of pass_ii reproduces D0's 0.99999775 (E 109.64).
+  - Calibrate and test use the same streams, rules and exclusions (controls.py line numbers in the notes), so
+    a calibrate/test mismatch is ruled out.
+  - Treating each test seed's runs as one 128-run pool, the single-pool estimate of E[(ii)] ranges from 70.4
+    to 109.8 (sd 13.7). Over 60 pools drawn from the pooled test runs: mean 91.5, sd 10.4. About 38% pass,
+    and given a pass the mean is 100.1. The law from the test's own runs gives E[(ii)] of about 92 to 94.
+  - So D0's 109.6 is a lucky pool, and the rung was tested only because its plug-in estimate passed. pass_ii
+    treats p32 and p16 as exact.
+  - Not explained: the test's 78 is itself low against that law (P 0.014 to 0.035). Almost all of the loss is
+    in telling's three rate_after flips, where about 1.0 was expected.
+- **Decisive check (a) launched:** one 1,024-replicate pool per run set under new stream ids (`fsd-poollaw-ind`,
+  `fsd-poollaw-crn`), with seed-0 menu, θ₊ 0.6 and designs 0,2..7.
+  - It runs in user unit `sci-fsd-poollaw` (`pool/poollaw-run.sh`; nice 15; one process; ceiling 3.0 CPU h,
+    exits 11 there and resumes on rerun). At 21:04Z: 3,808 of 28,672 runs, 0.165 CPU s per run, finish about
+    22:20Z.
+  - User unit `sci-fsd-poollaw-analyse` runs `poollaw_analyse.py` when the sim ends with `exit 0`. Its output
+    is `pool/poollaw-analysis.txt` and `.json`, with `watch:` lines in `pool/poollaw-progress.txt`.
+- **Not run: check (b).** It would regenerate calibrate's real rung-2 streams (`ctlA1-cal-r2`, `ctlA1-crn-r2`)
+  and replay its bootstrap (about 21 CPU min), which bypasses controls.py's stream-id guard on real control
+  ids. That is left for the owner (below).
+- **Pilot:**
+  - Baselines: 19 of 310 `ok`, 0 failed. With MemAvailable at 9.1 GiB, I re-armed `sci-pilot-to2` (STOP at
+    20:46:09Z). It relaunches with 2 workers if MemAvailable is at least 8 GiB when the unit in flight ends.
+  - LLM half: 25 scored `ok`. Still only the 3 initialize timeouts from 18:36-18:51Z; no new failure.
+- Checked and not a defect: 4 of 11 AG-o cells store `foreign tool: python` voids. These are denied bare
+  `python` calls, which the analysis void policy excuses (LOG 2026-10-03).
+
+**Learned.**
+- A wall-time end leaves no SDK `result`, so turns and tokens are missing, not zero. The root fix in `llm.py`
+  is queued with the p4-deltas integration. Session 23's interim AG-o means are low for this reason.
+- The A1 failure points at how the controls calibrate, not only at the telling rule. A plug-in pass_ii taken
+  from one fixed 128-run pool, followed by "test the first rung that passes", is optimistic by design. Any new
+  freeze needs a calibration that carries pool uncertainty: a larger pool, an interval on pass_ii, or a fresh
+  confirmation pool for the chosen rung.
+- Two launch failures this session: a relative path in `systemd-run`, and v2 lacking
+  `run_experiment_truncating`. The FSD drafts must run in the `fsd-dist` worktree with absolute paths.
+
+**Next.**
+1. Read `.cache/drafts/fsd-seedlead/pool/poollaw-progress.txt` for the `watch:` lines and then
+   `poollaw-analysis.txt`. If the sim exited 11 at the ceiling, rerun `poollaw-run.sh` in the same unit and
+   rerun the watcher. Then one red-team round on the analysis before any line in the journal calls it a
+   result. Option 2 stays parked. Bring a new freeze only with a calibration fix, and not before the owner or
+   control room has seen this.
+2. Pilot: `grep -E 'to2|exit:' .cache/pilot-run.log | tail -2` for the relaunch line and its worker count.
+   Check `.cache/pilot-llm/progress.log` for failures.
+3. With the CPU freer, run the slow tier on `p4-rehearsal` (at most 2 workers, nice), if MemAvailable allows.
+
+**Decision for the owner or control room:** may the lane regenerate A1's real calibration streams offline (check (b),
+about 21 CPU min, outside the stream-id guard, outputs only under `.cache/drafts/fsd-seedlead/`, declared
+exploratory) to confirm that D0's counts reproduce exactly? The lane recommends yes only if check (a) leaves
+the question open. A bug in calibrate would block every control.
+
+## 2026-11-01: Lane session 25 (10:44 UTC), short CPU-only session for the owner's hold until the reset
+
+INBOX 2026-11-01 11:00Z (one short session, CPU-only runs, then hold until Wed 4 Nov 02:00Z): handled. Nothing
+here calls an LLM, and no code was changed.
+
+**State found.** Both halves of the full pilot had already finished at 900e66a:
+- Baselines exited at 2026-11-01T05:07:46Z. 430 units are `ok` in `.cache/pilot/progress.log` (20 × 3 × 7 plus 10
+  B-sym@10F), 0 failed, bugs 0.
+- The LLM half exited at 2026-10-30T12:54:32Z with 240 scored (60 per arm), 0 failed and 3 retries.
+- Check (a) of the seed lead finished on 2026-10-29: sim exit 0 at 22:05:54Z, analysis exit 0 at 22:15:03Z
+  (`.cache/drafts/fsd-seedlead/pool/poollaw-analysis.txt`). It is not red-teamed, so it is not a result yet.
+  As printed: the full-pool law gives test (ii) mean 90.2 (jackknife 95% CI 83.1-97.4). In 400 calibrate-style
+  pools of 128, none reached D0's E_ii of 109.64 (`share >= D0 109.64: 0.0000`).
+- No `sci-*` user units were running. Load was 0.5.
+
+**Done.**
+- **Started:** the slow tier on `p4-rehearsal` 346676a (queue: p4-deltas item, point 5).
+  - User unit `sci-p4-slow`, `nice -n 10 uv run pytest -m slow -n 2`.
+  - Log `.cache/p4-slow.log`; its last line is `exit: <code> <UTC>`.
+  - This is the only frozen or ready CPU-only work there was.
+- **Store checks** (`scripts/store_check.py --store`, `scripts/hunt_gap.py --env fit/5 --split data/v2/truths/dev`):
+  - `.cache/pilot`: `STORE OK`. `hunt_gap` reports 0 above truth by +0.01, `oracle_underfit: 0 flagged ... of 60`,
+    `GATE PASS`.
+  - `.cache/pilot-llm`: `STORE INCONSISTENT` on one budget issue: `ISSUE reading_used bd3dc4c4…: fits_used 35.0 != 34
+    charged`. Cells 480, issues 0. Not investigated, since the INBOX asks for no reviews this session. This is a
+    budget-accounting instrument, so it must be explained before PILOT.md.
+- **S3:** both stores were copied to `s3://delaymargin-results-482913/sciagent/p3-linux/pilot-900e66a/` and
+  `pilot-llm-900e66a/`. Object counts match the local stores (435 and 729). The run and memory logs went to
+  `logs-900e66a/`. Three LEDGER rows were added.
+- Pilot cost from the store: units' wall time sums to 90.09 h and CPU time to 87.61 h (`timing.jsonl`). Elapsed time
+  was 65.6 h, which includes 15.5 h idle: the 1-worker run stopped at 2026-10-29T21:23Z and the 2-worker relaunch
+  came at 2026-10-30T12:54Z.
+
+**Not started, and why.** The hold leaves the machine mostly idle until Wednesday, because nothing else is frozen:
+- Check (b) of the seed lead (about 21 CPU min) still waits for the owner's yes (session 24's decision), and it
+  needs a script written.
+- Check (a)'s 0-of-400 reading makes check (b) more relevant, because a calibrate defect would block every
+  control.
+- Everything else open needs code, review, drafting or an LLM.
+
+**Next (after the reset).**
+1. Read the tail of `.cache/p4-slow.log`.
+2. Explain the `pilot-llm` fits_used 35 vs 34 issue.
+3. `store_merge.py` the two pilot stores, then the PILOT.md report (analyst) and its red team.
+4. Red-team check (a), and ask the owner again about check (b).
+
+## 2026-11-04: Lane session 26 (02:04 UTC), progress: pilot report and replay under way; slow-tier failure and fits_used issue diagnosed in part
+
+The weekly usage reset has passed and the INBOX has no open entry. This is a progress entry; the hand-over follows.
+
+**Done.**
+- **Replay at 900e66a started** (queue: PILOT.md note): user units `sci-replay-ag-c` and `sci-replay-ag-o`, nice 10, one
+  process each, in worktree `.claude/worktrees/pilot`, logs `.cache/replay-900e66a/AG-c.log` and `AG-o.log` (last line
+  `exit: <code> <UTC>`). $0, CPU only. The first launch exited 127 because `uv` is not on a user unit's PATH; the
+  relaunch uses the absolute path. At 02:11Z: 4 PASS, 0 FAIL.
+- **Delegated, running:** analyst (merge the stores, PILOT.md, go/no-go evidence, transcript picks; nothing committed
+  yet), red team (seed-lead check (a), independent), engineer on `p4-rehearsal` (the two wall-time defects below, test
+  first). A fourth helper was refused by the limit of 3 concurrent agents, so I took T2 myself.
+- **T2 sweep started:** user unit `sci-t2-sweep`, nice 15, ceiling 45 min wall, $0: 400 cases from a seeded list
+  (`.cache/drafts/t2-drift/sweep.py`, output `sweep.jsonl`). Exploratory.
+
+**Learned.**
+- **`p4-slow`:** `1 failed, 307 passed`, `exit: 1 2026-11-01T11:56:15Z`. The failure is
+  `test_fit_beats_random_grid_points`: `[(0.003972283900566254, (0, 'softplus', 1074))]`.
+- **That failure is not a merge regression.** `t2_gap(0, 'softplus', 1074)` is 0.003972283900566254 on v2 and on
+  `p4-rehearsal`, and `git diff 900e66a v2 -- src/sciagent/glm` is empty, so the pilot's fit gives the same loss.
+- **T2's "300 derandomised examples" are not a fixed list.** With the same test source, lists built from different
+  scripts, under pytest and on the two trees differ by 3 to 73 of 300 (`.cache/drafts/t2-drift/*.json`). The cause is
+  not established: Hypothesis's collection of local constants would fit, but no context I tried reproduced 1074, and
+  importing `test_ledger.py` or `test_reductions_pairwise.py` first moved nothing. The 2026-10-27 pass of this test
+  was therefore on a different sample, and passing does not show a stable claim.
+- **The losing case:** 2 features, 196 events, fit log-likelihood -266.9131 against -266.9091 at the generating point,
+  both certified. Printed ψ values differ in period (5 and 25 against 100 and 100) and in one exp_rate (4 against 1).
+  A search miss of 0.004 nats; its frequency is what the sweep measures.
+- **`pilot-llm` budget issue (session 25):** session bd3dc4c4 (AG-o-S/named dev-012 s1) ended `wall_time`. The record
+  ends with two parallel `fit` tool_uses that have no `tool_call` entry, and holds 34 charged fits and 54 calls; the
+  cell reads `fits_used` 35. `live.py` runs handlers in `asyncio.to_thread` under `asyncio.timeout`, which cancels the
+  await and not the thread, and `runner.py` reads `lab.fits_used` after the cut. My reading is that a late thread
+  added the 35th fit. The analyst and the engineer are each checking this, so it is not yet a result. The session has
+  no submission.
+
+**Next.** Read the helpers' reports and check them; red team on PILOT.md; read `sweep.jsonl`; then the hand-over entry.
+
+## 2026-11-04: Lane session 26 (02:04 UTC) hand-over: pilot report committed; go/no-go evidence ready for the owner; fit/5 search can lose; check (a) corrects session 24
+
+**Stop point: P3 go/no-go (AUTOPILOT stop 2).** The answer in one line: the rules as written compute GO on non-LLM systems only, and P3 closes only on the owner's decision after reading AG-o transcripts.
+- Evidence (`docs/v2/PILOT.md`, sections "Go/no-go" and "Positive controls"): too easy, B-lib 0% and B-rand 0% recover, B-sparse closes on 23% of out-of-dictionary truths (limit 70%); too hard does not fire (best non-LLM shares B-sym@10F 90 on 10 truths, B-sparse 47, planted 43, B-sym 28).
+- Controls: C1 margin above SE on 20 of 20 truths; C2 18 wins, 2 losses, p 4.768e-06, median 0.0245, CI [0.0148, 0.0306]; C3 median 0.0000 on 10 truths, seed 1. They support only ORACLE against B-lib, planted-hint against B-rand, and B-sym@10F against ORACLE on its subset. No control covers any LLM arm, so no LLM comparison is made.
+- Transcript picks (paths under `.cache/pilot-merged/`): dev-018 s1, dev-019 s1, dev-003 s1, dev-002 s2 (anon), dev-012 s1; the list and rule are in PILOT.md.
+- Caveats: the replay is unfinished (below); C3 reads a declared subset that §6.4 and §2.4 do not name, and its median is 0 because 5 of 10 are exact (worst -0.0086); fit/5's search can miss, and only ORACLE has a rescue (below).
+- Decision needed: the go/no-go itself, after the transcripts. Recommendation: none from the lane beyond the computed line.
+
+**Done.**
+- Merged store `.cache/pilot-merged` (910 cells, one fingerprint 900e66a). `store_check`: 0 cell issues, 1 budget issue, `STORE INCONSISTENT`, exit 1 (explained below; not cleared). `session_check`: 240 found, 0 issues, 12 `void_reclassified` warnings. `hunt_gap` on the merged store: `GATE PASS`, exit 0, 670 scored units, `oracle_underfit` 0 of 60.
+- PILOT.md regenerated from the merged store (analyst) and committed, 4dc2ff5. Report bytes identical on a rerun; 100k resamples give the same text. Red team: **commit with fixes**; every headline number it recomputed matches. Its 4 blocking and 6 fix-now text findings and 2 of its caveats were applied (19 replacements), and the generated sections stay byte-equal to the script's output. Not re-reviewed after the fixes. Its remaining items are in the queue (PILOT.md leftovers).
+- `fits_used` issue explained (LOG 2026-11-04). Mechanism checked against the code by the analyst and the engineer; `THREAD_JOIN_TIMEOUT` 300 checked by me. My first reading (two fits landed) was wrong: the reading of 35 means one did, though which one, and that the second never committed, are inferred. The other two wall-time sessions match by timing only.
+- Check (a) red-teamed: stands with corrections (LOG 2026-11-04). Review scripts copied to `.cache/drafts/fsd-seedlead/pool/review-s26/`. Missing LEDGER row added.
+- T2: slow-tier failure diagnosed (LOG 2026-11-04). `sweep.jsonl`: 376 of 400 cases before the ceiling, exit 0, 1 loss at 1.3249 nats, reproduced by hand and by the red team. The store has a larger miss of its own: ORACLE dev-015 s3, 4.53 nats (0.0024 per event), read from the cell by me, on an `exp` truth with no `Periodic`, so my BIG[0] lead was too narrow. Focused sweep on BIG[0] softplus (`sweep_b0.py`, unit `sci-t2-b0`): 1 loss in the first 21 cases, 0.27 nats; it runs to about 03:34Z, and these are found cases, not a rate.
+- T2 list pinned on local branch `t2-pin` 9fef563 (worktree, not merged, not pushed): seeded generator, the same hash 7d2c35128f8aa7fc from a script, a script with another import, with 300 distinct cases. The pytest context ran but my filter dropped its hash line, so that context is not shown. The 300 cases have not been run, so whether the list passes is unknown.
+- P4 sizing (below).
+
+**P4 sizing (Sonnet measured; Haiku and Opus are still guesses for P4.0 to replace; `.cache/drafts/p3-report/p4_size.py`, design counts P4-PROPOSAL §4).**
+- Non-LLM from pilot means under fit/5: 3,602 s per world × 80 = 80 h; B-sym@10F 40 × 10,815 s = 120 h; F = 80 about 3.6 h and policy arms about 22 h (both assume 2× B-sym's 326 s); scores 1,520 × 132 s = 56 h. About 281 worker-h, so about 5.9 days at the 2 workers the machine allows. The proposal's 34 h assumed 6 workers and fit/4.
+- Sessions: 1,520, or 1,584 Sonnet-equivalents with Haiku 0.7× and Opus 1.5× (guesses). At the pilot's mean 362.7 s (the red team's advice: about 365 s on this shared box, with 264 s, the mean after the overlap, as a floor) that is about 160 h; with the proposal's 1.5× allowance about 240 h, so about 5 days at concurrency 2. LLM calls per session: mean distinct message ids 12.6, 14.7, 16.1 and 17.0 by arm, maximum 48.
+- Together about 6 to 7 days if the two halves do not slow each other, and that is the weak assumption: the sessions early in the pilot, on a loaded machine, ran at median 4.85 times the same cell's later seeds (25 pairs; CPU 2.11 times; contention, seed and truth not separated, and the baseline half at 1 worker was not the main load). Quota under Max is unmeasured.
+
+**Learned.**
+- `turns` is tool_uses + 1, not LLM calls. Distinct message ids have medians 10, 12, 17, 14, so §7.1's calls are about 2.35 times fewer than the turns column.
+- A "derandomised" Hypothesis list is not a fixed list here; a pass on it says less than it looked.
+- Session 24's sd of 10 to 14 came from a pool structure calibrate does not use; the correct spread is about 9.
+
+**Next.**
+1. Replay: read `.cache/replay-900e66a/AG-c.log` and `AG-o.log` (exit lines); run `bash .cache/drafts/p3-report/replay_paragraph.sh`, update the notes' replay paragraph, sort any FAIL by the rule stated there. AG-c wrote nothing from 02:51Z to at least 03:12Z while using CPU: check it is one slow record.
+2. Read `.cache/drafts/t2-drift/sweep_b0.jsonl` and its log. Add the LEDGER rows for the replay and for `sci-t2-b0` when they end.
+3. PILOT.md leftovers (queue): the [draft] scripts, `pilot_report.py`'s three text fixes, test first.
+
+**Decisions for the owner or control room:** (1) P3 go/no-go after the transcripts; (2) check (b), red team and lane recommend yes, about 14 CPU min, needs the token for `ctlA1-boot-r2`, which is the guard bypass you would be approving; (3) fit/5 losses: pin T2 and document, restate the bound under a rule written first, or fit/6; this blocks the p4-deltas slow tier. Evidence: LOG 2026-11-04 (three entries) and PILOT.md's search-miss bullet.
+
+**Addendum to the hand-over (03:22Z).**
+- The stop-point push was attempted and not delivered (`Mobile push not sent (Remote Control inactive)`), so the owner has not been reached by it. The control room should raise the three decisions above.
+- Engineer on `p4-rehearsal` (local, not merged, not pushed): efbd014 (a reading follows the tool layer's commits, not the lab after the cut), 3e191dd (a session with no SDK `result` has no turns or tokens in its reading), 147e0bb (LOG). I read the source diff and reran five affected test files: `50 passed`, exit 0. It also adds a limit of 10 s on the exit of a process that has answered, beyond its brief, which covers the analyst's `process.join()` follow-up. Its fast tier had not finished at this time, so the branch is not yet checked as a whole.
+
+**Second addendum (03:33Z).**
+- **Engineer finished; its checks are partial.** ruff clean, `mypy` no issues in 288 files. No single clean fast-tier tail: the full run hit the engineer's own 1,500 s limit at 66%, and the rest was covered in two reruns. One failure, `tests/nonparam/test_wiener_hopf.py::test_runtime_n2000`, 2.09 s against a 2.0 s limit in code with no diff; my rerun passed in 0.78 s at load about 12, so it is a load effect there. That the `F` in the killed run is this test is inferred. `test_pilot_harness1_cells.py` passed inside my 50-test rerun. The rest of `test_campaign_slow.py` was not run. Not tested: real SDK cancellation and real Docker. A scripted session's reading and detail are byte-identical on 346676a and the fix. Only `fits_used` in one session was wrong in the pilot; the others were exposed, not wrong.
+- **Focused sweep, not final (`sci-t2-b0` ends about 03:34Z):** 3 losses in 106 BIG[0] softplus cases, 0.27, 0.59 and 2.08 nats (Clopper-Pearson 95% 0.6% to 8.1%). This stratum loses more often than the broad sweep's 1 of 376 suggested; it is the hardest grid of four and is not a pilot rate. PILOT.md's stress test used 0.0065 nats per event; a 2.08-nat loss may exceed that, so a next red-team pass should rerun the stress test with the largest per-event miss found. This strengthens decision (3).

@@ -1,0 +1,30 @@
+control ctlA1  status preregistered
+result 0 scored
+  controls_sha256: "c08952898feee2e16f4e157d9a35b1d88799b72f3336abdc38dad3d33488d876"
+  criteria_sha256: "963d14959d746242adb82ebc21350b0a028482599dd8b3de9cf348ea71386b41"
+  d0_commit: "c0d1b8f123fde746e9cf8497b2c9a919a479a4a2"
+  freeze_chain: [{"freeze": "84055094181dd1bdbfa09fa195f0d6979c5e485c", "rows": ["fsd-controls freeze 84055094181dd1bdbfa09fa195f0d6979c5e485c ceiling 7.6 CPU h"]}]
+  freeze_commit: "84055094181dd1bdbfa09fa195f0d6979c5e485c"
+  h1: "[false,false,true]"
+  h2: {"branch_deletion": "0", "force_push": "0"}
+  numpy: "2.5.1"
+  o: "c6baa21a3b8a0b0b25865a938bdab3f13e4e4808"
+  other_rows: ["fsd-controls ceiling 12.0 CPU h"]
+  runs_sha256: "772303dcc843a4c7d6d47a69f036ca28e535502e0c31b0b8a680082185352e31"
+  scipy: "1.18.0"
+  status_commits: [{"commit": "40598b2057f5d3ba45543073c52bd8e4c84d8263", "descends_from_F": true}, {"commit": "c0d1b8f123fde746e9cf8497b2c9a919a479a4a2", "descends_from_F": true}]
+  uv_lock_sha256: "93dcfa3e5ef4d7cfa72725e83227b6b6e4b1af7d01230c7a94c32d3e3a133396"
+  worktree_head: "bff61ecba3daed876e55896e329000704fb9626b"
+rung 0 R=16 shortfall: p1=True p2=True clause99=True h=0.9844352678677832 pass_ii=0.8501509851199556 pass_iii=0.9965885757829906 D*0=['mark_gap_correlation[sign]', 'rate_after_mark_slope[sign]']
+rung 1 unbuildable: p1=False p2=True clause99=True h=0.9824479125947682 pass_ii=0.9160295347687959 pass_iii=0.9985421167900015 D*0=['mark_gap_correlation[sign]', 'rate_after_mark_slope[sign]']
+rung 2 passes: p1=True p2=True clause99=True h=0.9965115428258395 pass_ii=0.9999977517174511 pass_iii=0.999876262239544 D*0=['mark_gap_correlation[sign]']
+tested rung 2
+K0: pass=False (i) 12/15 (ii) 0/120 (iii) p=1 passed=False
+K1: pass=False (i) 0/15 (ii) 120/120 (iii) p=3.052e-05 passed=True
+K2z: pass=False (i) 0/15 (ii) 36/120 (iii) p=0.0004883 passed=True
+K3a: pass=False (i) 12/15 (ii) 78/120 (iii) p=0.03516 passed=True
+K3h: pass=False (i) 12/15 (ii) 78/120 (iii) p=0.03516 passed=True
+K4: pass=False (i) 12/15 (ii) 78/120 (iii) p=0.03516 passed=True
+K5: pass=False (i) 12/15 (ii) 78/120 (iii) p=0.03516 passed=True
+P1 breaches by seed: {}
+determinism: {"design": 1, "mismatches": [], "ok": true, "runs": 64, "seed": 101}

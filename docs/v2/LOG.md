@@ -1977,3 +1977,7 @@ INBOX e7c6431 replaces aa83c36, whose figures were wrong. Before any new search:
 ## 2026-11-04: PILOT.md's report wording: the verdict is labelled computed, and C3 counts what it reads
 
 `pilot_report.py` now labels every computed outcome as the rules' output and not the decision (PENDING is unchanged), and C3's line counts the truths it reads by `analysis.verdict`'s own rule. The B-sparse sentence is dropped whole, its advice included, because that advice had no support once the equivalence claim went. Text only: the regenerated output differs in those three lines, and no number moves.
+
+## 2026-11-04: The pilot miss check's pre-registration is not ready and is not frozen
+
+One red-team round on 128f236: not ready, seven blocking findings, report saved verbatim. The draft's sizing script evaluated the generating point into the profile the reference search takes its maximum over (`t2_ref.py` line 26, confirmed by the lead), so "caught at the first start" and "wide basins" were artefacts; blind, one known miss is reached by about 1 start in 77. The other blocking items: the pilot-scale control can pass without R1, `GO_SURVIVES` cannot tell nothing-to-find from could-not-find, the freeze leaves a tuning window and an unpinned split, the tolerance can be infinite, the CPU ceiling holds per unit and not per run, and the statements of prior exposure are inaccurate (a red-team round had already evaluated dev-015 s3). No pilot unit has been searched by this check. Blocking findings get fixed, so no run starts until a second round passes.

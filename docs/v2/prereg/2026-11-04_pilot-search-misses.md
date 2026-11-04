@@ -1,6 +1,6 @@
 # Pre-registration: search misses on the pilot's own units (fit/5, P3)
 
-**Status: DRAFT, not frozen.** Written in lane session 27 under INBOX 2026-11-04 08:30 UTC (control room, e7c6431). Freeze commit: `F` (set at the freeze; every `F` below means that commit). One red-team round comes before the freeze.
+**Status: DRAFT, not frozen. Red team 2026-11-04: NOT READY, seven blocking findings (`docs/v2/redteam/2026-11-04_pilot-search-misses.md`); statements below on R1's catch and on prior exposure are known wrong until fixed.** Written in lane session 27 under INBOX 2026-11-04 08:30 UTC (control room, e7c6431). Freeze commit: `F` (set at the freeze; every `F` below means that commit). One red-team round comes before the freeze.
 
 **What has been touched so far.** No search, refit or held-out evaluation has been run on any pilot unit. The census below read structures, statuses, grid sizes and recorded timing, and printed aggregates only. No score, no `oracle_*` field and no per-unit line was printed. Feasibility was measured on T2 cases and on synthetic logs, neither of which is a pilot unit.
 

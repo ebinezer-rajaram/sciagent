@@ -25,3 +25,4 @@ date,item,provider,hours,usd,stage
 2026-11-04,T2 focused sweep on BIG[0] softplus (115 of 400 cases; sci-t2-b0; one process; 03:16Z-03:34Z; 16 min 45 s CPU; ended at its ceiling),dm-devbox,0.28,0,p3
 2026-11-04,S3 copy of the session 27 review scripts (28 objects; sciagent/p3-linux/report-900e66a/review-s27/),aws-s3,0,0,p3
 2026-11-04,T2 pinned list (300 cases; one process; 07:05Z-07:49Z; 2133 CPU s),dm-devbox,0.59,0,p3
+2026-11-04,Sizing runs for the pilot miss pre-registration (T2 and synthetic logs only; no pilot unit; about 0.5 CPU h from process lifetimes),dm-devbox,0.5,0,p3

@@ -9,7 +9,7 @@
 - **The withdrawn stress test** (session 27) computed how far each §7.1 gate could move, from stored readings, so the lane knows those margins (LOG 2026-11-04). Round 2's review read the same census as round 1, and committed text carrying stored values.
 - **T2 and synthetic logs** carry the feasibility numbers; neither is a pilot unit. The six T2 cases have been run several times, by the draft and by the red team, so nothing below calls them independent.
 
-**Sources of numbers in this draft** (dm-devbox, 2026-11-04; uncommitted): `.cache/drafts/prereg-s27/` `count.py` to `count4.py` (census: `OPENBLAS_NUM_THREADS=1 nice -n 10 .venv/bin/python <script>`), `t4_time.py` (identity timing, synthetic log), and `.cache/drafts/prereg-s28/count5.py` (R1-only sweeps), `.cache/drafts/prereg-s28/spike/` (synthetic strata, memory and CPU per point at about 2,300 events; `c.table`, `d.table`). The per-start rates are round 1's blind rerun (`/tmp/rt-s27/blind.py`, `basin.py`, copied to `.cache/drafts/prereg-s27/redteam-s27/`), as printed in the red-team report. `t2_ref.py` is **not** a source for catch rates: it put the generating point in the profile (round 1, finding 1).
+**Sources of numbers in this draft** (dm-devbox, 2026-11-04; uncommitted): `.cache/drafts/prereg-s27/` `count.py` to `count4.py` (census: `OPENBLAS_NUM_THREADS=1 nice -n 10 .venv/bin/python <script>`), `t4_time.py` (identity timing, synthetic log), and `.cache/drafts/prereg-s28/count5.py` and `count6.py` (R1-only sweeps), `m.out` and `cost3.py` (points per start, capped cost), `.cache/drafts/prereg-s28/spike/` (synthetic strata, memory and CPU per point at about 2,300 events; `c.table`, `d.table`). The per-start rates are round 1's blind rerun (`/tmp/rt-s27/blind.py`, `basin.py`, copied to `.cache/drafts/prereg-s27/redteam-s27/`), as printed in the red-team report. `t2_ref.py` is **not** a source for catch rates: it put the generating point in the profile (round 1, finding 1).
 
 ## 1. Question and falsifiable hypotheses
 
@@ -53,10 +53,10 @@ One gap: `score` is the inner solve's objective, so an uncertified solve could u
 **Fixed and deterministic.** For a fit with structure s on its observational log:
 
 - **R0, the stored fit.** `fit(s, obs, channels, config=FitConfig())`, the public call the pilot made. For ORACLE, `Oracle(...).run(data)`, so the kept fit is the stored one (search, or truth-ψ when that won). The stored cells keep no ψ or θ, so this rerun is the only way to get them.
-- **R1, multi-start.** K = 48 starts drawn uniformly from the grid, each followed by fit/5's own `_ascend` with fit/5's own blocks, sharing one **fresh** `_Profile`, so a point is solved once. R1's profile starts empty and holds only points R1 itself reached: not R0's point, not fit/5's path, not ORACLE's truth ψ. At most 16,000 new inner solves per fit: the cap is deterministic, and a fit that reaches it is flagged `capped`.
+- **R1, multi-start.** Up to K = 48 starts drawn uniformly from the grid, each followed by fit/5's own `_ascend` with fit/5's own blocks, sharing one **fresh** `_Profile`, so a point is solved once. R1's profile starts empty and holds only points R1 itself reached: not R0's point, not fit/5's path, not ORACLE's truth ψ. At most 8,000 new inner solves per fit on exp and softplus and 3,000 on identity: the caps are deterministic, a fit that reaches one is flagged `capped`, and its number of completed starts is recorded.
 - **R2, exhaustive.** If G ≤ 14,400, every remaining point of the product grid, on the same profile, after R1's result is written to the record. Otherwise nothing.
 
-**K and the cap, against the measured rates.** Round 1's blind rates per start on the six T2 cases are 9/30, 47/96, 4/56, 4/40, 1/77 and 33/51. K = 48 gives a chance of no catch of 0.029 at 4/56, 0.006 at 4/40 and 0.53 at 1/77, against 0.093, 0.034 and 0.66 at K = 32. K of 229 would be needed for 5% at 1/77, and that is unaffordable (section 8). So R1 **is not** a search that reliably finds a miss with a basin that small, and no reading of this check may say so. K = 48 was taken as the most the CPU ceiling carries with tier 1 still inside it at the misspecified identity rate. The cap is set so it does not bind on the expected cost: at 0.782 of a sweep per start, the largest sweep (376) gives 14,114 points.
+**K and the caps, against the measured rates.** Round 1's blind rates per start on the six T2 cases are 9/30, 47/96, 4/56, 4/40, 1/77 and 33/51. 48 starts give a chance of no catch of 0.029 at 4/56, 0.006 at 4/40 and 0.53 at 1/77, against 0.093, 0.034 and 0.66 at 32 starts. 229 starts would be needed for 5% at 1/77, and that is unaffordable (section 8). So R1 **is not** a search that reliably finds a miss with a basin that small, and no reading of this check may say so. **The budget is points, not starts.** The caps were set so that controls, group C and tier 1 stay under the 78-hour stop at the rates of section 8 however many sweeps a start costs, which round 1 and 2 showed cannot be read off T2. At the measured 1.1 sweeps per start, 52 of 107 exp and softplus and 22 of 24 identity tier 1 searched fits reach their cap. Their completed starts would then be 35, 48 and 48 at the quartiles on exp and softplus (fewest 19), and 18, 28 and 34 on identity (fewest 9). The identity cap is the tighter because identity's rate may be four times higher and it has the widest cost range. So on many fits R1 is well short of 48 starts, and the record gives the number for each fit.
 
 **Seeding.** `np.random.default_rng(np.random.SeedSequence([20261104, h]))`, where `h` is the first 16 hex digits, as an integer, of `sha256(c)`. For a pilot fit, `c = f"{truth}|{seed}|{text}"`. For a T2 case, `c = f"t2|{which}|{link}|{seed}"`. For a hunt case (section 2.9), `c = f"hunt|{stratum}|{i}"`. No Python `hash`, no wall time, no dependence on worker count or order. For S2, `c = f"s2|{truth}|{seed}|{text}"`. This stream has not been run on anything. It runs once, at the launch, and no other stream decides any control. The script's slow tests ran T2 cases 1 and 2 under a test root, 20261107, before the freeze, to check the code; both were caught, nothing was chosen from that run, and it is not repeated on other cases.
 
@@ -69,7 +69,7 @@ One gap: `score` is the inner solve's objective, so an uncertified solve could u
 **Two evidence classes, always reported apart.** Every fit that is checked is in exactly one.
 
 - **Exact.** Exhaustive by construction (G ≤ 512, `certified` = 1) or R2 complete (G ≤ 14,400). No certified grid point beats the stored fit beyond the tolerance, unless the fit is listed as a miss. This is exact about the certified points of the grid and silent on uncertified ones, whose number is reported per fit. That matters on the identity link: on a misspecified synthetic log 14 of 164 random points were uncertified (`t5_time.py`).
-- **Searched, unvalidated.** R1 only (G > 14,400, 140 of 255 fits, 131 of 196 in tier 1; or `capped` with R2 not finished). The stored fit was not beaten beyond tolerance by the best of 48 seeded ascents. This proves nothing. R1's catch rate is known only for the controls of section 2.9, and 118 of the 196 tier 1 fits have grids larger than any T2 or pilot control. "Searched" is what the label says for these, whatever the controls do.
+- **Searched, unvalidated.** R1 only (G > 14,400, 140 of 255 fits, 131 of 196 in tier 1; or `capped` with R2 not finished). The stored fit was not beaten beyond tolerance by the best of up to 48 seeded ascents, within the point cap. This proves nothing. R1's catch rate is known only for the controls of section 2.9, and 118 of the 196 tier 1 fits have grids larger than any T2 or pilot control. "Searched" is what the label says for these, whatever the controls do.
 
 So M is a lower bound on the true number of misses and every statement about reach is "at least".
 
@@ -156,7 +156,7 @@ The controls run before any other pilot unit, in the order A, D, C, B, so that g
 | C | Hunt cases (below) | The generating point's value, on a separate profile | Identity link, and grids of 24,000 and 3,456,000 points |
 | D | T2 (0, softplus, 103648458), R2 alone on an empty profile, no R1 | Same as A | Enumeration reaches the known value. Group D is the one control that does not test R1 |
 
-**Pass rule for H1, fixed now.** H1 stands if at least 5 of the 6 group A cases are caught, group B is caught, and group D is caught. On round 1's rates, group A passes with probability 0.98 at K = 48, and all six with 0.45, so "all must pass" would mostly measure the 1/77 case. H1 as a whole depends on group B, a single unit with a small sweep (60, against R1-only quartiles of 90, 144 and 188) whose rate is unknown: from 0.46 if it is like the 1/77 case to 0.95 if it is like 4/56. So H1 may fail on one unit, and that is accepted: it is the only pilot-scale case. Group C has no pass threshold, because how many cases it yields is not known: its catch count is reported, per stratum, as a stated rate with its denominator, and a stratum with no found loss says "no known miss, no control".
+**Pass rule for H1, fixed now.** H1 stands if at least 5 of the 6 group A cases are caught, group B is caught, and group D is caught. The cap stops T2's G = 14,400 cases near 43 starts. On round 1's rates, group A then passes with probability 0.97, and all six with 0.41, so "all must pass" would mostly measure the 1/77 case. H1 as a whole depends on group B, a single unit with a small sweep (60, against R1-only quartiles of 90, 144 and 188) whose rate is unknown: from 0.45 if it is like the 1/77 case to 0.94 if it is like 4/56. So H1 may fail on one unit, and that is accepted: it is the only pilot-scale case. Group C has no pass threshold, because how many cases it yields is not known: its catch count is reported, per stratum, as a stated rate with its denominator, and a stratum with no found loss says "no known miss, no control".
 
 **Nothing here is an independent validation.** All six group A cases informed the design. What the frozen run adds is the fixed stream, group B, whose R1 result nobody has seen, and group C. No Clopper-Pearson figure is quoted for group A.
 
@@ -272,7 +272,7 @@ What the numbers can and cannot support:
 
 ## 8. Cost ceiling and wall clock
 
-**Ceiling: 84 CPU hours in total over all units of this freeze, $0.** No LLM call, no usage credit, no instance beyond the always-on dm-devbox; the S3 copy is a few MB. Raised from the draft's 72 because the honest cost at K = 48 and 0.782 of a sweep per start needs it for tier 1 at the misspecified rate; it costs no money, only machine time.
+**Ceiling: 84 CPU hours in total over all units of this freeze, $0.** No LLM call, no usage credit, no instance beyond the always-on dm-devbox; the S3 copy is a few MB. Raised from the first draft's 72 so that tier 1 fits at the misspecified identity rate; it costs no money, only machine time.
 
 How it holds. The kernel's count is the record: the driver reads `usage_usec` from the unit's `cpu.stat` once a minute, adds it to the total of earlier units kept in `cpu.json` in the output directory (written and fsynced at each reading), and at **78 CPU hours** stops dispatching and lets jobs in flight run. Each of the at most 2 jobs in flight is bound by its own 3 CPU hour limit, so the total cannot pass 78 + 2 × 3 = 84 by more than the one-minute polling allows, about 2 CPU minutes, even if the driver hangs. A resume reads `cpu.json` and refuses at or above 78. The unit's `RuntimeMaxSec` is a backstop on time, not on CPU: 60 hours in total, and a resume is launched with 60 hours less the time already spent (the script prints the launch line). `--finalise` needs no live driver: it reads `journal.jsonl`, which is appended and fsynced per finished job, and the stored table (read-only, with `--split` and `--store`, under the same guards), then writes the sorted `units.jsonl` and the label. It runs on the driver's clean stop, and by hand after SIGKILL or a wall limit, and it uses under a minute of CPU.
 
@@ -299,32 +299,32 @@ systemd-run --user --unit=sci-search-misses --nice=10 -p CPUQuota=200% -p Runtim
 | Sum of one sweep over fits (points) | 5,413 + 16,607 + 6,600 = 28,620 | `count4.py` |
 | Grid points of fits with G ≤ 14,400, tier 1 | exp and softplus 179,148, identity 147,636 | `count5.py` |
 | Same, all fits | 239,898 and 195,876, of 435,774 | `count5.py` |
-| New points per R1 start | 0.782 of a sweep at most on the six T2 cases (6,006 new points on (0, softplus, 2006407976), `blind.out`), so 37.5 sweeps at K = 48. Round 1 gave the mean of the six as near 0.6; the upper value is used | round 1 |
+| New points per R1 start, fresh profile | 0.34 to 1.10 sweeps per start over 48 starts: seven synthetic cases, G from 24,000 to 3,456,000, horizon 300, one log per shape, root 20261199. Taken as 1.1. It runs higher over few starts (1.65 to 1.86 at 9 starts on `LARGE`) and falls as starts overlap. Pilot logs are longer and were not measured | `.cache/drafts/prereg-s28/m.out`, round 2's `ascent.py` |
 | CPU per point, exp and softplus | 0.041 to 0.044 s in R1, 0.055 to 0.064 s over a whole fit/5, at 1,395 to 1,420 events. Taken as 0.123 s, measured on a 2,318-event synthetic log over 4,043 points, near the largest ORACLE log in the census (2,327 events) | `t2_ref.py`, horizon 2,000; spike `d.table`; round 1 census |
 | CPU per point, identity, well specified | 0.039 s at 2,269 events over 2,052 points; 0.025 s at 1,865 events. Taken as 0.04 s | spike `d.table`, `t4_time.py` |
 | CPU per point, identity, misspecified | 0.313 s mean at 1,420 events, Clarabel on every point, so 0.512 s at 2,327 | `t5_time.py` |
 | R0, CPU per fit | 55.3 s, B-rand's recorded mean over 40 fits, scoring included | `.cache/pilot-merged/timing.jsonl` |
 
-**Expected cost.** On fits with G ≤ 14,400, R1's points are part of the grid, so R1 and R2 together cost at most G. Only the R1-only fits add R1 points: 37.5 × sweeps.
+**Expected cost.** On fits with G ≤ 14,400, R1's points are part of the grid, so R1 and R2 together cost at most G. Only the R1-only fits add R1 points: `min(1.1 × 48 × sweep, cap)` for each fit, summed (`.cache/drafts/prereg-s28/cost3.py`, from `count6.py`): 696,368 on exp and softplus and 71,702 on identity in tier 1.
 
 | Part | Arithmetic | CPU hours |
 |---|---|---:|
 | Controls | Groups A and D at horizon 300, B on its own log, under half an hour | 0.5 |
 | Group C | Capped. Spike: about 5 to 33 s per case at median, so 600 cases near 3 hours, plus R1 on found losses at about 10,200 points each | at most 6 |
-| Tier 1, exp and softplus | (613,263 + 179,148) points × 0.123 s | 27.1 |
-| Tier 1, identity | (108,104 + 147,636) points × 0.04 to 0.512 s | 2.8 to 36.4 |
+| Tier 1, exp and softplus | (696,368 + 179,148) points × 0.123 s | 29.9 |
+| Tier 1, identity | (71,702 + 147,636) points × 0.04 to 0.512 s | 2.4 to 31.2 |
 | Tier 1, R0 | 196 × 55.3 s | 3.0 |
-| **Tier 1 (label known)** | | **32.9 to 66.5** |
-| S2 | 51 rows × (3 × 55.3 s + 1,400 points × (0.123 + 0.123 + 0.04 to 0.512 s)) | 8.0 to 17.4 |
-| Tier 2 | all fits (37.6 to 78.2 hours) less tier 1 | 4.7 to 11.7 |
-| **All** | | **50 to 102** |
+| **Tier 1 (provisional label)** | | **35.4 to 64.1** |
+| S2 | 51 rows × (3 × 55.3 s + 2,000 points × (0.123 + 0.123 + 0.04 to 0.512 s)), at S2's cap | 10.5 to 23.8 |
+| Tier 2 | all fits (40.4 to 75.9 hours) less tier 1 | 5.0 to 11.8 |
+| **All** | | **55 to 106** |
 
-The width is the identity link: whether the 73 submitted identity fits behave like ORACLE's or like a badly misspecified log is not known, and it could not be measured without running on pilot units. The high end of "all" is above the 78-hour stop, so S2 and tier 2 can be cut short, and the report says by how much. Tier 1 is not reduced: controls, group C and tier 1 come to 73 hours at most, under 78, even at the misspecified rate.
+The width is the identity link: whether the 73 submitted identity fits behave like ORACLE's or like a badly misspecified log is not known, and it could not be measured without running on pilot units. The high end of "all" is above the 78-hour stop, so S2 and tier 2 can be cut short, and the report says by how much. Tier 1 is protected by the caps: with every searched fit at its cap, whatever a start costs, controls, group C and tier 1 come to (107 × 8,000 + 179,148) × 0.123 s + (24 × 3,000 + 147,636) × 0.512 s + 3.0 + 6.5 = 76.1 CPU hours, under 78. That holds at these rates, and the rates are not bounds: 0.123 s comes from a 4-column structure, and 106 of the 131 tier 1 searched fits have more columns; on the other side, recorded ORACLE units peak at 92.6 s. If the rates are worse, the 78-hour stop falls inside tier 1 and the label is `INCOMPLETE`, by rule.
 
 
-**Worst case with nothing to stop it.** Every R1-only fit reaching its cap and every fit at the top rate: (115 × 16,000 + 239,898) × 0.123 s + (25 × 16,000 + 195,876) × 0.512 s + 3.9 h, about 71 + 85 + 4 = 160 CPU hours, before S2. No measured case came near that, but it is why the ceiling is enforced and not assumed. At the ceiling the label is `INCOMPLETE`.
+**Worst case with nothing to stop it.** Every R1-only fit at its cap and identity at the top rate: (115 × 8,000 + 239,898) × 0.123 s + (25 × 3,000 + 195,876) × 0.512 s + 3.9 h, about 40 + 39 + 4 = 82 CPU hours, before S2. The ceiling is enforced and not assumed, and at the stop the label follows section 5.
 
-**Wall clock.** The one recent reference, the pinned T2 run, got 2,133 CPU seconds in about 2,640 s on this machine under load, so 0.81 of a core. With 2 workers that is 1.62 cores: tier 1 in 20 to 41 hours and the 78-hour stop at 48 hours, inside the 60-hour limit. With one worker for the whole run, 60 hours gives 49 CPU hours, which would leave the top of the tier 1 range `INCOMPLETE`; that is a further reason to launch only when the gate is open. Controls take under half an hour, and group C at most about 4 hours.
+**Wall clock.** The one recent reference, the pinned T2 run, got 2,133 CPU seconds in about 2,640 s on this machine under load, so 0.81 of a core. With 2 workers that is 1.62 cores: tier 1 in 22 to 40 hours and the 78-hour stop at 48 hours, inside the 60-hour limit. With one worker for the whole run, 60 hours gives 49 CPU hours, which would leave the top of the tier 1 range `INCOMPLETE`; that is a further reason to launch only when the gate is open. Controls take under half an hour, and group C at most about 4 hours.
 
 ## 9. Early-stop conditions
 

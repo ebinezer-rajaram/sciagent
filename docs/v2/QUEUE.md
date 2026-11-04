@@ -302,13 +302,14 @@ Each item says when it is done. Move finished items to the bottom section after 
   known losses as documented failures, restate the bound under a rule written first, or fit/6 (SPEC-level; would not
   apply to the pilot). Found so far: 3 of the first 106 cases of a focused BIG[0] softplus sweep (0.27, 0.59, 2.08 nats), and ORACLE dev-015 s3 in the pilot store
   (4.53 nats, `exp`, no `Periodic`), so the miss is not confined to BIG[0]. `t2-pin` 9fef563 holds the pinned list, not merged.
-  2026-11-04 (session 27): focused sweep final, 3 of 115. Pinned list: 1 loss in 300, 9.0007 nats on 318 events at (2, exp, 1499614403), reproduced. The stress test is withdrawn (LOG 2026-11-04). The control room chose pin and document on figures that were wrong; correction sent, its answer is awaited, so `t2-pin` is not merged into v2 until then.
+  2026-11-04 (session 27): focused sweep final, 3 of 115. Pinned list: 1 loss in 300, 9.0007 nats on 318 events at (2, exp, 1499614403), reproduced. The stress test is withdrawn (LOG 2026-11-04). The control room's pin-and-document decision rested on wrong figures and is withdrawn (INBOX e7c6431): restate the bound under a rule written first. `t2-pin` stays off v2.
 - [ ] **PILOT.md leftovers** (red team, session 26). Finish the replay paragraph when the units exit (`replay_paragraph.sh`, sort any FAIL by the
   notes' rule). Commit the [draft] scripts lint-clean or drop their sentences (S3 `sciagent/p3-linux/report-900e66a/`; commit wall_time_audit, sizing,
   independent_recompute with truths.json, sandbox_nondeterminism; drop dispatch_order; five figures have no printing script). Fix `pilot_report.py`, test first:
   the C3 line's "median over kept truths" (line 746), the B-sparse sentence (line 765), and label "Verdict: GO" as computed.
-- [ ] **Measure search misses on pilot units (session 27; rule first).** Only dev-015 s3 has a known size. Exploratory and CPU only: write the rule first, then measure in-sample and held-out misses on the units §7.1 turns on (26 of the 30 out-of-dictionary B-sparse units are on the coordinate path), read-only on the store, with a stated ceiling. This replaces the withdrawn stress test as the way to say how far misses reach. Red-team the rule; tell the control room before it could bear on the go/no-go.
+- [~] **Measure search misses on every pilot unit (control room, INBOX e7c6431; rule first).** Only dev-015 s3 has a known size. Pre-register (`docs/v2/prereg/2026-11-04_pilot-search-misses.md`), one red-team round, freeze, then a CPU-only check over every pilot unit: how many carry a miss, their held-out effect, and whether the computed GO survives. Until then the go/no-go is not put to the owner as final.
 - [!] **P3 go/no-go read: stop point.** SPEC §7.1 under the re-read rules of P4-PROPOSAL §2.4;
+  blocked also on the item above (INBOX e7c6431);
   the owner reads a few AG-o transcripts in full. Prepare the evidence and transcript picks,
   push the owner, wait. Done when the owner has decided.
 

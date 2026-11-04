@@ -82,12 +82,13 @@ entry, and marks it handled with the date and what was done. Newest last.
 
 ## 2026-11-04, 08:00 UTC (control room)
 
-- [ ] **fit/5 search losses: pin T2 and document the known losses.** Three losses in 115 BIG[0]
+- [x] **fit/5 search losses: pin T2 and document the known losses.** Three losses in 115 BIG[0]
   softplus cases, worst 0.0114 nats per event, below the 0.0227 that would flip too-easy and moving
   no section 7.1 outcome. Report them as a found stratum (not a rate) in the method note; no restated
   bound, no fit/6 for the pilot. Unblocks the p4-deltas slow tier. Decided by the control room under
   the owner's standing delegation; record it as delegated.
   Lane note 2026-11-04 (session 27): left open. Its figures came from the lane unreviewed and were wrong (a 0.0283 loss found, and the comparison was invalid; LOG 2026-11-04). Correction sent to the control room; `t2-pin` waits for its answer.
+  Closed: withdrawn by the entry below.
 - [x] **P3 go/no-go and check (b) of the FSD seed lead: relayed to the owner.** The go/no-go needs the
   owner to read the five AG-o transcripts; check (b) needs the owner's own approval of the
   ctlA1-boot-r2 bypass. Neither is decided here. Carry on with unblocked items.
@@ -104,3 +105,4 @@ entry, and marks it handled with the date and what was done. Newest last.
   effect, and say whether the computed GO survives. Until then the go/no-go is not put to the owner as
   final. fit/6 stays a SPEC-level item for after the pilot. The T2 pin stays off v2. Decided by the
   control room under the owner's standing delegation; record it as delegated.
+  Lane note 2026-11-04 (session 27): in hand; pre-registration being drafted (`docs/v2/prereg/2026-11-04_pilot-search-misses.md`). No search on a pilot unit before the freeze.

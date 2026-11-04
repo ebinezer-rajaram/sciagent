@@ -20,3 +20,5 @@ date,item,provider,hours,usd,stage
 2026-11-01,P3 full pilot LLM half at 900e66a (240 units scored under the Max subscription; concurrency 1; 2026-10-29T12:09Z-2026-10-30T12:54Z elapsed 24.8 h),dm-devbox,24.8,0,p3
 2026-11-01,S3 copy of the full pilot stores and logs (1164 store objects + 4 logs; 49 MB; sciagent/p3-linux/pilot-900e66a/ pilot-llm-900e66a/ logs-900e66a/),aws-s3,0,0,p3
 2026-11-04,Seed-lead check (a) of 2026-10-29 (28672 runs at 0.142 CPU s per run as the red team measured; sci-fsd-poollaw; ceiling 3.0 CPU h; row added late on the red team's finding),dm-devbox,1.13,0,p4
+2026-11-04,S3 copy of the P3 report scripts and red-team scripts (24 objects; sciagent/p3-linux/report-900e66a/),aws-s3,0,0,p3
+2026-11-04,T2 seeded sweep (376 of 400 cases; sci-t2-sweep; one process; ceiling 45 min wall; ended at the ceiling),dm-devbox,0.75,0,p3

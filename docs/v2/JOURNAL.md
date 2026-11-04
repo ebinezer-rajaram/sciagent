@@ -2276,3 +2276,38 @@ The weekly usage reset has passed and the INBOX has no open entry. This is a pro
   no submission.
 
 **Next.** Read the helpers' reports and check them; red team on PILOT.md; read `sweep.jsonl`; then the hand-over entry.
+
+## 2026-11-04: Lane session 26 (02:04 UTC) hand-over: pilot report committed; go/no-go evidence ready for the owner; fit/5 search can lose; check (a) corrects session 24
+
+**Stop point: P3 go/no-go (AUTOPILOT stop 2).** The answer in one line: the rules as written compute GO on non-LLM systems only, and P3 closes only on the owner's decision after reading AG-o transcripts.
+- Evidence (`docs/v2/PILOT.md`, sections "Go/no-go" and "Positive controls"): too easy, B-lib 0% and B-rand 0% recover, B-sparse closes on 23% of out-of-dictionary truths (limit 70%); too hard does not fire (best non-LLM shares B-sym@10F 90 on 10 truths, B-sparse 47, planted 43, B-sym 28).
+- Controls: C1 margin above SE on 20 of 20 truths; C2 18 wins, 2 losses, p 4.768e-06, median 0.0245, CI [0.0148, 0.0306]; C3 median 0.0000 on 10 truths, seed 1. They support only ORACLE against B-lib, planted-hint against B-rand, and B-sym@10F against ORACLE on its subset. No control covers any LLM arm, so no LLM comparison is made.
+- Transcript picks (paths under `.cache/pilot-merged/`): dev-018 s1, dev-019 s1, dev-003 s1, dev-002 s2 (anon), dev-012 s1; the list and rule are in PILOT.md.
+- Caveats: the replay is unfinished (below); C3 reads a declared subset that §6.4 and §2.4 do not name, and its median is 0 because 5 of 10 are exact (worst -0.0086); fit/5's search can miss, and only ORACLE has a rescue (below).
+- Decision needed: the go/no-go itself, after the transcripts. Recommendation: none from the lane beyond the computed line.
+
+**Done.**
+- Merged store `.cache/pilot-merged` (910 cells, one fingerprint 900e66a). `store_check`: 0 cell issues, 1 budget issue, `STORE INCONSISTENT`, exit 1 (explained below; not cleared). `session_check`: 240 found, 0 issues, 12 `void_reclassified` warnings. `hunt_gap` on the merged store: `GATE PASS`, exit 0, 670 scored units, `oracle_underfit` 0 of 60.
+- PILOT.md regenerated from the merged store (analyst) and committed, 4dc2ff5. Report bytes identical on a rerun; 100k resamples give the same text. Red team: **commit with fixes**; every headline number it recomputed matches. Its 4 blocking and 6 fix-now text findings and 2 of its caveats were applied (19 replacements), and the generated sections stay byte-equal to the script's output. Not re-reviewed after the fixes. Its remaining items are in the queue (PILOT.md leftovers).
+- `fits_used` issue explained (LOG 2026-11-04). Mechanism checked against the code by the analyst and the engineer; `THREAD_JOIN_TIMEOUT` 300 checked by me. My first reading (two fits landed) was wrong: the reading of 35 means one did, though which one, and that the second never committed, are inferred. The other two wall-time sessions match by timing only.
+- Check (a) red-teamed: stands with corrections (LOG 2026-11-04). Review scripts copied to `.cache/drafts/fsd-seedlead/pool/review-s26/`. Missing LEDGER row added.
+- T2: slow-tier failure diagnosed (LOG 2026-11-04). `sweep.jsonl`: 376 of 400 cases before the ceiling, exit 0, 1 loss at 1.3249 nats, reproduced by hand and by the red team. The store has a larger miss of its own: ORACLE dev-015 s3, 4.53 nats (0.0024 per event), read from the cell by me, on an `exp` truth with no `Periodic`, so my BIG[0] lead was too narrow. Focused sweep on BIG[0] softplus (`sweep_b0.py`, unit `sci-t2-b0`): 1 loss in the first 21 cases, 0.27 nats; it runs to about 03:34Z, and these are found cases, not a rate.
+- T2 list pinned on local branch `t2-pin` 9fef563 (worktree, not merged, not pushed): seeded generator, the same hash 7d2c35128f8aa7fc from a script, a script with another import, with 300 distinct cases. The pytest context ran but my filter dropped its hash line, so that context is not shown. The 300 cases have not been run, so whether the list passes is unknown.
+- P4 sizing (below).
+
+**P4 sizing (Sonnet measured; Haiku and Opus are still guesses for P4.0 to replace; `.cache/drafts/p3-report/p4_size.py`, design counts P4-PROPOSAL §4).**
+- Non-LLM from pilot means under fit/5: 3,602 s per world × 80 = 80 h; B-sym@10F 40 × 10,815 s = 120 h; F = 80 about 3.6 h and policy arms about 22 h (both assume 2× B-sym's 326 s); scores 1,520 × 132 s = 56 h. About 281 worker-h, so about 5.9 days at the 2 workers the machine allows. The proposal's 34 h assumed 6 workers and fit/4.
+- Sessions: 1,520, or 1,584 Sonnet-equivalents with Haiku 0.7× and Opus 1.5× (guesses). At the pilot's mean 362.7 s (the red team's advice: about 365 s on this shared box, with 264 s, the mean after the overlap, as a floor) that is about 160 h; with the proposal's 1.5× allowance about 240 h, so about 5 days at concurrency 2. LLM calls per session: mean distinct message ids 12.6, 14.7, 16.1 and 17.0 by arm, maximum 48.
+- Together about 6 to 7 days if the two halves do not slow each other, and that is the weak assumption: the sessions early in the pilot, on a loaded machine, ran at median 4.85 times the same cell's later seeds (25 pairs; CPU 2.11 times; contention, seed and truth not separated, and the baseline half at 1 worker was not the main load). Quota under Max is unmeasured.
+
+**Learned.**
+- `turns` is tool_uses + 1, not LLM calls. Distinct message ids have medians 10, 12, 17, 14, so §7.1's calls are about 2.35 times fewer than the turns column.
+- A "derandomised" Hypothesis list is not a fixed list here; a pass on it says less than it looked.
+- Session 24's sd of 10 to 14 came from a pool structure calibrate does not use; the correct spread is about 9.
+
+**Next.**
+1. Replay: read `.cache/replay-900e66a/AG-c.log` and `AG-o.log` (exit lines); run `bash .cache/drafts/p3-report/replay_paragraph.sh`, update the notes' replay paragraph, sort any FAIL by the rule stated there. AG-c wrote nothing from 02:51Z to at least 03:12Z while using CPU: check it is one slow record.
+2. Read `.cache/drafts/t2-drift/sweep_b0.jsonl` and its log. Add the LEDGER rows for the replay and for `sci-t2-b0` when they end.
+3. PILOT.md leftovers (queue): the [draft] scripts, `pilot_report.py`'s three text fixes, test first.
+
+**Decisions for the owner or control room:** (1) P3 go/no-go after the transcripts; (2) check (b), red team and lane recommend yes, about 14 CPU min, needs the token for `ctlA1-boot-r2`, which is the guard bypass you would be approving; (3) fit/5 losses: pin T2 and document, restate the bound under a rule written first, or fit/6; this blocks the p4-deltas slow tier. Evidence: LOG 2026-11-04 (three entries) and PILOT.md's search-miss bullet.

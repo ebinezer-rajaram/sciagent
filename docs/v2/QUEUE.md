@@ -281,7 +281,7 @@ Each item says when it is done. Move finished items to the bottom section after 
   B-sym@10F on seed 1 of dev-000 to dev-009 as declared. Raise LLM concurrency to 2 only if
   no rate limit has appeared. Done when the coverage table shows every planned unit scored or
   failed with a reason.
-- [ ] **Regenerate PILOT.md** (analyst) with `scripts/pilot_report.py` from the Linux store;
+- [x] 2026-11-04 **Regenerate PILOT.md** (analyst) with `scripts/pilot_report.py` from the Linux store;
   rewrite the notes block for the Linux run (the Windows notes stay in git history; say so).
   Red team before the commit. Done when committed with the red team's findings addressed.
   Note for the report (session 20; LOG 2026-10-29): an AG-o record whose own sandbox code prints wall time
@@ -293,12 +293,17 @@ Each item says when it is done. Move finished items to the bottom section after 
 - [ ] **Wall-time and sizing follow-ups from the pilot** (analyst, session 26; with the p4-deltas integration): `process.join()` after
   the outcome arrives has no limit, so dev-005 and dev-008 ran past the 4,200 s deadline without being killed; `turns` is tool_uses + 1,
   not LLM calls, so `max_turns` bounds tool calls and §7.1 sizing must use distinct message ids; 19 `run_experiment` tool_uses
-  never reached the layer (14 with `__unparsedToolInput`), none charged, and the record does not say why.
+  never reached the layer, none charged: all have an `unmatched_tool_result`, 14 `InputValidationError ... could not be parsed as JSON`, 5 `Input validation error`
+  (corrected by the red team, session 26): why the model's input failed to parse is the open question.
 - [ ] **fit/5 search losses and T2's list (needs the owner; LOG 2026-11-04).** T2's examples drift with context, and a seeded
   sweep found 1 loss in 376 (1.32 nats, (0, softplus, 103648458)); 0.004 nats at (0, softplus, 1074). This fails the slow tier
   on `p4-rehearsal`, so it blocks the p4-deltas merge check. Options: pin the list by a seeded generator (test only) and keep the
   known losses as documented failures, restate the bound under a rule written first, or fit/6 (SPEC-level; would not
   apply to the pilot). Lead: both losses are BIG[0], softplus, generating period 100, fit at period 5.
+- [ ] **PILOT.md leftovers** (red team, session 26). Finish the replay paragraph when the units exit (`replay_paragraph.sh`, sort any FAIL by the
+  notes' rule). Commit the [draft] scripts lint-clean or drop their sentences (S3 `sciagent/p3-linux/report-900e66a/`; commit wall_time_audit, sizing,
+  independent_recompute with truths.json, sandbox_nondeterminism; drop dispatch_order; five figures have no printing script). Fix `pilot_report.py`, test first:
+  the C3 line's "median over kept truths" (line 746), the B-sparse sentence (line 765), and label "Verdict: GO" as computed.
 - [!] **P3 go/no-go read: stop point.** SPEC §7.1 under the re-read rules of P4-PROPOSAL §2.4;
   the owner reads a few AG-o transcripts in full. Prepare the evidence and transcript picks,
   push the owner, wait. Done when the owner has decided.

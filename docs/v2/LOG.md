@@ -1932,3 +1932,13 @@ before the ceiling (`.cache/drafts/t2-drift/sweep.jsonl`), found 1 loss above th
 the fit at period 5 where the generating point has 100: a lead from two cases. The grid point that wins is the generating ψ, so
 each loss is a search miss on a θ-refitted point. No decision yet: fit/5 is the frozen instrument of the pilot and a fit/6 is
 SPEC-level, so this goes to the owner. The test is neither loosened nor edited until then, so it passes or fails with its sample.
+
+## 2026-11-04: Red team on PILOT.md: two statements of today's LOG corrected; the search miss is in the pilot's own store
+
+Commit with fixes: every headline number recomputed, four blocking text faults fixed before the commit (a clause that went past a computed output, an LLM-arm
+comparison no control supports, "rules applied as written" for C3, which reads a declared subset, and T2's absence). Two corrections to the entries above, which stay as
+written. (1) "Both known losses are BIG[0] under softplus" is incomplete: ORACLE dev-015 s3 in the pilot store lost 4.53 nats (search -781.9771, truth-ψ -777.4489, read
+from the cell; 1,902 events, 0.0024 nats per event) on an `exp` truth with no `Periodic`. Control 1's truth-ψ check rescued it as designed, but only ORACLE has that rescue.
+(2) "Only one of the two unanswered fits reached the lab" is an inference from the join, not an observation: the layer lock serialises concurrent calls too, so
+order equality does not show one-at-a-time dispatch. Under a stress test that adds T2's 0.0065 nats per event to every unit, no §7.1 outcome moves; that is a stress test,
+not an estimate of the rate or size of misses. Not changed by this: no §7.1 number, and no rule.

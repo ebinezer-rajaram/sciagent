@@ -2388,3 +2388,35 @@ Checkpoint, not the hand-over. No pilot unit has been searched, and nothing here
 **Running.** An engineer on the synthetic spike, and an engineer on the script and test in a worktree (toy data only). `sci-p4-tier` and both replay units have not exited.
 
 **Next.** Fill the hunt, second red-team round, freeze, `R`, launch once memory allows. Read `sci-p4-tier`'s two failures when it exits.
+
+
+## 2026-11-04: Lane session 28 (09:19 UTC) hand-over: the miss check's rule is frozen and its script is on v2; not launched
+
+**Stop point, still open.** The answer in one line: the computed GO stays held, because the check that decides it is frozen but has not run.
+- Evidence: `docs/v2/prereg/2026-11-04_pilot-search-misses.md` (`F` 3226f9b, sha256 ea71cdea...); `docs/v2/redteam/2026-11-04_pilot-search-misses*.md`; LOG 2026-11-04 (last three entries).
+- Caveats: no pilot unit has been searched by this check and no number from it exists. Even the best label says nothing about misses the search did not find, on 131 of the 196 baseline fits.
+- Recommendation: launch when memory allows. Worst case 84 CPU hours, $0, about 2 days.
+- Decision needed from the owner: unchanged, the go/no-go after the transcripts, and check (b).
+
+**Done.**
+- Red team: round 1 answered, round 2 not ready (five blocking), round 3 narrow, ready with fixes (one blocking). All blocking findings fixed, reports saved verbatim. I read the last edits myself against round 3's list; no fourth round.
+- Design (LOG): the survival label speaks of found misses only; exact against searched, unvalidated; H1 is a stated catch rate; a failed R1 control does not stop the run; `GO_CHANGES` outranks every shortfall; one table of consequences; budget in points, up to 48 starts within 8,000 solves, 3,000 on identity; ceiling 84 CPU hours, stop at 78.
+- `R` 5e5a169: `scripts/pilot_search_misses.py` and its test, hashes in the LOG. Control room told (in its inbox, unread when last seen).
+- `sci-p4-tier` ended `2 failed, 299 passed`, exit 1. Named in QUEUE. The wall-time failure passed alone; the cause is likely load, not shown.
+- Replay at 11:47Z: AG-c 119 PASS, 0 FAIL; AG-o 119 PASS, 1 FAIL (dev-003 s1, as the rule expected). One replay unit had exited by then, the other had not; final counts are for the next session.
+- LEDGER rows added for the p4 tier and the spike. Not yet: the replay units.
+
+**Checks.** At `R`: `ruff format --check .` `273 files already formatted`; `ruff check .` clean; mypy `no issues found in 262 source files`; `tests/test_invariants.py` plus the new test, `1146 passed`, exit 0. The new test's slow tier `24 passed` is the engineer's, before the constants were set; I did not rerun it. The repository's fast tier was started at `R`, result in `.cache/drafts/prereg-s28/fast-R.log`; it had not finished when this was written, so it is not claimed. No file under `src/` changed. The script past its guards has never run: that needs the launch.
+
+**Learned.**
+- 0.782 sweeps per start came from grids that fill up. On fresh profiles it ran 0.34 to 1.10 over 48 starts, one log per shape, and higher over few starts. On many fits R1 will stop short of 48 starts, so the record gives the count.
+- A fix can reopen what it fixes: making STOP always `INCOMPLETE` let a stop bury a flip, and a clause I added in section 6 repeated it. Section 5 now alone sets the label.
+- `pgrep -f` in a shell waiting on a name matches the shell itself: my wait ran out its 30 minutes. With `-q` twice pytest prints no summary; read the exit code.
+- GitHub gave one 500 on a push at 10:48Z; a direct retry went through.
+- The research-team guard refuses inline Bash writes whose text names lane controls, even when the target is a doc; the Edit tool is the route for docs.
+
+**Next.**
+1. `grep -E '^(FAILED|ERROR)|^exit:| passed' .cache/drafts/prereg-s28/fast-R.log`; fix any failure before launching (a change to the script is an amendment).
+2. `git worktree add --detach .claude/worktrees/misses 5e5a169`, check MemAvailable is at least 8 GiB, launch by section 8's line, LEDGER row.
+3. Replay: when both units exit, final counts, `replay_paragraph.sh`, LEDGER rows.
+4. While the run goes: write the section 10 note's frame; nobody reads `journal.jsonl` before the end.

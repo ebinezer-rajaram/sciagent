@@ -1991,3 +1991,9 @@ Round 2 on b6e98db was also not ready (five blocking, report saved verbatim), so
 Frozen: `docs/v2/prereg/2026-11-04_pilot-search-misses.md` at 3226f9b9521fe3a8c1d2445d1654cd1609b1eb2d. Red team: round 1 not ready, round 2 not ready, round 3 (narrow) ready with fixes; reports under `docs/v2/redteam/2026-11-04_pilot-search-misses*.md`. Every blocking finding is fixed; round 3's non-blocking findings 2 to 10 were all fixed in the text, and I read those lines against its list, with no fourth round, as round 3 said would do. Ceiling: 84 CPU hours in total, $0, no LLM call. No pilot unit has been searched, and roots 20261104 and 20261106 are unrun. Next is `R` (script, test and their hashes here), then the launch once MemAvailable is at least 8 GiB.
 sha256: ea71cdea282c9dac13586649b504286e11221958aa5764aba16326a37c972659  docs/v2/prereg/2026-11-04_pilot-search-misses.md
 owner go: 2026-11-04   (the freeze date, under the owner's standing waiver of 2026-10-29)
+
+## 2026-11-04: Pilot miss check: `R`, the script and its test (session 28)
+
+`scripts/pilot_search_misses.py` and `tests/campaign/test_pilot_search_misses.py`, built test first on a side branch against toy data, with `PREREG_SHA256` and `F_COMMIT` set to the freeze. The text's words are the rule. Built detail: a fit's result sits in the `r1` record, so a job that dies in R2 keeps it as `r2_lost`; the hash lines here are what stop an edited later commit from passing the diff guard. Not verified, because forbidden before the launch: the run past the guards, the real split hash inside the script, R0 against any real cell, memory at 14,400 points, real systemd behaviour.
+sha256: 94003dea9db544f8ff88d360b2906468db4dba77b06afa99531c34ddecc4713b  scripts/pilot_search_misses.py
+sha256: cf8654a3dbfe8dbdfd7b6dd972cc17d5fdb2f5f274b53673a31fa045b190ec71  tests/campaign/test_pilot_search_misses.py

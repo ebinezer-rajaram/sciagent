@@ -2239,3 +2239,40 @@ here calls an LLM, and no code was changed.
 2. Explain the `pilot-llm` fits_used 35 vs 34 issue.
 3. `store_merge.py` the two pilot stores, then the PILOT.md report (analyst) and its red team.
 4. Red-team check (a), and ask the owner again about check (b).
+
+## 2026-11-04: Lane session 26 (02:04 UTC), progress: pilot report and replay under way; slow-tier failure and fits_used issue diagnosed in part
+
+The weekly usage reset has passed and the INBOX has no open entry. This is a progress entry; the hand-over follows.
+
+**Done.**
+- **Replay at 900e66a started** (queue: PILOT.md note): user units `sci-replay-ag-c` and `sci-replay-ag-o`, nice 10, one
+  process each, in worktree `.claude/worktrees/pilot`, logs `.cache/replay-900e66a/AG-c.log` and `AG-o.log` (last line
+  `exit: <code> <UTC>`). $0, CPU only. The first launch exited 127 because `uv` is not on a user unit's PATH; the
+  relaunch uses the absolute path. At 02:11Z: 4 PASS, 0 FAIL.
+- **Delegated, running:** analyst (merge the stores, PILOT.md, go/no-go evidence, transcript picks; nothing committed
+  yet), red team (seed-lead check (a), independent), engineer on `p4-rehearsal` (the two wall-time defects below, test
+  first). A fourth helper was refused by the limit of 3 concurrent agents, so I took T2 myself.
+- **T2 sweep started:** user unit `sci-t2-sweep`, nice 15, ceiling 45 min wall, $0: 400 cases from a seeded list
+  (`.cache/drafts/t2-drift/sweep.py`, output `sweep.jsonl`). Exploratory.
+
+**Learned.**
+- **`p4-slow`:** `1 failed, 307 passed`, `exit: 1 2026-11-01T11:56:15Z`. The failure is
+  `test_fit_beats_random_grid_points`: `[(0.003972283900566254, (0, 'softplus', 1074))]`.
+- **That failure is not a merge regression.** `t2_gap(0, 'softplus', 1074)` is 0.003972283900566254 on v2 and on
+  `p4-rehearsal`, and `git diff 900e66a v2 -- src/sciagent/glm` is empty, so the pilot's fit gives the same loss.
+- **T2's "300 derandomised examples" are not a fixed list.** With the same test source, lists built from different
+  scripts, under pytest and on the two trees differ by 3 to 73 of 300 (`.cache/drafts/t2-drift/*.json`). The cause is
+  not established: Hypothesis's collection of local constants would fit, but no context I tried reproduced 1074, and
+  importing `test_ledger.py` or `test_reductions_pairwise.py` first moved nothing. The 2026-10-27 pass of this test
+  was therefore on a different sample, and passing does not show a stable claim.
+- **The losing case:** 2 features, 196 events, fit log-likelihood -266.9131 against -266.9091 at the generating point,
+  both certified. Printed ψ values differ in period (5 and 25 against 100 and 100) and in one exp_rate (4 against 1).
+  A search miss of 0.004 nats; its frequency is what the sweep measures.
+- **`pilot-llm` budget issue (session 25):** session bd3dc4c4 (AG-o-S/named dev-012 s1) ended `wall_time`. The record
+  ends with two parallel `fit` tool_uses that have no `tool_call` entry, and holds 34 charged fits and 54 calls; the
+  cell reads `fits_used` 35. `live.py` runs handlers in `asyncio.to_thread` under `asyncio.timeout`, which cancels the
+  await and not the thread, and `runner.py` reads `lab.fits_used` after the cut. My reading is that a late thread
+  added the 35th fit. The analyst and the engineer are each checking this, so it is not yet a result. The session has
+  no submission.
+
+**Next.** Read the helpers' reports and check them; red team on PILOT.md; read `sweep.jsonl`; then the hand-over entry.

@@ -8,7 +8,7 @@
 - **The census** read structures, statuses, grid sizes and recorded timing, and printed aggregates, plus dev-015's own structure and G (`count3.py`). No score, `oracle_*` value or `certified` value was printed. Round 1's `census.py` did the same and also loaded stored rows in memory; session 28's `count5.py` printed link, tier and sweep aggregates.
 - **T2 and synthetic logs** carry the feasibility numbers; neither is a pilot unit. The six T2 cases have been run several times, by the draft and by the red team, so nothing below calls them independent.
 
-**Sources of numbers in this draft** (dm-devbox, 2026-11-04; uncommitted): `.cache/drafts/prereg-s27/` `count.py` to `count4.py` (census: `OPENBLAS_NUM_THREADS=1 nice -n 10 .venv/bin/python <script>`), `t4_time.py` (identity timing, synthetic log), and `.cache/drafts/prereg-s28/count5.py` (R1-only sweeps). The per-start rates are round 1's blind rerun (`/tmp/rt-s27/blind.py`, `basin.py`, copied to `.cache/drafts/prereg-s27/redteam-s27/`), as printed in the red-team report. `t2_ref.py` is **not** a source for catch rates: it put the generating point in the profile (round 1, finding 1).
+**Sources of numbers in this draft** (dm-devbox, 2026-11-04; uncommitted): `.cache/drafts/prereg-s27/` `count.py` to `count4.py` (census: `OPENBLAS_NUM_THREADS=1 nice -n 10 .venv/bin/python <script>`), `t4_time.py` (identity timing, synthetic log), and `.cache/drafts/prereg-s28/count5.py` (R1-only sweeps), `.cache/drafts/prereg-s28/spike/` (synthetic strata, memory and CPU per point at about 2,300 events; `c.table`, `d.table`). The per-start rates are round 1's blind rerun (`/tmp/rt-s27/blind.py`, `basin.py`, copied to `.cache/drafts/prereg-s27/redteam-s27/`), as printed in the red-team report. `t2_ref.py` is **not** a source for catch rates: it put the generating point in the profile (round 1, finding 1).
 
 ## 1. Question and falsifiable hypotheses
 
@@ -161,7 +161,22 @@ The controls run before any other pilot unit, in the order below. A control asks
 
 **Group B reads the store for one known value.** Its R0 byte check (section 2.4) runs too, so the first pilot unit proves both halves. The old row "every other ORACLE unit below its truth ψ" is deleted: `systems.py:318-320` keeps a higher truth-ψ fit whenever it is certified, so any such unit has an uncertified truth-ψ point that R1 may not select. Those units are counted in S3.
 
-**The hunt, group C.** Before any pilot unit, on fixed-seed synthetic logs, in two strata: HUNT_RULE. For each case, fit/5 runs, then `fit(s, obs, CHANNELS, psi=generating)`. A case where the latter beats the former by more than the tolerance is a **found loss** and joins group C, and R1 is run on it. Every found loss enters; none is dropped for size. The hunt is capped at HUNT_CAP CPU hours, in a fixed order, and it reports how many cases it completed. Group C is the only evidence on the identity link and on grids above 10⁵, and it is synthetic, at horizon 300, so its rates are optimistic or pessimistic by an unknown amount for pilot logs.
+**The hunt, group C.** Before any pilot unit, on fixed-seed synthetic logs, in four sub-strata of 150 cases each, chosen to sit where no other control does.
+
+| Sub-stratum | Structure | Link | G |
+|---|---|---|---:|
+| `id-24000` | `BIG[2]` of `tests/glm/test_fit_search.py` | identity | 24,000 |
+| `id-large` | `LARGE` | identity | 3,456,000 |
+| `large-exp` | `LARGE` | exp | 3,456,000 |
+| `large-softplus` | `LARGE` | softplus | 3,456,000 |
+
+`LARGE = (Gate(EXP_K, PhaseWindow()), Gate(SIZE_K, PhaseWindow()), Gate(POWER_K, PhaseWindow()))`. Case j of sub-stratum s (s = 0 to 3 in the table's order, j = 0 to 149) uses `rng = default_rng(SeedSequence([20261106, 1000 * s + j]))`, and in order: `_random_point(structure, rng)`, the coefficients, then `simulate(structure, generating, coefficients, CHANNELS, marks, 300.0, rng)`. Coefficients for exp and softplus are `_random_coefficients`. For identity they are `Coefficients(0.5, ...)`: a bare or gated `Periodic` gets `(0.2, -0.15)`, and every other column `uniform(0.1, 0.4)`, drawn in feature order. Cases run round-robin (j outer, s inner), so a cap cuts the sub-strata evenly.
+
+For each case fit/5 runs, then `fit(s, obs, CHANNELS, psi=generating)`. A case is a **found loss** if the fixed-ψ fit is certified and beats fit/5's L by more than the tolerance. fit/5's own `certified` flag is not a condition, because it is false when any visited point was uncertified. A found loss joins group C and R1 is run on it, for the first 25 found losses of each sub-stratum in index order; later ones are counted but not run. None is dropped for size. The whole of group C, R1 included, stops at **6 CPU hours**, and it reports how many cases it completed.
+
+Stream 20261106 has not been run. A spike on another stream (session 28, `.cache/drafts/prereg-s28/spike/`) measured stability and cost on 40 seeds and fit/5 on 5 seeds per sub-stratum, `id-large` excepted, and saw one loss, of 4.27 nats, on `LARGE` exp at 1 of 5, and 0 of 20 on identity with `BIG` members. So `id-24000` and `id-large` **may yield nothing**. The generating point is a weak target at about 200 events: fit/5 beat it by 0.27 to 10.2 nats in 17 of those 20 cases. An empty sub-stratum is reported as "no known miss, no control", and the identity link then stays with no control at all on grids above 14,400 points.
+
+Group C is the only evidence on the identity link and on grids above 10⁵. Its limits: it is synthetic, at horizon 300, and its identity logs are well specified, which is the easy case (about 1 uncertified point in 10,000 in the spike, against 14 of 164 on a misspecified log). Its rates may be too high or too low for pilot logs by an unknown amount.
 
 **If H1 fails, the run continues.** R1's misses are still real and the exact class does not depend on R1, so stopping would discard the part that is sound. The outcome is `CONTROL_FAIL` (section 5) unless the verdict moved. No survival statement is made for searched fits, and a stronger reference needs an amendment frozen before it is run. The search is not tuned and rerun on a failing case under this freeze.
 
@@ -257,7 +272,7 @@ systemd-run --user --unit=sci-search-misses --nice=10 -p CPUQuota=200% -p Runtim
 `OOMPolicy=continue` keeps the unit up when one worker is killed, so section 6's retry happens in the same run.
 
 
-**Machine.** At most 2 workers, `nice` 10, one process per job (`FitConfig.workers` stays 1), BLAS threads 1. **The unit is launched only when `MemAvailable` ≥ 8 GiB**, so its time limit does not run while it waits: AUTOPILOT's 6 GB floor plus the about 2 GB a pilot worker peaks at (QUEUE). The second worker starts only while `MemAvailable` ≥ 8 GiB with the first running; below that, dispatch pauses. That needs most of the running units gone, since round 1 measured 6.81 GiB available with about 3.98 GiB in the four units, page cache included. MEMORY_LINE
+**Machine.** At most 2 workers, `nice` 10, one process per job (`FitConfig.workers` stays 1), BLAS threads 1. **The unit is launched only when `MemAvailable` ≥ 8 GiB**, so its time limit does not run while it waits: AUTOPILOT's 6 GB floor plus the about 2 GB a pilot worker peaks at (QUEUE). The second worker starts only while `MemAvailable` ≥ 8 GiB with the first running; below that, dispatch pauses. That needs most of the running units gone, since round 1 measured 6.81 GiB available with about 3.98 GiB in the four units, page cache included. Per worker, the spike measured a peak of 729 MB at 4,043 solved points on a 2,318-event log, and the block cache's 1 GiB limit puts the top near 1.3 GB; 16,000 points was not measured. The 2 GB allowance stays.
 
 **Order, fixed and outcome-neutral.** Controls and the hunt; then tier 1 (the 196 fits on baseline rows, the only rows `v` reads); then S2; then tier 2 (the 59 fits only on LLM rows). Inside a stage, by `sha256(f"{truth}|{seed}|{text}")`. The label is known at the end of tier 1 and does not wait for the rest.
 
@@ -272,8 +287,8 @@ systemd-run --user --unit=sci-search-misses --nice=10 -p CPUQuota=200% -p Runtim
 | Grid points of fits with G ≤ 14,400, tier 1 | exp and softplus 179,148, identity 147,636 | `count5.py` |
 | Same, all fits | 239,898 and 195,876, of 435,774 | `count5.py` |
 | New points per R1 start | 0.782 of a sweep at most on the six T2 cases (6,006 new points on (0, softplus, 2006407976), `blind.out`), so 37.5 sweeps at K = 48. Round 1 gave the mean of the six as near 0.6; the upper value is used | round 1 |
-| CPU per point, exp and softplus | 0.041 to 0.044 s in R1, 0.055 to 0.064 s over a whole fit/5, at 1,395 to 1,420 events. Taken as 0.105 s at 2,327 events, the largest ORACLE log in the census | `t2_ref.py`, horizon 2,000; round 1 census |
-| CPU per point, identity, well specified | 0.025 s at 1,865 events; ORACLE's identity units took 19.9 s median in all, so about 0.03 s | `t4_time.py`, `count4.py` |
+| CPU per point, exp and softplus | 0.041 to 0.044 s in R1, 0.055 to 0.064 s over a whole fit/5, at 1,395 to 1,420 events. Taken as 0.123 s, measured on a 2,318-event synthetic log over 4,043 points, near the largest ORACLE log in the census (2,327 events) | `t2_ref.py`, horizon 2,000; spike `d.table`; round 1 census |
+| CPU per point, identity, well specified | 0.039 s at 2,269 events over 2,052 points; 0.025 s at 1,865 events. Taken as 0.04 s | spike `d.table`, `t4_time.py` |
 | CPU per point, identity, misspecified | 0.313 s mean at 1,420 events, Clarabel on every point, so 0.512 s at 2,327 | `t5_time.py` |
 | R0, CPU per fit | 55.3 s, B-rand's recorded mean over 40 fits, scoring included | `.cache/pilot-merged/timing.jsonl` |
 
@@ -282,21 +297,21 @@ systemd-run --user --unit=sci-search-misses --nice=10 -p CPUQuota=200% -p Runtim
 | Part | Arithmetic | CPU hours |
 |---|---|---:|
 | Controls | Groups A, B and D at horizon 300, under half an hour | 0.5 |
-| Hunt | HUNT_COST | HUNT_HOURS |
-| Tier 1, exp and softplus | (613,263 + 179,148) points × 0.105 s | 23.1 |
-| Tier 1, identity | (108,104 + 147,636) points × 0.03 to 0.512 s | 2.1 to 36.4 |
+| Group C | Capped. Spike: about 5 to 33 s per case at median, so 600 cases near 3 hours, plus R1 on found losses at about 10,200 points each | at most 6 |
+| Tier 1, exp and softplus | (613,263 + 179,148) points × 0.123 s | 27.1 |
+| Tier 1, identity | (108,104 + 147,636) points × 0.04 to 0.512 s | 2.8 to 36.4 |
 | Tier 1, R0 | 196 × 55.3 s | 3.0 |
-| **Tier 1 (label known)** | | **28.3 to 62.5** |
-| S2 | 51 rows × (3 × 55.3 s + 1,400 points × (0.105 + 0.105 + 0.03 to 0.512 s)) | 7.1 to 16.7 |
-| Tier 2 | all fits (32.4 to 73.8 hours) less tier 1 | 4.1 to 11.3 |
-| **All** | | **HUNT_ALL** |
+| **Tier 1 (label known)** | | **32.9 to 66.5** |
+| S2 | 51 rows × (3 × 55.3 s + 1,400 points × (0.123 + 0.123 + 0.04 to 0.512 s)) | 8.0 to 17.4 |
+| Tier 2 | all fits (37.6 to 78.2 hours) less tier 1 | 4.7 to 11.7 |
+| **All** | | **50 to 102** |
 
-The width is the identity link: whether the 73 submitted identity fits behave like ORACLE's or like a badly misspecified log is not known, and it could not be measured without running on pilot units. The high end of "all" is above the 78-hour stop, so S2 and tier 2 can be cut short, and the report says by how much. Tier 1 is not reduced: controls, hunt and tier 1 fit under 78 hours even at the misspecified rate.
+The width is the identity link: whether the 73 submitted identity fits behave like ORACLE's or like a badly misspecified log is not known, and it could not be measured without running on pilot units. The high end of "all" is above the 78-hour stop, so S2 and tier 2 can be cut short, and the report says by how much. Tier 1 is not reduced: controls, group C and tier 1 come to 73 hours at most, under 78, even at the misspecified rate.
 
 
-**Worst case with nothing to stop it.** Every R1-only fit reaching its cap and every fit at the top rate: (115 × 16,000 + 239,898) × 0.105 s + (25 × 16,000 + 195,876) × 0.512 s + 3.9 h, about 61 + 85 + 4 = 150 CPU hours, before S2. No measured case came near that, but it is why the ceiling is enforced and not assumed. At the ceiling the label is `INCOMPLETE`.
+**Worst case with nothing to stop it.** Every R1-only fit reaching its cap and every fit at the top rate: (115 × 16,000 + 239,898) × 0.123 s + (25 × 16,000 + 195,876) × 0.512 s + 3.9 h, about 71 + 85 + 4 = 160 CPU hours, before S2. No measured case came near that, but it is why the ceiling is enforced and not assumed. At the ceiling the label is `INCOMPLETE`.
 
-**Wall clock.** The one recent reference, the pinned T2 run, got 2,133 CPU seconds in about 2,640 s on this machine under load, so 0.81 of a core. With 2 workers that is 1.62 cores: tier 1 in 17 to 39 hours and the 78-hour stop at 48 hours, inside the 60-hour limit. With one worker for the whole run, 60 hours gives 49 CPU hours, which would leave the top of the tier 1 range `INCOMPLETE`; that is a further reason to launch only when the gate is open. Controls take under half an hour, and the hunt HUNT_WALL.
+**Wall clock.** The one recent reference, the pinned T2 run, got 2,133 CPU seconds in about 2,640 s on this machine under load, so 0.81 of a core. With 2 workers that is 1.62 cores: tier 1 in 20 to 41 hours and the 78-hour stop at 48 hours, inside the 60-hour limit. With one worker for the whole run, 60 hours gives 49 CPU hours, which would leave the top of the tier 1 range `INCOMPLETE`; that is a further reason to launch only when the gate is open. Controls take under half an hour, and group C at most about 4 hours.
 
 ## 9. Early-stop conditions
 

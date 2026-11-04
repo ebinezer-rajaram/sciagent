@@ -2420,3 +2420,17 @@ Checkpoint, not the hand-over. No pilot unit has been searched, and nothing here
 2. `git worktree add --detach .claude/worktrees/misses 5e5a169`, check MemAvailable is at least 8 GiB, launch by section 8's line, LEDGER row.
 3. Replay: when both units exit, final counts, `replay_paragraph.sh`, LEDGER rows.
 4. While the run goes: write the section 10 note's frame; nobody reads `journal.jsonl` before the end.
+
+
+## 2026-11-04: Lane session 29 (11:59 UTC), progress: the miss check is launched; replay final
+
+Checkpoint, not the hand-over. Nothing here is a result of the miss check.
+
+**Done.**
+- Miss check launched at 11:59:49Z by section 8's line, with `RuntimeMaxSec=216000`, unit `sci-search-misses`, worktree `.claude/worktrees/misses` detached at `R` 5e5a169. Before launch: script, test and prereg sha256 equal to the LOG's; split hash `31c18f10...`; `R` an ancestor of origin/v2; `MemAvailable` 10.9 GiB; no other `sci-*` unit active. Guards passed: the unit printed the script's hash and took the manifest. Ceiling 84 CPU hours, $0. At 12:03Z `cpu.json` read 279 CPU s over 180 s of wall, so about 1.5 cores. `journal.jsonl` not read.
+- Replay final, in PILOT.md (934354e): AG-c 120 of 120 PASS, exit 0; AG-o 119 of 120, exit 1. The one FAIL is dev-003 s1, step 51, `digest`, which `sandbox_nondeterminism.out` lists as call 51, `clock`. Counted apart by the rule, so harness replay defects are 0. I did not compare the two outputs, and replay stops at the first divergence, so that record's later calls were not replayed. LEDGER rows in (9.1 and 8.9 CPU hours).
+- PID 219453, read: orphan of the lane's own cgroup, cwd `p4-rehearsal`, 2 CPU s in 9 hours, 115 MB. Harmless and left alone.
+
+**Running.** An engineer on the section 10 note generator (side branch, toy records only), a red team on PILOT.md since 4dc2ff5, and a timed rerun of `sci-p4-tier`'s wall-time failure (`.cache/drafts/s29/p4-cap.log`).
+
+**Next.** Read those three, then the hand-over.

@@ -290,6 +290,15 @@ Each item says when it is done. Move finished items to the bottom section after 
   Note (session 24; LOG 2026-10-29): wall-time sessions have no SDK `result`, so their turns and tokens are
   "not recorded"; the report counts them apart since 58d1ac2. Session 23's interim AG-o turn and token means
   include one as zeros, so use the report's figures, not those, for P4 sizing.
+- [ ] **Wall-time and sizing follow-ups from the pilot** (analyst, session 26; with the p4-deltas integration): `process.join()` after
+  the outcome arrives has no limit, so dev-005 and dev-008 ran past the 4,200 s deadline without being killed; `turns` is tool_uses + 1,
+  not LLM calls, so `max_turns` bounds tool calls and §7.1 sizing must use distinct message ids; 19 `run_experiment` tool_uses
+  never reached the layer (14 with `__unparsedToolInput`), none charged, and the record does not say why.
+- [ ] **fit/5 search losses and T2's list (needs the owner; LOG 2026-11-04).** T2's examples drift with context, and a seeded
+  sweep found 1 loss in 376 (1.32 nats, (0, softplus, 103648458)); 0.004 nats at (0, softplus, 1074). This fails the slow tier
+  on `p4-rehearsal`, so it blocks the p4-deltas merge check. Options: pin the list by a seeded generator (test only) and keep the
+  known losses as documented failures, restate the bound under a rule written first, or fit/6 (SPEC-level; would not
+  apply to the pilot). Lead: both losses are BIG[0], softplus, generating period 100, fit at period 5.
 - [!] **P3 go/no-go read: stop point.** SPEC §7.1 under the re-read rules of P4-PROPOSAL §2.4;
   the owner reads a few AG-o transcripts in full. Prepare the evidence and transcript picks,
   push the owner, wait. Done when the owner has decided.
@@ -421,6 +430,8 @@ Each item says when it is done. Move finished items to the bottom section after 
   Check (a) running (`sci-fsd-poollaw`, analysis chained in `sci-fsd-poollaw-analyse`, `.cache/drafts/fsd-seedlead/pool/`).
   Check (b) (real calibration streams, outside the stream-id guard) awaits the owner. Next: read the analysis,
   red-team it, then a calibration fix before any new freeze (JOURNAL session 24).
+  2026-11-04 (session 26): check (a) red-teamed: stands with corrections (LOG 2026-11-04 replaces the sd of 10 to 14 and withdraws
+  "lucky pool" and "optimistic by construction" as facts). Check (b) recommended, as the missing positive control; waits for the owner.
 - [ ] **Remaining P4 work packages**: WP9 (1327de9), WP10 (98205b4), WP11 controls 4-6
   (6ac6142) and WP12 LOG entries (f4a38e0) are committed on `origin/p4-deltas`
   (HANDOFF-2026-10-09); its slow tier was never run. Folded into the integration item above.

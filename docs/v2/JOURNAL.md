@@ -2476,3 +2476,16 @@ Checkpoint, not the hand-over. Nothing here is a result of the miss check.
 **Running.** An engineer on branch `spec22-shares`, test first, in its own worktree, not on v2. No code from it has been read or checked yet.
 
 **Next.** Read its report, check it, splice PILOT.md's generated lines, then the hand-over.
+
+
+## 2026-11-05: Lane session 31 (04:16 UTC), progress: the miss check has ended; its note is under review
+
+Checkpoint, not the hand-over. The numbers here are unreviewed.
+
+**Done.** Session 30 left no hand-over: the lane log shows it over its usage share until 04:16Z, and its engineer's work on `spec22-shares` sat uncommitted in its worktree (kept). `sci-search-misses` ended at 00:49:38Z, `run ended: complete`, label `GO_SURVIVES_FOUND_MISSES`, 25.41 CPU hours and 12.83 wall hours by `cpu.json`, $0. Records copied to S3 at 04:17Z, seven files, sizes equal. LEDGER row filled. `miss_note.py` ran on real records for the first time, exit 0; output in `docs/v2/PILOT-MISSES.md`, status unreviewed, with hand lines at the end.
+
+**Read so far, unreviewed.** M = 25 rows on 25 fits, 23 of them baseline rows; H2 and H3 falsified, H1 and H4 not; max |Δ| 0.02198 (dev-012 s3, B-sparse). The verdict on corrected readings is go, no clause moved. 13 of the 25 misses are at G > 3,456,000, the band whose 51 searched fits have no control, and R1 caught 16 of 23 group C losses, so the unfound misses are a real unknown. The unit log holds 276 `Solution may be inaccurate` warnings, not yet explained.
+
+**Running.** A red team on the note and the label; an engineer finishing SPEC §2.2's shares on `spec22-shares`.
+
+**Next.** Read both, then the stop point: the go/no-go goes to the owner only after the note is reviewed.

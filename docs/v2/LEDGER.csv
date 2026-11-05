@@ -31,4 +31,4 @@ date,item,provider,hours,usd,stage
 2026-11-04,Synthetic spike and points-per-start runs for the miss pre-registration (one process; no pilot unit; about 39 min and 10 min wall),dm-devbox,0.8,0,p3
 2026-11-04,Replay check at 900e66a; AG-c unit (sci-replay-ag-c; 120 of 120 PASS; exit 0 at 11:49Z),dm-devbox,9.1,0,p3
 2026-11-04,Replay check at 900e66a; AG-o unit (sci-replay-ag-o; 119 of 120 PASS; the 1 FAIL expected by the rule; exit 1 at 11:40Z),dm-devbox,8.9,0,p3
-2026-11-04,Pilot miss check launched 11:59:49Z (sci-search-misses; F 3226f9b; R 5e5a169; ceiling 84 CPU hours and $0; hours filled at the end),dm-devbox,0,0,p3
+2026-11-04,Pilot miss check 11:59:49Z to 00:49:38Z (sci-search-misses; F 3226f9b; R 5e5a169; ceiling 84 CPU hours and $0; 25.41 CPU hours by the kernel count),dm-devbox,25.41,0,p3

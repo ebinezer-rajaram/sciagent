@@ -138,3 +138,11 @@ entry, and marks it handled with the date and what was done. Newest last.
   check only.
 - [ ] **Standing (owner): never leave compute idle while waiting on Claude.** If the lane is waiting on its
   usage share, it starts frozen CPU or GPU work first.
+
+## 2026-11-05, control room (check (b) scope)
+
+- [ ] **Check (b): the approval covers ctlA1-cal-r2, ctlA1-crn-r2 and ctlA1-boot-r2, for this check
+  only.** The owner approved check (b) itself ("go and yes, whatever you think is best please"); naming
+  one id was the lane's wording error, not a limit the owner chose. Scope: rung 2 only, about 14 CPU
+  min, ceiling 1 CPU hour, $0, outputs only under .cache/drafts/fsd-seedlead/, exploratory, no change
+  to A1's scored failure. Record the wording error and this scope in the LOG.

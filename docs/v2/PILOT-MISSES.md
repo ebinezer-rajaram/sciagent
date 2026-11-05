@@ -1,6 +1,6 @@
 # Pilot search misses: the section 10 note
 
-**Status: unreviewed.** Generated from the run's records, and unreviewed until a red team has read it (section 10).
+**Status: reviewed.** Red team 2026-11-05, ready with fixes (`docs/v2/redteam/2026-11-05_pilot-misses.md`). Its fixes are in the generator's wording and in the section added by hand at the end, which limits several lines above: read that section with them. A narrow second read of those fixes was running when this was committed; the journal says how it ended.
 
 Stored readings, the stored verdict and PILOT.md's generated sections stay as they are. A corrected reading is never presented as the pilot's reading.
 
@@ -44,7 +44,7 @@ Label line: GO_SURVIVES_FOUND_MISSES | H2 falsified=True | H3 falsified=True | M
 | H4 | not falsified |
 
 H1: group A 5 of 6, group B caught true, group D caught true.
-H3: max |Δ|: 0.021980616852384116.
+H3: largest |Δ| among the misses found: 0.021980616852384116.
 H4: `v.outcome`: go.
 
 ## 2. Controls
@@ -103,7 +103,7 @@ Rows each §7.1 gate reads:
 | too_easy | exact 105, exhaustive_uncertified 0, not_applicable 22, searched 83 |
 | too_hard | exact 214, exhaustive_uncertified 0, not_applicable 82, searched 134 |
 
-Searched fits by stratum, and the control that speaks for them:
+Searched tier 1 fits by stratum, and that stratum's control result:
 
 | Stratum | Searched fits | Control |
 |---|---|---|
@@ -119,7 +119,7 @@ Searched fits by stratum, and the control that speaks for them:
 M = 25 rows, 25 fits. M is a lower bound (section 2.2).
 
 `uncertified_better`: 0. `uncertified_better` on the identity link: 0.
-max |Δ|: 0.021980616852384116.
+largest |Δ| among the misses found: 0.021980616852384116.
 `within_quadrature` rows: none.
 
 | System | Miss rows |
@@ -387,12 +387,62 @@ Asked for by section 10 or the sections it draws on, and carried by no record th
 
 ## Added by hand (session 31)
 
-Everything above is the generator's output, unedited. These lines fill what it marks "not recorded".
+Everything above is the generator's output, apart from the status line. These lines fill what it marks "not recorded", and answer the red team's report (`docs/v2/redteam/2026-11-05_pilot-misses.md`, verdict ready with fixes, label and every number recomputed). The values below are the red team's unless a line says otherwise; I reran `c_controls.py` and `i_more.py` from `.cache/drafts/s31/rt/` and they printed the same counts.
+
+### How far this reaches
+
+- This is no new worst-case figure for fit/5. The check gives a lower bound on M and the largest |Δ| among the misses found; no bound of any kind is given on misses it did not find (prereg, opening section).
+- **The control rates in section 4 are not recall for the fits beside them.** Group C's R1 cases have 158 to 357 events, and pilot fits have 1,797 to 2,327. 22 of the 23 R1 runs were capped, and `id-large` got 4 to 6 starts.
+- 13 of the 25 misses, and the largest Δ, sit in the 51 no-control fits. 38 of those are capped, with as few as 6 starts.
+- R1 alone fell short of fit/5's own value on 5 fits, the worst by 6.9 nats on dev-008 s2 with all 48 starts and no cap, in the stratum shown as 4 of 4 caught.
+- S1 is `not_estimable` at 4 of 4. R2 beat R1 on 0 of 115 fits, which says nothing above G = 14,400.
+- dev-015 s3 is not blind, and H1 depends on group B (prereg, opening section).
+- The per-system counts in section 5 support no comparison between systems. Exposure differs: 10 of B-sparse's 11 misses are at G > 3,456,000.
+
+### The gates
+
+- **The too-easy line in section 4 understates what is unchecked.** `too_easy: exact 105, searched 83` includes B-lib and B-rand recovery rows, whose `exact` flag substitution cannot move. The statistic that can move is B-sparse out of dictionary: on its 30 rows, 5 are exact (1 by R2, 4 exhaustive), 3 are searched in a stratum with a control, and 22 are searched with no control. 7 of the 30 close the gap; a share of 0.7 needs 21, so 14 more. The 14th smallest shift needed is 0.02266 (dev-013 s3), and 13 rows need 0.02198 or less.
+- Do not read the gates as far from their limits on the strength of this check. The largest Δ found, 0.02198, is above the C1 (0.0217), C2 (0.0148) and C3 (0.0100) figures of the withdrawn stress test and just under its 0.0227. Those figures assumed a shift on every row in one direction, and B-sparse's found Δs have mixed signs, so this is neither a bound nor a threat estimate.
+- C2's second condition: CI 0.014792505887358457 to 0.030626581033161644 stored, 0.0134072923559961 to 0.03036450265337871 corrected, low end above 0 in both. C1's thinnest margin is 0.02173559760251412 at dev-002, stored and corrected alike.
+- Each gate's limit, for S4: too-easy share ≥ 0.7; too-hard every system < 0.1; C1 margin > SE, zero underfit flags, no -inf; C2 p < 0.05 and CI low > 0; C3 median ≥ -0.01.
+
+### Uncertified points
+
+`uncertified_better` counts only points with a score, so failed solves are not covered by its 0. On the two fits enumerated, every uncertified point was a solver failure with L = -inf, and a retry through Clarabel failed too. ORACLE dev-010 s1's failed point has a certified neighbour 0.36 nats below the chosen L, so a better fit there cannot be ruled out. 49 of the 70 points were not enumerated.
+
+Section 2.2's per-fit count, 70 points on 17 identity fits (`system, G: count`):
+
+| Class | Fits |
+|---|---|
+| Exact, 46 points on 10 fits | dev-012 s2 B-sym 3,600: 20; dev-013 s2 AG-o-S/anon 12,000: 10; dev-001 s1 B-rand 13,824: 8; dev-010 s2 B-rand 14,400: 2; dev-003 s1 AG-o-S/anon 1,440: 1; dev-017 s1 AG-c-S/named 720: 1; dev-017 s1 AG-o-S/anon 4,800: 1; dev-018 s2 B-sparse 576: 1; dev-010 s1 ORACLE 2,304: 1; dev-013 s2 AG-c-S/anon 600: 1 |
+| Searched, 24 points on 7 fits | dev-019 s1 B-rand 345,600: 8; dev-011 s2 planted-hint 20,736: 5; dev-010 s1 B-rand 16,588,800: 5; dev-008 s3 B-rand 115,200: 2; dev-011 s2 B-sym 41,472: 2; dev-003 s1 AG-c-S/named 21,600: 1; dev-019 s1 B-sym 172,800: 1 |
+
+### The solver warnings
+
+The unit's log holds 276 `Solution may be inaccurate` lines from `fit_solve.py:591`, which is Clarabel, so only identity fits can raise them. Each process warned once, by Python's once-per-location filter, so 276 counts processes and not solves; the true count cannot be recovered (two fits rerun with `always` gave 63 and 240). A warning does not mean a bad final solve. All 25 miss rows' stored and chosen solves reproduce L, gap and held-out bytes with status `optimal` and no warning, and the largest sum of gaps on any row is 1.5e-7 against a smallest gain of 0.256 nats. H1 reads no identity case, and dropping both identity substitutions still gives `go`. So the warnings touch no miss row, no Δ and not the label; failed solves can only hide misses on identity fits, which M's lower bound already allows.
+
+### Fields the records do not carry
+
+| Item | Value |
+|---|---|
+| Classes, baseline + LLM rows | Coordinate 205 + 62; exhaustive certified 143 + 174; exhaustive uncertified 0 + 1, which is dev-005 s3 AG-o-S/named (identity, G = 180, reading -inf) |
+| Capped | 53 rows (52 baseline) on 52 fits: 51 tier 1 searched fits, plus dev-013 s2 AG-o-S/anon, G = 12,000, exact after R2 |
+| Not applicable | 82 fits (60 B-np, 22 B-lib); the other 3 of the 85 rows have no fit |
+| ORACLE search misses | dev-015 s3: search gain 5.63357, reading gain 1.10531, truth ψ kept, Δ -0.00096; dev-009 s3: 0.31382, ψ source search, Δ +0.00124 |
+| `stored_uncertified` row | dev-003 s1 AG-c-S/named, searched, call none; fit-level flag false, its own point certified |
+| S2 rows that differ | dev-019 s2 exp to softplus, -0.86227 to -0.87085, Δ -0.00858, out of dictionary; dev-016 s2 softplus to exp, -0.78476 to -0.78992, Δ -0.00516, in dictionary |
+| Rows behind a moved clause | None: no clause moved |
+
+On dev-019 s2 the reference's exp fit scored about -3e11 on validation against about -471 for R0's, and that flipped the link: a better training fit is not always a better model.
+
+How the counts reconcile. Fits, all: 310 exact (195 exhaustive + 115 by R2), 140 searched, 1 unchecked, as in the label line. Fits the verdict reads: 184 exact (119 + 65), 131 searched, 0 unchecked, 82 outside, as in the fixed statement. The stratum table in section 4 is tier 1 only and sums to 131; the 9 tier 2 fits add 2 to `groups_a_b`, 1 to `id-24000` and 6 to `large-softplus`. "Capped 52" includes the one exact fit above.
+
+### Cost and records
 
 - Kernel CPU count: 25.41 CPU hours (`cpu.json`: `current_usec` 91468211483, `earlier_usec` 0; the unit's own line reads 1d 1h 24min 28.795s). Ceiling 84, stop at 78, neither reached.
 - Run wall time: 12.83 hours (`cpu.json`: `current_wall_s` 46182.26), 11:59:49Z on 2026-11-04 to 00:49:38Z on 2026-11-05. One unit, no resume.
 - LEDGER: the launch row of 2026-11-04, hours filled at 25.41, $0.
-- S3 copy: made 2026-11-05 at 04:17Z, seven files, sizes equal to the local ones, to the path in section 9 above.
-- `journal.jsonl` before the run ended: the journal entries of sessions 29 and 30 record status read from `systemctl` and `cpu.json` only. No session records reading it. Nothing can prove that from the file itself.
-- Departures from the pre-registration: none known to this session; the red team's reading is the check.
-- The unit's log holds 276 `Solution may be inaccurate` warnings from `fit_solve.py:591`. The pre-registration does not mention them, and their effect on any row is not yet known.
+- S3 copy: made 2026-11-05 at 04:17Z, seven files. The red team hashed the six data files equal to local; `driver.lock` is empty at both ends.
+- `journal.jsonl` before the run ended: the journal entries of sessions 29 and 30 record status read from `systemctl` and `cpu.json` only, and a search of the session transcripts found no command naming a record file's contents during the run. Reads outside Claude sessions cannot be excluded.
+- Departures from the pre-registration: none in the launch line, guards, stage order or budget (red team). The first version of this note lacked items sections 2.2, 4, 6 and 10 ask for; they are above, and the LOG records it (2026-11-05).
+- Not rerun by anyone: R1, R2 and the hunt on the reserved roots, so byte identity of `units.jsonl` on a rerun is not shown, and the 317 exhaustive rows rest on the code argument.

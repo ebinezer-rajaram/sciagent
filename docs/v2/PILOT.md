@@ -120,7 +120,7 @@ Rules applied as written, with one declared exception, and none changed after th
 
 SPEC §7.1's own too-hard wording, "every system", also takes in the LLM arms (25%, 32%, 33%, 27% [report]); the result is the same. B-rand's 10% is exactly on the line (0.1000 [script: `independent_recompute.py`]), which does not matter because other systems are far above it.
 
-The computed verdict line below says what the rules compute. It reads the non-LLM systems only, so the one store issue does not enter it. **It is not the decision:** §2.4 closes P3 on a GO plus the owner's transcript read, and the GO itself is held until the miss check reports (first decision below).
+The computed verdict line below says what the rules compute. It reads the non-LLM systems only, so the one store issue does not enter it. **It is not the decision:** §2.4 closes P3 on a GO plus the owner's transcript read, and the miss check's wording goes with the GO (first decision below).
 
 #### AG-o transcripts for the owner's read
 
@@ -161,8 +161,8 @@ Medians per session [report]; sessions at concurrency 1, Sonnet 5.5 under Max.
 
 #### For the owner
 
-1. **The go/no-go** (stop point), after reading the transcripts above. The rules compute GO. Not final yet: the control room holds it until the check of search misses on every pilot unit reports (INBOX e7c6431), and only the label `GO_SURVIVES_FOUND_MISSES` releases it; every other label keeps it from being final (prereg, section 5).
-2. **fit/5's search misses** (the bullet under the checks; LOG 2026-11-04): decide what T2 should assert, and whether P4 runs on fit/5. The size of misses on pilot units is unmeasured, apart from dev-015 s3, so read the computed verdict with that open.
+1. **The go/no-go** (stop point), after reading the transcripts above. The rules compute GO. The check of search misses on every pilot unit reported `GO_SURVIVES_FOUND_MISSES` (`docs/v2/PILOT-MISSES.md`, red-teamed), which releases the control room's hold (INBOX e7c6431; prereg, section 5). In the prereg's fixed wording: the computed GO survives substitution of the 23 misses found (23 counts baseline rows, the ones the verdict reads). Of the 397 fits the verdict reads, 184 are exact over their certified grid points, 131 are searched and unvalidated, 0 are exhaustive but uncertified and were not checked, and 82 are outside the check (B-np, B-lib's out-of-grammar members). Nothing is said about misses on the 131 fits that the search did not find. Rows per gate, exact and searched: too easy 105 and 83, too hard 214 and 134, C1 71 and 27, C2 104 and 76, C3 40 and 30. On the too-easy gate's one statistic substitution can move, B-sparse out of dictionary, 5 of 30 rows are exact and 22 are searched with no control. The curve tables and BIC selection stay unchecked.
+2. **fit/5's search misses** (the bullet under the checks; LOG 2026-11-04): decide what T2 should assert, and whether P4 runs on fit/5. The check found 25 miss rows on 25 fits, the largest held-out move among them 0.02198 nats per event (dev-012 s3, B-sparse). That is a lower bound on the count and no bound at all on misses it did not find: 13 of the 25 sit in the 51 fits above G = 3,456,000, which have no control, so read the computed verdict with that open.
 3. **C3's reach.** It passes on 10 truths, one seed and no mid truth, as declared in 2026-10. §2.4 does not mention the subset. If that is too thin for the read, it is your call, not a reinterpretation made here.
 4. **Follow-ups for the p4-deltas integration, none done here:** read lab state from the record or at the cut, not after the join; put a limit on the post-outcome `process.join()`; the `turns` measure; turns and tokens at a wall-time end (LOG 2026-10-29).
 <!-- /notes -->

@@ -96,7 +96,7 @@ entry, and marks it handled with the date and what was done. Newest last.
 
 ## 2026-11-04, 08:30 UTC (control room)
 
-- [ ] **fit/5: the 08:00 decision is WITHDRAWN.** It rested on figures the red team has since disproved
+- [x] **fit/5: the 08:00 decision is WITHDRAWN.** It rested on figures the red team has since disproved
   (worst loss 0.0283 per event, not 0.0114; losses on three strata including the pilot's dev-015 s3;
   in-sample and held-out figures not comparable). New decision: restate the bound under a rule
   written first. Before any new search is run, write and red-team (one round) a short rule that
@@ -108,3 +108,4 @@ entry, and marks it handled with the date and what was done. Newest last.
   Lane note 2026-11-04 (session 27): in hand; pre-registration being drafted (`docs/v2/prereg/2026-11-04_pilot-search-misses.md`). No search on a pilot unit before the freeze.
   Lane note 2026-11-04 (session 28): rule frozen after three red-team rounds (more than the one asked, because the first two said not ready); `F` 3226f9b, `R` 5e5a169, control room told. Not launched; stays open until the check reports.
   Lane note 2026-11-04 (session 29): launched 11:59:49Z, guards passed, running in `sci-search-misses`. Stays open until the check reports.
+  Handled 2026-11-05 (lane session 31): the check ran complete; label `GO_SURVIVES_FOUND_MISSES`, 25 miss rows on 25 fits, largest |Δ| found 0.02198, no clause moved (`docs/v2/PILOT-MISSES.md`, red-teamed; LOG 2026-11-05). fit/6 stays a SPEC-level item, and the T2 pin stays off v2.

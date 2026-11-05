@@ -2489,3 +2489,24 @@ Checkpoint, not the hand-over. The numbers here are unreviewed.
 **Running.** A red team on the note and the label; an engineer finishing SPEC §2.2's shares on `spec22-shares`.
 
 **Next.** Read both, then the stop point: the go/no-go goes to the owner only after the note is reviewed.
+
+
+## 2026-11-05: Lane session 31, checkpoint: the note is fixed after the red team; a narrow second read is running
+
+Checkpoint, not the final hand-over. The go/no-go is not yet pushed to the owner.
+
+**Done.**
+- Red team on the note: **ready with fixes**, five blocking, all text (`docs/v2/redteam/2026-11-05_pilot-misses.md`, saved in full). The label stands and no number moved. I reran `c_controls.py` and `i_more.py`: same counts. The rest of the report's figures are the red team's.
+- Fixed: `miss_note.py`'s heading and "largest |Δ| among the misses found", test changed with it, note regenerated (the diff is those three lines); status line and the "Added by hand" section answer findings 1 to 9; finding 10 is corrected in the LOG. PILOT.md's hold wording is replaced by the prereg's fixed wording and the per-gate line.
+- SPEC §2.2's shares on v2 (da5e54a, fcea1c3): "Fit certification" in PILOT.md, certified 99.7% (583/585), coordinate-optimal 45.3% (265/585). Engineer's report; I read the regenerated diff and reran its test file, not the arithmetic. It trimmed the earlier uncommitted work. `.git/worktrees/agent-a33cbf18cc26fc53f/locked` vanished during that work, cause not found, no harm seen.
+
+**Checks.** `ruff format --check .` `276 files already formatted`; `ruff check .` `All checks passed!`; mypy `no issues found in 265 source files`; fast tier `3397 passed, 47 warnings in 103.67s`, exit 0. Slow tier not run: no file under `src/` changed. No check covers the note's prose beyond the red team's read.
+
+**Learned.**
+- `miss_note.py` ran clean on real records first time, and the red team found its output byte-identical and its numbers right. Its problems were wording, not arithmetic.
+- 276 solver warnings count processes, not solves: Python warns once per location per process.
+- `uncertified_better` cannot fire on a failed solve, because the point has no score.
+
+**Running.** A narrow red team on the fixes, PILOT.md's three hand edits and the Fit certification section.
+
+**Next.** Read it, fix, then the stop point: tell the control room (session `agent-control-b6`) and push the owner. The owner's decisions are unchanged: the go/no-go after the transcripts, check (b), and what T2 asserts.

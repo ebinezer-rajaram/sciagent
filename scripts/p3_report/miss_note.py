@@ -632,7 +632,7 @@ def label_section(fields: Fields) -> list[str]:
         f"{cell(fields.get('H1', 'group_a_of'))}, group B caught "
         f"{cell(fields.get('H1', 'group_b_caught'))}, group D caught "
         f"{cell(fields.get('H1', 'group_d_caught'))}.",
-        f"H3: max |Δ|: {cell(fields.get('max_abs_delta'))}.",
+        f"H3: largest |Δ| among the misses found: {cell(fields.get('max_abs_delta'))}.",
         f"H4: `v.outcome`: {cell(fields.get('H4', 'outcome'))}.",
     ]
     if fields.get("H2", "rests_on_within_quadrature") is True:
@@ -726,7 +726,11 @@ def coverage_section(fields: Fields) -> list[str]:
         out += table(("Gate", "Rows"), [(k, gates[k]) for k in sorted(gates)])
     else:
         out.append(f"Gates: {cell(gates)}.")
-    out += ["", "Searched fits by stratum, and the control that speaks for them:", ""]
+    out += [
+        "",
+        "Searched tier 1 fits by stratum, and that stratum's control result:",
+        "",
+    ]
     strata = fields.get("strata")
     if not isinstance(strata, Mapping):
         return [*out, f"Strata: {cell(strata)}."]
@@ -776,7 +780,7 @@ def misses_section(fields: Fields) -> list[str]:
         f"{cell(fields.get('s3', 'uncertified_better'))}. "
         "`uncertified_better` on the identity link: "
         f"{cell(fields.get('s3', 'uncertified_better_identity'))}.",
-        f"max |Δ|: {cell(fields.get('max_abs_delta'))}.",
+        f"largest |Δ| among the misses found: {cell(fields.get('max_abs_delta'))}.",
         f"`within_quadrature` rows: {cell(fields.get('within_quadrature_rows'))}.",
         "",
     ]

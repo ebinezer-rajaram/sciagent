@@ -414,7 +414,7 @@ def test_an_infinite_move_is_listed_and_not_read_as_a_number(
     assert run.decision["max_abs_delta"] == "infinite_move"
     note = tool.note_of(run.root)
     assert "| t1 | 1 | B-sym | 1.0 | infinite_move | -inf | -0.7105 |" in note
-    assert "max |Δ|: infinite_move" in note
+    assert "largest |Δ| among the misses found: infinite_move" in note
 
 
 def test_oracle_search_misses_are_apart(tool: ModuleType, miss_run: Run) -> None:

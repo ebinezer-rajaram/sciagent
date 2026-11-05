@@ -2557,3 +2557,18 @@ Corrects the hand-over above: its third decision (T2 and fit/5) is no longer the
 **Not verified.** Whether the control room or the owner has read the stop point: the message reached the control room's inbox, and the phone push did not go out.
 
 **Next.** Nothing needs a session until someone answers, apart from round 2's finding 9 (minor wording, in the queue). After a GO: the p4-deltas merge with this T2, then a plan for the miss check on P4's fits.
+
+## 2026-11-05: Lane session 32, checkpoint: finding 9 closed, the P4 miss check is an accepted amendment; the rehearsal merge is running
+
+**Done.**
+- Round 2's finding 9 (07c4123 before the rebase): the Fit certification section now tells exhaustive and coordinate searches apart, and no longer lists the go/no-go shares among the marked places. Two tests written first and seen to fail on the old text. PILOT.md regenerated with its recorded command: exactly the two generated lines changed, verdict `go`, a second regeneration byte-identical. Hand line marked. PILOT.md leftovers ticked.
+- `docs/v2/P4-MISS-PLAN.md`: the miss rule carries over to P4 (`fit.py` unchanged from 900e66a at 8fde280, still fit/5), but the guards, split hash, tiers, prereg 2.6's LLM clauses and section 5's labels cannot, as P4 has no §7.1 verdict and its contrasts read LLM rows. The amended script is analysis code, so it freezes in or before the §6.1 commit.
+- Control room accepted that as an amendment, one red-team round (INBOX c81749a). Recorded as delegated in LOG 2026-11-05; inbox and queue updated.
+
+**Running.** Engineer on `p4-rehearsal` (local, nothing pushed): v2 merged in, then the fast tier, the store checks and a slow tier in unit `sci-p4-tier-s32`, $0, about 8 CPU hours, log under `.cache/drafts/s32/`. No result yet.
+
+**Checks.** At the finding 9 commit: `276 files already formatted`, `All checks passed!`, mypy `no issues found in 265 source files`, the two report test files `37 passed`, exit 0. The repository's fast tier has not been run this session: the engineer holds the 2 workers.
+
+**Learned.** A push rejected as "fetch first" right after a clean fetch was the control room answering within minutes. Read the full error, and read what arrived, before rebasing. `tail -1` on a push hides the reason.
+
+**Next.** Read the engineer's report and record it. The amendment waits for a GO and the merged analysis code; the go/no-go and check (b) are still the owner's.

@@ -158,6 +158,20 @@ def test_b_sparse_carries_no_claim_from_the_windows_run(
     assert line.endswith("and its distance is not shown."), line
 
 
+def test_c3_says_the_wall_limit_helps_the_two_arms_unequally(
+    report: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """LOG 2026-11-05 (session 34): the prompt states the limit in the same words,
+    but only one arm can read a clock, so C3 reads with that difference. The
+    sentence stands beside the arms' cost and wall figures, once."""
+    text = _render(report, tmp_path, monkeypatch, _table())
+    line = _line(text, "C3 (AG-o against AG-c):")
+    assert "AG-o can read a clock through its own code and AG-c cannot" in line
+    assert "wall limit" in line
+    llm = text.index("## LLM arms: cost and behaviour")
+    assert llm < text.index(line) < text.index("### Void runs")
+
+
 def test_go_is_labelled_as_computed_not_decided(
     report: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

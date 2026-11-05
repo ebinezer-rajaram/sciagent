@@ -1231,6 +1231,10 @@ def main() -> None:
         "Predictions made in a policy arm are not read (P4 Δ11: the agent did "
         "not choose the experiment); the last column counts what was left out.",
         "",
+        "C3 (AG-o against AG-c): AG-o can read a clock through its own code and "
+        "AG-c cannot, so the wall limit the prompt states helps the two arms "
+        "unequally, and C3 reads with that difference (LOG 2026-11-05).",
+        "",
     ]
     L += ["### The softplus note", ""]
     L += softplus_note_table(args.root, llm_systems, tab)

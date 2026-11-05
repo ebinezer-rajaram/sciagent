@@ -62,6 +62,9 @@ CERTIFIED: Final = "certified"
 UNCERTIFIED: Final = "uncertified"
 NOT_A_FIT: Final = "not a GLM fit"
 UNRECORDED: Final = "unrecorded"
+#: The start of the line a softplus fit carries when its θ could not be converted
+#: to the agent's units (``investigation/tools.py``, ``Lab._fit_text``).
+SOFTPLUS_NOTE: Final = "note: softplus-link coefficients are reported as fitted"
 
 type RowKey = tuple[str, int, str]
 
@@ -205,15 +208,11 @@ def recorded_text(values: Sequence[float | None], total: int) -> str:
     return _part_text(values, total, "recorded")
 
 
-def counts_recorded(root: Path, session: Any) -> bool:
-    """Whether the session's stored record has an SDK ``result`` entry, which
-    carries its turn count and token usage (a ``wall_time`` end has none).
-
-    Read from the record under ``root`` (the detail's ``record_dir`` and
-    ``record``), never from the outcome or a zero reading.
+def session_record_path(root: Path, session: Any, unknown: str) -> Path:
+    """The session's stored record under ``root`` (the detail's ``record_dir``
+    and ``record``). A cell that names none raises, saying what stays ``unknown``.
     """
     from sciagent.campaign.plan import CampaignError
-    from sciagent.harness.record import SessionRecord
 
     detail = session.detail
     if not isinstance(detail.get("record_dir"), str) or not isinstance(
@@ -221,11 +220,76 @@ def counts_recorded(root: Path, session: Any) -> bool:
     ):
         raise CampaignError(
             f"session cell {session.digest} ({session.system} {session.truth} "
-            f"seed {session.seed}) names no record; its turn and token counts "
-            "cannot be told recorded or not"
+            f"seed {session.seed}) names no record; {unknown}"
         )
-    path = root / detail["record_dir"] / detail["record"]
+    return root / str(detail["record_dir"]) / str(detail["record"])
+
+
+def counts_recorded(root: Path, session: Any) -> bool:
+    """Whether the session's stored record has an SDK ``result`` entry, which
+    carries its turn count and token usage (a ``wall_time`` end has none).
+
+    Read from the record under ``root``, never from the outcome or a zero
+    reading.
+    """
+    from sciagent.harness.record import SessionRecord
+
+    path = session_record_path(
+        root, session, "its turn and token counts cannot be told recorded or not"
+    )
     return bool(SessionRecord.load(path).of_kind("result"))
+
+
+def shown_softplus_note(root: Path, session: Any) -> bool:
+    """Whether a ``fit`` result in the session's record carries the note.
+
+    Only ``fit``: the note is the framework's, and an agent can put the same
+    words into a ``notebook`` or ``python`` output itself. A free repeat repeats
+    the fit's text, so it counts; a refused fit has no note to show.
+    """
+    from sciagent.harness.record import SessionRecord
+
+    path = session_record_path(
+        root, session, "whether it was shown the softplus note cannot be told"
+    )
+    return any(
+        entry.body["name"] == "fit" and SOFTPLUS_NOTE in entry.body["text"]
+        for entry in SessionRecord.load(path).of_kind("tool_call")
+    )
+
+
+def softplus_note_table(root: Path, systems: Sequence[str], tab: Any) -> list[str]:
+    """The sessions shown the softplus note, per arm with sessions, and what the
+    count means (LOG 2026-11-05, session 34). Void sessions count among the
+    sessions shown it; the scored columns are what a contrast reads."""
+    rows = []
+    for s in systems:
+        sess = [x for x in tab.sessions if x.system == s]
+        if not sess:
+            continue
+        shown = [shown_softplus_note(root, x) for x in sess]
+        scored = [n for x, n in zip(sess, shown, strict=True) if not x.void.void]
+        rows.append(
+            [s, str(len(sess)), str(sum(shown)), str(len(scored)), str(sum(scored))]
+        )
+    return [
+        *table(
+            [
+                "arm",
+                "sessions",
+                "shown the note",
+                "scored sessions",
+                "scored, shown the note",
+            ],
+            rows,
+        ),
+        f"Sessions with at least one `fit` result reading `{SOFTPLUS_NOTE}`, from "
+        "the records. Softplus θ cannot be converted to the agent's time units, so "
+        "the anonymised condition is told, and the named condition, whose units "
+        "are not converted, is not: C2 compares conditions that include this note "
+        "(LOG 2026-11-05).",
+        "",
+    ]
 
 
 def session_wall_times(root: Path, sessions: Sequence[Any]) -> dict[str, float]:
@@ -1168,6 +1232,8 @@ def main() -> None:
         "not choose the experiment); the last column counts what was left out.",
         "",
     ]
+    L += ["### The softplus note", ""]
+    L += softplus_note_table(args.root, llm_systems, tab)
     flagged_runs = [x for x in tab.sessions if x.void.void or x.void.stored_void]
     L += [
         "### Void runs",

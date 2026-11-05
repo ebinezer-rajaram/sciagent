@@ -404,6 +404,7 @@ def test_the_reports_picks_see_a_variant_arm(
         ),
     )
     monkeypatch.setattr(report, "counts_recorded", lambda root, session: False)
+    monkeypatch.setattr(report, "shown_softplus_note", lambda root, session: False)
     text = _render(report, tmp_path, monkeypatch, table, extra_argv=("--arm-set", "p4"))
     assert "**best gap closed (named)**" in text
     assert "**best gap closed (anonymised)**" in text

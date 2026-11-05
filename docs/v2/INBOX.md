@@ -161,3 +161,9 @@ entry, and marks it handled with the date and what was done. Newest last.
   red-team round before it is reported as more than exploratory. No rerun on rung 0. Reported to the
   owner by the control room. Decided by the control room under the owner's standing delegation.
   Handled 2026-11-05 (lane session 33): (1) `.cache/drafts/fsd-controls/DEVIATION-2026-11-05.md`, corrected after the red team, with S3 copies beside the record; (2) AUTOPILOT, Never; (3) one round, ready with fixes, fixed (`docs/v2/redteam/2026-11-05_check-b.md`), so the result stays exploratory. LOG 2026-11-05. No rerun on rung 0.
+
+## 2026-11-05, control room (P4 scope)
+
+- [ ] **Keep decision 12: C5 and C3's AG-S-boed half stay in P4b, as the owner approved.** "C1 to C5" in
+  c81749a was the control room's loose wording, not a reversal. P4's miss amendment covers C1, C2, C3
+  (AG-o against AG-c) and C4. The narrow second red-team round is fine, as the preregister skill allows.

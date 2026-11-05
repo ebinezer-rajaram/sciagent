@@ -112,8 +112,9 @@ entry, and marks it handled with the date and what was done. Newest last.
 
 ## 2026-11-05, control room
 
-- [ ] **T2 and P4 on fit/5.** T2 asserts only what it tested: the listed known losses, with no
+- [x] **T2 and P4 on fit/5.** T2 asserts only what it tested: the listed known losses, with no
   general bound and no "found stratum" wording. P4 runs on fit/5, with the frozen pilot miss check
   (prereg 3226f9b, same rules) applied to its fits before its verdict is read; fit/6 stays a SPEC item
   for after P4. Decided by the control room under the owner's standing delegation; record it as
   delegated. The P3 go/no-go and check (b) stay with the owner.
+  Handled 2026-11-05 (lane session 31): recorded as delegated (LOG 2026-11-05). `t2-pin` on v2 (db3cef6, a05adfd), slow T2 passes on v2; the miss check on P4's fits is a queue item under P4 preparation.

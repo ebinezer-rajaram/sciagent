@@ -296,14 +296,14 @@ Each item says when it is done. Move finished items to the bottom section after 
   never reached the layer, none charged: all have an `unmatched_tool_result`, 14 `InputValidationError ... could not be parsed as JSON`, 5 `Input validation error`
   (corrected by the red team, session 26): why the model's input failed to parse is the open question.
   2026-11-04 (session 27; corrected after the red team, LOG 2026-11-04): no defect found in our code path; the agents' typing is likely, not shown. 9 of the 14 end in one surplus closing brace, 5 are over the SDK's 2,048-byte cap and not visible, the 5 validation errors are the schema refusing bad input; 12 of 19 carry mark-count drift. None was charged; on 5 of 19 the session never ran a `force_events` experiment. The CLI's error shows only the first 200 bytes, so an agent never sees a tail fault. `process.join()` limit: `EXIT_GRACE_S` on `p4-rehearsal`. Left: the merge.
-- [~] **fit/5 search losses and T2's list (decided by the control room; LOG 2026-11-05).** T2's examples drift with context, and a seeded
+- [x] 2026-11-05 **fit/5 search losses and T2's list (decided by the control room; LOG 2026-11-05).** T2's examples drift with context, and a seeded
   sweep found 1 loss in 376 (1.32 nats, (0, softplus, 103648458)); 0.004 nats at (0, softplus, 1074). This fails the slow tier
   on `p4-rehearsal`, so it blocks the p4-deltas merge check. Options: pin the list by a seeded generator (test only) and keep the
   known losses as documented failures, restate the bound under a rule written first, or fit/6 (SPEC-level; would not
   apply to the pilot). Found so far: 3 of the first 106 cases of a focused BIG[0] softplus sweep (0.27, 0.59, 2.08 nats), and ORACLE dev-015 s3 in the pilot store
   (4.53 nats, `exp`, no `Periodic`), so the miss is not confined to BIG[0]. `t2-pin` 9fef563 holds the pinned list, not merged.
   2026-11-04 (session 27): focused sweep final, 3 of 115. Pinned list: 1 loss in 300, 9.0007 nats on 318 events at (2, exp, 1499614403), reproduced. The stress test is withdrawn (LOG 2026-11-04). The control room's pin-and-document decision rested on wrong figures and is withdrawn (INBOX e7c6431): restate the bound under a rule written first. `t2-pin` stays off v2.
-  2026-11-05 (session 31): decided by delegation: T2 asserts only its listed losses; `t2-pin` on v2 (db3cef6, a05adfd). The slow T2 run on v2 is in `.cache/drafts/s31/t2.log`; read its tail, then tick this item and INBOX 0577e79.
+  2026-11-05 (session 31): decided by delegation: T2 asserts only its listed losses; `t2-pin` on v2 (db3cef6, a05adfd). Slow T2 and its regressions on v2: `25 passed, 19 deselected in 1187.12s`, exit 0. The p4-deltas merge check must take this T2 with it.
 - [ ] **PILOT.md leftovers** (red team, session 26). Finish the replay paragraph when the units exit (`replay_paragraph.sh`, sort any FAIL by the
   notes' rule). Commit the [draft] scripts lint-clean or drop their sentences (S3 `sciagent/p3-linux/report-900e66a/`; commit wall_time_audit, sizing,
   independent_recompute with truths.json, sandbox_nondeterminism; drop dispatch_order; five figures have no printing script). Fix `pilot_report.py`, test first:

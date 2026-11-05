@@ -2543,3 +2543,17 @@ Corrects the hand-over above: its third decision (T2 and fit/5) is no longer the
 **Running.** T2's slow test and regressions on v2, 2 cores at most, nice 10, about 1 CPU hour, $0, log `.cache/drafts/s31/t2.log`. No result yet.
 
 **Next.** Read the tail, tick the queue and the inbox, LEDGER row.
+
+
+## 2026-11-05: Lane session 31, final hand-over: T2 passes on v2; the go/no-go waits on the owner
+
+**Stop point, still open.** The answer in one line: the computed GO survives the misses found and is no longer held; the entry above the last gives evidence and caveats.
+- Decision needed from the owner: the go/no-go after the AG-o transcripts, and check (b).
+
+**Done since the checkpoint.** Slow T2 and its regressions on v2: `25 passed, 19 deselected in 1187.12s (0:19:47)`, exit 0, so the pinned list's one known loss reproduces at its recorded gap here. Queue and inbox ticked, LEDGER row in (0.66 hours, an upper bound from wall time at 2 cores).
+
+**Checks.** T2's file is the only code since e04d68c: its fast tests pass, 16 tests, exit 0; ruff clean on it; the slow run above. The repository's fast tier and mypy were not rerun after the cherry-pick, which touched that test file alone.
+
+**Not verified.** Whether the control room or the owner has read the stop point: the message reached the control room's inbox, and the phone push did not go out.
+
+**Next.** Nothing needs a session until someone answers, apart from round 2's finding 9 (minor wording, in the queue). After a GO: the p4-deltas merge with this T2, then a plan for the miss check on P4's fits.

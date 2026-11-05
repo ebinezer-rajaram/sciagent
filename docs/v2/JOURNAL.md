@@ -2557,3 +2557,94 @@ Corrects the hand-over above: its third decision (T2 and fit/5) is no longer the
 **Not verified.** Whether the control room or the owner has read the stop point: the message reached the control room's inbox, and the phone push did not go out.
 
 **Next.** Nothing needs a session until someone answers, apart from round 2's finding 9 (minor wording, in the queue). After a GO: the p4-deltas merge with this T2, then a plan for the miss check on P4's fits.
+
+## 2026-11-05: Lane session 32, checkpoint: finding 9 closed, the P4 miss check is an accepted amendment; the rehearsal merge is running
+
+**Done.**
+- Round 2's finding 9 (07c4123 before the rebase): the Fit certification section now tells exhaustive and coordinate searches apart, and no longer lists the go/no-go shares among the marked places. Two tests written first and seen to fail on the old text. PILOT.md regenerated with its recorded command: exactly the two generated lines changed, verdict `go`, a second regeneration byte-identical. Hand line marked. PILOT.md leftovers ticked.
+- `docs/v2/P4-MISS-PLAN.md`: the miss rule carries over to P4 (`fit.py` unchanged from 900e66a at 8fde280, still fit/5), but the guards, split hash, tiers, prereg 2.6's LLM clauses and section 5's labels cannot, as P4 has no §7.1 verdict and its contrasts read LLM rows. The amended script is analysis code, so it freezes in or before the §6.1 commit.
+- Control room accepted that as an amendment, one red-team round (INBOX c81749a). Recorded as delegated in LOG 2026-11-05; inbox and queue updated.
+
+**Running.** Engineer on `p4-rehearsal` (local, nothing pushed): v2 merged in, then the fast tier, the store checks and a slow tier in unit `sci-p4-tier-s32`, $0, about 8 CPU hours, log under `.cache/drafts/s32/`. No result yet.
+
+**Checks.** At the finding 9 commit: `276 files already formatted`, `All checks passed!`, mypy `no issues found in 265 source files`, the two report test files `37 passed`, exit 0. The repository's fast tier has not been run this session: the engineer holds the 2 workers.
+
+**Learned.** A push rejected as "fetch first" right after a clean fetch was the control room answering within minutes. Read the full error, and read what arrived, before rebasing. `tail -1` on a push hides the reason.
+
+**Next.** Read the engineer's report and record it. The amendment waits for a GO and the merged analysis code; the go/no-go and check (b) are still the owner's.
+
+## 2026-11-05: Lane session 32, hand-over: the rehearsal is merged to b4d6225; its slow tier runs on
+
+**Done since the checkpoint.**
+- Engineer on `p4-rehearsal`: v2 b4d6225 merged (866ae34; LOG conflict only, both sides kept; T2 byte-identical to v2's, which I confirmed by diff), then the cap test on CPU time (3ddc8da, committed by me; its figures are the engineer's). Local, nothing pushed. ruff clean, mypy `no issues found in 303 source files`, fast tier `4059 passed` on the second run; the first was `1 failed, 4058 passed`. Store checks on a fresh copy match session 27's: addresses `match 910 differ 0`, score addresses `match 240 differ 0`, `store_check` 1 budget issue (bd3dc4c4), `session_check` exit 0, `replay_check` refused 240, exit 3. I read `fast2.log`'s tail and `fast.log`'s failure, not the store logs.
+- That failure is a real SIGTERM race in the frozen `pilot_search_misses.py` (LOG 2026-11-05). It does not touch the pilot's result: I checked `journalctl` (no stop on `sci-search-misses`), `Result=success`, and `decision.json` (`exit_code` 0, shortfall 0 on tier 1, tier 2 and S2). The fix goes in the P4 amendment; the frozen script is unchanged.
+- Three adopted decisions are not built on `p4-rehearsal`: C5 truth-keyed seeding, F5 derived address text, Δ6 `link-neutral` as the arms' setting (engineer's reading, queue). The merge item was under-counted until now.
+
+**Running.** `sci-p4-tier-s32`, full `-m slow` on 866ae34 plus the cap edit, 2 workers, nice 10, started 06:30:42Z, ceiling about 8 CPU hours, $0. No result yet. LEDGER row when it exits.
+
+**Checks on v2** at e193065: `276 files already formatted`, `All checks passed!`, mypy `no issues found in 265 source files`, fast tier exit 0 in one process (`.cache/drafts/s32/fast-v2.log`), since the slow tier holds the 2 workers. Slow tier on v2 not run: nothing under `src/` changed.
+
+**Not verified.** The determinism check, the rescore and the trailers were not done. The earlier tier's 405 s on the cap test stays unexplained. Whether the owner has seen the stop point: session 31's message went to the control room and the phone push failed.
+
+**Learned.** A rare failure in a fast tier was worth a look: it was a real fault in frozen code, and a rerun alone would have hidden it. When a defect turns up in code a result rests on, check whether that run could have met it before calling it harmless; the records answered it in two commands.
+
+**Next.** Read the tier (`grep -E '^(FAILED|ERROR)|^exit:' .cache/drafts/s32/slow.log`), add its LEDGER row. Then, test first on `p4-rehearsal`: C5, F5 and Δ6, before the slow tier that signs off the merge. The owner decides the P3 go/no-go after the AG-o transcripts, and check (b). The P4 amendment waits for a GO and the merged analysis code.
+
+## 2026-11-05: Lane session 33, checkpoint: owner's GO and check (b) in hand; the delegated read, check (b) and the rehearsal work are running
+
+**Done.**
+- Read the owner's three inbox items (4443928): P3 GO with the transcript reading delegated, check (b) yes, and never leave compute idle. None is marked handled yet.
+- Session 32's slow tier read: `333 passed`, exit 0 at 07:45:35Z, LEDGER row in.
+- Check (b)'s scope: the approval named `ctlA1-boot-r2`, the check also needs `ctlA1-cal-r2` and `ctlA1-crn-r2`, and the pools are not stored. Asked the control room before any draw; answered and confirmed in INBOX b0e794a, the three ids for this check only. The wording error was the lane's (LOG 2026-11-05).
+- Found an unrecorded result: session 27's rescore ended 7 of 240 with 1 differ (AG-o-S/anon dev-000 s2, `result.curve` only), where the queue said "identical so far" (LOG 2026-11-05, queue corrected).
+
+**Running.** `sci-rescore-s33`: full rescore with uncut output, p4-rehearsal 3ddc8da, one process, ceiling 20 CPU hours, $0; 3 of 240 at 11:58Z, no DIFF yet, and the first launch died on a missing gitignored `data/` in the fresh worktree (mine; copied, sha256 matched). Two analysts on the five AG-o transcripts (`.cache/drafts/s33/transcripts-a.md`, `-b.md`). Theorist on check (b), ceiling 1 CPU hour, $0, not yet at its real draw. Engineer on C5, F5, Δ6 on `p4-rehearsal`. With those, three processes can overlap for check (b)'s 14 minutes or so, one above the usual 2.
+
+**Checks.** Docs only so far; nothing under `src/` changed on v2, and ruff, mypy and pytest have not been run this session.
+
+**Learned.** A note written during a run is not the run's result: reread the log's end before calling a run's status. A summary of an approval can be narrower than the thing approved; read the check's own definition before drawing on it.
+
+**Next.** Read the four reports. Then record the GO as the owner gave it, in the LOG and PILOT.md, with the reading stated as delegated. No paper or AI-use disclosure exists in the repository yet, so that wording needs a home. Then the merge's slow tier, and the P4 amendment after the merge.
+
+## 2026-11-05: Lane session 33, hand-over: P3 closed on the owner's GO; check (b) reproduces D0, with an unapproved rung-0 draw on the way; F5 built
+
+**Done.**
+- **P3 closed on GO, the owner's own decision, without the owner's read** (LOG 2026-11-05; PILOT.md "The decision"). AI agents did the reading: two analysts on the five picks, then a red team from the records first (ready with fixes, fixed). No sign of a leak or an agent-set score in those five, which is 5 of 240 and cannot prove separation. `docs/v2/P3-TRANSCRIPT-READ-A.md`, `-B.md`, `docs/v2/redteam/2026-11-05_ag-o-transcript-read.md`. I added a warning to `TRANSCRIPTS.md`, which describes the Windows pilot.
+- **Named and anon differ by more than names, which bears on P4's C2.** An anon-only sentence reached 60 of 120 anon sessions (`grep -rl`, rerun by me) and `sign` reached one anon session through an error message, which the leak test never scans. Neither moves the GO. Queued before P4's prompts freeze; control room told.
+- **Check (b), exploratory:** one run on the three approved ids, 8,192 runs, 36 min 16 s CPU (`systemd` count), `D0_RUNG2_REPRODUCED`, 22 of 22 fields; the real test is three count maps. D0 is what the code computes on those streams, not proof calibrate's rules are right. A1 stays failed. Why the pool sits high stays open, and the deviation script did not finish (LOG; `docs/v2/redteam/2026-11-05_check-b.md`, ready with fixes, fixed).
+- **Deviation:** the helper drew `ctlA1-cal-r0`, outside the approval, by running a guard-removed mutant at 12:07Z (about 630 runs; values lost). I learned of it at about 13:20Z and told the control room then, which replied in INBOX 119eff3. Note beside the control record, on S3 too; AUTOPILOT's Never list has the rule; no rerun on rung 0. My first LOG text said "nothing records the run" and "at once", both wrong, and the entry carries the correction.
+- **The rescore's DIFF is explained:** `-inf` float against the store's `'-inf'` string (`store.py:98`), so a flaw in the comparison, not a score change. All 36 curve entries agree on value.
+- **`p4-rehearsal`, local, not pushed, head a9e43a6:** C5, the Δ6 arms and guard, F5 complete. ruff clean, mypy `no issues found in 309 source files`, fast tier `4250 passed, 333 deselected`, exit 0, 12 of 19 named slow campaign tests passed (engineer's run; I read the fast log's tail and step4's lines). F5 stopped once on a constraint that was mine, not the decision's (LOG 2026-11-05).
+
+**Running, $0.** `sci-rescore-s33`, 3ddc8da, 62 of 240 at 13:57Z, ceiling 20 CPU hours, the one DIFF being the `-inf` one. `sci-p4-tier-s33`, 2205433, -n 1, ceiling 5 CPU hours, no result yet. `sci-p4-tier2-s33`, a9e43a6, starts when that one exits, ceiling 5 CPU hours. Worktrees `rescore-s33`, `tier-s33`, `tier2-s33` belong to them. LEDGER rows when each exits.
+
+**Checks on v2** at 24448b6: `276 files already formatted`, `All checks passed!`, mypy `no issues found in 265 source files`, fast tier exit 0, one process (`.cache/drafts/s33/checks-v2.log`). The doubled `-q` hid pytest's count, so the exit code is all I have. Slow tier on v2 not run: nothing under `src/` changed there. No check would catch a misreading of a transcript.
+
+**Not verified.** dev-003's last two fits and its submit were not replayed at HEAD, and PILOT's statement for those three calls rests on a review script that was not kept. Which stream the mutant drew is inferred from code order, and "never seen" cannot be proved. `store_check` and `replay_check` were not rerun at a9e43a6. The determinism check is not done. Three processes ran at once for part of the session, one above the usual 2, and the load reached about 8 with the other lane.
+
+**Learned.** A helper told to test a guard removed it around code that reaches the real path, and the brief had not forbidden that: the prohibition belongs in the brief, and now is. A helper's report can arrive over an hour after the event, so a breach does not reach the lead when it happens. An approval's summary can be narrower than the thing approved. A note written during a run is not its result. My brief's constraint overrode an adopted decision until the engineer stopped: check a constraint against the record before putting it in a brief. The red team twice found what two readers had not.
+
+**Next.**
+1. `grep -E '^(FAILED|ERROR)|^exit:' .cache/drafts/s33/slow.log slow2.log`, and the rescore's last lines, normalising `-inf`. LEDGER rows.
+2. If clean, finish the merge (queue, session 33 later line): v2 past b4d6225 with a8aeff8, PILOT.md's regeneration commit, trailers, the determinism check.
+3. Then the P4 miss amendment, and the named against anon items before the prompt freeze.
+
+**Decision needed from the owner:** none now. The Test split and §6.1 freeze remains a stop point ahead.
+
+## 2026-11-05: Lane session 34, checkpoint: the P4 miss amendment is drafted and in review; P4's contrast code turns out not to exist
+
+**Done.**
+- Orient: no open inbox item but the standing one on idle compute, and that holds: `sci-rescore-s33` and `sci-p4-tier-s33` are running, with `sci-p4-tier2-s33` queued behind the second.
+- **P4 miss amendment drafted**, `docs/v2/prereg/2026-11-05_p4-search-misses.md`, 71997c2, not frozen. Its one red-team round is running. Extensions beyond INBOX c81749a, stated in the text: a read also changes if it stops being reportable, group E (P4-scale ORACLE units, no threshold), new roots 20261108 and 20261109. Ceiling 178 CPU hours, stop at 172, $0, from the pilot's 25.41 CPU hours on 670 rows, doubled.
+- **Named against anon (a):** the softplus note stays, and the LOG's "only in names and time units" is qualified (LOG 2026-11-05). Part (b), the `sign` leak, is with an engineer on `p4-rehearsal`, test first, not back yet.
+- **Harness points:** first-turn usage and `predict` counts over all 240 records (`scripts/p3_report/first_turn_and_predict.py`, follow-up in `docs/v2/P3-TRANSCRIPT-READ-B.md`). One first-turn total per arm, 6,430, 6,794, 7,089, 7,453, so the context does not change in length with the truth; what the tail holds stays unknown. 19 calls, 9 accepted, 16 sessions tried, 8 with one accepted, as the red team said. Wall limit: goes in P4's prompt (LOG 2026-11-05); all 3 wall-time sessions were AG-o/named with no submit call (dev-005, dev-008, dev-012, s1, rerun by me). The sentence is not written yet.
+
+**Running, $0.** Rescore 3ddc8da, 65 SAME and 1 DIFF (the `-inf` one) at 14:08Z. Tier 2205433, at about 65% since 13:54Z, log unchanged since then, which is one long test or a hang: not shown. Tier a9e43a6 waits on it. Helpers: engineer, red team.
+
+**Checks.** Fast tier on v2 running at this checkpoint, not yet read (`.cache/drafts/s34/fast-v2.log`); ruff and mypy results are in that run, not read either. Nothing under `src/` changed on v2.
+
+**Learned.** Writing the amendment showed that "substitute into the frozen P4 analysis code" names code that does not exist: at a9e43a6 nothing computes C1 to C6, and no AG-S-boed or Haiku/Opus arm is planned in code. Queued; it blocks the §6.1 freeze and `R2`.
+
+**Next.** Read the red team, fix, save its report, freeze if ready. Integrate the engineer's commits. Then `grep -E '^(FAILED|ERROR)|^exit:' .cache/drafts/s33/slow.log slow2.log`, and the merge as session 33's list says.
+
+**Decision needed from the owner:** none now.

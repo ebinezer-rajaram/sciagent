@@ -332,6 +332,32 @@ def test_the_list_does_not_depend_on_row_order(report: ModuleType) -> None:
     )
 
 
+def test_the_section_says_what_a_certificate_says_of_each_search(
+    report: ModuleType,
+) -> None:
+    """Every point of an exhaustive grid is evaluated, so a certified fit there
+    has the best ψ of its grid; a coordinate search evaluates only some."""
+    rows = [fitted(1, "A", LARGE)]
+    text = " ".join(section(report, rows, {key(rows[0]): cell()}, ("A",)))
+    assert "does not say ψ is the best point of its grid" not in text
+    assert "searched exhaustively, that makes ψ the best point of the grid" in text
+    assert "searched coordinate-wise, it does not" in text
+
+
+def test_the_list_of_marked_places_leaves_out_the_baselines_only_shares(
+    report: ModuleType,
+) -> None:
+    """The go/no-go shares table prints no LLM arm, and the verdict's baselines
+    are the only rows it holds, so naming it promises a mark it cannot show."""
+    rows = _llm_rows()
+    cells = {key(r): cell(1.0) for r in rows}
+    cells[("t", 1, ARM)] = cell(0.0)
+    lines = section(report, rows, cells, ("ORACLE", "B-lib", ARM, OPEN))
+    text = " ".join(lines)
+    assert "the go/no-go shares" not in text
+    assert "the per-system and group tables and the transcript picks" in text
+
+
 def test_no_uncertified_fit_is_stated_too(report: ModuleType) -> None:
     rows = _llm_rows()
     lines = section(report, rows, {key(r): cell(1.0) for r in rows}, (ARM,))

@@ -37,6 +37,22 @@ These notes replace the Windows run's. The Windows notes (smoke, fit/4 pilot, pr
 
 Sources: **[report]** is a number in the generated sections of this file. **[script]** is a number from a committed script under `scripts/p3_report/`, named each time, rerun on dm-devbox on 2026-11-04 at e1057af, a side branch whose scripts are byte-identical to v2's 5bd54ed. **[red team]** is a number from a review script kept on S3 under `sciagent/p3-linux/report-900e66a/`, not committed.
 
+#### The decision (2026-11-05)
+
+**P3 closes on GO, and the owner did not read the transcripts.** The owner's words, 2026-11-05 10:10 UTC through the control room: "go and yes, whatever you think is best please. you dont need me i trust you to do this." P4-PROPOSAL §2.4 closes P3 on a GO plus the owner's read; the owner gave the go without that read and delegated it, so this departs from §2.4's wording by the owner's own decision. No rule or number changed. Text below that speaks of "the owner's read", including the generated verdict line, was written before the decision and stands as written.
+
+**Who read what.** AI agents did the delegated reading, and no human has read these transcripts: two analyst agents read the five picks below (`docs/v2/P3-TRANSCRIPT-READ-A.md`, `-B.md`), and a red-team agent checked the records independently and then the notes (`docs/v2/redteam/2026-11-05_ag-o-transcript-read.md`, ready with fixes, fixed). What each read line by line and by script is in the notes.
+
+**What the read found.** No sign in these five records of truth, held-out data or a score reaching an agent, or of an agent setting anything scoring reads beyond the structure it submits. Sandbox code stayed on its mounts and budgets reconcile, apart from the known 35 against 34 on dev-012 s1. Each claim made in this file about the picks that could be checked held; the replay's "timing number alone" was seen for 62 of dev-003's 65 calls. A transcript cannot prove separation: that rests on the code, the isolation tests and replay. This is 5 of 240 records, chosen by rule.
+
+**What it leaves for P4, none of which moves the verdict, which reads non-LLM systems only.**
+- The named and anon conditions differ by more than names and time units. An anon-only sentence ("softplus-link coefficients are reported as fitted, not converted to your time units") reached 60 of 120 anon sessions and no named session, and the forbidden word `sign` reached one anon session through an error message (AG-c-S/anon dev-015 s1). The one anon pick shows neither.
+- Agents' written reports claim more than their actions support on at least four of the five picks. No scorer reads `report`.
+- The wall limit is in the config and not in the agent's prompt.
+- "Any prediction" in the LLM table counts accepted calls: 19 `predict` calls ran, 10 refused by the parser.
+- The record may not hold everything the agent saw (red team, finding 4; about 400 tokens, an inference, unconfirmed).
+- `docs/v2/TRANSCRIPTS.md` describes the Windows pilot, not this store.
+
 #### How this file was made
 
 ```sh
@@ -118,7 +134,7 @@ Rules applied as written, with one declared exception, and none changed after th
 | C2 | Δ10 rank rule | p = 4.768e-06; median 0.0245, CI lower end 0.0148 > 0 | passes |
 | C3 | B-sym@10F median gap ≥ -0.01 | 0.0000 (10 truths, seed 1) | passes |
 
-SPEC §7.1's own too-hard wording, "every system", also takes in the LLM arms (25%, 32%, 33%, 27% [report]); the result is the same. B-rand's 10% is exactly on the line (0.1000 [script: `independent_recompute.py`]), which does not matter because other systems are far above it.
+SPEC §7.1's own too-hard wording, "every system", also takes in the LLM arms (25% (1 uncertified), 32% (1 uncertified), 33%, 27% [report]); the result is the same. B-rand's 10% is exactly on the line (0.1000 [script: `independent_recompute.py`]), which does not matter because other systems are far above it.
 
 The computed verdict line below says what the rules compute. It reads the non-LLM systems only, so the one store issue does not enter it. **It is not the decision:** §2.4 closes P3 on a GO plus the owner's transcript read, and the miss check's wording goes with the GO (first decision below).
 
@@ -276,7 +292,7 @@ Recovery and close shares are truth-weighted; gaps and similarity are over units
 
 ## Fit certification (SPEC §2.2)
 
-Read from each scored row's `certified` reading: the final fit behind the row's submitted model, under the current fitter. The fits inside a search, a selection or a curve are not in the rows. Certified means the inner solve at the chosen ψ and at every ψ point evaluated is certified: a certificate in θ, which does not say ψ is the best point of its grid. Shares are over units (truth x seed), not truths, of the rows reading 0 or 1. No GLM fit (the reading is NaN: B-np, and B-lib when an out-of-grammar member won) and unrecorded (no `certified` field) enter neither side of a share. A no-submission or failed row has no field because it has no fit, and is counted among the unrecorded as such.
+Read from each scored row's `certified` reading: the final fit behind the row's submitted model, under the current fitter. The fits inside a search, a selection or a curve are not in the rows. Certified means the inner solve at the chosen ψ and at every ψ point evaluated is certified: a certificate in θ. On a grid searched exhaustively, that makes ψ the best point of the grid; on one searched coordinate-wise, it does not. Shares are over units (truth x seed), not truths, of the rows reading 0 or 1. No GLM fit (the reading is NaN: B-np, and B-lib when an out-of-grammar member won) and unrecorded (no `certified` field) enter neither side of a share. A no-submission or failed row has no field because it has no fit, and is counted among the unrecorded as such.
 
 The coordinate-optimal share is of fits "certified in θ, coordinate-optimal in ψ". No cell stores `psi_search`, so it is recomputed from the row's structure, exactly: `fit` searches a grid of at most 512 points exhaustively and any larger one coordinate-wise. An uncertified fit and ORACLE's kept truth-ψ refit (ψ fixed, no search) are not in it, whatever their grid.
 
@@ -296,7 +312,7 @@ The coordinate-optimal share is of fits "certified in θ, coordinate-optimal in 
 | AG-o-S/anon | 60 | 60 | 0 | 0 | 0 | 100.0% (60/60) | 30.0% (18/60) |
 | all | 670 | 583 | 2 | 82 | 3 (3 with no fit) | 99.7% (583/585) | 45.3% (265/585) |
 
-Uncertified fits: 2, marked `(n uncertified)` where an arm's final-fit scores are printed: the go/no-go shares, the per-system and group tables and the transcript picks. Each fit stays in every number, as the rules read it. Non-LLM rows among them (the only rows the §7.1 verdict reads): 0.
+Uncertified fits: 2, marked `(n uncertified)` where an arm's final-fit scores are printed: the per-system and group tables and the transcript picks. Each fit stays in every number, as the rules read it. Non-LLM rows among them (the only rows the §7.1 verdict reads): 0.
 
 - AG-c-S/named dev-003 seed 1: gap -0.1462, gap closed 0.25.
 - AG-o-S/named dev-005 seed 3: gap -inf, gap closed -.

@@ -470,6 +470,7 @@ Each item says when it is done. Move finished items to the bottom section after 
   red-team it, then a calibration fix before any new freeze (JOURNAL session 24).
   2026-11-04 (session 26): check (a) red-teamed: stands with corrections (LOG 2026-11-04 replaces the sd of 10 to 14 and withdraws
   "lucky pool" and "optimistic by construction" as facts). Check (b) recommended, as the missing positive control; waits for the owner.
+  2026-11-05 (session 33): **check (b) done, exploratory**: D0 rung 2 reproduced exactly (three count maps, 11 counts, plus derived fields); red team ready with fixes, fixed; LOG 2026-11-05 (two entries), `docs/v2/redteam/2026-11-05_check-b.md`. Why the pool sits high stays open, and the deviation script did not finish. An unapproved `ctlA1-cal-r0` draw happened during testing (deviation note beside the record); no rerun on rung 0. Next here: a calibration that carries pool uncertainty, before any new freeze. Not started.
 - [ ] **Remaining P4 work packages**: WP9 (1327de9), WP10 (98205b4), WP11 controls 4-6
   (6ac6142) and WP12 LOG entries (f4a38e0) are committed on `origin/p4-deltas`
   (HANDOFF-2026-10-09); its slow tier was never run. Folded into the integration item above.

@@ -130,31 +130,34 @@ entry, and marks it handled with the date and what was done. Newest last.
 
 ## 2026-11-05, 10:10 UTC (owner, via the control-room session)
 
-- [ ] **P3 go/no-go: GO.** Owner: "go and yes, whatever you think is best please. you dont need me i
+- [x] **P3 go/no-go: GO.** Owner: "go and yes, whatever you think is best please. you dont need me i
   trust you to do this." The owner gave the go without reading the AG-o transcripts and delegated
   that reading; record it so (the transcript reading is not done by the owner), and state it the same
   way in PILOT.md and the paper's AI-use disclosure.
   Handled 2026-11-05 (lane session 33): recorded as the owner's decision and as a departure from §2.4's wording (LOG 2026-11-05; PILOT.md "The decision"; queue item closed). The reading was done by AI agents and red-teamed (`docs/v2/P3-TRANSCRIPT-READ-A.md`, `-B.md`). No paper or disclosure exists yet, so the sentence is in the LOG and a queue item carries it.
-- [ ] **Check (b) of the FSD seed lead: YES.** The owner approves the ctlA1-boot-r2 guard bypass for this
+- [x] **Check (b) of the FSD seed lead: YES.** The owner approves the ctlA1-boot-r2 guard bypass for this
   check only.
+  Handled 2026-11-05 (lane session 33): run; D0 rung 2 reproduced exactly, exploratory (LOG 2026-11-05). An unapproved rung-0 draw happened during testing; see the entries below.
 - [ ] **Standing (owner): never leave compute idle while waiting on Claude.** If the lane is waiting on its
   usage share, it starts frozen CPU or GPU work first.
   Noted 2026-11-05 (lane session 33): standing, so it stays open. This machine has no GPU and no AWS launch is approved for this lane, so it applies to CPU here; the rescore and the slow tier ran through the session.
 
 ## 2026-11-05, control room (check (b) scope)
 
-- [ ] **Check (b): the approval covers ctlA1-cal-r2, ctlA1-crn-r2 and ctlA1-boot-r2, for this check
+- [x] **Check (b): the approval covers ctlA1-cal-r2, ctlA1-crn-r2 and ctlA1-boot-r2, for this check
   only.** The owner approved check (b) itself ("go and yes, whatever you think is best please"); naming
   one id was the lane's wording error, not a limit the owner chose. Scope: rung 2 only, about 14 CPU
   min, ceiling 1 CPU hour, $0, outputs only under .cache/drafts/fsd-seedlead/, exploratory, no change
   to A1's scored failure. Record the wording error and this scope in the LOG.
+  Handled 2026-11-05 (lane session 33): wording error and scope in the LOG; run within scope on those ids, apart from the separate unapproved draw below.
 
 ## 2026-11-05, control room (unapproved rung-0 draw during check (b))
 
-- [ ] **Record it as a protocol deviation, then carry on.** Beyond the LOG and JOURNAL entries: (1) add a
+- [x] **Record it as a protocol deviation, then carry on.** Beyond the LOG and JOURNAL entries: (1) add a
   short deviation note beside the FSD control record (which stream, when, how, that the values were
   never written or seen, and that the hash check covering it was taken after the draw), so any later
   use of ctlA1 rung 0 carries it; (2) standing rule for helpers: never remove or bypass the guard, not
   even in a mutant or test, and test only on non-control ids; (3) check (b)'s result gets its one
   red-team round before it is reported as more than exploratory. No rerun on rung 0. Reported to the
   owner by the control room. Decided by the control room under the owner's standing delegation.
+  Handled 2026-11-05 (lane session 33): (1) `.cache/drafts/fsd-controls/DEVIATION-2026-11-05.md`, corrected after the red team, with S3 copies beside the record; (2) AUTOPILOT, Never; (3) one round, ready with fixes, fixed (`docs/v2/redteam/2026-11-05_check-b.md`), so the result stays exploratory. LOG 2026-11-05. No rerun on rung 0.

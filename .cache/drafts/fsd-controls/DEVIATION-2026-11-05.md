@@ -1,11 +1,14 @@
 # Protocol deviation, 2026-11-05: `ctlA1-cal-r0` drawn outside the gate
 
-Any later use of ctlA1 rung 0 carries this note (INBOX 119eff3; LOG 2026-11-05, "Check (b): an unapproved real stream was drawn during testing").
+Any later use of ctlA1 rung 0 carries this note (INBOX 119eff3; LOG 2026-11-05, "Check (b): an unapproved real stream was drawn during testing"). Corrected after the red team (`docs/v2/redteam/2026-11-05_check-b.md`, finding 6); the first version is in git and on S3 under this file's name, this one on S3 with `-r2`.
 
-- **Stream:** `ctlA1-cal-r0`, a real control stream, rung 0. It is outside the approval for check (b), which covers `ctlA1-cal-r2`, `ctlA1-crn-r2` and `ctlA1-boot-r2` only (INBOX b0e794a).
+- **Stream:** `ctlA1-cal-r0`, a real control stream, rung 0, outside the approval for check (b), which covers `ctlA1-cal-r2`, `ctlA1-crn-r2` and `ctlA1-boot-r2` only (INBOX b0e794a). Which stream it was is inferred, not logged: the code calls `calibration_d0` before `bootstrap r0`, and all 4,096 cal runs precede crn, so only cal-r0 was reachable.
 - **When:** 2026-11-05, 12:07Z to 12:11:11Z, 4:09 CPU, killed after a tool timeout.
-- **How:** while testing its self-test, a lane helper ran a mutant of `.cache/drafts/fsd-seedlead/checkb/checkb.py` with the guard removed, and the self-test then called `calibration_d0("ctlA1")` for real. Seed objects for other real ids were built too, with no generator drawn on them.
-- **How much:** 600 to 1,000 runs by the helper's estimate. The exact count is unknown.
-- **The values:** never written and never seen. They stayed in memory and were lost at the kill; `m1.out` is 0 bytes. This is the helper's account, as nothing records the run.
-- **What was checked:** no file in this directory is newer than the start of 2026-11-05. The before and after hashes of this directory (`fsd-seedlead/checkb/fsd-controls-before.txt`, `-after.txt`) were taken at 12:18Z and 12:59Z, **after the draw**, so they do not cover it.
-- **Consequence:** no rerun on rung 0. D0, the test runs and the scores of 2026-10-29 are unchanged, and A1's scored failure stands. Helpers never remove or bypass the guard, even in a mutant or test (AUTOPILOT, Never).
+- **How:** while testing its self-test, a lane helper ran a mutant of `.cache/drafts/fsd-seedlead/checkb/checkb.py` with the guard removed (m1), and the self-test then called `calibration_d0("ctlA1")` for real. Seed objects for other real ids were built too, with no generator drawn on them.
+- **A second round:** at 12:13:41Z to 12:13:55Z, after the tripwires went in, more mutants ran. m2 and m5 built seed objects on real ids and m4 reached the `World` tripwire. None drew, by a reading of the code. That round is also what the later rule forbids.
+- **How much:** about 630 runs at rung-2 rates (red team); 600 to 1,000 by the helper's estimate. The exact count is unknown.
+- **The values:** never written, and by the helper's account never seen; that cannot be proved, as they are gone. They were in a memory-only store with a null ledger, in a buffer lost at the kill; `m1.out` is 0 bytes. The red team found no path into any later file.
+- **What records it:** the task output kept at `.cache/drafts/fsd-seedlead/checkb/evidence-r0/` (m1 `Terminated`, last written 12:11:11Z) and the helper's account. The hash check at 12:12:21Z is in the helper's transcript only.
+- **What was checked:** no file in this directory other than this note is newer than the start of 2026-11-05. The hash lists of this directory (`checkb/fsd-controls-before.txt`, `-after.txt`) were taken at 12:18Z and 12:59Z, **after the draw**, so they do not cover it. The git commit c0d1b8f does cover D0 across the window, and D0's records carry the controls sha.
+- **When it was known:** the lead learned of it from the helper's final report at about 13:20Z, over an hour later, and told the control room then. The real run at 12:18:04Z started without that report, and the run's expected table does not mention it.
+- **Consequence:** no rerun on rung 0. D0, the test runs and the scores of 2026-10-29 are unchanged, and A1's scored failure stands. Helpers never remove or bypass a guard, even in a mutant or test (AUTOPILOT, Never).

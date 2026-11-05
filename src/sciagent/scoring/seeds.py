@@ -71,6 +71,8 @@ TELLING: Final = 5
 #: policy unit's or session's text names this, so the rule cannot change under
 #: an unchanged key (:func:`truth_policy_seed`).
 POLICY_SEED_RULE: Final = "stable_key(truth|seed|policy) mod 2**63"
+#: The last field of the search seed's key (``campaign.plan.search_seed``).
+SEARCH_SEED_TAG: Final = "search"
 
 _WORD: Final = 2**32
 

@@ -1,24 +1,24 @@
 """Address text read from the object that runs (F5 point 2; LOG 2026-10-27).
 
-The part of F5 that moves no pilot address: B-rand, B-np and the B-sym policy
-arms are built by one constructor shared by ``plan.py`` and ``execute.py``, and
-their text reads that object's fields, so a change to a default there moves the
-address instead of leaving a copied number behind. The text itself is
-byte-identical to the pilot's (pinned below and in ``test_campaign_policy.py``).
-
-The rest of point 2 moves every baseline and score address and is not built
-(LOG 2026-11-05, "F5 stops at the byte-identical part").
+ORACLE, B-lib, B-rand, B-np and the B-sym policy arms are built by one constructor
+shared by ``plan.py`` and ``execute.py``, and their text reads that object's
+fields, so a change to a default there moves the address instead of leaving a
+copied number behind. B-rand's and B-np's text stayed byte-identical to the
+pilot's; ORACLE's and B-lib's did not, by design (``test_campaign_policy.py``).
 """
 
 from __future__ import annotations
 
 import dataclasses
 import hashlib
+import importlib
+from pathlib import Path
 from typing import Any, Final
 
 import pytest
 from campaign_support import entry, environment, tiny_config
 
+from environments.pointproc import v2
 from sciagent.campaign import execute, plan
 from sciagent.campaign.execute import BaselineJob
 from sciagent.campaign.plan import (
@@ -27,22 +27,25 @@ from sciagent.campaign.plan import (
     POLICY_ARMS,
     system_config_text,
 )
+from sciagent.library.mmpp import MMPP2
 from sciagent.nonparam.wiener_hopf import DEFAULT, WienerHopfConfig
 from sciagent.systems.v2.policy_search import PolicySearch
 from sciagent.systems.v2.search import BRand
-from sciagent.systems.v2.systems import BNp
+from sciagent.systems.v2.systems import BLib, BNp, LibraryEntry, ModelMember, Oracle
 
+SCRIPTS: Final = Path(__file__).resolve().parents[2] / "scripts"
 #: ``system_config_text`` as the pilot's cells store it (tiny_config's budget).
 B_RAND_TEXT: Final = "budget=3; max_draws_factor=100; prior=test-prior"
 OTHER_WH: Final = dataclasses.replace(DEFAULT, max_lag=DEFAULT.max_lag * 2)
 #: SHA-256 of each policy arm's text under ``tiny_config``, from the hand text
-#: at b7ff29b (with C5's rule), before the shared constructor.
+#: at b7ff29b (with C5's rule), before the shared constructor. ``B-sym+truthFSD``
+#: is re-pinned by F5 point 2: its comparator text holds the library.
 POLICY_TEXT_SHA256: Final = {
     "B-sym+random": "0d3723c1e6db3989dea137f58eebd1d82cf9efce3ec41358a12a036931dc39eb",
     "B-sym+EIG": "d8d7678d35fe62426928bd925866824dc163cf8c5973c05cc3aa02c0e35ee9b1",
     "B-sym+FSD": "2c5404084a302f4448968882f028bfbb2a9138b2d5153caeabf2c9753a8e9c57",
     "B-sym+truthFSD": (
-        "d6aa0db93ad645fda087021ed0f5b487a845818aedff9ca9c6620cb3bf2192be"
+        "62647afd5745a6f849e7708d5a3f0fe43cec91b587f67563ccb562fe14436d83"
     ),
 }
 
@@ -178,3 +181,100 @@ def test_a_policy_unit_runs_the_constructors_search(
     assert search.seed == plan.search_seed("hawkes", 1)
     assert search.name == B_SYM_RANDOM
     assert search.entertained == job.config.policy.entertained
+
+
+# --------------------------------------------------------------------------
+# ORACLE and B-lib (F5 point 2): these texts move the pilot's baseline addresses
+# --------------------------------------------------------------------------
+
+
+def test_oracles_text_reads_the_system_that_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    before = system_config_text("ORACLE", environment(), tiny_config())
+
+    def other(*args: Any, **kwargs: Any) -> Oracle:
+        return dataclasses.replace(Oracle(*args, **kwargs), name="other-oracle")
+
+    monkeypatch.setattr(plan, "Oracle", other, raising=False)
+    text = system_config_text("ORACLE", environment(), tiny_config())
+    assert "other-oracle" in text and text != before
+
+
+def test_oracles_text_names_the_fit_config_and_no_truth() -> None:
+    text = system_config_text("ORACLE", environment(), tiny_config())
+    assert text.startswith("oracle: Oracle(")
+    assert "truth_psi=None" in text and "truth_coefficients=None" in text
+    # A truth's own structure enters by its digest, never by this text.
+    other = dataclasses.replace(tiny_config(), fits=7)
+    assert system_config_text("ORACLE", environment(), other) == text
+
+
+def test_oracle_runs_the_constructors_object(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[Oracle] = []
+
+    class Spy(Oracle):
+        def run(self, data: Any) -> Any:
+            seen.append(self)
+            raise Reached
+
+    monkeypatch.setattr(plan, "Oracle", Spy, raising=False)
+    monkeypatch.setattr(execute, "Oracle", _forbidden, raising=False)
+    job = _job("ORACLE")
+    with pytest.raises(Reached):
+        execute._run_system(
+            "ORACLE", job, execute.observational_data(job.truth, 1, job.env)
+        )
+    (system,) = seen
+    assert system.structure == job.truth.structure
+    assert system.truth_psi == job.truth.spec.psi
+    assert system.truth_coefficients == job.truth.spec.coef
+    assert system.fit_config == job.config.fit_config
+
+
+def _with_library(*library: LibraryEntry) -> Any:
+    return dataclasses.replace(environment(), library=library)
+
+
+def test_a_library_models_text_is_its_repr_not_its_type_name() -> None:
+    a = system_config_text(
+        "B-lib", _with_library(ModelMember("m", MMPP2())), tiny_config()
+    )
+    b = system_config_text(
+        "B-lib", _with_library(ModelMember("m", MMPP2(name="other"))), tiny_config()
+    )
+    assert a != b
+    assert f"m={MMPP2()!r}" in a
+
+
+@pytest.mark.parametrize("system", ["B-lib", "telling", "B-sym+truthFSD"])
+def test_every_text_holding_the_library_reads_its_models(system: str) -> None:
+    text = system_config_text(system, environment(), tiny_config())
+    assert "MMPP2(name=" in text and "PoissonMixture2(name=" in text
+
+
+def test_b_lib_runs_the_constructors_object(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[BLib] = []
+
+    class Spy(BLib):
+        def run(self, data: Any) -> Any:
+            seen.append(self)
+            raise Reached
+
+    monkeypatch.setattr(plan, "BLib", Spy, raising=False)
+    monkeypatch.setattr(execute, "BLib", _forbidden, raising=False)
+    job = _job("B-lib")
+    with pytest.raises(Reached):
+        execute._run_system(
+            "B-lib", job, execute.observational_data(job.truth, 1, job.env)
+        )
+    (system,) = seen
+    assert system.library == job.env.library
+    assert system.fit_config == job.config.fit_config
+
+
+def test_pilot_supplies_the_domains_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    pilot = importlib.import_module("pilot")
+    env = pilot.pointproc_environment(pilot.load_split(pilot.DEFAULT_SPLIT))
+    assert env.domain_text == v2.domain_text()

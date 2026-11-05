@@ -76,7 +76,7 @@ def _seeds_of_a_policy_unit(
         seen["search"] = kwargs["seed"]
         raise Reached
 
-    monkeypatch.setattr(execute, "BLib", FakeBLib)
+    monkeypatch.setattr(plan, "BLib", FakeBLib)
     monkeypatch.setattr(execute, "build_policy", spy_policy)
     monkeypatch.setattr(plan, "PolicySearch", spy_search)
     job = BaselineJob(entry(truth_id), seed, (system,), environment(), tiny_config())

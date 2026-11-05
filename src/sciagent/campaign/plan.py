@@ -20,12 +20,13 @@ control asks: the same search, longer.
 **Addresses** (:func:`baseline_key`, :func:`session_key`, :func:`score_key`).
 An :class:`~sciagent.registry.store.ExperimentKey` with
 
-- ``env_version``: the environment name and ``FIT_VERSION``;
+- ``env_version``: the environment name, the SHA-256 of the domain's own text
+  (:attr:`CampaignEnvironment.domain_text`) and ``FIT_VERSION``, last;
 - ``config``: the unit kind, system, truth id and the SHA-256 of the truth's
   record, the budgets, the fit configuration's key and the SHA-256 of the
   system's full configuration text (kept verbatim in the cell's detail);
-- ``data_version``: :data:`DATA_VERSION` (the world's observational horizon and
-  the scorer's held-out horizon);
+- ``data_version``: :data:`DATA_VERSION` (the world's observational horizon, the
+  scorer's held-out horizon and the digest of the data's constants);
 - ``metric_version``: :data:`METRIC_VERSION`;
 - ``seed``: the investigation seed.
 
@@ -59,14 +60,17 @@ the policy's own config (canonical JSON, no seed, no truth; P4 Δ11 decision 16)
 and :class:`PolicyArmSettings`, so a change to either moves their addresses and
 never an existing unit's. The telling unit's key has ``kind = "telling"``.
 
-**Text read from what runs** (F5). B-np, B-rand and the policy arms are built
-by one constructor shared with ``execute.py`` (:func:`b_np_system`,
+**Text read from what runs** (F5). ORACLE, B-lib, B-np, B-rand and the policy
+arms are built by one constructor shared with ``execute.py``
+(:func:`oracle_system`, :func:`b_lib_system`, :func:`b_np_system`,
 :func:`b_rand_system`, :func:`policy_search_system`), and their text reads that
-object, so a changed default moves the address. The rest of F5 moves the
-pilot's addresses and is not built (LOG 2026-11-05): ORACLE's sentence and
-B-lib's out-of-grammar members are still hand text, and
-:data:`METRIC_VERSION` and :data:`DATA_VERSION` still name only part of what
-they cover, so a change there needs a hand bump.
+object, so a changed default moves the address. :data:`METRIC_VERSION` and
+:data:`DATA_VERSION` end with the digests of :mod:`sciagent.campaign.versions`.
+
+**The pilot's store is not read from here on.** F5 moved every baseline and
+score address, as its entry said it would (LOG 2026-11-05): baselines and scores
+of the pilot are read only from the commit that reads them. The pilot's
+sessions can still be found by enumeration (:mod:`sciagent.campaign.rescore`).
 """
 
 from __future__ import annotations
@@ -80,14 +84,16 @@ from typing import Final, Literal
 
 import numpy as np
 
+from sciagent.campaign.versions import data_digest, metric_digest
+from sciagent.campaign.versions import render as render_value
 from sciagent.core.errors import SciAgentError
 from sciagent.core.program import stable_key
 from sciagent.core.types import DataVersion, EnvVersion, FrozenDict, MetricVersion, Seed
 from sciagent.glm.data import Dataset
 from sciagent.glm.fit import FIT_VERSION, FitConfig
-from sciagent.glm.grammar import ChannelSpec, Structure
+from sciagent.glm.grammar import ChannelSpec, Link, Structure
 from sciagent.glm.interventions import Experiment
-from sciagent.glm.simulate import MarkSampler
+from sciagent.glm.simulate import Coefficients, MarkSampler, PsiAssignment
 from sciagent.glm.syntax import render
 from sciagent.harness.live import HARNESS_VERSION
 from sciagent.harness.record import canonical_json
@@ -125,7 +131,7 @@ from sciagent.sandbox.runner import canonical_run_argv
 from sciagent.scoring import battery
 from sciagent.scoring.battery import Simulator
 from sciagent.scoring.heldout import HELDOUT_HORIZON
-from sciagent.scoring.seeds import POLICY_SEED_RULE
+from sciagent.scoring.seeds import POLICY_SEED_RULE, SEARCH_SEED_TAG
 from sciagent.scoring.telling import TELLING_REPLICATES
 from sciagent.systems.v2.policies import (
     BIC_WEIGHTS,
@@ -143,7 +149,14 @@ from sciagent.systems.v2.policy_controls import TruthFSDPolicy
 from sciagent.systems.v2.policy_search import PolicySearch, epoch_budgets
 from sciagent.systems.v2.search import BRand, GPConfig, StructureSampler
 from sciagent.systems.v2.sparse import SparseConfig
-from sciagent.systems.v2.systems import BNp, GrammarMember, LibraryEntry, ModelMember
+from sciagent.systems.v2.systems import (
+    BLib,
+    BNp,
+    GrammarMember,
+    LibraryEntry,
+    ModelMember,
+    Oracle,
+)
 
 ORACLE: Final = "ORACLE"
 B_LIB: Final = "B-lib"
@@ -178,18 +191,26 @@ POLICY_UNITS: Final = (*POLICY_ARMS, TELLING)
 KNOWN_BASELINES: Final = (*BASELINES, *POLICY_UNITS)
 
 #: The scorer's version: held-out gap, structure, battery, efficiency curve.
-#: Bump when any scoring code or constant changes. /2 (2026-10-03): the
+#: Its digest covers every value constant a system or the scorer reads
+#: (:mod:`sciagent.campaign.versions`, F5), so a changed constant moves it by
+#: itself; bump the label when scoring *code* changes. /2 (2026-10-03): the
 #: control-2 rank rule, the gap-closed noise flag and the ORACLE underfit
 #: requirement of control 1 (P4-PROPOSAL Δ10, T4, §2.4) change what is read
 #: from a score, so fit/5 scores are addressed apart from fit/4's.
 METRIC_VERSION: Final = (
     f"sciagent.campaign.score/2|battery:{battery.BATTERY_HORIZON}"
     f"x{battery.REPLICATES}cap{battery.BATTERY_MAX_EVENTS}"
+    f"|constants:{metric_digest()}"
 )
 #: The data every unit sees: the world's observational log and the held-out log.
+#: Its digest covers their constants (:mod:`sciagent.campaign.versions`).
 DATA_VERSION: Final = (
     f"world-obs:{OBSERVATIONAL_HORIZON}|heldout:{HELDOUT_HORIZON}|world/1"
+    f"|constants:{data_digest()}"
 )
+
+#: ORACLE's text is built on this: the truth's own structure is in no text.
+_NO_STRUCTURE: Final = Structure((), Link.IDENTITY)
 
 type UnitKind = Literal["baseline", "llm-session", "llm-score"]
 
@@ -246,6 +267,9 @@ class CampaignEnvironment:
     sym_seeds: tuple[Structure, ...]
     prior: StructureSampler
     prior_id: str
+    #: The domain's own text for its channels and mark law, derived by the
+    #: environment; its digest enters the environment version of every key.
+    domain_text: str
     investigation: EnvironmentSpec | None = field(default=None, compare=False)
 
 
@@ -511,7 +535,7 @@ class Unit:
 
 def search_seed(truth_id: str, seed: int) -> int:
     """The search systems' RNG seed for (truth, seed) (module docstring)."""
-    return stable_key(f"{truth_id}|{seed}|search") % 2**63
+    return stable_key(f"{truth_id}|{seed}|{SEARCH_SEED_TAG}") % 2**63
 
 
 # --------------------------------------------------------------------------
@@ -576,8 +600,29 @@ def _library_text(library: Sequence[LibraryEntry]) -> str:
             case GrammarMember(name=name, structure=structure):
                 parts.append(f"{name}={render(structure)}")
             case ModelMember(name=name, model=model):
-                parts.append(f"{name}={type(model).__name__}")
+                parts.append(f"{name}={render_value(model)}")
     return ";".join(parts)
+
+
+def oracle_system(
+    structure: Structure,
+    config: CampaignConfig,
+    *,
+    psi: PsiAssignment | None = None,
+    coefficients: Coefficients | None = None,
+) -> Oracle:
+    """ORACLE as a unit runs it and as its address text reads it (F5)."""
+    return Oracle(
+        structure,
+        fit_config=config.fit_config,
+        truth_psi=psi,
+        truth_coefficients=coefficients,
+    )
+
+
+def b_lib_system(env: CampaignEnvironment, config: CampaignConfig) -> BLib:
+    """B-lib as a unit runs it and as its address text reads it (F5)."""
+    return BLib(env.library, fit_config=config.fit_config)
 
 
 def b_np_system() -> BNp:
@@ -628,9 +673,11 @@ def system_config_text(
     budget = config.fits * (config.control_factor if system == B_SYM_10F else 1)
     match system:
         case "ORACLE":
-            return "oracle: fit the true structure"
+            # The truth's own fields are placeholders here: a truth enters an
+            # address by its digest, and this text is the same for every truth.
+            return f"oracle: {render_value(oracle_system(_NO_STRUCTURE, config))}"
         case "B-lib":
-            return f"library: {_library_text(env.library)}"
+            return f"library: {_library_text(b_lib_system(env, config).library)}"
         case "B-np":
             return f"wiener_hopf: {b_np_system().config!r}"
         case "B-rand":
@@ -694,7 +741,9 @@ def _key(
 ) -> ExperimentKey:
     base = {"fit_config": config.fit_config.key()}
     return ExperimentKey(
-        env_version=EnvVersion(f"{env.name}|{FIT_VERSION}"),
+        env_version=EnvVersion(
+            f"{env.name}|domain:{_sha(env.domain_text)}|{FIT_VERSION}"
+        ),
         config=FrozenDict[str, str]({**base, **fields}),
         data_version=DataVersion(DATA_VERSION),
         metric_version=MetricVersion(metric),

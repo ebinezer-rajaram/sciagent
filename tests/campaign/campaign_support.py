@@ -57,6 +57,7 @@ def environment() -> CampaignEnvironment:
         ),
         prior=ScenarioPrior(STRUCTURE_PRIOR, v2.CHANNELS, 0.5),
         prior_id="test-prior",
+        domain_text=v2.domain_text(),
         investigation=EnvironmentSpec(
             name="pointproc-v2",
             anon_channels=ANON_CHANNELS,

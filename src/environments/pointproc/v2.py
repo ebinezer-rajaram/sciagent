@@ -31,6 +31,7 @@ stationary mean rate is exactly 1 rather than v1's searched ≈0.99.
 
 from __future__ import annotations
 
+import hashlib
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -77,6 +78,31 @@ def mark_sampler(rng: np.random.Generator) -> Mapping[str, float]:
     size = -math.log1p(-rng.random())
     sign = 1.0 if rng.random() < 0.5 else -1.0
     return {"sign": sign, "size": size}
+
+
+#: Draws in :func:`domain_text`'s probe of the mark law.
+MARK_PROBE: Final = 64
+
+
+def domain_text() -> str:
+    """The channels and the mark law, as a campaign's addresses read them (F5).
+
+    The law has no parameters to print: it is the code of
+    :func:`mark_sampler`, and hashing source would move every address on a
+    comment edit (LOG 2026-10-27). So the text is what the sampler does: the
+    SHA-256 of :data:`MARK_PROBE` draws on a fixed stream, which a change of law
+    or of draw order moves. Each mark is rendered to ten significant digits, so
+    a last-digit difference in ``log1p`` between machine classes does not
+    reach an address.
+    """
+    rng = np.random.default_rng(0)
+    draws = (mark_sampler(rng) for _ in range(MARK_PROBE))
+    rendered = ";".join(
+        ",".join(f"{name}={marks[name]:.9e}" for name in sorted(marks))
+        for marks in draws
+    )
+    digest = hashlib.sha256(rendered.encode("utf-8")).hexdigest()
+    return f"channels={CHANNELS!r}; marks={digest}"
 
 
 # --------------------------------------------------------------------------

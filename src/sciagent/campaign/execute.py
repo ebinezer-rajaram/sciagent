@@ -72,7 +72,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Final, Protocol
 
-from sciagent.campaign import cpu
+from sciagent.campaign import cpu, versions
 from sciagent.campaign.plan import (
     B_LIB,
     B_NP,
@@ -89,13 +89,14 @@ from sciagent.campaign.plan import (
     CampaignEnvironment,
     CampaignError,
     TruthEntry,
+    b_lib_system,
     b_np_system,
     b_rand_system,
     build_policy,
+    oracle_system,
     policy_search_system,
     search_seed,
 )
-from sciagent.core.errors import SciAgentError
 from sciagent.diagnostics.catalogue import ArgValue
 from sciagent.glm.canonical import canonicalise, structure_hash
 from sciagent.glm.data import Dataset
@@ -118,16 +119,14 @@ from sciagent.systems.v2.policy_search import Decision
 from sciagent.systems.v2.search import BSym, PlantedHint
 from sciagent.systems.v2.sparse import BSparse, SparseReport
 from sciagent.systems.v2.systems import (
-    BLib,
     InvestigationData,
-    Oracle,
     SystemResult,
 )
 
 type Json = Any
 
 #: The failures recorded as a unit's result (module docstring).
-UNIT_FAILURES: Final = (SciAgentError, ValueError, ArithmeticError)
+UNIT_FAILURES: Final = versions.UNIT_FAILURES
 
 
 @dataclass(frozen=True)
@@ -253,14 +252,14 @@ def _run_system(
         case "ORACLE":
             # The truth-ψ check (P4-PROPOSAL Δ1): framework-side, so the
             # ORACLE may see the truth's ψ and coefficients.
-            result = Oracle(
+            result = oracle_system(
                 truth.structure,
-                fit_config=fc,
-                truth_psi=truth.spec.psi,
-                truth_coefficients=truth.spec.coef,
+                config,
+                psi=truth.spec.psi,
+                coefficients=truth.spec.coef,
             ).run(data)
         case "B-lib":
-            result = BLib(env.library, fit_config=fc).run(data)
+            result = b_lib_system(env, config).run(data)
         case "B-np":
             result = b_np_system().run(data)
         case "B-rand":
@@ -456,7 +455,7 @@ def _policy_unit(
     comparator: FittedModel | None = None
     if system == B_SYM_TRUTH_FSD:
         # Control 5: the truth enters here, framework-side, as for ORACLE.
-        member = BLib(env.library, fit_config=fc).run(data)
+        member = b_lib_system(env, config).run(data)
         comparator, truth_model = member.model, TruthModel(truth.spec)
         extra["comparator"] = member.submitted
     policy_key = truth_policy_seed(truth.id, job.seed)
@@ -523,7 +522,7 @@ def _telling_unit(
 ) -> UnitResult:
     """The (truth, seed)'s telling diagnostic (:mod:`sciagent.scoring.telling`)."""
     env, config, truth = job.env, job.config, job.truth
-    member = BLib(env.library, fit_config=config.fit_config).run(data)
+    member = b_lib_system(env, config).run(data)
     obs = data.observational[0]
     menu = Menu(design_menu(env.channels), diagnostic_menu(obs.log, env.channels))
     telling = telling_diagnostic(

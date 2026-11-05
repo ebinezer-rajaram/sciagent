@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 from campaign_support import entry, environment, tiny_config
 
-from sciagent.campaign import execute
+from sciagent.campaign import execute, plan
 from sciagent.campaign.analysis import (
     Row,
     Table,
@@ -62,16 +62,19 @@ from sciagent.systems.v2.policies import (
 # --------------------------------------------------------------------------
 
 #: ``baseline_key(Unit("hawkes", 1, s), entry("hawkes"), environment(),
-#: tiny_config()).digest`` at 98205b4, before WP9.
+#: tiny_config()).digest``, first pinned at 98205b4 before WP9. Re-pinned by F5
+#: point 2 (LOG 2026-11-05): every key now carries the constants' digests and
+#: the domain's text. A new unit must still move none of these; a change to a
+#: constant moves them all, by design, and is re-pinned saying why.
 PINNED_BASELINES = {
-    "ORACLE": "83943197dfc8ece0bfd1f9bd4d20dddc5bf805df2ed2204838cffd2f5b96b722",
-    "B-lib": "4eefb39d79406a75cd9b87717abcaa6b7e974ebdb74bbada292d08e7c837365d",
-    "B-np": "14f97e09b91f27587cbe61e686c12a299a913785d880167d22de8edd3085134b",
-    "B-rand": "bf5eda01ca80f43d34424edefc763ee68067fe083d48c5c56918f233640ad319",
-    "B-sym": "24af2e6203209af5e4dc920a33e9e6175a9c1befcc7473f5b843c85ac0387b77",
-    "B-sparse": "4a1031b32c6a7f7c6e37f081f398c20058b6e76a24cf6c61999cb12bca72d27b",
-    "planted-hint": "9363d08e5b556689046f5c5978f78325b45924bbacd62b75dc246428c3d892c5",
-    "B-sym@10F": "511ddc30fbb12f46920b989128258477c95094077b3a04eff5dad7cf9c8ba960",
+    "ORACLE": "b9e08b1dafcfc4775a9fb7e7ce7033a23b2fce3d06d3e9f9e42809a4fd65d140",
+    "B-lib": "4e81ef10b4edadb06a0db011b3f0a8dc2eb8fbaf4885939d3d81df84b4eb9e15",
+    "B-np": "c26db4d7fca4a85d5398fab069f828e2ba47d619ae05a55d40906e4ea70ef56d",
+    "B-rand": "f08ee5ff3b0f1f26e5ee41b0886fc4c669e6b623d42a94a59920263015177f13",
+    "B-sym": "80300c22a691c9c6b443ec01b4e4e28705fd2d2ce773adbd7d3273e15c56001c",
+    "B-sparse": "59219f6f6356b85314c59580485b2b8960055f32d5b4d1b8e44fdaf498fa5ac0",
+    "planted-hint": "09e85b3d816a0cfab462bf28a92ceb81c1ee9e747fa9a436d93b22263207c53e",
+    "B-sym@10F": "5593b739cf333ee6aab7576a4d87561fa48423576121f93a355af4d5f13f8315",
 }
 #: Session keys of four arms at 98205b4 (tiny_config with these arms). The
 #: AG-o key is re-pinned at the merge into v2: its harness/2 text ends with
@@ -79,7 +82,8 @@ PINNED_BASELINES = {
 #: The EIG and FSD keys are re-pinned when the arm settings' cap and EIG
 #: weighting reach AG-c-S: the recorded policy settings name both. They are
 #: re-pinned again by C5: ``policy_config`` names the truth-keyed seed rule,
-#: and the two plain arms stay as they were.
+#: and the two plain arms stay as they were. All four are re-pinned by F5 point
+#: 2, as the baselines are; :data:`PINNED_SESSION_CONFIG` did not move.
 PINNED_ARMS = (
     LLMArm("AG-c", "named"),
     LLMArm("AG-o", "anon"),
@@ -87,15 +91,76 @@ PINNED_ARMS = (
     LLMArm("AG-c", "named", policy="FSD"),
 )
 PINNED_SESSIONS = {
-    "AG-c-H/named": "8b0c82b5f8a5e779e0223bb579214d67eb3b92d7033bb0bc80aac1ecf2e7b5e9",
-    "AG-o-H/anon": "7d4148be9043e0b32ef16634ec006c9a482922e35c7a547fdfeba81b3f67ecb2",
+    "AG-c-H/named": "160e1721cab333ad7bc1a1cd632951299608b793a4c569263ec41d25031fbddc",
+    "AG-o-H/anon": "b3afe49d0f78c00aa28e73d757db1a6d8f95dd31f8970d276cb16ea945aca3b1",
     "AG-c-H/named+policy=EIG": (
-        "63b4455c26449cb02f26ac63a10cf6fa629cee679099b666db4f434b157be9f8"
+        "3e5187a4871a97aea06fae74ad377c4b334e708356439b5727490dfaaf79ed34"
     ),
     "AG-c-H/named+policy=FSD": (
-        "1f3e55e0d5635528e22f230e93584f53f0bafac9c438cc4a19907a9ff10ff6bd"
+        "badd4173b33de541dc18bab4aa17a0e6211d32e0112f1e255a6a16aa25c93028"
     ),
 }
+
+
+#: What F5 point 2 left in place, each from 2205433, the last head that reads
+#: the pilot's store: the ``system_config`` of the six baselines whose text
+#: already read what runs, so their configuration did not change, only their
+#: versions. ORACLE and B-lib are absent: their text is what F5 replaced.
+PINNED_SYSTEM_CONFIG = {
+    "B-np": "92efec386c2d74dafab6e2143d462e70de60656c6b4b4a6bd4b0f4b420918399",
+    "B-rand": "f7b3708fe8b36a9cc5c4bdff7655acc51c45b2b454ca2787e98fa9399b2edb65",
+    "B-sym": "0147372cb9b5705f1696ea1451b8a3db23a345bdd6d03cfa140d72bd80c20f4d",
+    "B-sparse": "971c13da34185444c0c71f2bdd5a9b798898fdf1ef33f50f0db54bfb122416a2",
+    "planted-hint": "0147372cb9b5705f1696ea1451b8a3db23a345bdd6d03cfa140d72bd80c20f4d",
+    "B-sym@10F": "2ee1ce0bb881cfb217e05fb8a701b227c31556be38126211ed7b811b5090948a",
+}
+#: The two texts F5 replaced, as they were at 2205433 and as they are now.
+MOVED_SYSTEM_CONFIG = {
+    "ORACLE": (
+        "216303d4371cfcf102764ab67a1d1401c01369d4c1cf7bb2a395b01d90d96fbf",
+        "4d701af2781e5ff43100d200c907066d0d05aae8eee278dfdf002bb2cba1351d",
+    ),
+    "B-lib": (
+        "59bed42a6319cfa9efb38b3d8d38e48b1a3b43b90cb0f8ae766d2f1ae759f127",
+        "8c4ff49f1a2e551c35eabe9ca9285165f2c7eaac8e71a8d30e8bc24775794841",
+    ),
+}
+#: Each arm's ``session_config`` at 2205433: F5 point 2 changes a session's
+#: versions, not what it ran, so these stand.
+PINNED_SESSION_CONFIG = {
+    "AG-c-H/named": "87c18124f53bb21ec6afd8a7666873330f4009531cb2c85ef8a0d52296fd4133",
+    "AG-o-H/anon": "828ae3fa9ca1f0aef2071aac280f2f946805e94616934ac08a931b449fc73c50",
+    "AG-c-H/named+policy=EIG": (
+        "316738b88d4876befd2bd2c1c465daf0d7e7e329fd071d4fee8b90cd7c8af850"
+    ),
+    "AG-c-H/named+policy=FSD": (
+        "d07a77a8a7f5df76a15622fbe7d2385e30c0fe345ca049d966fe1debeafb1d94"
+    ),
+}
+
+
+def test_what_a_baseline_runs_did_not_move_with_its_versions() -> None:
+    env, config, truth = environment(), tiny_config(), entry("hawkes")
+    for system, digest in PINNED_SYSTEM_CONFIG.items():
+        key = baseline_key(Unit("hawkes", 1, system), truth, env, config)
+        assert key.config["system_config"] == digest, system
+
+
+def test_oracles_and_b_libs_text_moved_as_f5_says() -> None:
+    env, config, truth = environment(), tiny_config(), entry("hawkes")
+    assert set(PINNED_SYSTEM_CONFIG) | set(MOVED_SYSTEM_CONFIG) == set(BASELINES)
+    for system, (before, after) in MOVED_SYSTEM_CONFIG.items():
+        key = baseline_key(Unit("hawkes", 1, system), truth, env, config)
+        assert key.config["system_config"] == after != before, system
+
+
+def test_what_a_session_ran_did_not_move_with_its_versions() -> None:
+    env, truth = environment(), entry("hawkes")
+    config = tiny_config(llm_arms=PINNED_ARMS)
+    for arm in PINNED_ARMS:
+        system = arm.system("H")
+        key = session_key(Unit("hawkes", 1, system), truth, env, config)
+        assert key.config["session_config"] == PINNED_SESSION_CONFIG[system], system
 
 
 def test_existing_baseline_addresses_are_unchanged() -> None:
@@ -398,7 +463,7 @@ def test_a_telling_and_a_policy_cell_round_trip_through_the_store(
         )
         return Telling.from_table(table, menu.designs, menu.diagnostics)
 
-    monkeypatch.setattr(execute, "BLib", FakeBLib)
+    monkeypatch.setattr(plan, "BLib", FakeBLib)
     monkeypatch.setattr(execute, "telling_diagnostic", fake_telling)
     data = execute.observational_data(truth, 1, env)
     job = BaselineJob(truth, 1, (TELLING,), env, config)

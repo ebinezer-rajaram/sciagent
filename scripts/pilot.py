@@ -266,6 +266,7 @@ def pointproc_environment(records: tuple[TruthRecord, ...]) -> CampaignEnvironme
         ),
         prior=ScenarioPrior(STRUCTURE_PRIOR, v2.CHANNELS, share),
         prior_id=f"{config_digest(SAMPLER_CONFIG, environment())}|ood={share!r}",
+        domain_text=v2.domain_text(),
         investigation=EnvironmentSpec(
             name=ENV_NAME,
             anon_channels=ANON_CHANNELS,

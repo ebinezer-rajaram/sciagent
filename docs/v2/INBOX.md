@@ -121,8 +121,9 @@ entry, and marks it handled with the date and what was done. Newest last.
 
 ## 2026-11-05, control room (P4 miss check)
 
-- [ ] **Accepted as an amendment under prereg section 2.10.** LLM rows move into tier 1; labels
+- [x] **Accepted as an amendment under prereg section 2.10.** LLM rows move into tier 1; labels
   `CONTRASTS_SURVIVE_FOUND_MISSES` and `CONTRASTS_CHANGE` replace the GO labels, comparing each of C1
   to C5's sign and whether its 95% CI excludes zero, stored against corrected. The amended script
   freezes in or before the SPEC section 6.1 commit, before P4 runs. One red-team round. Decided by the
   control room under the owner's standing delegation; record it as delegated.
+  Handled 2026-11-05 (lane session 32): recorded as delegated (LOG 2026-11-05); `docs/v2/P4-MISS-PLAN.md` and the queue say so. The amendment itself is a queue item under P4 preparation.

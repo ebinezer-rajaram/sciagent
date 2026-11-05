@@ -1,8 +1,8 @@
 # Plan: the frozen miss check on P4's fits
 
-**Status: plan only (lane session 32, 2026-11-05).** Nothing here is frozen, no code is written and no P4 unit exists. It answers the queue item "Apply the frozen miss check to P4's fits before P4's verdict is read" (INBOX 0577e79; LOG 2026-11-05). Section numbers mean `docs/v2/prereg/2026-11-04_pilot-search-misses.md` (`F` = 3226f9b).
+**Status: plan, its decision taken (lane session 32, 2026-11-05).** The control room accepted the proposal below as an amendment, with one red-team round (INBOX c81749a; LOG 2026-11-05). Nothing here is frozen, no code is written and no P4 unit exists. It answers the queue item "Apply the frozen miss check to P4's fits before P4's verdict is read" (INBOX 0577e79; LOG 2026-11-05). Section numbers mean `docs/v2/prereg/2026-11-04_pilot-search-misses.md` (`F` = 3226f9b).
 
-**In one line:** the rule for finding and sizing a miss carries over to P4 unchanged, but "same rules" cannot hold for the parts that say what a miss does to the verdict, because P4 has no §7.1 verdict and its contrasts read the LLM rows the pilot rule set aside. One decision is needed (below).
+**In one line:** the rule for finding and sizing a miss carries over to P4 unchanged, but "same rules" cannot hold for the parts that say what a miss does to the verdict, because P4 has no §7.1 verdict and its contrasts read the LLM rows the pilot rule set aside. The control room decided how (status above).
 
 ## What carries over unchanged
 
@@ -30,7 +30,7 @@ SPEC §6.1 freezes "the analysis code" in one commit before the test campaign. T
 
 The run must also keep the contrasts unread: the script's equality step (2.7) computes the stored contrasts, so it writes the stored and corrected tables together at the end, and no session reads either first.
 
-## Proposal for the outcome (needs a decision)
+## The outcome (accepted)
 
 Same shape as section 5, with two labels renamed and one clause defined. For each preregistered contrast C1 to C5, compare the stored and corrected read: the sign of the point estimate, and whether the 95% CI excludes zero. C6 is exploratory and is reported without a label.
 
@@ -42,13 +42,8 @@ Caveat to carry: 2.6 item 3 weighs more here. Sessions cannot be replayed under 
 
 ## Steps, after a GO and the p4-deltas merge
 
-1. Control room's answer to the decision below.
-2. Amendment under the `preregister` skill and 2.10's own steps: new document, new frozen version, new output directory, red team first. The pilot's records and label stay as they are.
-3. Script changes test first (SPEC §6.3): guards, two split hashes, tiers, the contrast substitution. Toy tables only.
-4. Rehearse on the pilot store, on rows and contrasts of the dev split. Exploratory, and it may not be cited as a P4 result.
-5. Freeze with or before the §6.1 commit, which is itself a stop point.
-6. After the P4 campaign, run it before any contrast is read.
-
-## Decision needed (control room)
-
-INBOX 0577e79 says "same rules". Does that accept the replacements above, in particular LLM rows in tier 1 and the contrast labels, as an amendment under section 2.10? The lane's recommendation is yes: the miss rule stays frozen, and the outcome clause is the only part with no literal P4 meaning.
+1. Amendment under the `preregister` skill and 2.10's own steps: new document, new frozen version, new output directory, one red-team round. The pilot's records and label stay as they are.
+2. Script changes test first (SPEC §6.3): guards, two split hashes, tiers, the contrast substitution. Toy tables only.
+3. Rehearse on the pilot store, on rows and contrasts of the dev split. Exploratory, and it may not be cited as a P4 result.
+4. Freeze with or before the §6.1 commit, which is itself a stop point.
+5. After the P4 campaign, run it before any contrast is read.

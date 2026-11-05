@@ -329,7 +329,7 @@ Each item says when it is done. Move finished items to the bottom section after 
 ## P4 preparation (after a GO)
 
 - [ ] **Apply the frozen miss check to P4's fits before P4's verdict is read** (control room, INBOX 0577e79; LOG 2026-11-05). Prereg 3226f9b, same rules, on fit/5. Needs a plan for the script's pilot-only guards (split hash, store manifest, `F`), since a change to the script is an amendment. fit/6 stays a SPEC item for after P4.
-  2026-11-05 (session 32): plan written, `docs/v2/P4-MISS-PLAN.md`. The miss rule carries over; the guards, the split hash, 2.6's LLM clauses, the tiers and section 5's labels cannot, since P4 has no §7.1 verdict and its contrasts read LLM rows. The amended script is analysis code, so it freezes in or before the §6.1 commit (item "Test split" below depends on it). Waits on the control room's answer to the plan's one decision.
+  2026-11-05 (session 32): plan written, `docs/v2/P4-MISS-PLAN.md`. The miss rule carries over; the guards, the split hash, 2.6's LLM clauses, the tiers and section 5's labels cannot, since P4 has no §7.1 verdict and its contrasts read LLM rows. The amended script is analysis code, so it freezes in or before the §6.1 commit (item "Test split" below depends on it). Control room accepted it the same day (INBOX c81749a; LOG 2026-11-05), one red-team round. Next: write the amendment, then the script, test first; freeze in or before the §6.1 commit.
 
 - [ ] **Integrate `origin/p4-deltas` after the Linux pilot.** Pushed from the Windows PC on
   2026-10-27 11:45 UTC: P4 work packages 4 to 12 plus core.reductions fixes, based on ea055be

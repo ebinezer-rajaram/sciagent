@@ -2589,3 +2589,19 @@ Corrects the hand-over above: its third decision (T2 and fit/5) is no longer the
 **Learned.** A rare failure in a fast tier was worth a look: it was a real fault in frozen code, and a rerun alone would have hidden it. When a defect turns up in code a result rests on, check whether that run could have met it before calling it harmless; the records answered it in two commands.
 
 **Next.** Read the tier (`grep -E '^(FAILED|ERROR)|^exit:' .cache/drafts/s32/slow.log`), add its LEDGER row. Then, test first on `p4-rehearsal`: C5, F5 and Δ6, before the slow tier that signs off the merge. The owner decides the P3 go/no-go after the AG-o transcripts, and check (b). The P4 amendment waits for a GO and the merged analysis code.
+
+## 2026-11-05: Lane session 33, checkpoint: owner's GO and check (b) in hand; the delegated read, check (b) and the rehearsal work are running
+
+**Done.**
+- Read the owner's three inbox items (4443928): P3 GO with the transcript reading delegated, check (b) yes, and never leave compute idle. None is marked handled yet.
+- Session 32's slow tier read: `333 passed`, exit 0 at 07:45:35Z, LEDGER row in.
+- Check (b)'s scope: the approval named `ctlA1-boot-r2`, the check also needs `ctlA1-cal-r2` and `ctlA1-crn-r2`, and the pools are not stored. Asked the control room before any draw; answered and confirmed in INBOX b0e794a, the three ids for this check only. The wording error was the lane's (LOG 2026-11-05).
+- Found an unrecorded result: session 27's rescore ended 7 of 240 with 1 differ (AG-o-S/anon dev-000 s2, `result.curve` only), where the queue said "identical so far" (LOG 2026-11-05, queue corrected).
+
+**Running.** `sci-rescore-s33`: full rescore with uncut output, p4-rehearsal 3ddc8da, one process, ceiling 20 CPU hours, $0; 3 of 240 at 11:58Z, no DIFF yet, and the first launch died on a missing gitignored `data/` in the fresh worktree (mine; copied, sha256 matched). Two analysts on the five AG-o transcripts (`.cache/drafts/s33/transcripts-a.md`, `-b.md`). Theorist on check (b), ceiling 1 CPU hour, $0, not yet at its real draw. Engineer on C5, F5, Δ6 on `p4-rehearsal`. With those, three processes can overlap for check (b)'s 14 minutes or so, one above the usual 2.
+
+**Checks.** Docs only so far; nothing under `src/` changed on v2, and ruff, mypy and pytest have not been run this session.
+
+**Learned.** A note written during a run is not the run's result: reread the log's end before calling a run's status. A summary of an approval can be narrower than the thing approved; read the check's own definition before drawing on it.
+
+**Next.** Read the four reports. Then record the GO as the owner gave it, in the LOG and PILOT.md, with the reading stated as delegated. No paper or AI-use disclosure exists in the repository yet, so that wording needs a home. Then the merge's slow tier, and the P4 amendment after the merge.

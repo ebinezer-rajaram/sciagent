@@ -364,6 +364,108 @@ def test_a_huge_integer_argument_is_a_refusal_not_a_harness_fault() -> None:
     _scan(texts)
 
 
+def _predict_args(the_lab: Lab) -> dict[str, Any]:
+    return {
+        "experiment": 0,
+        "diagnostic": the_lab.view.diagnostic("mean_rate"),
+        "hypothesis": "null",
+        "interval": [0.0, 1.0],
+        "level": 0.5,
+    }
+
+
+#: What each field of a prediction or a belief may be past the float range, and
+#: what the refusal says. ``1e999`` in JSON parses to ``inf``, which ``int()``
+#: cannot take either; ``nan`` fails on the same line of ``predict``.
+PAST_THE_RANGE: Final[tuple[tuple[str, Any, str], ...]] = (
+    ("experiment", 10**400, "experiment is too large"),
+    ("experiment", -(10**400), "experiment is too large"),
+    ("experiment", math.inf, "experiment must be an integer index"),
+    ("experiment", -math.inf, "experiment must be an integer index"),
+    ("experiment", math.nan, "experiment must be an integer index"),
+    ("interval", [0.0, 10**400], "interval is too large"),
+    ("interval", [-(10**400), 1.0], "interval is too large"),
+    ("level", 10**400, "level is too large"),
+    ("confidence", 10**400, "confidence is too large"),
+    ("confidence", -(10**400), "confidence is too large"),
+)
+
+
+@pytest.mark.parametrize(("field", "value", "words"), PAST_THE_RANGE)
+def test_a_value_past_the_float_range_is_a_refusal_that_changes_nothing(
+    field: str, value: Any, words: str
+) -> None:
+    """A refusal, uncharged: no budget moves, the ledger holds nothing new, and a
+    refused belief is no belief, so the gate stays shut."""
+    the_lab = _anon_lab()
+    layer = the_lab.layer()
+    if field == "confidence":
+        call = ("belief", {**BELIEF_ARGS, field: value})
+    else:
+        call = ("predict", {**_predict_args(the_lab), field: value})
+    out = layer.call(*call)
+    assert out.is_error, out.text
+    assert words in out.text
+    assert layer.calls[-1].charged is None
+    assert set(layer.calls[-1].budgets_after.values()) == {0}
+    assert the_lab.ledger.committed == ()
+    assert the_lab.state.beliefs == 0
+    assert layer.call("run_experiment", plain_run(8.0)).is_error
+    _scan({"refusal": out.text})
+
+
+#: Every other input, as it read before the guards went in: a refusal's opening
+#: words, or None for an accepted call. This table passes on both sides of them.
+UNCHANGED: Final[tuple[tuple[str, Any, str | None], ...]] = (
+    ("experiment", 0, None),
+    ("experiment", 0.0, None),
+    ("experiment", 2, None),
+    ("experiment", 3, "predict: experiment 3 can never run"),
+    ("experiment", 1e300, "predict: experiment 1000000000000000052504760255204"),
+    ("experiment", 1.5, "predict: experiment must be an integer index"),
+    ("experiment", True, "predict: experiment must be an integer index"),
+    ("experiment", "0", "predict: experiment must be an integer index"),
+    ("experiment", 2**53 + 1, "predict: experiment must be an integer index"),
+    ("experiment", -1, "predict: experiment index -1 < 0"),
+    ("interval", [0, 1], None),
+    ("interval", [math.inf, 1.0], "predict: interval must be finite"),
+    ("interval", [True, 1.0], "predict: interval must be a number"),
+    ("interval", [1.0, 0.0], "predict: interval must be finite with low <= high"),
+    ("interval", [0.0], "predict: interval must be [low, high]"),
+    ("level", 0.5, None),
+    ("level", math.inf, "predict: level must be finite"),
+    ("level", "x", "predict: level must be a number"),
+    ("level", 2.0, "predict: level must be in (0, 1)"),
+    ("confidence", 0.5, None),
+    ("confidence", 1.0, "belief: confidence must be strictly between 0 and 1"),
+    ("confidence", math.inf, "belief: confidence must be strictly between 0 and 1"),
+    ("confidence", math.nan, "belief: confidence must be strictly between 0 and 1"),
+    ("confidence", True, "belief: confidence must be a number in (0, 1)"),
+)
+
+
+@pytest.mark.parametrize(("field", "value", "opening"), UNCHANGED)
+def test_every_other_input_reads_as_it_did(
+    field: str, value: Any, opening: str | None
+) -> None:
+    the_lab = _anon_lab()
+    layer = the_lab.layer()
+    if field == "confidence":
+        out = layer.call("belief", {**BELIEF_ARGS, field: value})
+        held = the_lab.state.beliefs
+    else:
+        out = layer.call("predict", {**_predict_args(the_lab), field: value})
+        held = len(the_lab.ledger.committed)
+    assert layer.calls[-1].charged is None
+    if opening is None:
+        assert not out.is_error, out.text
+        assert held == 1
+    else:
+        assert out.is_error
+        assert out.text.startswith(opening), out.text
+        assert held == 0
+
+
 @pytest.mark.parametrize("horizon", [0.001, 24.0], ids=["empty", "few-events"])
 def test_a_short_run_leaks_nothing_where_a_diagnostic_cannot_be_read(
     horizon: float,

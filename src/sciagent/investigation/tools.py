@@ -975,7 +975,11 @@ class Lab:
         experiment = args["experiment"]
         if isinstance(experiment, bool) or not isinstance(experiment, int | float):
             raise LabError("experiment must be an integer index")
-        if float(experiment) != int(experiment):
+        try:
+            as_float = float(experiment)
+        except OverflowError:
+            raise LabError(f"experiment is too large: {experiment!r}") from None
+        if not math.isfinite(as_float) or as_float != int(experiment):
             raise LabError("experiment must be an integer index")
         index = int(experiment)
         if index >= self.experiments:
@@ -1555,7 +1559,10 @@ def _counted(data: Dataset) -> int:
 def _finite(value: object, what: str) -> float:
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise LabError(f"{what} must be a number, got {value!r}")
-    v = float(value)
+    try:
+        v = float(value)
+    except OverflowError:
+        raise LabError(f"{what} is too large: {value!r}") from None
     if not math.isfinite(v):
         raise LabError(f"{what} must be finite, got {value!r}")
     return v
@@ -1569,7 +1576,10 @@ def _native_text(structure: Structure) -> str:
 def _confidence(value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise LabError(f"confidence must be a number in (0, 1), got {value!r}")
-    c = float(value)
+    try:
+        c = float(value)
+    except OverflowError:
+        raise LabError(f"confidence is too large: {value!r}") from None
     if not (math.isfinite(c) and 0.0 < c < 1.0):
         raise LabError(f"confidence must be strictly between 0 and 1, got {value!r}")
     return c

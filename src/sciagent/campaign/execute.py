@@ -89,7 +89,10 @@ from sciagent.campaign.plan import (
     CampaignEnvironment,
     CampaignError,
     TruthEntry,
+    b_np_system,
+    b_rand_system,
     build_policy,
+    policy_search_system,
     search_seed,
 )
 from sciagent.core.errors import SciAgentError
@@ -111,12 +114,11 @@ from sciagent.scoring.telling import telling_diagnostic
 from sciagent.scoring.truth import TruthModel
 from sciagent.systems.v2.models import FittedModel, GLMModel
 from sciagent.systems.v2.policies import Menu, design_menu, diagnostic_menu
-from sciagent.systems.v2.policy_search import Decision, PolicySearch
-from sciagent.systems.v2.search import BRand, BSym, PlantedHint
+from sciagent.systems.v2.policy_search import Decision
+from sciagent.systems.v2.search import BSym, PlantedHint
 from sciagent.systems.v2.sparse import BSparse, SparseReport
 from sciagent.systems.v2.systems import (
     BLib,
-    BNp,
     InvestigationData,
     Oracle,
     SystemResult,
@@ -260,11 +262,9 @@ def _run_system(
         case "B-lib":
             result = BLib(env.library, fit_config=fc).run(data)
         case "B-np":
-            result = BNp().run(data)
+            result = b_np_system().run(data)
         case "B-rand":
-            result = BRand(
-                env.prior, budget=config.fits, seed=rng_seed, fit_config=fc
-            ).run(data)
+            result = b_rand_system(env, config, seed=rng_seed).run(data)
         case "B-sym" | "B-sym@10F":
             factor = config.control_factor if system == B_SYM_10F else 1
             result = BSym(
@@ -463,17 +463,13 @@ def _policy_unit(
     policy = build_policy(
         system, policy_key, config.policy, truth=truth_model, comparator=comparator
     )
-    search = PolicySearch(
-        env.sym_seeds,
+    search = policy_search_system(
+        system,
+        env,
+        config,
         policy,
-        policy_seed=policy_key,
-        experiments=config.experiments,
-        config=config.gp,
-        budget=config.fits,
+        policy_key=policy_key,
         seed=search_seed(truth.id, job.seed),
-        fit_config=fc,
-        entertained=config.policy.entertained,
-        name=system,
     )
     runner = WorldRunner(world)
     start = time.perf_counter()

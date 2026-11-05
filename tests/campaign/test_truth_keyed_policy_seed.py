@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 from campaign_support import entry, environment, tiny_config
 
-from sciagent.campaign import execute
+from sciagent.campaign import execute, plan
 from sciagent.campaign.execute import BaselineJob
 from sciagent.campaign.plan import (
     B_SYM_EIG,
@@ -78,7 +78,7 @@ def _seeds_of_a_policy_unit(
 
     monkeypatch.setattr(execute, "BLib", FakeBLib)
     monkeypatch.setattr(execute, "build_policy", spy_policy)
-    monkeypatch.setattr(execute, "PolicySearch", spy_search)
+    monkeypatch.setattr(plan, "PolicySearch", spy_search)
     job = BaselineJob(entry(truth_id), seed, (system,), environment(), tiny_config())
     held: Any = None  # read only after the search has run
     with pytest.raises(Reached):
@@ -172,8 +172,6 @@ def test_the_rule_enters_a_policy_sessions_key_and_only_a_policy_sessions() -> N
 def test_the_seed_rule_moves_the_policy_arms_and_no_other_unit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from sciagent.campaign import plan
-
     env, config, truth = environment(), tiny_config(), entry("hawkes")
 
     def digest(system: str) -> str:

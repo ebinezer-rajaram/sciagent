@@ -55,9 +55,18 @@ around ``experiments`` policy-chosen experiments
 ``B-sym+truthFSD`` is the control-5 arm (FSD against the truth, with B-lib's
 pick as the parametric side); ``telling`` computes the (truth, seed)'s telling
 diagnostic (:mod:`sciagent.scoring.telling`). Their configuration text holds
-the policy's own config (:func:`policy_arm_config`; P4 Δ11 decision 16) and
-:class:`PolicyArmSettings`, so a change to either moves their addresses and
+the policy's own config (canonical JSON, no seed, no truth; P4 Δ11 decision 16)
+and :class:`PolicyArmSettings`, so a change to either moves their addresses and
 never an existing unit's. The telling unit's key has ``kind = "telling"``.
+
+**Text read from what runs** (F5). B-np, B-rand and the policy arms are built
+by one constructor shared with ``execute.py`` (:func:`b_np_system`,
+:func:`b_rand_system`, :func:`policy_search_system`), and their text reads that
+object, so a changed default moves the address. The rest of F5 moves the
+pilot's addresses and is not built (LOG 2026-11-05): ORACLE's sentence and
+B-lib's out-of-grammar members are still hand text, and
+:data:`METRIC_VERSION` and :data:`DATA_VERSION` still name only part of what
+they cover, so a change there needs a hand bump.
 """
 
 from __future__ import annotations
@@ -103,7 +112,6 @@ from sciagent.investigation.tools import python_tool_json
 from sciagent.investigation.view import Condition
 from sciagent.investigation.world import MAX_EVENTS as WORLD_MAX_EVENTS
 from sciagent.investigation.world import OBSERVATIONAL_HORIZON, TruthSpec
-from sciagent.nonparam.wiener_hopf import DEFAULT as WIENER_HOPF_DEFAULT
 from sciagent.registry.store import ExperimentKey
 from sciagent.sandbox import (
     HANDOFF_HELPER_SHA256,
@@ -132,10 +140,10 @@ from sciagent.systems.v2.policies import (
     Weighting,
 )
 from sciagent.systems.v2.policy_controls import TruthFSDPolicy
-from sciagent.systems.v2.policy_search import epoch_budgets
-from sciagent.systems.v2.search import GPConfig, StructureSampler
+from sciagent.systems.v2.policy_search import PolicySearch, epoch_budgets
+from sciagent.systems.v2.search import BRand, GPConfig, StructureSampler
 from sciagent.systems.v2.sparse import SparseConfig
-from sciagent.systems.v2.systems import GrammarMember, LibraryEntry, ModelMember
+from sciagent.systems.v2.systems import BNp, GrammarMember, LibraryEntry, ModelMember
 
 ORACLE: Final = "ORACLE"
 B_LIB: Final = "B-lib"
@@ -350,14 +358,6 @@ def build_policy(
                 max_events=settings.max_events,
             )
     raise CampaignError(f"{system!r} is not a policy arm")
-
-
-def policy_arm_config(system: str, settings: PolicyArmSettings) -> str:
-    """The arm's policy configuration (canonical JSON; no seed, no truth)."""
-    placeholder = _ConfigOnly()
-    return build_policy(
-        system, 0, settings, truth=placeholder, comparator=placeholder
-    ).config
 
 
 #: What a policy name may hold: it is part of a system name.
@@ -580,6 +580,46 @@ def _library_text(library: Sequence[LibraryEntry]) -> str:
     return ";".join(parts)
 
 
+def b_np_system() -> BNp:
+    """B-np as a unit runs it and as its address text reads it (F5)."""
+    return BNp()
+
+
+def b_rand_system(
+    env: CampaignEnvironment, config: CampaignConfig, *, seed: int = 0
+) -> BRand:
+    """B-rand as a unit runs it and as its address text reads it (F5).
+
+    ``seed`` is the unit's search seed, which is no part of the text.
+    """
+    return BRand(env.prior, budget=config.fits, seed=seed, fit_config=config.fit_config)
+
+
+def policy_search_system(
+    system: str,
+    env: CampaignEnvironment,
+    config: CampaignConfig,
+    policy: Policy,
+    *,
+    policy_key: int,
+    seed: int,
+) -> PolicySearch:
+    """A B-sym policy arm as a unit runs it and as its address text reads it
+    (F5). ``policy_key`` and ``seed`` are the unit's, no part of the text."""
+    return PolicySearch(
+        env.sym_seeds,
+        policy,
+        policy_seed=policy_key,
+        experiments=config.experiments,
+        config=config.gp,
+        budget=config.fits,
+        seed=seed,
+        fit_config=config.fit_config,
+        entertained=config.policy.entertained,
+        name=system,
+    )
+
+
 def system_config_text(
     system: str, env: CampaignEnvironment, config: CampaignConfig
 ) -> str:
@@ -592,9 +632,13 @@ def system_config_text(
         case "B-lib":
             return f"library: {_library_text(env.library)}"
         case "B-np":
-            return f"wiener_hopf: {WIENER_HOPF_DEFAULT!r}"
+            return f"wiener_hopf: {b_np_system().config!r}"
         case "B-rand":
-            return f"budget={budget}; max_draws_factor=100; prior={env.prior_id}"
+            b_rand = b_rand_system(env, config)
+            return (
+                f"budget={b_rand.budget}; "
+                f"max_draws_factor={b_rand.max_draws_factor}; prior={env.prior_id}"
+            )
         case "B-sym" | "B-sym@10F" | "planted-hint":
             return f"budget={budget}; gp={config.gp!r}; seeds={seeds}"
         case "B-sparse":
@@ -617,18 +661,22 @@ def system_config_text(
 def _policy_arm_text(
     system: str, env: CampaignEnvironment, config: CampaignConfig, seeds: str
 ) -> str:
-    first, second = epoch_budgets(config.fits)
-    s = config.policy
+    placeholder = _ConfigOnly()
+    policy = build_policy(
+        system, 0, config.policy, truth=placeholder, comparator=placeholder
+    )
+    search = policy_search_system(system, env, config, policy, policy_key=0, seed=0)
+    first, second = epoch_budgets(search.budget)
     text = (
-        f"budget={config.fits}; epochs={first}+{second}; "
-        f"experiments={config.experiments}; gp={config.gp!r}; seeds={seeds}; "
-        f"policy={policy_arm_config(system, s)}; policy_seed={POLICY_SEED_RULE}; "
+        f"budget={search.budget}; epochs={first}+{second}; "
+        f"experiments={search.experiments}; gp={search.config!r}; seeds={seeds}; "
+        f"policy={search.policy.config}; policy_seed={POLICY_SEED_RULE}; "
         f"world_cap={WORLD_MAX_EVENTS}, truncating; stopped=used, no data"
     )
     if system == B_SYM_RANDOM:
         return text + "; entertained=none"
     text += (
-        f"; entertained=top {s.entertained} of epoch 1 by BIC, refitted on all "
+        f"; entertained=top {search.entertained} of epoch 1 by BIC, refitted on all "
         f"data; design_horizon={POLICY_HORIZON!r}; menus=full, frozen on obs; "
         f"fallback=random"
     )

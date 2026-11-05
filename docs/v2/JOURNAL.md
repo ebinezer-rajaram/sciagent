@@ -2532,3 +2532,14 @@ Control room told by message to `agent-control-b6`, in its inbox, not yet read w
 - The Stop hook fires while a helper still runs if the tree is dirty, so commit a checkpoint before waiting.
 
 **Next.** Nothing in the queue is unblocked: the go/no-go, the test split and T2 wait on the owner, the p4-deltas merge waits on T2 and the go, and Haiku and Opus sizing waits on P4.0. Only the minor wording of round 2's finding 9 is open. If the owner has not answered, a session should do that and stop.
+
+
+## 2026-11-05: Lane session 31, checkpoint: the control room decided T2 and P4; T2's slow run is going
+
+Corrects the hand-over above: its third decision (T2 and fit/5) is no longer the owner's. The control room decided it in the inbox (0577e79) while that entry was being written. The owner's decisions are now two: the go/no-go after the transcripts, and check (b).
+
+**Done.** `t2-pin` brought to v2 by cherry-pick (db3cef6, a05adfd). T2's fast tests pass, 16 tests, exit 0. LOG, PILOT.md's decision 2 and the queue say what was decided. A rebase conflict on INBOX.md, my line against the control room's new entry: I aborted, recommitted without the inbox edit, pulled, and reapplied it, so neither side's text was hand-merged.
+
+**Running.** T2's slow test and regressions on v2, 2 cores at most, nice 10, about 1 CPU hour, $0, log `.cache/drafts/s31/t2.log`. No result yet.
+
+**Next.** Read the tail, tick the queue and the inbox, LEDGER row.

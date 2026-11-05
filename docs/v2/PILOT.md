@@ -83,7 +83,7 @@ Three sessions of 240 ended on `wall_time`, all AG-o-S/named at seed 1. No other
 - **Failed units:** 0 in every system [report]. **Not run:** 0 [report].
 - **fit/5's search can miss, and this report reads its fits.** ORACLE dev-015 s3, above, is a miss in this store: search -781.977, truth-ψ refit -777.449, so 4.53 nats on 1,902 events, 0.0024 nats per event, on an `exp` truth with no `Periodic` (`detail.result` of that cell). T2 found 0.0040 nats at (0, softplus, 1074) and 1.3249 at (0, softplus, 103648458), the latter 1 of 376 cases of a seeded list and both reproduced (LOG 2026-11-04); these are found cases, not an estimated rate. ORACLE keeps at least the truth-ψ fit on 60 of 60 units, but that rescue is ORACLE's alone and sees only misses worse than truth ψ, so any other fit here on a grid above 512 points (gaps, closes, curves, B-sym's BIC selection) may carry a miss, and `certified` does not cover the search. Of the 670 final rows, 267 are on such grids, 318 are on grids of 512 points or fewer, searched exhaustively and safe from a miss when certified, and 85 have no fit/5 ψ search (`docs/v2/prereg/2026-11-04_pilot-search-misses.md`, section 2.1); curves and BIC selection hold further fits beyond these rows. The stress test that stood here (0.0065 nats per event, "no §7.1 outcome moves") is withdrawn (LOG 2026-11-04, session 27): it set T2's in-sample nats against §7.1's held-out per-event reading, and where measured the held-out effect of a miss was 1.6 to about 2,500 times the training figure (T2's logs are about a tenth of pilot size; dev-015 s3, the one pilot-scale point, 0.00238 training and 0.00373 held-out on one log). So no per-event size is supported, and this report does not say how far misses reach into §7.1. Largest T2 loss found so far: 9.0007 nats on 318 events at (2, exp, 1499614403), reproduced. Sensitivities only, each a one-sided shift of the per-event reading, not an estimate [red team, through the rule's code; `review-s27/` under the S3 prefix]: with ORACLE and B-lib held, too-easy fires at 0.0227 on the candidates; on B-rand alone C2 fails at 0.0148; on ORACLE alone C3 fails from 0.0100; C1 first drops at 0.0217. Too-easy needs 14 more of the 30 out-of-dictionary B-sparse units to close; how many carry a miss is unknown.
 - **Void:** 0 by the Δ8 policy; 12 stored void (9 AG-o-S/named, 3 AG-o-S/anon) reclassified, each one denied bare `python` name [report]. The records hold exactly 12 unanswered `python` tool_uses, in those arms [script: `wall_time_audit.py`].
-- **-inf units:** 4 [report]: B-rand dev-010 s1, B-sym dev-005 s3, B-sym dev-011 s1, AG-o-S/named dev-005 s3 [script: `independent_recompute.py`]. None is ORACLE or B-lib. B-rand's is control 2's one infinite truth, ranked as a planted win. By the rule, -inf is excluded from means and medians of gaps and counts as not closing. Two rows are uncertified, both LLM rows, so `verdict` does not read them [script: `independent_recompute.py`]: AG-o-S/named dev-005 s3, this -inf unit, and AG-c-S/named dev-003 s1, finite, gap -0.1462, closed 0.25, which that arm's tables do not flag. This report does not give SPEC §2.2's certified and coordinate-optimal shares.
+- **-inf units:** 4 [report]: B-rand dev-010 s1, B-sym dev-005 s3, B-sym dev-011 s1, AG-o-S/named dev-005 s3 [script: `independent_recompute.py`]. None is ORACLE or B-lib. B-rand's is control 2's one infinite truth, ranked as a planted win. By the rule, -inf is excluded from means and medians of gaps and counts as not closing. Two rows are uncertified, both LLM rows, so `verdict` does not read them [script: `independent_recompute.py`]: AG-o-S/named dev-005 s3, this -inf unit, and AG-c-S/named dev-003 s1, finite, gap -0.1462, closed 0.25. Both are flagged in the arm's tables, and SPEC §2.2's certified and coordinate-optimal shares are under "Fit certification" below.
 - **No submission:** 3, the wall-time sessions, all AG-o-S/named [report]. They count as neither recovering nor closing and are absent from gap means and medians.
 - **T4:** `closed flagged` is 0 for every system [report]; the smallest |LL(ORACLE) - LL(B-lib)| over its truth's paired SE is 3.47 [script: `independent_recompute.py`].
 
@@ -233,8 +233,8 @@ Recovery and close shares are truth-weighted; gaps and similarity are over units
 | B-sparse | 60 |  | 0 | 0 | 0 | 20 | 3% | 47% | -0.0214 | -0.0090 | 0.90 | 0 | 0.956 | 0.489 |
 | planted-hint | 60 |  | 0 | 0 | 0 | 20 | 17% | 43% | -0.0298 | -0.0142 | 0.85 | 0 | 0.955 | 0.331 |
 | B-sym@10F | 10 |  | 0 | 0 | 0 | 10 | 50% | 90% | -0.0012 | 0.0000 | 1.00 | 0 | 0.982 | 0.103 |
-| AG-c-S/named | 60 | 0 | 0 | 0 | 0 | 20 | 13% | 25% | -0.0526 | -0.0435 | 0.62 | 0 | 0.935 | 0.423 |
-| AG-o-S/named | 60 | 0 | 0 | 1 | 3 | 20 | 17% | 32% | -0.0481 | -0.0367 | 0.68 | 0 | 0.941 | 0.411 |
+| AG-c-S/named (1 uncertified) | 60 | 0 | 0 | 0 | 0 | 20 | 13% | 25% | -0.0526 | -0.0435 | 0.62 | 0 | 0.935 | 0.423 |
+| AG-o-S/named (1 uncertified) | 60 | 0 | 0 | 1 | 3 | 20 | 17% | 32% | -0.0481 | -0.0367 | 0.68 | 0 | 0.941 | 0.411 |
 | AG-c-S/anon | 60 | 0 | 0 | 0 | 0 | 20 | 17% | 33% | -0.0506 | -0.0318 | 0.69 | 0 | 0.944 | 0.401 |
 | AG-o-S/anon | 60 | 0 | 0 | 0 | 0 | 20 | 12% | 27% | -0.0474 | -0.0368 | 0.72 | 0 | 0.941 | 0.394 |
 
@@ -250,8 +250,8 @@ Recovery and close shares are truth-weighted; gaps and similarity are over units
 | B-sparse | 10% / 76% / -0.003 (n=7) | 0% / 33% / -0.014 (n=4*) | 0% / 30% / -0.026 (n=9) |  |
 | planted-hint | 14% / 57% / -0.003 (n=7) | 42% / 67% / -0.001 (n=4*) | 7% / 22% / -0.028 (n=9) |  |
 | B-sym@10F | 40% / 100% / 0.000 (n=5) | - / - / - (n=0) | 60% / 80% / 0.000 (n=5) |  |
-| AG-c-S/named | 33% / 62% / 0.000 (n=7) | 8% / 17% / -0.057 (n=4*) | 0% / 0% / -0.081 (n=9) | 0 |
-| AG-o-S/named | 38% / 67% / 0.000 (n=7) | 17% / 33% / -0.063 (n=4*) | 0% / 4% / -0.057 (n=9) | 0 |
+| AG-c-S/named | 33% / 62% / 0.000 (n=7) | 8% / 17% / -0.057 (n=4*) | 0% / 0% / -0.081 (n=9) (1 uncertified) | 0 |
+| AG-o-S/named | 38% / 67% / 0.000 (n=7) | 17% / 33% / -0.063 (n=4*) | 0% / 4% / -0.057 (n=9) (1 uncertified) | 0 |
 | AG-c-S/anon | 33% / 67% / 0.000 (n=7) | 25% / 50% / -0.012 (n=4*) | 0% / 0% / -0.088 (n=9) | 0 |
 | AG-o-S/anon | 33% / 67% / 0.000 (n=7) | 0% / 17% / -0.058 (n=4*) | 0% / 0% / -0.070 (n=9) | 0 |
 
@@ -267,12 +267,39 @@ Recovery and close shares are truth-weighted; gaps and similarity are over units
 | B-sparse | 7% / 70% / -0.002 (n=10) | 0% / 23% / -0.027 (n=10) |  |
 | planted-hint | 23% / 57% / -0.003 (n=10) | 10% / 30% / -0.037 (n=10) |  |
 | B-sym@10F | 80% / 100% / 0.000 (n=5) | 20% / 80% / -0.001 (n=5) |  |
-| AG-c-S/named | 27% / 40% / -0.008 (n=10) | 0% / 10% / -0.079 (n=10) | 0 |
-| AG-o-S/named | 33% / 50% / -0.002 (n=10) | 0% / 13% / -0.065 (n=10) | 0 |
+| AG-c-S/named | 27% / 40% / -0.008 (n=10) | 0% / 10% / -0.079 (n=10) (1 uncertified) | 0 |
+| AG-o-S/named | 33% / 50% / -0.002 (n=10) | 0% / 13% / -0.065 (n=10) (1 uncertified) | 0 |
 | AG-c-S/anon | 33% / 53% / -0.002 (n=10) | 0% / 13% / -0.078 (n=10) | 0 |
 | AG-o-S/anon | 23% / 47% / -0.006 (n=10) | 0% / 7% / -0.071 (n=10) | 0 |
 
 `*` fewer than 5 truths: inconclusive.
+
+## Fit certification (SPEC §2.2)
+
+Read from each scored row's `certified` reading: the final fit behind the row's submitted model, under the current fitter. The fits inside a search, a selection or a curve are not in the rows. Certified means the inner solve at the chosen ψ and at every ψ point evaluated is certified: a certificate in θ, which does not say ψ is the best point of its grid. Shares are over units (truth x seed), not truths, of the rows reading 0 or 1. No GLM fit (the reading is NaN: B-np, and B-lib when an out-of-grammar member won) and unrecorded (no `certified` field) enter neither side of a share. A no-submission or failed row has no field because it has no fit, and is counted among the unrecorded as such.
+
+The coordinate-optimal share is of fits "certified in θ, coordinate-optimal in ψ". No cell stores `psi_search`, so it is recomputed from the row's structure, exactly: `fit` searches a grid of at most 512 points exhaustively and any larger one coordinate-wise. An uncertified fit and ORACLE's kept truth-ψ refit (ψ fixed, no search) are not in it, whatever their grid.
+
+| system | units | certified | uncertified | no GLM fit | unrecorded | certified share | coordinate-optimal share |
+|---|---|---|---|---|---|---|---|
+| ORACLE | 60 | 60 | 0 | 0 | 0 | 100.0% (60/60) | 68.3% (41/60) |
+| B-lib | 60 | 38 | 0 | 22 | 0 | 100.0% (38/38) | 0.0% (0/38) |
+| B-np | 60 | 0 | 0 | 60 | 0 | - | - |
+| B-rand | 60 | 60 | 0 | 0 | 0 | 100.0% (60/60) | 73.3% (44/60) |
+| B-sym | 60 | 60 | 0 | 0 | 0 | 100.0% (60/60) | 45.0% (27/60) |
+| B-sparse | 60 | 60 | 0 | 0 | 0 | 100.0% (60/60) | 85.0% (51/60) |
+| planted-hint | 60 | 60 | 0 | 0 | 0 | 100.0% (60/60) | 58.3% (35/60) |
+| B-sym@10F | 10 | 10 | 0 | 0 | 0 | 100.0% (10/10) | 60.0% (6/10) |
+| AG-c-S/named | 60 | 59 | 1 | 0 | 0 | 98.3% (59/60) | 20.0% (12/60) |
+| AG-o-S/named | 60 | 56 | 1 | 0 | 3 (3 with no fit) | 98.2% (56/57) | 22.8% (13/57) |
+| AG-c-S/anon | 60 | 60 | 0 | 0 | 0 | 100.0% (60/60) | 30.0% (18/60) |
+| AG-o-S/anon | 60 | 60 | 0 | 0 | 0 | 100.0% (60/60) | 30.0% (18/60) |
+| all | 670 | 583 | 2 | 82 | 3 (3 with no fit) | 99.7% (583/585) | 45.3% (265/585) |
+
+Uncertified fits: 2, marked `(n uncertified)` where an arm's final-fit scores are printed: the go/no-go shares, the per-system and group tables and the transcript picks. Each fit stays in every number, as the rules read it. Non-LLM rows among them (the only rows the §7.1 verdict reads): 0.
+
+- AG-c-S/named dev-003 seed 1: gap -0.1462, gap closed 0.25.
+- AG-o-S/named dev-005 seed 3: gap -inf, gap closed -.
 
 ## Efficiency (SPEC §4.3 score 4)
 

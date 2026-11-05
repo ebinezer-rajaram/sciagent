@@ -2572,3 +2572,20 @@ Corrects the hand-over above: its third decision (T2 and fit/5) is no longer the
 **Learned.** A push rejected as "fetch first" right after a clean fetch was the control room answering within minutes. Read the full error, and read what arrived, before rebasing. `tail -1` on a push hides the reason.
 
 **Next.** Read the engineer's report and record it. The amendment waits for a GO and the merged analysis code; the go/no-go and check (b) are still the owner's.
+
+## 2026-11-05: Lane session 32, hand-over: the rehearsal is merged to b4d6225; its slow tier runs on
+
+**Done since the checkpoint.**
+- Engineer on `p4-rehearsal`: v2 b4d6225 merged (866ae34; LOG conflict only, both sides kept; T2 byte-identical to v2's, which I confirmed by diff), then the cap test on CPU time (3ddc8da, committed by me; its figures are the engineer's). Local, nothing pushed. ruff clean, mypy `no issues found in 303 source files`, fast tier `4059 passed` on the second run; the first was `1 failed, 4058 passed`. Store checks on a fresh copy match session 27's: addresses `match 910 differ 0`, score addresses `match 240 differ 0`, `store_check` 1 budget issue (bd3dc4c4), `session_check` exit 0, `replay_check` refused 240, exit 3. I read `fast2.log`'s tail and `fast.log`'s failure, not the store logs.
+- That failure is a real SIGTERM race in the frozen `pilot_search_misses.py` (LOG 2026-11-05). It does not touch the pilot's result: I checked `journalctl` (no stop on `sci-search-misses`), `Result=success`, and `decision.json` (`exit_code` 0, shortfall 0 on tier 1, tier 2 and S2). The fix goes in the P4 amendment; the frozen script is unchanged.
+- Three adopted decisions are not built on `p4-rehearsal`: C5 truth-keyed seeding, F5 derived address text, Δ6 `link-neutral` as the arms' setting (engineer's reading, queue). The merge item was under-counted until now.
+
+**Running.** `sci-p4-tier-s32`, full `-m slow` on 866ae34 plus the cap edit, 2 workers, nice 10, started 06:30:42Z, ceiling about 8 CPU hours, $0. No result yet. LEDGER row when it exits.
+
+**Checks on v2** at e193065: `276 files already formatted`, `All checks passed!`, mypy `no issues found in 265 source files`, fast tier exit 0 in one process (`.cache/drafts/s32/fast-v2.log`), since the slow tier holds the 2 workers. Slow tier on v2 not run: nothing under `src/` changed.
+
+**Not verified.** The determinism check, the rescore and the trailers were not done. The earlier tier's 405 s on the cap test stays unexplained. Whether the owner has seen the stop point: session 31's message went to the control room and the phone push failed.
+
+**Learned.** A rare failure in a fast tier was worth a look: it was a real fault in frozen code, and a rerun alone would have hidden it. When a defect turns up in code a result rests on, check whether that run could have met it before calling it harmless; the records answered it in two commands.
+
+**Next.** Read the tier (`grep -E '^(FAILED|ERROR)|^exit:' .cache/drafts/s32/slow.log`), add its LEDGER row. Then, test first on `p4-rehearsal`: C5, F5 and Δ6, before the slow tier that signs off the merge. The owner decides the P3 go/no-go after the AG-o transcripts, and check (b). The P4 amendment waits for a GO and the merged analysis code.

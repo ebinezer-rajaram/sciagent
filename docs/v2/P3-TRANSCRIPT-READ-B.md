@@ -169,3 +169,11 @@ One thing I cannot explain: the landed fit took at most 550 s, while fit 28 on t
 - Replay not rerun; the claim about "timing number alone" rests on the review's report and on reading the code.
 - No statement about why an agent did anything beyond what its actions show.
 - `.cache/drafts/s33/transcripts-a.md` was not read, so these notes are independent of it.
+
+## Follow-up, lane session 34 (2026-11-05): red team findings 4 and 5
+
+`uv run python scripts/p3_report/first_turn_and_predict.py --root .cache/pilot-merged`, over all 240 records.
+
+**Finding 4.** The first assistant entry's total input is one value per arm in all 240 records: AG-c/anon 6,430, AG-c/named 6,794, AG-o/anon 7,089, AG-o/named 7,453. The cache-creation figure is 453 in 217 records in every arm, 0 in 6 and the whole total in 17, so 453 is where a cache boundary falls, and it is the same tail across arms, truths and seeds. So the first turn's context does not change in length with the truth, on any record. That is stronger than the five records the review had, and it is still not proof: equal length is not equal content, and what the roughly 400 tokens beyond the 176-character prompt hold stays unknown, since the record does not carry them. The docstring's "sees only" stays unestablished.
+
+**Finding 5.** 19 `predict` calls: 9 accepted, 10 refused. 16 sessions tried, 8 of them with one accepted. Per arm, tried then accepted, of 60 sessions: AG-c/named 9, 6; AG-c/anon 4, 1; AG-o/named 1, 0; AG-o/anon 2, 1. This agrees with the review and with PILOT.md's line 52. No score reads it.

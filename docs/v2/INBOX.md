@@ -127,3 +127,14 @@ entry, and marks it handled with the date and what was done. Newest last.
   freezes in or before the SPEC section 6.1 commit, before P4 runs. One red-team round. Decided by the
   control room under the owner's standing delegation; record it as delegated.
   Handled 2026-11-05 (lane session 32): recorded as delegated (LOG 2026-11-05); `docs/v2/P4-MISS-PLAN.md` and the queue say so. The amendment itself is a queue item under P4 preparation.
+
+## 2026-11-05, 10:10 UTC (owner, via the control-room session)
+
+- [ ] **P3 go/no-go: GO.** Owner: "go and yes, whatever you think is best please. you dont need me i
+  trust you to do this." The owner gave the go without reading the AG-o transcripts and delegated
+  that reading; record it so (the transcript reading is not done by the owner), and state it the same
+  way in PILOT.md and the paper's AI-use disclosure.
+- [ ] **Check (b) of the FSD seed lead: YES.** The owner approves the ctlA1-boot-r2 guard bypass for this
+  check only.
+- [ ] **Standing (owner): never leave compute idle while waiting on Claude.** If the lane is waiting on its
+  usage share, it starts frozen CPU or GPU work first.

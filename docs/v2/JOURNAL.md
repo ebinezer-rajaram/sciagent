@@ -2319,3 +2319,241 @@ The weekly usage reset has passed and the INBOX has no open entry. This is a pro
 **Second addendum (03:33Z).**
 - **Engineer finished; its checks are partial.** ruff clean, `mypy` no issues in 288 files. No single clean fast-tier tail: the full run hit the engineer's own 1,500 s limit at 66%, and the rest was covered in two reruns. One failure, `tests/nonparam/test_wiener_hopf.py::test_runtime_n2000`, 2.09 s against a 2.0 s limit in code with no diff; my rerun passed in 0.78 s at load about 12, so it is a load effect there. That the `F` in the killed run is this test is inferred. `test_pilot_harness1_cells.py` passed inside my 50-test rerun. The rest of `test_campaign_slow.py` was not run. Not tested: real SDK cancellation and real Docker. A scripted session's reading and detail are byte-identical on 346676a and the fix. Only `fits_used` in one session was wrong in the pilot; the others were exposed, not wrong.
 - **Focused sweep, not final (`sci-t2-b0` ends about 03:34Z):** 3 losses in 106 BIG[0] softplus cases, 0.27, 0.59 and 2.08 nats (Clopper-Pearson 95% 0.6% to 8.1%). This stratum loses more often than the broad sweep's 1 of 376 suggested; it is the hardest grid of four and is not a pilot rate. PILOT.md's stress test used 0.0065 nats per event; a 2.08-nat loss may exceed that, so a next red-team pass should rerun the stress test with the largest per-event miss found. This strengthens decision (3).
+
+## 2026-11-04: Lane session 27 (07:03 UTC), progress: the 19 failed inputs answered; stress test rerun, red team pending; decisions sent to the control room
+
+The INBOX has no open entry. This is a progress entry; the hand-over follows. The numbers below are exploratory and **not yet red-teamed**, and the stress-test sentence for PILOT.md is held out of the file until they are (`.cache/drafts/p3-report/s27-pilot-stress.patch`).
+
+**Done.**
+- **Stop point re-sent the handbook's way.** Session 26 tried only a phone push, which fails from a lane; `~/research/CONTROL.md` says lanes message the control room. The three decisions went to session `agent-control-b6` by cross-session message. It reached the inbox; that it was read is not known.
+- **Focused sweep final:** `sci-t2-b0` exit 0 at 03:34:12Z, 115 of 400 cases, 3 losses (0.27, 0.59, 2.08 nats). LEDGER row added.
+- **Stress test rerun** (`.cache/drafts/t2-drift/stress_s27.py`): largest per-event loss 0.0114, 2.0819 nats on 183 events; at that shift B-sparse out-of-dictionary reads 33% against 70%. It reaches 70% at 0.0227 (LOG 2026-11-04).
+- **The 19 `run_experiment` inputs answered** (`.cache/drafts/unmatched_s27.py`, `unmatched2_s27.py`; LOG 2026-11-04): 9 surplus closing brace, 5 over the record's 2,048 bytes and not visible, 5 schema refusals; each was followed by a call that reached the layer.
+- **Replay at 07:03Z, still running:** AG-c 83 PASS, 0 FAIL; AG-o 55 PASS, 1 FAIL of 120 each. The FAIL is dev-003 s1, step 51, field `digest`, the record the notes' rule expected apart. PILOT.md's replay paragraph is not updated; it waits for the exit lines.
+- **Delegated, running:** engineer on `pilot-leftovers` (scripts and `pilot_report.py` text), engineer on `p4-rehearsal` (merge v2, fast and slow tiers, finished-store checks, the `t2-pin` list), red team on the two exploratory items above.
+
+**Learned.** Lane pushes cannot reach the owner while Remote Control is inactive, so stop points go to the control room by message.
+
+**Next.** Read the three reports and check them; apply the red team's corrections; apply the patch to PILOT.md; then the hand-over entry.
+
+## 2026-11-04: Lane session 27, correction: the stress test is withdrawn, and the control room decided on wrong figures
+
+**Stop point (AUTOPILOT stop 5: a result that bears on what the project can claim).** The answer in one line: session 27's "no §7.1 outcome moves" is withdrawn, and how far search misses reach into the go/no-go is unmeasured.
+- Evidence: LOG 2026-11-04 (last entry). Pinned T2 list: 1 loss in 300, 9.000695672681786 nats on 318 events at (2, exp, 1499614403), reproduced by me on v2. T2's in-sample gaps cannot be read as held-out shifts.
+- Caveats: the computed verdict on the stored numbers stands; the sensitivities in PILOT.md are one-sided shifts, not estimates.
+- Recommendation: measure misses on the units §7.1 turns on, under a rule written first (new queue item), before the owner leans on the computed line.
+- Decision needed: whether pin-and-document still stands (control room, messaged 07:58Z; not known to be read).
+
+**My error.** I sent unreviewed numbers to the control room without labelling them, and it decided on them within minutes. The progress entry above and my first stop-point message carry the wrong figures; they stay as written and this entry corrects them.
+
+**Done.** Red team's seven blocking and non-blocking items applied: PILOT.md's stress sentence replaced, QUEUE corrected, LOG correction appended, INBOX item left open with a note. Review scripts copied to S3 (28 objects). `t2-pin` held off v2.
+**Next.** Read the two engineers' reports; the control room's answer; the replay exit lines.
+
+## 2026-11-04: Lane session 27 (07:03 UTC) hand-over: stress test withdrawn; go/no-go held for a miss check whose rule is not yet ready; PILOT.md's scripts committed
+
+**Stop point, still open.** The answer in one line: the computed GO on the stored numbers stands, but it is not put to the owner as final until misses on every pilot unit are checked, and that check's rule failed review.
+- Evidence: INBOX e7c6431; LOG 2026-11-04 (last entries); `docs/v2/redteam/2026-11-04_pilot-search-misses.md`.
+- Caveats: nothing shows the GO is wrong. The size of misses on pilot units is unmeasured, apart from dev-015 s3.
+- Recommendation: finish the rule; the run takes about 1 to 2 days of wall time at most 2 workers once frozen, and waits for memory.
+- Decision needed from the owner: still the go/no-go after the transcripts, and check (b). Both were relayed by the control room; neither is decided. My first two control-room messages (the second at 07:58Z) were acted on; my third, on the not-ready verdict, is in its inbox with no answer seen.
+
+**Done.**
+- `pilot_report.py` text fixes and `scripts/p3_report/` on v2 (a4bd9cf, 5bd54ed); PILOT.md's [draft] tags replaced, sections regenerated, verdict `go`. The engineer compared 57 figures against PILOT.md: 0 misses. Not red-teamed.
+- Stress test withdrawn; failed-inputs entry corrected (LOG 2026-11-04); review scripts on S3.
+- Pre-registration drafted and red-teamed: **not ready**, 7 blocking, not frozen. The leak at `t2_ref.py` line 26 confirmed by me. No pilot unit searched by this check.
+- `p4-rehearsal`: state in QUEUE. I read the merge commit, the ancestor check and the running units; the test tails are the engineer's, not rerun by me.
+- Replay at 09:08Z, still running: AG-c 101 PASS, 0 FAIL; AG-o 82 PASS, 1 FAIL (dev-003 s1, as the rule expected). PILOT.md's paragraph says 98 and 81, from 08:58Z. LEDGER rows for the replay and the p4 units wait for their end.
+
+**Checks.** v2's `src/` is unchanged this session. ruff clean, mypy `Success: no issues found in 260 source files`, the two new test files `25 passed`, exit 0. The full fast tier `2972 passed` is the engineer's, on `pilot-leftovers` before the cherry-pick; v2 differs from it in docs only. I did not rerun it on v2. The slow tier was run only for the two report-related files, and no src changed.
+
+**Learned.**
+- My error, twice over: unreviewed numbers went to the control room unlabelled and a decision was made on them; and in-sample T2 gaps cannot be read as held-out shifts.
+- A sizing script that shares state with its search can leak the answer without any argument carrying it. A test blind by signature does not catch this.
+- `nice` does not appear to set the CPU split between user units, each with its own cgroup share (the engineer's inference: nice 15 got 83% of a core against pytest's 35%). `CPUWeight` does the job.
+- Memory is at the 6 GB floor with the four units running, so no new long job until some end.
+
+**Next.**
+1. Read `sci-p4-tier`'s result: `grep -E '^(FAILED|ERROR)|^exit:' .cache/drafts/p4-s27/slow.log`, and name and diagnose both failures.
+2. Prereg: decide K against the blind rates, split the label, fix the seven (QUEUE has the order), second round, freeze.
+3. Replay: when both units exit, final counts and paragraph, then LEDGER rows, including the p4 units.
+4. PID 219453 looks like session 26's leftover `p4-rehearsal` process, idle: check it before anything else uses that tree. Left alone.
+
+
+## 2026-11-04: Lane session 28 (09:19 UTC), progress: miss-check rule revised for round 2, not frozen
+
+Checkpoint, not the hand-over. No pilot unit has been searched, and nothing here is a result.
+
+**Done.** `docs/v2/prereg/2026-11-04_pilot-search-misses.md` revised against round 1's findings. It is still a draft: the hunt's rule, cap and cost are placeholders until a synthetic-log spike reports. Main decisions: K = 48 with a cap of 16,000 solves, chosen against round 1's blind rates and `count5.py`; two evidence classes (exact, and searched, unvalidated), so the survival label speaks only of found misses; H1 is at least 5 of 6 T2 cases plus dev-015 s3 on R1's own best, and a failed control no longer stops the run; ceiling 84 CPU hours, kept by the kernel's count across units; `F` then `R` for the freeze.
+
+**Running.** An engineer on the synthetic spike, and an engineer on the script and test in a worktree (toy data only). `sci-p4-tier` and both replay units have not exited.
+
+**Next.** Fill the hunt, second red-team round, freeze, `R`, launch once memory allows. Read `sci-p4-tier`'s two failures when it exits.
+
+
+## 2026-11-04: Lane session 28 (09:19 UTC) hand-over: the miss check's rule is frozen and its script is on v2; not launched
+
+**Stop point, still open.** The answer in one line: the computed GO stays held, because the check that decides it is frozen but has not run.
+- Evidence: `docs/v2/prereg/2026-11-04_pilot-search-misses.md` (`F` 3226f9b, sha256 ea71cdea...); `docs/v2/redteam/2026-11-04_pilot-search-misses*.md`; LOG 2026-11-04 (last three entries).
+- Caveats: no pilot unit has been searched by this check and no number from it exists. Even the best label says nothing about misses the search did not find, on 131 of the 196 baseline fits.
+- Recommendation: launch when memory allows. Worst case 84 CPU hours, $0, about 2 days.
+- Decision needed from the owner: unchanged, the go/no-go after the transcripts, and check (b).
+
+**Done.**
+- Red team: round 1 answered, round 2 not ready (five blocking), round 3 narrow, ready with fixes (one blocking). All blocking findings fixed, reports saved verbatim. I read the last edits myself against round 3's list; no fourth round.
+- Design (LOG): the survival label speaks of found misses only; exact against searched, unvalidated; H1 is a stated catch rate; a failed R1 control does not stop the run; `GO_CHANGES` outranks every shortfall; one table of consequences; budget in points, up to 48 starts within 8,000 solves, 3,000 on identity; ceiling 84 CPU hours, stop at 78.
+- `R` 5e5a169: `scripts/pilot_search_misses.py` and its test, hashes in the LOG. Control room told (in its inbox, unread when last seen).
+- `sci-p4-tier` ended `2 failed, 299 passed`, exit 1. Named in QUEUE. The wall-time failure passed alone; the cause is likely load, not shown.
+- Replay at 11:47Z: AG-c 119 PASS, 0 FAIL; AG-o 119 PASS, 1 FAIL (dev-003 s1, as the rule expected). One replay unit had exited by then, the other had not; final counts are for the next session.
+- LEDGER rows added for the p4 tier and the spike. Not yet: the replay units.
+
+**Checks.** At `R`: `ruff format --check .` `273 files already formatted`; `ruff check .` clean; mypy `no issues found in 262 source files`; `tests/test_invariants.py` plus the new test, `1146 passed`, exit 0. The new test's slow tier `24 passed` is the engineer's, before the constants were set; I did not rerun it. The repository's fast tier was started at `R`, result in `.cache/drafts/prereg-s28/fast-R.log`: `3282 passed, 47 warnings in 141.01s`, exit 0. No file under `src/` changed. The script past its guards has never run: that needs the launch.
+
+**Learned.**
+- 0.782 sweeps per start came from grids that fill up. On fresh profiles it ran 0.34 to 1.10 over 48 starts, one log per shape, and higher over few starts. On many fits R1 will stop short of 48 starts, so the record gives the count.
+- A fix can reopen what it fixes: making STOP always `INCOMPLETE` let a stop bury a flip, and a clause I added in section 6 repeated it. Section 5 now alone sets the label.
+- `pgrep -f` in a shell waiting on a name matches the shell itself: my wait ran out its 30 minutes. With `-q` twice pytest prints no summary; read the exit code.
+- GitHub gave one 500 on a push at 10:48Z; a direct retry went through.
+- The research-team guard refuses inline Bash writes whose text names lane controls, even when the target is a doc; the Edit tool is the route for docs.
+
+**Next.**
+1. A change to the script from here on is an amendment (section 2.10).
+2. `git worktree add --detach .claude/worktrees/misses 5e5a169`, check MemAvailable is at least 8 GiB, launch by section 8's line, LEDGER row.
+3. Replay: when both units exit, final counts, `replay_paragraph.sh`, LEDGER rows.
+4. While the run goes: write the section 10 note's frame; nobody reads `journal.jsonl` before the end.
+
+
+## 2026-11-04: Lane session 29 (11:59 UTC), progress: the miss check is launched; replay final
+
+Checkpoint, not the hand-over. Nothing here is a result of the miss check.
+
+**Done.**
+- Miss check launched at 11:59:49Z by section 8's line, with `RuntimeMaxSec=216000`, unit `sci-search-misses`, worktree `.claude/worktrees/misses` detached at `R` 5e5a169. Before launch: script, test and prereg sha256 equal to the LOG's; split hash `31c18f10...`; `R` an ancestor of origin/v2; `MemAvailable` 10.9 GiB; no other `sci-*` unit active. Guards passed: the unit printed the script's hash and took the manifest. Ceiling 84 CPU hours, $0. At 12:03Z `cpu.json` read 279 CPU s over 180 s of wall, so about 1.5 cores. `journal.jsonl` not read.
+- Replay final, in PILOT.md (934354e): AG-c 120 of 120 PASS, exit 0; AG-o 119 of 120, exit 1. The one FAIL is dev-003 s1, step 51, `digest`, which `sandbox_nondeterminism.out` lists as call 51, `clock`. Counted apart by the rule, so harness replay defects are 0. I did not compare the two outputs, and replay stops at the first divergence, so that record's later calls were not replayed. LEDGER rows in (9.1 and 8.9 CPU hours).
+- PID 219453, read: orphan of the lane's own cgroup, cwd `p4-rehearsal`, 2 CPU s in 9 hours, 115 MB. Harmless and left alone.
+
+**Running.** An engineer on the section 10 note generator (side branch, toy records only), a red team on PILOT.md since 4dc2ff5, and a timed rerun of `sci-p4-tier`'s wall-time failure (`.cache/drafts/s29/p4-cap.log`).
+
+**Next.** Read those three, then the hand-over.
+
+
+## 2026-11-04: Lane session 29 (11:59 UTC) hand-over: the miss check is running; PILOT.md reviewed and fixed
+
+**Stop point, still open.** The answer in one line: the computed GO stays held, because the miss check is running and has no label yet.
+- Evidence: unit `sci-search-misses`, active at 12:42Z, `cpu.json` 1.31 CPU hours over 0.70 wall hours, so about 1.9 cores; `docs/v2/redteam/2026-11-04_pilot-md.md`.
+- Caveats: no output of the check has been read, and no number from it exists. The run past its guards had never been exercised before today, so a late bug is possible.
+- Recommendation: wait for the label. At this rate tier 1 ends sooner than the prereg's 24 to 44 hours only if the per-point rates hold, which is not known yet.
+- Decision needed from the owner: unchanged, the go/no-go after the transcripts, and check (b).
+
+**Done.**
+- Miss check launched (checkpoint above).
+- Replay final in PILOT.md; LEDGER rows in. The launch row's hours are filled at the end.
+- Red team on PILOT.md since 4dc2ff5: **ready with fixes**, no number or the computed GO changed. It regenerated the generated sections byte-identical and reproduced the figures. Fixed: finding 1 (blocking; the "every other fit" clause against the LOG, now 267, 318 and 85 of 670 rows), finding 2 (the hold beside the verdict, and only `GO_SURVIVES_FOUND_MISSES` releases it), 4, 5, 6, three of the nits. I confirmed finding 1's LOG quote, `e1057af` off v2, and the 2 uncertified rows by running `independent_recompute.py` (exit line `uncertified rows by system: {'AG-c-S/named': 1, 'AG-o-S/named': 1}`). The gap figures of finding 6 and the dev-003 s1 gap are the red team's; finding 6's agree with the stated gap-closed values. Line 50's stale commit is left, as harmless.
+- Its rerun of the failing replay record, past each divergence, closed the paragraph's two limits: only calls 51, 54 and 58 differ, in the timing number alone. I cite that as a review rerun: I did not repeat it, its script was not kept, and the other 239 records rest on their log lines. PILOT.md's fixes were not sent back for a second review.
+- `scripts/p3_report/miss_note.py` and its test on v2 (884ba01; engineer, toy records only, no pilot record read). Exploratory table defined before any number (LOG). I read its imports and grep for what it opens, not all 1,092 lines. Never run on real records.
+- `p4-rehearsal` wall-time failure timed: 49.45 s and 65.28 s against the tier's 405.08 s. Cause still not shown (QUEUE).
+
+**Checks.** v2: `ruff format --check .` `275 files already formatted`; `ruff check .` `All checks passed!`; mypy `no issues found in 264 source files`; fast tier `3368 passed, 47 warnings in 169.20s`, exit 0; `tests -k p3_report` `19 passed`. Slow tier not run: no file under `src/` changed. No check covers PILOT.md's prose beyond the red team's read. `find .cache/pilot-merged -newermt '2026-11-04 11:50:00'` is empty, so the reads beside the run left the store as its manifest took it.
+
+**Learned.**
+- `.cache/drafts/p3-report/notes.md` has drifted from PILOT.md: six of nine edits found no match. Splicing from it would undo reviewed text.
+- `OPENBLAS_NUM_THREADS` unset costs that test about a third more CPU (66.9 s against 51.5 s), not the factor of 8.
+- A `cd` into a worktree carries to the Stop hook, which then reads the wrong branch. Use `git -C` or a subshell.
+- The red team's replay used sandbox containers, which `nice` does not reach: load peaked near 3.4 beside the run for about 21 minutes. Its scratch `/tmp/rv-pilot-OOfw` (108K) is still there; its removal was refused and I left it.
+- PID 219453 still idle, left alone.
+
+**Next.**
+1. Check `systemctl --user is-active sci-search-misses` and `cpu.json` only. No `journal.jsonl`.
+2. When it ends: `decision.json`, S3 copy, LEDGER hours, `uv run python scripts/p3_report/miss_note.py --records <dir>`, hand-filled lines, red team, then the stop point.
+3. Meanwhile: SPEC §2.2's shares in `pilot_report.py`, test first (QUEUE, PILOT.md leftovers).
+
+
+## 2026-11-04: Lane session 30 (14:52 UTC), progress: miss check still running; SPEC §2.2's shares with the engineer
+
+Checkpoint, not the hand-over. Nothing here is a result of the miss check.
+
+**Done.** Oriented: no new INBOX entry (e7c6431 stays open until the check reports); v2 clean at 3e31bc2. Status read from `systemctl --user is-active sci-search-misses` and `cpu.json` only; `journal.jsonl` not read. The transcript picks are already in PILOT.md (section "AG-o transcripts to read in full"). Corrected from this entry's first version, which also named TRANSCRIPTS.md: that file is the 2026-10-03 behaviour report and holds no picks. Queue read for unblocked work: only SPEC §2.2's shares (PILOT.md leftovers, red team finding 3). The go/no-go, check (b), the test split and T2's list wait on the owner or the miss check; the p4-deltas merge stays after the pilot closes.
+
+**Running.** An engineer on branch `spec22-shares`, test first, in its own worktree, not on v2. No code from it has been read or checked yet.
+
+**Next.** Read its report, check it, splice PILOT.md's generated lines, then the hand-over.
+
+
+## 2026-11-05: Lane session 31 (04:16 UTC), progress: the miss check has ended; its note is under review
+
+Checkpoint, not the hand-over. The numbers here are unreviewed.
+
+**Done.** Session 30 left no hand-over: the lane log shows it over its usage share until 04:16Z, and its engineer's work on `spec22-shares` sat uncommitted in its worktree (kept). `sci-search-misses` ended at 00:49:38Z, `run ended: complete`, label `GO_SURVIVES_FOUND_MISSES`, 25.41 CPU hours and 12.83 wall hours by `cpu.json`, $0. Records copied to S3 at 04:17Z, seven files, sizes equal. LEDGER row filled. `miss_note.py` ran on real records for the first time, exit 0; output in `docs/v2/PILOT-MISSES.md`, status unreviewed, with hand lines at the end.
+
+**Read so far, unreviewed.** M = 25 rows on 25 fits, 23 of them baseline rows; H2 and H3 falsified, H1 and H4 not; max |Δ| 0.02198 (dev-012 s3, B-sparse). The verdict on corrected readings is go, no clause moved. 13 of the 25 misses are at G > 3,456,000, the band whose 51 searched fits have no control, and R1 caught 16 of 23 group C losses, so the unfound misses are a real unknown. The unit log holds 276 `Solution may be inaccurate` warnings, not yet explained.
+
+**Running.** A red team on the note and the label; an engineer finishing SPEC §2.2's shares on `spec22-shares`.
+
+**Next.** Read both, then the stop point: the go/no-go goes to the owner only after the note is reviewed.
+
+
+## 2026-11-05: Lane session 31, checkpoint: the note is fixed after the red team; a narrow second read is running
+
+Checkpoint, not the final hand-over. The go/no-go is not yet pushed to the owner.
+
+**Done.**
+- Red team on the note: **ready with fixes**, five blocking, all text (`docs/v2/redteam/2026-11-05_pilot-misses.md`, saved in full). The label stands and no number moved. I reran `c_controls.py` and `i_more.py`: same counts. The rest of the report's figures are the red team's.
+- Fixed: `miss_note.py`'s heading and "largest |Δ| among the misses found", test changed with it, note regenerated (the diff is those three lines); status line and the "Added by hand" section answer findings 1 to 9; finding 10 is corrected in the LOG. PILOT.md's hold wording is replaced by the prereg's fixed wording and the per-gate line.
+- SPEC §2.2's shares on v2 (da5e54a, fcea1c3): "Fit certification" in PILOT.md, certified 99.7% (583/585), coordinate-optimal 45.3% (265/585). Engineer's report; I read the regenerated diff and reran its test file, not the arithmetic. It trimmed the earlier uncommitted work. `.git/worktrees/agent-a33cbf18cc26fc53f/locked` vanished during that work, cause not found, no harm seen.
+
+**Checks.** `ruff format --check .` `276 files already formatted`; `ruff check .` `All checks passed!`; mypy `no issues found in 265 source files`; fast tier `3397 passed, 47 warnings in 103.67s`, exit 0. Slow tier not run: no file under `src/` changed. No check covers the note's prose beyond the red team's read.
+
+**Learned.**
+- `miss_note.py` ran clean on real records first time, and the red team found its output byte-identical and its numbers right. Its problems were wording, not arithmetic.
+- 276 solver warnings count processes, not solves: Python warns once per location per process.
+- `uncertified_better` cannot fire on a failed solve, because the point has no score.
+
+**Running.** A narrow red team on the fixes, PILOT.md's three hand edits and the Fit certification section.
+
+**Next.** Read it, fix, then the stop point: tell the control room (session `agent-control-b6`) and push the owner. The owner's decisions are unchanged: the go/no-go after the transcripts, check (b), and what T2 asserts.
+
+
+## 2026-11-05: Lane session 31 hand-over: stop point, the computed GO survives the misses found
+
+**Stop point.** The answer in one line: the miss check ended `GO_SURVIVES_FOUND_MISSES`, so the hold is released and the go/no-go is the owner's, after the AG-o transcripts.
+- Evidence: `docs/v2/PILOT-MISSES.md`; `docs/v2/redteam/2026-11-05_pilot-misses.md` and `-round2.md`; PILOT.md's decisions; LOG 2026-11-05; records on S3 under `sciagent/p3-linux/search-misses-3226f9b9521fe3a8c1d2445d1654cd1609b1eb2d/`.
+- Numbers: M 25 rows on 25 fits, 23 baseline; largest |Δ| found 0.02198; corrected verdict go, no clause moved; H2, H3 falsified, H1, H4 not; 25.41 CPU hours, $0.
+- Caveats: nothing is said about misses not found, on 131 of the 397 fits the verdict reads. 13 of the 25 sit in the 51 fits with no control. On B-sparse out of dictionary, 22 of 30 rows are searched with no control. R1, R2 and the hunt were not rerun by anyone, and 49 of 70 uncertified points were not enumerated. Curves and BIC selection stay unchecked.
+- Recommendation: read the transcripts; do not read the gates as far from their limits on this check. Since H3 fell on exact fits as well, settle what T2 asserts and whether P4 runs on fit/5 before P4 starts.
+- Decision needed from the owner: the go/no-go, check (b), and T2 / fit/5.
+
+**Done since the checkpoint.** Round 2 (narrow): ready with fixes, three blocking, all text. Fixed: decision 1 now carries the whole per-gate line, C1's margin corrected to 0.0266, the coverage claim narrowed; also findings 4 to 8, 10 and part of 9. It confirmed SPEC §2.2's shares by a route with no shared code. Round 2's fixes were not sent back for a third read; I checked each replacement applied once, not its figures beyond the report's. Round 2's own copied figures (the 63 and 240 warnings, the 0.36-nat neighbour, the transcript search) rest on round 1.
+
+Control room told by message to `agent-control-b6`, in its inbox, not yet read when sent. The phone push failed: `Mobile push not sent (Remote Control inactive)`, as session 26 found from a lane.
+
+**Checks.** At e04d68c: `276 files already formatted`, `All checks passed!`, mypy `no issues found in 265 source files`, fast tier `3397 passed`, exit 0. Later commits are docs only. Slow tier not run: nothing under `src/` changed.
+
+**Learned.**
+- A hand line can quietly mislabel a statistic: margin minus SE went out as C1's margin, and only a second read caught it. Copy a figure with its label.
+- The Stop hook fires while a helper still runs if the tree is dirty, so commit a checkpoint before waiting.
+
+**Next.** Nothing in the queue is unblocked: the go/no-go, the test split and T2 wait on the owner, the p4-deltas merge waits on T2 and the go, and Haiku and Opus sizing waits on P4.0. Only the minor wording of round 2's finding 9 is open. If the owner has not answered, a session should do that and stop.
+
+
+## 2026-11-05: Lane session 31, checkpoint: the control room decided T2 and P4; T2's slow run is going
+
+Corrects the hand-over above: its third decision (T2 and fit/5) is no longer the owner's. The control room decided it in the inbox (0577e79) while that entry was being written. The owner's decisions are now two: the go/no-go after the transcripts, and check (b).
+
+**Done.** `t2-pin` brought to v2 by cherry-pick (db3cef6, a05adfd). T2's fast tests pass, 16 tests, exit 0. LOG, PILOT.md's decision 2 and the queue say what was decided. A rebase conflict on INBOX.md, my line against the control room's new entry: I aborted, recommitted without the inbox edit, pulled, and reapplied it, so neither side's text was hand-merged.
+
+**Running.** T2's slow test and regressions on v2, 2 cores at most, nice 10, about 1 CPU hour, $0, log `.cache/drafts/s31/t2.log`. No result yet.
+
+**Next.** Read the tail, tick the queue and the inbox, LEDGER row.
+
+
+## 2026-11-05: Lane session 31, final hand-over: T2 passes on v2; the go/no-go waits on the owner
+
+**Stop point, still open.** The answer in one line: the computed GO survives the misses found and is no longer held; the entry above the last gives evidence and caveats.
+- Decision needed from the owner: the go/no-go after the AG-o transcripts, and check (b).
+
+**Done since the checkpoint.** Slow T2 and its regressions on v2: `25 passed, 19 deselected in 1187.12s (0:19:47)`, exit 0, so the pinned list's one known loss reproduces at its recorded gap here. Queue and inbox ticked, LEDGER row in (0.66 hours, an upper bound from wall time at 2 cores).
+
+**Checks.** T2's file is the only code since e04d68c: its fast tests pass, 16 tests, exit 0; ruff clean on it; the slow run above. After the cherry-pick `ruff check .` `All checks passed!` and mypy `no issues found in 265 source files`; the repository's fast tier was not rerun, as that test file alone changed.
+
+**Not verified.** Whether the control room or the owner has read the stop point: the message reached the control room's inbox, and the phone push did not go out.
+
+**Next.** Nothing needs a session until someone answers, apart from round 2's finding 9 (minor wording, in the queue). After a GO: the p4-deltas merge with this T2, then a plan for the miss check on P4's fits.

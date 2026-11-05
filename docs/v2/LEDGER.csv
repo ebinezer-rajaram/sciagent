@@ -22,3 +22,14 @@ date,item,provider,hours,usd,stage
 2026-11-04,Seed-lead check (a) of 2026-10-29 (28672 runs at 0.142 CPU s per run as the red team measured; sci-fsd-poollaw; ceiling 3.0 CPU h; row added late on the red team's finding),dm-devbox,1.13,0,p4
 2026-11-04,S3 copy of the P3 report scripts and red-team scripts (24 objects; sciagent/p3-linux/report-900e66a/),aws-s3,0,0,p3
 2026-11-04,T2 seeded sweep (376 of 400 cases; sci-t2-sweep; one process; ceiling 45 min wall; ended at the ceiling),dm-devbox,0.75,0,p3
+2026-11-04,T2 focused sweep on BIG[0] softplus (115 of 400 cases; sci-t2-b0; one process; 03:16Z-03:34Z; 16 min 45 s CPU; ended at its ceiling),dm-devbox,0.28,0,p3
+2026-11-04,S3 copy of the session 27 review scripts (28 objects; sciagent/p3-linux/report-900e66a/review-s27/),aws-s3,0,0,p3
+2026-11-04,T2 pinned list (300 cases; one process; 07:05Z-07:49Z; 2133 CPU s),dm-devbox,0.59,0,p3
+2026-11-04,Sizing runs for the pilot miss pre-registration (T2 and synthetic logs only; no pilot unit; about 0.5 CPU h from process lifetimes),dm-devbox,0.5,0,p3
+2026-11-04,S3 copy of the miss-check draft scripts and red-team scripts (30 objects; sciagent/p3-linux/prereg-s27/),aws-s3,0,0,p3
+2026-11-04,p4-rehearsal slow tier (sci-p4-tier; 08:14Z-10:50Z wall; -n 2; 2 failed; 299 passed),dm-devbox,2.6,0,p3
+2026-11-04,Synthetic spike and points-per-start runs for the miss pre-registration (one process; no pilot unit; about 39 min and 10 min wall),dm-devbox,0.8,0,p3
+2026-11-04,Replay check at 900e66a; AG-c unit (sci-replay-ag-c; 120 of 120 PASS; exit 0 at 11:49Z),dm-devbox,9.1,0,p3
+2026-11-04,Replay check at 900e66a; AG-o unit (sci-replay-ag-o; 119 of 120 PASS; the 1 FAIL expected by the rule; exit 1 at 11:40Z),dm-devbox,8.9,0,p3
+2026-11-04,Pilot miss check 11:59:49Z to 00:49:38Z (sci-search-misses; F 3226f9b; R 5e5a169; ceiling 84 CPU hours and $0; 25.41 CPU hours by the kernel count),dm-devbox,25.41,0,p3
+2026-11-05,T2 slow test and regressions on v2 (pinned list; 25 passed; 1187 s wall at 2 cores at most; hours an upper bound),dm-devbox,0.66,0,p3

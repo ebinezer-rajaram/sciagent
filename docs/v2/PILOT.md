@@ -118,7 +118,7 @@ Rules applied as written, with one declared exception, and none changed after th
 | C2 | Δ10 rank rule | p = 4.768e-06; median 0.0245, CI lower end 0.0148 > 0 | passes |
 | C3 | B-sym@10F median gap ≥ -0.01 | 0.0000 (10 truths, seed 1) | passes |
 
-SPEC §7.1's own too-hard wording, "every system", also takes in the LLM arms (25%, 32%, 33%, 27% [report]); the result is the same. B-rand's 10% is exactly on the line (0.1000 [script: `independent_recompute.py`]), which does not matter because other systems are far above it.
+SPEC §7.1's own too-hard wording, "every system", also takes in the LLM arms (25% (1 uncertified), 32% (1 uncertified), 33%, 27% [report]); the result is the same. B-rand's 10% is exactly on the line (0.1000 [script: `independent_recompute.py`]), which does not matter because other systems are far above it.
 
 The computed verdict line below says what the rules compute. It reads the non-LLM systems only, so the one store issue does not enter it. **It is not the decision:** §2.4 closes P3 on a GO plus the owner's transcript read, and the miss check's wording goes with the GO (first decision below).
 
@@ -276,7 +276,7 @@ Recovery and close shares are truth-weighted; gaps and similarity are over units
 
 ## Fit certification (SPEC §2.2)
 
-Read from each scored row's `certified` reading: the final fit behind the row's submitted model, under the current fitter. The fits inside a search, a selection or a curve are not in the rows. Certified means the inner solve at the chosen ψ and at every ψ point evaluated is certified: a certificate in θ, which does not say ψ is the best point of its grid. Shares are over units (truth x seed), not truths, of the rows reading 0 or 1. No GLM fit (the reading is NaN: B-np, and B-lib when an out-of-grammar member won) and unrecorded (no `certified` field) enter neither side of a share. A no-submission or failed row has no field because it has no fit, and is counted among the unrecorded as such.
+Read from each scored row's `certified` reading: the final fit behind the row's submitted model, under the current fitter. The fits inside a search, a selection or a curve are not in the rows. Certified means the inner solve at the chosen ψ and at every ψ point evaluated is certified: a certificate in θ. On a grid searched exhaustively, that makes ψ the best point of the grid; on one searched coordinate-wise, it does not. Shares are over units (truth x seed), not truths, of the rows reading 0 or 1. No GLM fit (the reading is NaN: B-np, and B-lib when an out-of-grammar member won) and unrecorded (no `certified` field) enter neither side of a share. A no-submission or failed row has no field because it has no fit, and is counted among the unrecorded as such.
 
 The coordinate-optimal share is of fits "certified in θ, coordinate-optimal in ψ". No cell stores `psi_search`, so it is recomputed from the row's structure, exactly: `fit` searches a grid of at most 512 points exhaustively and any larger one coordinate-wise. An uncertified fit and ORACLE's kept truth-ψ refit (ψ fixed, no search) are not in it, whatever their grid.
 
@@ -296,7 +296,7 @@ The coordinate-optimal share is of fits "certified in θ, coordinate-optimal in 
 | AG-o-S/anon | 60 | 60 | 0 | 0 | 0 | 100.0% (60/60) | 30.0% (18/60) |
 | all | 670 | 583 | 2 | 82 | 3 (3 with no fit) | 99.7% (583/585) | 45.3% (265/585) |
 
-Uncertified fits: 2, marked `(n uncertified)` where an arm's final-fit scores are printed: the go/no-go shares, the per-system and group tables and the transcript picks. Each fit stays in every number, as the rules read it. Non-LLM rows among them (the only rows the §7.1 verdict reads): 0.
+Uncertified fits: 2, marked `(n uncertified)` where an arm's final-fit scores are printed: the per-system and group tables and the transcript picks. Each fit stays in every number, as the rules read it. Non-LLM rows among them (the only rows the §7.1 verdict reads): 0.
 
 - AG-c-S/named dev-003 seed 1: gap -0.1462, gap closed 0.25.
 - AG-o-S/named dev-005 seed 3: gap -inf, gap closed -.

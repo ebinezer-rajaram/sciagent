@@ -441,7 +441,8 @@ def certification_lines(
         "row's submitted model, under the current fitter. The fits inside a "
         "search, a selection or a curve are not in the rows. Certified means the "
         "inner solve at the chosen ψ and at every ψ point evaluated is certified: "
-        "a certificate in θ, which does not say ψ is the best point of its grid. "
+        "a certificate in θ. On a grid searched exhaustively, that makes ψ the best "
+        "point of the grid; on one searched coordinate-wise, it does not. "
         "Shares are over units (truth x seed), not truths, of the rows reading 0 "
         "or 1. No GLM fit (the reading is NaN: B-np, and B-lib when an "
         "out-of-grammar member won) and unrecorded (no `certified` field) enter "
@@ -474,7 +475,7 @@ def certification_lines(
         return [*out, "No uncertified fit.", ""]
     out += [
         f"Uncertified fits: {len(bad)}, marked `(n uncertified)` where an arm's "
-        "final-fit scores are printed: the go/no-go shares, the per-system and "
+        "final-fit scores are printed: the per-system and "
         "group tables and the transcript picks. Each fit stays in every number, "
         "as the rules read it. Non-LLM rows among them (the only rows the §7.1 "
         f"verdict reads): {sum(not r.llm for r in bad)}.",

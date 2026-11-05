@@ -406,13 +406,14 @@ def check_image_id(recorded: Mapping[str, Any], lab: Lab) -> None:
         )
 
 
-def _prompts(lab: Lab) -> tuple[str, str]:
+def _prompts(lab: Lab, wall_time_s: float) -> tuple[str, str]:
     observational = lab.world.datasets[OBSERVATIONAL]
     system = system_prompt(
         lab.view,
         lab.arm,
         experiments=lab.experiments,
         fits=lab.fits,
+        wall_time_s=wall_time_s,
         variant=lab.prompt_variant,
         policy=lab.policy,
     )
@@ -420,14 +421,15 @@ def _prompts(lab: Lab) -> tuple[str, str]:
     return system, opening
 
 
-def rendered_surface(lab: Lab) -> dict[str, Any]:
+def rendered_surface(lab: Lab, *, wall_time_s: float) -> dict[str, Any]:
     """Everything the agent is shown before its first call, by label.
 
     The system prompt, the opening prompt and every tool schema: the input to
     the anonymisation leak test. Without the opening prompt it equals
-    :func:`rendered_config` for the lab's configuration.
+    :func:`rendered_config` for the lab's configuration. ``wall_time_s`` is the
+    session's limit, which the lab does not hold and the prompt states.
     """
-    system, opening = _prompts(lab)
+    system, opening = _prompts(lab, wall_time_s)
     surface: dict[str, Any] = {"system_prompt": system, "opening_prompt": opening}
     for schema in lab.layer().schemas():
         surface[f"tool:{schema['name']}"] = schema
@@ -442,6 +444,7 @@ def rendered_config(
     *,
     experiments: int,
     fits: int,
+    wall_time_s: float,
     prompt_variant: str = "v1",
     policy: str | None = None,
 ) -> dict[str, Any]:
@@ -451,8 +454,8 @@ def rendered_config(
     observational log's size and horizon), rendered without resolving a truth
     or building a world: the system prompt and every tool schema, by label.
     Its inputs are the channel specs, the anonymised names, the arm, the
-    condition, the budgets, the prompt variant, the policy (P4 Δ11; it is
-    validated here, and runs on AG-c only) and this package's constants; the
+    condition, the budgets, the wall limit, the prompt variant, the policy (P4
+    Δ11; it is validated here, and runs on AG-c only) and this package's constants; the
     truth, the seed and the sandbox limits are not among them. The campaign's
     session key hashes it, so a prompt or schema edit moves the key. A lab
     built from the same configuration shows exactly this.
@@ -474,6 +477,7 @@ def rendered_config(
             arm,
             experiments=experiments,
             fits=fits,
+            wall_time_s=wall_time_s,
             variant=variant,
             policy=policy_name,
         )
@@ -614,7 +618,7 @@ def run(
         policy_settings=policy_settings,
     )
     lab = build_lab(spec, env, sandbox_root=sandbox_root, fit_workers=fit_workers)
-    system, opening = _prompts(lab)
+    system, opening = _prompts(lab, wall_time_s)
     try:
         investigation = investigation_json(spec, lab)
     except SandboxError:

@@ -22,6 +22,7 @@ from investigation_support import (
     BELIEF,
     POINTPROC,
     STOP,
+    WALL_TIME_S,
     clean_environment,
     lab,
     plain_run,
@@ -224,7 +225,7 @@ def test_no_tool_output_shows_the_truth(
 def test_anonymised_prompts_and_schemas_do_not_leak(arm: Arm, tmp_path: Path) -> None:
     # Rendering needs no container: the image is named, not asked of Docker.
     the_lab = lab(arm, "anon", sandbox_root=tmp_path, image="sciagent-sandbox:unused")
-    surface = rendered_surface(the_lab)
+    surface = rendered_surface(the_lab, wall_time_s=WALL_TIME_S)
     terms = leak_terms(POINTPROC, tuple(c.name for c in v2.CHANNELS))
     assert {"size", "sign", "arrival", "mean_rate", "hawkes"} <= set(terms)
     assert_no_leaks(surface, terms, numeric_constants=NATIVE_CONSTANTS)
@@ -234,7 +235,7 @@ def test_the_leak_test_would_catch_a_leak(tmp_path: Path) -> None:
     """Positive control: the same scan fails on the named condition."""
     from sciagent.anonymise import LeakError
 
-    surface = rendered_surface(lab("AG-c", "named"))
+    surface = rendered_surface(lab("AG-c", "named"), wall_time_s=WALL_TIME_S)
     terms = leak_terms(POINTPROC, tuple(c.name for c in v2.CHANNELS))
     with pytest.raises(LeakError) as caught:
         assert_no_leaks(surface, terms, numeric_constants=NATIVE_CONSTANTS)

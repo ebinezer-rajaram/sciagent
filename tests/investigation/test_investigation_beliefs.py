@@ -20,6 +20,7 @@ from investigation_support import (
     BELIEF_ARGS,
     POINTPROC,
     STOP,
+    WALL_TIME_S,
     believe,
     lab,
     plain_run,
@@ -434,7 +435,9 @@ def test_the_prompt_asks_for_beliefs_and_a_rival_prediction(
     the_lab = lab(
         arm, condition, sandbox_root=tmp_path, image="sciagent-sandbox:unused"
     )
-    text = system_prompt(the_lab.view, the_lab.arm, experiments=8, fits=40)
+    text = system_prompt(
+        the_lab.view, the_lab.arm, experiments=8, fits=40, wall_time_s=WALL_TIME_S
+    )
     assert "`belief(favoured, rivals, confidence)`" in text
     assert "before every experiment" in text
     assert "at least one prediction under a rival" in text

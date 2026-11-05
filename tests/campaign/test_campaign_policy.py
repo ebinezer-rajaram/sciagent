@@ -83,7 +83,9 @@ PINNED_BASELINES = {
 #: weighting reach AG-c-S: the recorded policy settings name both. They are
 #: re-pinned again by C5: ``policy_config`` names the truth-keyed seed rule,
 #: and the two plain arms stay as they were. All four are re-pinned by F5 point
-#: 2, as the baselines are; :data:`PINNED_SESSION_CONFIG` did not move.
+#: 2, as the baselines are; :data:`PINNED_SESSION_CONFIG` did not move. All
+#: four are re-pinned by the prompt's wall-limit sentence (LOG 2026-11-05,
+#: session 34), which moves every session's surface and no baseline.
 PINNED_ARMS = (
     LLMArm("AG-c", "named"),
     LLMArm("AG-o", "anon"),
@@ -91,13 +93,13 @@ PINNED_ARMS = (
     LLMArm("AG-c", "named", policy="FSD"),
 )
 PINNED_SESSIONS = {
-    "AG-c-H/named": "160e1721cab333ad7bc1a1cd632951299608b793a4c569263ec41d25031fbddc",
-    "AG-o-H/anon": "b3afe49d0f78c00aa28e73d757db1a6d8f95dd31f8970d276cb16ea945aca3b1",
+    "AG-c-H/named": "836c8ca529d55a53ee72fd6f36ac9066f352caf2124d84a89c3170d6cd9d0b58",
+    "AG-o-H/anon": "ac682a2042afb099c39e4f026861bdccd67a191976deed6c14289cc3a8c69172",
     "AG-c-H/named+policy=EIG": (
-        "3e5187a4871a97aea06fae74ad377c4b334e708356439b5727490dfaaf79ed34"
+        "b71003fb48d4324c81bf7cf9b9324b36cde127c735074650957194c636d8471e"
     ),
     "AG-c-H/named+policy=FSD": (
-        "badd4173b33de541dc18bab4aa17a0e6211d32e0112f1e255a6a16aa25c93028"
+        "5c9860b61f093c427e665257d78c4d3a43f31e647b711bf8243b88afd818cb45"
     ),
 }
 
@@ -125,16 +127,17 @@ MOVED_SYSTEM_CONFIG = {
         "8c4ff49f1a2e551c35eabe9ca9285165f2c7eaac8e71a8d30e8bc24775794841",
     ),
 }
-#: Each arm's ``session_config`` at 2205433: F5 point 2 changes a session's
-#: versions, not what it ran, so these stand.
+#: Each arm's ``session_config``. F5 point 2 left them as they were at 2205433,
+#: changing a session's versions and not what it ran. The prompt's wall-limit
+#: sentence is a change to what it runs, so these are re-pinned there.
 PINNED_SESSION_CONFIG = {
-    "AG-c-H/named": "87c18124f53bb21ec6afd8a7666873330f4009531cb2c85ef8a0d52296fd4133",
-    "AG-o-H/anon": "828ae3fa9ca1f0aef2071aac280f2f946805e94616934ac08a931b449fc73c50",
+    "AG-c-H/named": "a0416e37a10fbdf24dab0e39a58fb20cb5e8432f701864453fc4979282e0ffed",
+    "AG-o-H/anon": "9efdc8fc5c73568a7efb2f6c7e87044f3f50c2c452b3cbe1de67b017004c04b6",
     "AG-c-H/named+policy=EIG": (
-        "316738b88d4876befd2bd2c1c465daf0d7e7e329fd071d4fee8b90cd7c8af850"
+        "5fdec6fe21b9c763008253bfb6e967752347208f58184affc875370211d8bfc4"
     ),
     "AG-c-H/named+policy=FSD": (
-        "d07a77a8a7f5df76a15622fbe7d2385e30c0fe345ca049d966fe1debeafb1d94"
+        "0ccabc8727c16defc8ab2e8b8d8eb99fdcf72403cc3743f8dfefe8e671ee59ab"
     ),
 }
 

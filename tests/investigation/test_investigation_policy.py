@@ -36,6 +36,7 @@ from investigation_support import (
     POINTPROC,
     SMALL_POLICY,
     STOP,
+    WALL_TIME_S,
     clean_environment,
     lab,
     plain_run,
@@ -586,11 +587,13 @@ def test_policy_surface_names_no_policy_and_is_the_live_labs(tmp_path: Path) -> 
     """The prompt says the framework chooses the experiments; it does not name
     the rule, so the three policies show the agent the same surface."""
     surfaces = {
-        name: rendered_surface(lab("AG-c", "named", policy=name))
+        name: rendered_surface(
+            lab("AG-c", "named", policy=name), wall_time_s=WALL_TIME_S
+        )
         for name in ("random", "EIG", "FSD")
     }
     assert surfaces["random"] == surfaces["EIG"] == surfaces["FSD"]
-    plain = rendered_surface(lab("AG-c", "named"))
+    plain = rendered_surface(lab("AG-c", "named"), wall_time_s=WALL_TIME_S)
     added = set(surfaces["EIG"]["system_prompt"].splitlines()) - set(
         plain["system_prompt"].splitlines()
     )

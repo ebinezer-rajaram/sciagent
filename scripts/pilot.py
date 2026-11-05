@@ -68,20 +68,21 @@ DEFAULT_ROOT: Final = ROOT / ".cache" / "pilot"
 #: The anonymised channel names SPEC §5 fixes for pointproc.
 ANON_CHANNELS: Final = {"size": "m1", "sign": "m2"}
 #: The rendered surface of each P4 arm on pointproc at the default budgets
-#: (``sciagent.campaign.freeze``). An arm or budget not here does not launch
-#: outside the dev split. Changing a digest is unfreezing a prompt.
+#: and wall limit (``sciagent.campaign.freeze``). An arm, budget or limit not
+#: here does not launch outside the dev split. Changing a digest is unfreezing a
+#: prompt.
 P4_SURFACES: Final[dict[str, str]] = {
-    "AG-c/named|link-neutral|none|experiments=8|fits=40": (
-        "b25bcb0ab8a461b67ebc8745b6d47f5e0a74599fc3de7b744ce255ec51afd285"
+    "AG-c/named|link-neutral|none|experiments=8|fits=40|wall_time_s=3600.0": (
+        "ae7d3d2341afa07e156daa686c9c63abcf81988f2a130dcfd7b4d76601904e8f"
     ),
-    "AG-o/named|link-neutral|none|experiments=8|fits=40": (
-        "47775904c37bfbcb6acb7e6b5bf9d1e8e6452782055320441248fbd2dc60eb3c"
+    "AG-o/named|link-neutral|none|experiments=8|fits=40|wall_time_s=3600.0": (
+        "75ff7f428bdc1407b5e936d4079cef1414165c05e07aa3c221e9357487fa4dd1"
     ),
-    "AG-c/anon|link-neutral|none|experiments=8|fits=40": (
-        "6045c7182b1724c110fbdbeecbfb7b5663524b2395f61ef01bc0e212af9dce13"
+    "AG-c/anon|link-neutral|none|experiments=8|fits=40|wall_time_s=3600.0": (
+        "a241b9ca5eda774246952edff0cd12fc78a59203ff108d339a71177a6eff6605"
     ),
-    "AG-o/anon|link-neutral|none|experiments=8|fits=40": (
-        "bb95a51d4e37cf713757ffea327938e75682028ea1f7d8f6d7e5f2f361254776"
+    "AG-o/anon|link-neutral|none|experiments=8|fits=40|wall_time_s=3600.0": (
+        "dd1eea72c55eb7a09807ef0dcc3f49fe745066911513ddf1b59c82436e6c887d"
     ),
 }
 #: pointproc's own leak terms beyond the default list.

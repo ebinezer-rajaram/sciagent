@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from investigation_support import BELIEF_ARGS, STOP, lab, plain_run
+from investigation_support import BELIEF_ARGS, STOP, WALL_TIME_S, lab, plain_run
 
 from sciagent.investigation.prompts import Arm, system_prompt
 from sciagent.investigation.view import Condition
@@ -71,7 +71,9 @@ def test_the_prompt_describes_generators_truncation_and_the_budget_line(
         sandbox_root=tmp_path,
         image="sciagent-sandbox:unused",
     )
-    text = system_prompt(the_lab.view, the_lab.arm, experiments=8, fits=40)
+    text = system_prompt(
+        the_lab.view, the_lab.arm, experiments=8, fits=40, wall_time_s=WALL_TIME_S
+    )
     assert '"times": {"start":' in text and '"step":' in text and '"n":' in text
     for pattern in ('"constant"', '"alternate"', '"repeat"'):
         assert pattern in text

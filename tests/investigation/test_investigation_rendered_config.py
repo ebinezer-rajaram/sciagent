@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Final
 
 import pytest
-from investigation_support import POINTPROC, lab
+from investigation_support import POINTPROC, WALL_SENTENCE, WALL_TIME_S, lab
 
 from environments.pointproc import v2
 from sciagent.anonymise import assert_no_leaks
@@ -49,6 +49,7 @@ def _config(
         condition,
         experiments=experiments,
         fits=fits,
+        wall_time_s=WALL_TIME_S,
         prompt_variant=variant,
     )
 
@@ -69,7 +70,7 @@ def test_the_rendered_config_is_what_a_live_lab_shows(
     the_lab = lab(
         arm, condition, sandbox_root=tmp_path, image=IMAGE, prompt_variant=variant
     )
-    shown = _without_opening(rendered_surface(the_lab))
+    shown = _without_opening(rendered_surface(the_lab, wall_time_s=WALL_TIME_S))
     assert _config(arm, condition, variant) == shown
     assert "opening_prompt" not in _config(arm, condition, variant)
     assert set(shown) >= {"system_prompt", "tool:run_experiment", "tool:submit"}
@@ -89,10 +90,12 @@ def test_two_truths_and_seeds_render_the_same_surface(arm: Arm, tmp_path: Path) 
         image=IMAGE,
     )
     assert a.world.datasets["obs"].log.n != b.world.datasets["obs"].log.n
-    assert _without_opening(rendered_surface(a)) == _without_opening(
-        rendered_surface(b)
+    assert _without_opening(
+        rendered_surface(a, wall_time_s=WALL_TIME_S)
+    ) == _without_opening(rendered_surface(b, wall_time_s=WALL_TIME_S))
+    assert _without_opening(rendered_surface(a, wall_time_s=WALL_TIME_S)) == _config(
+        arm, "anon"
     )
-    assert _without_opening(rendered_surface(a)) == _config(arm, "anon")
 
 
 def test_rendering_needs_no_truth_and_no_world(
@@ -181,10 +184,19 @@ def test_non_policy_surfaces_are_byte_identical_to_before_policy_mode(
         condition,
         experiments=3,
         fits=4,
+        wall_time_s=WALL_TIME_S,
         prompt_variant=variant,
         policy=None,
     )
-    got = hashlib.sha256(canonical_json(surface).encode("utf-8")).hexdigest()
+    # These digests predate the wall limit's sentence too, and stay as they were:
+    # less that one sentence, nothing moved (LOG 2026-11-05, session 34).
+    sentence = "\n" + WALL_SENTENCE.format(wall=f"{WALL_TIME_S:g}") + "\n"
+    assert surface["system_prompt"].count(sentence) == 1
+    before = {
+        **surface,
+        "system_prompt": surface["system_prompt"].replace(sentence, ""),
+    }
+    got = hashlib.sha256(canonical_json(before).encode("utf-8")).hexdigest()
     assert got == PRE_POLICY_DIGESTS[combination]
 
 
@@ -195,7 +207,7 @@ def test_the_rendered_config_is_what_a_live_policy_lab_shows(
     condition: Condition, variant: PromptVariant, policy: PolicyName
 ) -> None:
     the_lab = lab("AG-c", condition, prompt_variant=variant, policy=policy)
-    shown = _without_opening(rendered_surface(the_lab))
+    shown = _without_opening(rendered_surface(the_lab, wall_time_s=WALL_TIME_S))
     config = rendered_config(
         POINTPROC,
         v2.CHANNELS,
@@ -203,6 +215,7 @@ def test_the_rendered_config_is_what_a_live_policy_lab_shows(
         condition,
         experiments=3,
         fits=4,
+        wall_time_s=WALL_TIME_S,
         prompt_variant=variant,
         policy=policy,
     )
@@ -215,7 +228,9 @@ def test_the_rendered_config_is_what_a_live_policy_lab_shows(
 
 
 def test_anonymised_policy_surface_does_not_leak() -> None:
-    surface = rendered_surface(lab("AG-c", "anon", policy="EIG"))
+    surface = rendered_surface(
+        lab("AG-c", "anon", policy="EIG"), wall_time_s=WALL_TIME_S
+    )
     terms = leak_terms(POINTPROC, tuple(c.name for c in v2.CHANNELS))
     assert_no_leaks(surface, terms, numeric_constants=NATIVE_CONSTANTS)
 
@@ -224,11 +239,25 @@ def test_policy_is_validated_where_the_surface_is_rendered() -> None:
     bad: Any = "greedy"
     with pytest.raises(LabError, match="policy"):
         rendered_config(
-            POINTPROC, v2.CHANNELS, "AG-c", "named", experiments=3, fits=4, policy=bad
+            POINTPROC,
+            v2.CHANNELS,
+            "AG-c",
+            "named",
+            experiments=3,
+            fits=4,
+            wall_time_s=WALL_TIME_S,
+            policy=bad,
         )
     with pytest.raises(LabError, match="AG-c"):
         rendered_config(
-            POINTPROC, v2.CHANNELS, "AG-o", "named", experiments=3, fits=4, policy="EIG"
+            POINTPROC,
+            v2.CHANNELS,
+            "AG-o",
+            "named",
+            experiments=3,
+            fits=4,
+            wall_time_s=WALL_TIME_S,
+            policy="EIG",
         )
     view = make_view("named", v2.CHANNELS, POINTPROC.anon_channels)
     with pytest.raises(LabError, match="policy"):

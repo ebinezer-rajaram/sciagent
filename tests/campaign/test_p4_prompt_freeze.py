@@ -214,6 +214,24 @@ def test_a_pin_is_per_budget() -> None:
         check_surfaces(other, environment(), [_test_truth()], _pins(config))
 
 
+def test_a_pin_is_per_wall_limit() -> None:
+    """The prompt states the limit, so the surface is rendered from it: another
+    limit has no pin, rather than a pin it fails to match."""
+    config = tiny_config(llm_arms=P4_ARMS)
+    other = dataclasses.replace(config, wall_time_s=config.wall_time_s + 1.0)
+    with pytest.raises(CampaignError) as refused:
+        check_surfaces(other, environment(), [_test_truth()], _pins(config))
+    assert "no pinned surface" in str(refused.value)
+
+
+def test_the_wall_limit_enters_the_surface_digest() -> None:
+    config = tiny_config(llm_arms=P4_ARMS)
+    other = dataclasses.replace(config, wall_time_s=config.wall_time_s + 1.0)
+    env = environment()
+    for arm in P4_ARMS:
+        assert surface_digest(arm, config, env) != surface_digest(arm, other, env)
+
+
 def test_a_dev_campaign_needs_no_pin() -> None:
     check_surfaces(tiny_config(), environment(), [entry("hawkes")], {})
 

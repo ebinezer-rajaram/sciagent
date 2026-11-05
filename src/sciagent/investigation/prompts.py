@@ -33,6 +33,12 @@ chooses (:func:`_policy_paragraph`). The text never names the rule, so the
 three policies show the agent the same prompt, and no policy number is ever in
 it. Without a policy every text is byte-identical to the text before policy
 mode existed.
+
+Wall limit (LOG 2026-11-05, session 34). One sentence, :func:`_wall_limit`, states
+the session's limit in the same words for every arm, condition, variant and
+policy. Its number is the session's ``wall_time_s``, which every renderer takes
+with no default. It is real seconds and no time of the process, so it is the one
+number here the view does not rescale: both conditions read it unchanged.
 """
 
 from __future__ import annotations
@@ -311,11 +317,21 @@ def _run_experiment_line(
   in order."""
 
 
+def _wall_limit(wall_time_s: float) -> str:
+    """The session's wall limit, the same for everyone (module docstring)."""
+    return f"""\
+The whole investigation has a limit of {num(wall_time_s)} seconds of real time
+(wall clock, not the time units of your data): when it is reached the session
+ends, and if you have not called `submit` nothing is submitted.
+"""
+
+
 def _tools(
     view: AgentView,
     arm: Arm,
     experiments: int,
     fits: int,
+    wall_time_s: float,
     policy: PolicyName | None = None,
 ) -> str:
     open_tools = ""
@@ -358,7 +374,8 @@ def _tools(
 
 Every tool result ends with what is left of your budget, as a line such as
 `{budget_line(experiments, experiments, fits, fits)}`.
-"""
+
+{_wall_limit(wall_time_s)}"""
 
 
 def _files_too(arm: Arm) -> str:
@@ -415,11 +432,13 @@ def system_prompt(
     *,
     experiments: int,
     fits: int,
+    wall_time_s: float,
     variant: str = "v1",
     policy: PolicyName | None = None,
 ) -> str:
     """The system prompt for ``arm`` in ``view``'s condition; ``policy`` adds
-    policy mode's text (module docstring)."""
+    policy mode's text and ``wall_time_s`` is the limit it states (module
+    docstring)."""
     max_horizon = num(view.time(MAX_HORIZON))
     max_rate = num(view.rate(MAX_CLAMP_RATE))
     return f"""\
@@ -438,7 +457,7 @@ framework fits it; you never supply numbers.
 {_scoring(variant)}
 
 {_grammar(view, variant)}
-{_tools(view, arm, experiments, fits, policy)}
+{_tools(view, arm, experiments, fits, wall_time_s, policy)}
 ## Experiments
 
 An experiment is an intervention on a fresh run of the process. Windows are

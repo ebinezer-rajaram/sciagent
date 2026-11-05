@@ -780,7 +780,8 @@ def surface_digest(
 
     The surface is :func:`~sciagent.investigation.runner.rendered_config` for
     the environment's channels and anonymised names, the arm, the condition,
-    the budgets, the prompt variant and the policy: no truth and no seed. A
+    the budgets, the wall limit, the prompt variant and the policy: no truth and
+    no seed. A
     policy arm's digest also covers the policy's framework-only configuration
     (:func:`~sciagent.investigation.policy.policy_config`: replicates, event
     cap, weights, tie tolerance, quadrature, menus; P4 Δ11 decision 16) under
@@ -797,6 +798,7 @@ def surface_digest(
         arm.condition,
         experiments=config.experiments,
         fits=config.fits,
+        wall_time_s=config.wall_time_s,
         prompt_variant=arm.prompt_variant,
         policy=arm.policy,
     )

@@ -97,7 +97,13 @@ def test_one_character_of_one_tool_schema_changes_the_key(
 
     def surface() -> dict[str, Any]:
         return rendered_config(
-            spec, env.channels, "AG-c", "named", experiments=2, fits=3
+            spec,
+            env.channels,
+            "AG-c",
+            "named",
+            experiments=2,
+            fits=3,
+            wall_time_s=3600.0,
         )
 
     before_key, before = _key(AG_C_NAMED), surface()
@@ -127,6 +133,7 @@ def test_each_part_of_the_configuration_enters_the_key() -> None:
         "experiments": _key(AG_C_NAMED, experiments=3),
         "fits": _key(AG_C_NAMED, fits=4),
         "turns": _key(AG_C_NAMED, max_turns=21),
+        "wall": _key(AG_C_NAMED, wall_time_s=601.0),
     }
     assert len(set(keys.values())) == len(keys), keys
 
@@ -135,10 +142,22 @@ def test_budgets_enter_the_rendered_surface_not_only_the_text() -> None:
     env = environment()
     assert env.investigation is not None
     a = rendered_config(
-        env.investigation, env.channels, "AG-c", "named", experiments=2, fits=3
+        env.investigation,
+        env.channels,
+        "AG-c",
+        "named",
+        experiments=2,
+        fits=3,
+        wall_time_s=3600.0,
     )
     b = rendered_config(
-        env.investigation, env.channels, "AG-c", "named", experiments=3, fits=3
+        env.investigation,
+        env.channels,
+        "AG-c",
+        "named",
+        experiments=3,
+        fits=3,
+        wall_time_s=3600.0,
     )
     assert a["system_prompt"] != b["system_prompt"]
     assert a["tool:run_experiment"] != b["tool:run_experiment"]
@@ -218,6 +237,7 @@ def test_policy_arms_hash_the_policy_surface_and_its_config() -> None:
         "named",
         experiments=config.experiments,
         fits=config.fits,
+        wall_time_s=config.wall_time_s,
     )
     assert (
         plan.surface_digest(AG_C_NAMED, config, env)

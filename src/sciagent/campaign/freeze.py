@@ -53,7 +53,8 @@ def surface_pin_key(arm: LLMArm, config: CampaignConfig) -> str:
     policy = "none" if arm.policy is None else arm.policy
     return (
         f"{arm.arm}/{arm.condition}|{arm.prompt_variant}|{policy}|"
-        f"experiments={config.experiments}|fits={config.fits}"
+        f"experiments={config.experiments}|fits={config.fits}|"
+        f"wall_time_s={config.wall_time_s!r}"
     )
 
 

@@ -19,6 +19,7 @@ from investigation_support import (
     BELIEF,
     POINTPROC,
     STOP,
+    WALL_TIME_S,
     clean_environment,
     lab,
     scripted_run,
@@ -105,7 +106,14 @@ def test_an_unknown_variant_is_refused() -> None:
         )
     the_lab = lab("AG-c")
     with pytest.raises(SciAgentError, match="prompt variant"):
-        system_prompt(the_lab.view, "AG-c", experiments=8, fits=40, variant="neutral")
+        system_prompt(
+            the_lab.view,
+            "AG-c",
+            experiments=8,
+            fits=40,
+            wall_time_s=WALL_TIME_S,
+            variant="neutral",
+        )
 
 
 # --------------------------------------------------------------------------
@@ -174,8 +182,15 @@ def test_the_variants_differ_only_in_examples_and_scoring(
     arm: Arm, condition: Condition, tmp_path: Path
 ) -> None:
     view = lab(arm, condition, sandbox_root=tmp_path, image=IMAGE).view
-    old = system_prompt(view, arm, experiments=8, fits=40)
-    new = system_prompt(view, arm, experiments=8, fits=40, variant="link-neutral")
+    old = system_prompt(view, arm, experiments=8, fits=40, wall_time_s=WALL_TIME_S)
+    new = system_prompt(
+        view,
+        arm,
+        experiments=8,
+        fits=40,
+        wall_time_s=WALL_TIME_S,
+        variant="link-neutral",
+    )
     old_rest, old_examples = _cut(old, V1_SCORING)
     new_rest, new_examples = _cut(new, LINK_NEUTRAL_SCORING)
     assert old_rest == new_rest
@@ -198,7 +213,7 @@ def test_anonymised_render_of_each_variant_does_not_leak(
     the_lab = lab(
         arm, "anon", sandbox_root=tmp_path, image=IMAGE, prompt_variant=variant
     )
-    surface = rendered_surface(the_lab)
+    surface = rendered_surface(the_lab, wall_time_s=WALL_TIME_S)
     terms = leak_terms(POINTPROC, tuple(c.name for c in v2.CHANNELS))
     assert_no_leaks(surface, terms, numeric_constants=NATIVE_CONSTANTS)
     assert ("structural\ndistance" in surface["system_prompt"]) is (
@@ -223,5 +238,10 @@ def test_a_link_neutral_session_records_its_variant_and_prompt(
     assert config["investigation"]["prompt_variant"] == "link-neutral"
     the_lab = lab("AG-c", prompt_variant="link-neutral")
     assert config["system_prompt"] == system_prompt(
-        the_lab.view, "AG-c", experiments=3, fits=4, variant="link-neutral"
+        the_lab.view,
+        "AG-c",
+        experiments=3,
+        fits=4,
+        wall_time_s=WALL_TIME_S,
+        variant="link-neutral",
     )

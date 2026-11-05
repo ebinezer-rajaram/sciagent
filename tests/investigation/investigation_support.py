@@ -35,6 +35,15 @@ ANON_CHANNELS: Final = {"size": "m1", "sign": "m2"}
 POINTPROC_FORBIDDEN: Final = ("size", "sign", "arrival")
 MODEL: Final = MODELS["haiku"]
 SEED: Final = 20261002
+#: The wall limit of a scripted session, which its prompt states.
+WALL_TIME_S: Final = 600.0
+#: The prompt's sentence about that limit, written out: a change to the words is
+#: a change here.
+WALL_SENTENCE: Final = (
+    "The whole investigation has a limit of {wall} seconds of real time\n"
+    "(wall clock, not the time units of your data): when it is reached the session\n"
+    "ends, and if you have not called `submit` nothing is submitted."
+)
 
 #: A belief with no channel names (so it parses in both conditions): what a
 #: test states before an experiment or a submit when the belief is not its
@@ -129,6 +138,7 @@ def scripted_run(
     prompt_variant: str = "v1",
     policy: str | None = None,
     policy_settings: PolicySettings | None = None,
+    wall_time_s: float = WALL_TIME_S,
 ) -> InvestigationOutcome:
     return run(
         POINTPROC,
@@ -141,7 +151,7 @@ def scripted_run(
         experiments=experiments,
         fits=fits,
         max_turns=40,
-        wall_time_s=600.0,
+        wall_time_s=wall_time_s,
         driver=ScriptedDriver(script),
         sandbox_root=sandbox_root,
         prompt_variant=prompt_variant,

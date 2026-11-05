@@ -1,13 +1,15 @@
 # Pre-registration amendment: search misses on P4's fits (fit/5)
 
-**Status: DRAFT, round 2, not frozen.** Written in lane session 34 under the control room's acceptance of the amendment (INBOX c81749a; LOG 2026-11-05) and the plan `docs/v2/P4-MISS-PLAN.md`. Round 1 (71997c2): NOT READY, nine blocking (`docs/v2/redteam/2026-11-05_p4-search-misses.md`). This revision answers them, except that finding 6 waits on the control room (below). Four commits matter: `F2` freezes this file, `R2` adds the script and its test, `S` is the §6.1 commit, and `T` is the one commit after `S` that adds `docs/v2/FREEZE-6.1.txt`. "The pilot rule" means `docs/v2/prereg/2026-11-04_pilot-search-misses.md` at `F` = 3226f9b, and "PR x" means its section x. **Every part of the pilot rule carries over unless this file changes it**, with "pilot" read as "P4", "the 78-hour stop" as 172 CPU hours, "84" as 178, "60 hours" as 120, "root 20261104" as 20261111 and "root 20261106" as 20261112. The pilot's records and label stay as they are (`docs/v2/PILOT-MISSES.md`).
+**Status: DRAFT, round 2, not frozen.** Written in lane session 34 under the control room's acceptance of the amendment (INBOX c81749a; LOG 2026-11-05) and the plan `docs/v2/P4-MISS-PLAN.md`. Round 1 (71997c2): NOT READY, nine blocking (`docs/v2/redteam/2026-11-05_p4-search-misses.md`). This revision answers them, finding 6 by the control room's decision (below). Four commits matter: `F2` freezes this file, `R2` adds the script and its test, `S` is the §6.1 commit, and `T` is the one commit after `S` that adds `docs/v2/FREEZE-6.1.txt`. "The pilot rule" means `docs/v2/prereg/2026-11-04_pilot-search-misses.md` at `F` = 3226f9b, and "PR x" means its section x. **Every part of the pilot rule carries over unless this file changes it**, with "pilot" read as "P4", "the 78-hour stop" as 172 CPU hours, "84" as 178, "60 hours" as 120, "root 20261104" as 20261111 and "root 20261106" as 20261112. The pilot's records and label stay as they are (`docs/v2/PILOT-MISSES.md`).
 
 **What has been touched.** No P4 unit exists, no test split exists, and no contrast has been computed on anything. The pilot's results are known and informed this draft: the pilot check found 25 miss rows on 25 fits, largest |Δ| 0.02198, group A 5 of 6, groups B and D caught, and 25.41 CPU hours (`docs/v2/PILOT-MISSES.md`). So nothing below is blind to how R1 did on the pilot.
 
-**Two dependencies this draft cannot close.**
+**Dependencies this draft cannot close.**
 
 - **The contrast code does not exist.** At `p4-rehearsal` a9e43a6 nothing under `src/sciagent/campaign/` or `scripts/` computes C1 to C6: `scoring/stats.py` has the paired bootstrap, and nothing assembles a contrast. `P4_ARMS` holds the four pilot arms, and the `rescaled` condition is not built (`controls_p4.py`). This file fixes an interface (section 2.7), and `R2` cannot exist before that code does. It is analysis code under SPEC §6.1.
-- **The list of reads waits on a decision.** The owner approved P4-PROPOSAL §5's decisions 1 to 17 as recommended (LOG, lines 583-602), including Δ9's `rescaled` and decision 12's "descope C5 to P4b", which takes C3's AG-S-boed half too. INBOX c81749a and SPEC §7 say C1 to C5, and no reversal was found. The question is with the control room. This draft follows the owner's decision 12 as the record stands; if the answer differs, section 2.7's list and section 7's counts change before `F2`. The ceiling in section 8 holds either way.
+- **The `rescaled` condition is not built either,** and the C2 reads need it.
+
+**The list of reads is settled.** The owner approved P4-PROPOSAL §5's decisions 1 to 17 as recommended (LOG, lines 583-602), including Δ9's `rescaled` and decision 12's "descope C5 to P4b", which takes C3's AG-S-boed half too. "C1 to C5" in INBOX c81749a was the control room's loose wording, not a reversal (INBOX c65a614). So this amendment covers C1, C2, C3 (AG-o against AG-c) and C4. SPEC §7's P4 row still says C1 to C5; a SPEC change is a stop point and is not made here.
 
 **Extensions beyond the accepted text and plan, stated as such** (red team finding 11):
 
@@ -16,7 +18,7 @@
 3. Group E, close to a row PR 2.9 deleted, now selected so that the reason for that deletion does not apply (section 2.9).
 4. The rehearsal moves off the pilot store, forced by F5.
 5. S5, the reads file, and `docs/v2/FREEZE-6.1.txt`, which are new artefacts.
-6. The ceiling is set before the row count is fixed, against the plan's "once P4's row count is fixed", as an upper figure for either answer to the decision above.
+6. The ceiling is set before the row count is fixed, against the plan's "once P4's row count is fixed", from the larger table, so it holds for the 1,940 rows expected.
 
 ## 1. Question and falsifiable hypotheses
 
@@ -193,7 +195,7 @@ As PR 6, with these classes on P4's rows, and with section 2.7's pair rule in pl
 
 ## 7. Sample size
 
-A census, fixed by the store. P4-PROPOSAL §4 gives 1,520 scored sessions and 740 baseline units, 2,260 rows. Under decision 12, 80 AG-S-boed sessions and the 240 policy rows go, so 1,320 and 620, 1,940 rows. Tier 1 by that table, if `contrast_rows` returns what SPEC §6.2 and §6.4 name: AG-c-S and AG-o-S in three conditions 480, and B-sym, B-sparse, ORACLE, B-lib, planted-hint and B-rand at 80 each, and B-sym@10F 40: 1,000 rows. The rule is the function's output, not this count. Coverage statements as PR 7, and no recall bound is quoted.
+A census, fixed by the store. P4-PROPOSAL §4 gives 1,520 scored sessions and 740 baseline units, 2,260 rows. Under decision 12, the 80 AG-S-boed sessions and the 240 policy rows go, so 1,320 and 620, 1,940 rows. Tier 1 by that table, if `contrast_rows` returns what SPEC §6.2 and §6.4 name: AG-c-S and AG-o-S in three conditions 480, and B-sym, B-sparse, ORACLE, B-lib, planted-hint and B-rand at 80 each, and B-sym@10F 40: 1,000 rows. The rule is the function's output, not this count. Coverage statements as PR 7, and no recall bound is quoted.
 
 **Power.** This check has none to speak of on a contrast: the reads pair over 40 truths, C4 over about 20, and the label compares two intervals, each from one fixed resampling. A read near zero can flip on a small move. That is why both intervals are printed.
 

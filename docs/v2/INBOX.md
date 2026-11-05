@@ -164,6 +164,7 @@ entry, and marks it handled with the date and what was done. Newest last.
 
 ## 2026-11-05, control room (P4 scope)
 
-- [ ] **Keep decision 12: C5 and C3's AG-S-boed half stay in P4b, as the owner approved.** "C1 to C5" in
+- [x] **Keep decision 12: C5 and C3's AG-S-boed half stay in P4b, as the owner approved.** "C1 to C5" in
   c81749a was the control room's loose wording, not a reversal. P4's miss amendment covers C1, C2, C3
   (AG-o against AG-c) and C4. The narrow second red-team round is fine, as the preregister skill allows.
+  Handled 2026-11-05 (lane session 34): the amendment's reads are C1, the four C2 reads, C3 (AG-o against AG-c) and C4; recorded there and in the LOG; second round sent. SPEC §7's P4 row still says C1 to C5, left alone as a stop point.

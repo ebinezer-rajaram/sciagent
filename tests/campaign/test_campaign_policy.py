@@ -77,7 +77,9 @@ PINNED_BASELINES = {
 #: AG-o key is re-pinned at the merge into v2: its harness/2 text ends with
 #: v2's sandbox block (``plan._with_sandbox``), as its harness/1 text did.
 #: The EIG and FSD keys are re-pinned when the arm settings' cap and EIG
-#: weighting reach AG-c-S: the recorded policy settings name both.
+#: weighting reach AG-c-S: the recorded policy settings name both. They are
+#: re-pinned again by C5: ``policy_config`` names the truth-keyed seed rule,
+#: and the two plain arms stay as they were.
 PINNED_ARMS = (
     LLMArm("AG-c", "named"),
     LLMArm("AG-o", "anon"),
@@ -88,10 +90,10 @@ PINNED_SESSIONS = {
     "AG-c-H/named": "8b0c82b5f8a5e779e0223bb579214d67eb3b92d7033bb0bc80aac1ecf2e7b5e9",
     "AG-o-H/anon": "7d4148be9043e0b32ef16634ec006c9a482922e35c7a547fdfeba81b3f67ecb2",
     "AG-c-H/named+policy=EIG": (
-        "aad5cbb7b9bab143d4c135566f5d18633f0f6781b0d2d275444789627ccb95f0"
+        "63b4455c26449cb02f26ac63a10cf6fa629cee679099b666db4f434b157be9f8"
     ),
     "AG-c-H/named+policy=FSD": (
-        "2edb2baac5140c6608bf427e4b628ce87fc4116e625f87e20aa37829b2596896"
+        "1f3e55e0d5635528e22f230e93584f53f0bafac9c438cc4a19907a9ff10ff6bd"
     ),
 }
 

@@ -14,7 +14,9 @@ of the experiment about to run) :meth:`PolicyMode.decide`
    not read an entertained set, so it fits nothing;
 2. asks the committed policy core (:mod:`sciagent.systems.v2.policies`) for a
    (design, diagnostic) cell of the menus, seeded by
-   ``policy_seed(seed, k, ...)`` with the investigation seed;
+   ``policy_seed(seed, k, ...)`` with the opaque integer the runner passes
+   (:func:`~sciagent.scoring.seeds.truth_policy_seed`; no truth id reaches
+   this module);
 3. hands the chosen native experiment back to the lab, which runs it through
    the same path as an agent-chosen design, so it is charged, sealed against
    predictions, truncated and summarised exactly the same way.
@@ -80,7 +82,7 @@ from sciagent.glm.interventions import Experiment
 from sciagent.glm.simulate import MarkSampler
 from sciagent.investigation.prompts import PolicyName
 from sciagent.investigation.view import AgentView
-from sciagent.scoring.seeds import generator, policy_seed
+from sciagent.scoring.seeds import POLICY_SEED_RULE, generator, policy_seed
 from sciagent.systems.v2.policies import (
     BIC_WEIGHTS,
     ENTERTAINED_MAX,
@@ -230,8 +232,9 @@ def make_policy(name: PolicyName, seed: int, settings: PolicySettings) -> Policy
 
 def policy_config(name: PolicyName, settings: PolicySettings = DEFAULT_SETTINGS) -> str:
     """Canonical JSON of everything in policy mode that changes a choice except
-    the seed: the core policy's own config, the settings, the entertained-set
-    cap, the design horizon and the fallback (P4 Δ11 decision 16)."""
+    the seed's value: the core policy's own config, the settings, the
+    entertained-set cap, the design horizon, the fallback (P4 Δ11 decision 16)
+    and the rule the seed comes from (C5)."""
     return json.dumps(
         {
             "policy": json.loads(make_policy(name, 0, settings).config),
@@ -239,6 +242,7 @@ def policy_config(name: PolicyName, settings: PolicySettings = DEFAULT_SETTINGS)
             "entertained_max": ENTERTAINED_MAX,
             "design_horizon": POLICY_HORIZON,
             "fallback": "random",
+            "policy_seed": POLICY_SEED_RULE,
         },
         sort_keys=True,
         separators=(",", ":"),

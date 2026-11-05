@@ -20,9 +20,13 @@ entertained models from
 
 (:func:`policy_seed`): ``decision`` is the policy decision's index, ``k`` the
 simulated model's index (an entertained hypothesis, or a reserved index for
-the model-free reference and the random draw), ``r`` the replicate. A policy
-never sees the truth, so its key carries no truth id: two truths on one seed
-share policy streams, which only pairs them.
+the model-free reference and the random draw), ``r`` the replicate. Here
+``seed`` is not the investigation seed but :func:`truth_policy_seed` of the
+(truth, seed), derived framework-side, as the scorer and search streams are
+keyed by truth: without it the menu size, which depends only on the channels,
+gives every truth on a seed the same random draws (C5; LOG 2026-10-27, adopted
+2026-10-28). A policy receives that opaque integer and never a truth id. Within
+a (truth, seed) all arms and both naming conditions share these streams.
 
 Why the streams are disjoint:
 
@@ -63,6 +67,10 @@ BATTERY: Final = 3
 POLICY: Final = 4
 #: Spawn-key tag of the telling-diagnostic streams (``scoring/telling.py``).
 TELLING: Final = 5
+#: How a policy's seed comes from the (truth, seed), as addresses state it: a
+#: policy unit's or session's text names this, so the rule cannot change under
+#: an unchanged key (:func:`truth_policy_seed`).
+POLICY_SEED_RULE: Final = "stable_key(truth|seed|policy) mod 2**63"
 
 _WORD: Final = 2**32
 
@@ -91,6 +99,18 @@ def scorer_seed(
     key = stable_key(truth_id)
     words = (tag, (key >> 32) % _WORD, key % _WORD, *extra)
     return np.random.SeedSequence(entropy=seed, spawn_key=words)
+
+
+def truth_policy_seed(truth_id: str, seed: int) -> int:
+    """The seed of every policy stream of (truth, seed) (:data:`POLICY_SEED_RULE`).
+
+    Keyed on the truth id, not its digest: digests change with the machine
+    class, and two splits sharing ids hold the same truths, which is pairing.
+    """
+    _check_seed(seed)
+    if not truth_id:
+        raise ScoringError("truth_id must be a non-empty string")
+    return stable_key(f"{truth_id}|{seed}|policy") % 2**63
 
 
 def policy_seed(

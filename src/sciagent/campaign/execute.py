@@ -40,8 +40,9 @@ P4 Δ11) run :class:`~sciagent.systems.v2.policy_search.PolicySearch` on the
 ``truncate=True`` as the agent's lab builds it, so an experiment is the same
 draw an agent's experiment of the same index and design would be, a capped run
 is truncated and kept, and a run the simulator stops gives no data
-(:class:`WorldRunner`). The policy draws on the investigation seed's policy
-streams, the search on :func:`~sciagent.campaign.plan.search_seed`. The
+(:class:`WorldRunner`). The policy draws on the (truth, seed)'s policy streams
+(:func:`~sciagent.scoring.seeds.truth_policy_seed`), the search on
+:func:`~sciagent.campaign.plan.search_seed`. The
 truth-aware control's policy is built here, where the truth is (as ORACLE's
 is), with B-lib's pick on the observational log as its comparator. The
 submission is scored like an LLM session's: refitted on the observational log
@@ -104,6 +105,7 @@ from sciagent.investigation.world import OBSERVATIONAL, World, experiment_id
 from sciagent.scoring.battery import interventional_similarity
 from sciagent.scoring.efficiency import efficiency_curve
 from sciagent.scoring.heldout import held_out_dataset
+from sciagent.scoring.seeds import truth_policy_seed
 from sciagent.scoring.structure import structural_recovery
 from sciagent.scoring.telling import telling_diagnostic
 from sciagent.scoring.truth import TruthModel
@@ -457,13 +459,14 @@ def _policy_unit(
         member = BLib(env.library, fit_config=fc).run(data)
         comparator, truth_model = member.model, TruthModel(truth.spec)
         extra["comparator"] = member.submitted
+    policy_key = truth_policy_seed(truth.id, job.seed)
     policy = build_policy(
-        system, job.seed, config.policy, truth=truth_model, comparator=comparator
+        system, policy_key, config.policy, truth=truth_model, comparator=comparator
     )
     search = PolicySearch(
         env.sym_seeds,
         policy,
-        policy_seed=job.seed,
+        policy_seed=policy_key,
         experiments=config.experiments,
         config=config.gp,
         budget=config.fits,

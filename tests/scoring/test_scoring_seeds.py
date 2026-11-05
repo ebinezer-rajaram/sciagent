@@ -24,6 +24,10 @@ from sciagent.scoring.seeds import (
     scorer_seed,
 )
 
+#: ``hashlib.blake2b(f"{id}|1|policy", digest_size=8)`` as an integer, mod 2**63.
+PINNED_DEV_000 = 5713830370896504560
+PINNED_DEV_001 = 6699562569456839180
+
 
 def _uniforms(seq: np.random.SeedSequence, n: int = 8) -> list[float]:
     return [float(x) for x in np.random.default_rng(seq).random(n)]
@@ -140,3 +144,49 @@ def test_module_documents_every_tag() -> None:
     doc = seeds.__doc__ or ""
     for name in ("HELDOUT", "BATTERY", "POLICY", "TELLING"):
         assert name in doc
+
+
+# --------------------------------------------------------------------------
+# The truth-keyed policy seed (C5; LOG 2026-10-27, adopted 2026-10-28)
+# --------------------------------------------------------------------------
+
+
+def test_truth_policy_seed_is_the_documented_key() -> None:
+    # Pinned from hashlib, not from the code under test.
+    assert seeds.truth_policy_seed("dev-000", 1) == PINNED_DEV_000
+    assert seeds.truth_policy_seed("dev-001", 1) == PINNED_DEV_001
+
+
+def test_truth_policy_seed_depends_on_truth_and_seed_and_on_nothing_else() -> None:
+    a = seeds.truth_policy_seed("dev-000", 1)
+    assert a == seeds.truth_policy_seed("dev-000", 1)
+    assert a != seeds.truth_policy_seed("dev-001", 1)
+    assert a != seeds.truth_policy_seed("dev-000", 2)
+
+
+def test_truth_policy_seed_is_a_valid_policy_seed() -> None:
+    for truth in ("dev-000", "dev-001", "hawkes", "size_excitation"):
+        for seed in (0, 1, 2, 3, 2**63 - 1):
+            key = seeds.truth_policy_seed(truth, seed)
+            assert 0 <= key < 2**63
+            assert policy_seed(key, 0, 0, 0).entropy == key
+
+
+def test_truth_policy_seed_gives_each_truth_its_own_stream() -> None:
+    # The fault C5 fixes: on one seed every truth drew the same sequence.
+    draws = {
+        tuple(
+            _uniforms(policy_seed(seeds.truth_policy_seed(f"dev-{i:03}", 1), 0, 0, 0))
+        )
+        for i in range(20)
+    }
+    assert len(draws) == 20
+
+
+def test_truth_policy_seed_rejects_bad_input() -> None:
+    with pytest.raises(ScoringError):
+        seeds.truth_policy_seed("", 1)
+    with pytest.raises(ScoringError):
+        seeds.truth_policy_seed("dev-000", -1)
+    with pytest.raises(ScoringError):
+        seeds.truth_policy_seed("dev-000", 2**63)

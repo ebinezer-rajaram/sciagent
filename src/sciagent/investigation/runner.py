@@ -83,6 +83,7 @@ from sciagent.sandbox import (
     ensure_image,
     image_id,
 )
+from sciagent.scoring.seeds import truth_policy_seed
 
 __all__ = [
     "OUT_OF_BOUNDS",
@@ -353,7 +354,7 @@ def build_lab(
         prompt_variant=spec.prompt_variant,
         policy=spec.policy,
         policy_settings=spec.policy_settings,
-        policy_seed=spec.seed,
+        policy_seed=truth_policy_seed(spec.truth_id, spec.seed),
         marks=env.marks,
     )
 

@@ -116,6 +116,7 @@ from sciagent.sandbox.runner import canonical_run_argv
 from sciagent.scoring import battery
 from sciagent.scoring.battery import Simulator
 from sciagent.scoring.heldout import HELDOUT_HORIZON
+from sciagent.scoring.seeds import POLICY_SEED_RULE
 from sciagent.scoring.telling import TELLING_REPLICATES
 from sciagent.systems.v2.policies import (
     BIC_WEIGHTS,
@@ -309,7 +310,9 @@ def build_policy(
     truth: Simulator | None = None,
     comparator: Simulator | None = None,
 ) -> Policy:
-    """The policy of a B-sym policy arm, seeded with the investigation seed.
+    """The policy of a B-sym policy arm; ``seed`` is the (truth, seed)'s key
+    (:func:`~sciagent.scoring.seeds.truth_policy_seed`), not the investigation
+    seed.
 
     ``truth`` and ``comparator`` (B-lib's pick on the observational log) are
     required by, and read only by, ``B-sym+truthFSD``: the truth enters there,
@@ -596,7 +599,7 @@ def _policy_arm_text(
     text = (
         f"budget={config.fits}; epochs={first}+{second}; "
         f"experiments={config.experiments}; gp={config.gp!r}; seeds={seeds}; "
-        f"policy={policy_arm_config(system, s)}; policy_seed=investigation seed; "
+        f"policy={policy_arm_config(system, s)}; policy_seed={POLICY_SEED_RULE}; "
         f"world_cap={WORLD_MAX_EVENTS}, truncating; stopped=used, no data"
     )
     if system == B_SYM_RANDOM:

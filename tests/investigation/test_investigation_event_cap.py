@@ -496,9 +496,14 @@ def test_an_adversarial_design_on_a_heavy_truth_stops_within_minutes() -> None:
     # process runs away slowly, which under the old 50,000-event cap took
     # (under the pilot's load) up to half an hour.
     design = Experiment(InjectMarks((0.0, MAX_HORIZON), "size", 3.0), MAX_HORIZON)
-    start = time.perf_counter()
+    # The cap bounds work, so the bound is on CPU time; wall time measures the
+    # machine. `World.run` simulates in this process, so nothing escapes
+    # `process_time`, and 50,000 events pass 200 s of it (15,000 take about 65).
+    wall_start = time.perf_counter()
+    start = time.process_time()
     with pytest.raises(ExplosionError):
         world.run(design)
-    elapsed = time.perf_counter() - start
+    cpu = time.process_time() - start
+    wall = time.perf_counter() - wall_start
     assert world.experiments_run == 1
-    assert elapsed < 180.0, f"a capped experiment took {elapsed:.0f} s"
+    assert cpu < 180.0, f"a capped experiment took {cpu:.0f} s CPU, {wall:.0f} s wall"

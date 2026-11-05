@@ -2630,3 +2630,21 @@ Corrects the hand-over above: its third decision (T2 and fit/5) is no longer the
 3. Then the P4 miss amendment, and the named against anon items before the prompt freeze.
 
 **Decision needed from the owner:** none now. The Test split and §6.1 freeze remains a stop point ahead.
+
+## 2026-11-05: Lane session 34, checkpoint: the P4 miss amendment is drafted and in review; P4's contrast code turns out not to exist
+
+**Done.**
+- Orient: no open inbox item but the standing one on idle compute, and that holds: `sci-rescore-s33` and `sci-p4-tier-s33` are running, with `sci-p4-tier2-s33` queued behind the second.
+- **P4 miss amendment drafted**, `docs/v2/prereg/2026-11-05_p4-search-misses.md`, 71997c2, not frozen. Its one red-team round is running. Extensions beyond INBOX c81749a, stated in the text: a read also changes if it stops being reportable, group E (P4-scale ORACLE units, no threshold), new roots 20261108 and 20261109. Ceiling 178 CPU hours, stop at 172, $0, from the pilot's 25.41 CPU hours on 670 rows, doubled.
+- **Named against anon (a):** the softplus note stays, and the LOG's "only in names and time units" is qualified (LOG 2026-11-05). Part (b), the `sign` leak, is with an engineer on `p4-rehearsal`, test first, not back yet.
+- **Harness points:** first-turn usage and `predict` counts over all 240 records (`scripts/p3_report/first_turn_and_predict.py`, follow-up in `docs/v2/P3-TRANSCRIPT-READ-B.md`). One first-turn total per arm, 6,430, 6,794, 7,089, 7,453, so the context does not change in length with the truth; what the tail holds stays unknown. 19 calls, 9 accepted, 16 sessions tried, 8 with one accepted, as the red team said. Wall limit: goes in P4's prompt (LOG 2026-11-05); all 3 wall-time sessions were AG-o/named with no submit call (dev-005, dev-008, dev-012, s1, rerun by me). The sentence is not written yet.
+
+**Running, $0.** Rescore 3ddc8da, 65 SAME and 1 DIFF (the `-inf` one) at 14:08Z. Tier 2205433, at about 65% since 13:54Z, log unchanged since then, which is one long test or a hang: not shown. Tier a9e43a6 waits on it. Helpers: engineer, red team.
+
+**Checks.** Fast tier on v2 running at this checkpoint, not yet read (`.cache/drafts/s34/fast-v2.log`); ruff and mypy results are in that run, not read either. Nothing under `src/` changed on v2.
+
+**Learned.** Writing the amendment showed that "substitute into the frozen P4 analysis code" names code that does not exist: at a9e43a6 nothing computes C1 to C6, and no AG-S-boed or Haiku/Opus arm is planned in code. Queued; it blocks the §6.1 freeze and `R2`.
+
+**Next.** Read the red team, fix, save its report, freeze if ready. Integrate the engineer's commits. Then `grep -E '^(FAILED|ERROR)|^exit:' .cache/drafts/s33/slow.log slow2.log`, and the merge as session 33's list says.
+
+**Decision needed from the owner:** none now.

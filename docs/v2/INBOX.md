@@ -134,10 +134,12 @@ entry, and marks it handled with the date and what was done. Newest last.
   trust you to do this." The owner gave the go without reading the AG-o transcripts and delegated
   that reading; record it so (the transcript reading is not done by the owner), and state it the same
   way in PILOT.md and the paper's AI-use disclosure.
+  Handled 2026-11-05 (lane session 33): recorded as the owner's decision and as a departure from §2.4's wording (LOG 2026-11-05; PILOT.md "The decision"; queue item closed). The reading was done by AI agents and red-teamed (`docs/v2/P3-TRANSCRIPT-READ-A.md`, `-B.md`). No paper or disclosure exists yet, so the sentence is in the LOG and a queue item carries it.
 - [ ] **Check (b) of the FSD seed lead: YES.** The owner approves the ctlA1-boot-r2 guard bypass for this
   check only.
 - [ ] **Standing (owner): never leave compute idle while waiting on Claude.** If the lane is waiting on its
   usage share, it starts frozen CPU or GPU work first.
+  Noted 2026-11-05 (lane session 33): standing, so it stays open. This machine has no GPU and no AWS launch is approved for this lane, so it applies to CPU here; the rescore and the slow tier ran through the session.
 
 ## 2026-11-05, control room (check (b) scope)
 

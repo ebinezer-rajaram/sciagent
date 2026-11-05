@@ -1,5 +1,7 @@
 # P3 pilot: what the LLM agents did (transcript analysis)
 
+**Note added 2026-11-05: this report describes the Windows pilot, not the Linux store at 900e66a that PILOT.md reports.** Its counts and its "read in full" list do not apply there (for example, its account of dev-019 s1 is false of the scored Linux record). For the Linux store see `docs/v2/P3-TRANSCRIPT-READ-A.md` and `-B.md`.
+
 2026-10-03. Local report only. Covers the 240 P3 pilot LLM sessions (AG-c-S and
 AG-o-S, named and anon, 20 dev truths, seeds 1-3, model `claude-sonnet-5-5`).
 

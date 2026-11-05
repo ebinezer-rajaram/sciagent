@@ -1,6 +1,6 @@
 # Pilot search misses: the section 10 note
 
-**Status: reviewed.** Red team 2026-11-05, ready with fixes (`docs/v2/redteam/2026-11-05_pilot-misses.md`). Its fixes are in the generator's wording and in the section added by hand at the end, which limits several lines above: read that section with them. A narrow second read of those fixes was running when this was committed; the journal says how it ended.
+**Status: reviewed.** Red team 2026-11-05, two rounds, each ready with fixes (`docs/v2/redteam/2026-11-05_pilot-misses.md`, `-round2.md`). Its fixes are in the generator's wording and in the section added by hand at the end, which limits several lines above: read that section with them. Round 2's fixes were not read again by a red team.
 
 Stored readings, the stored verdict and PILOT.md's generated sections stay as they are. A corrected reading is never presented as the pilot's reading.
 
@@ -387,11 +387,11 @@ Asked for by section 10 or the sections it draws on, and carried by no record th
 
 ## Added by hand (session 31)
 
-Everything above is the generator's output, apart from the status line. These lines fill what it marks "not recorded", and answer the red team's report (`docs/v2/redteam/2026-11-05_pilot-misses.md`, verdict ready with fixes, label and every number recomputed). The values below are the red team's unless a line says otherwise; I reran `c_controls.py` and `i_more.py` from `.cache/drafts/s31/rt/` and they printed the same counts.
+Everything above is the generator's output, apart from the status line. These lines fill what it marks "not recorded", and answer the red team's report (`docs/v2/redteam/2026-11-05_pilot-misses.md`, verdict ready with fixes: the label, and every number it recomputed, held). The values below are the red team's unless a line says otherwise; I reran `c_controls.py` and `i_more.py` from `.cache/drafts/s31/rt/` and they printed the same counts.
 
 ### How far this reaches
 
-- This is no new worst-case figure for fit/5. The check gives a lower bound on M and the largest |Δ| among the misses found; no bound of any kind is given on misses it did not find (prereg, opening section).
+- This is no new worst-case figure for fit/5. The check gives a lower bound on M and the largest |Δ| among the misses found; no bound of any kind is given on misses it did not find (prereg, section 1).
 - **The control rates in section 4 are not recall for the fits beside them.** Group C's R1 cases have 158 to 357 events, and pilot fits have 1,797 to 2,327. 22 of the 23 R1 runs were capped, and `id-large` got 4 to 6 starts.
 - 13 of the 25 misses, and the largest Δ, sit in the 51 no-control fits. 38 of those are capped, with as few as 6 starts.
 - R1 alone fell short of fit/5's own value on 5 fits, the worst by 6.9 nats on dev-008 s2 with all 48 starts and no cap, in the stratum shown as 4 of 4 caught.
@@ -401,16 +401,16 @@ Everything above is the generator's output, apart from the status line. These li
 
 ### The gates
 
-- **The too-easy line in section 4 understates what is unchecked.** `too_easy: exact 105, searched 83` includes B-lib and B-rand recovery rows, whose `exact` flag substitution cannot move. The statistic that can move is B-sparse out of dictionary: on its 30 rows, 5 are exact (1 by R2, 4 exhaustive), 3 are searched in a stratum with a control, and 22 are searched with no control. 7 of the 30 close the gap; a share of 0.7 needs 21, so 14 more. The 14th smallest shift needed is 0.02266 (dev-013 s3), and 13 rows need 0.02198 or less.
-- Do not read the gates as far from their limits on the strength of this check. The largest Δ found, 0.02198, is above the C1 (0.0217), C2 (0.0148) and C3 (0.0100) figures of the withdrawn stress test and just under its 0.0227. Those figures assumed a shift on every row in one direction, and B-sparse's found Δs have mixed signs, so this is neither a bound nor a threat estimate.
-- C2's second condition: CI 0.014792505887358457 to 0.030626581033161644 stored, 0.0134072923559961 to 0.03036450265337871 corrected, low end above 0 in both. C1's thinnest margin is 0.02173559760251412 at dev-002, stored and corrected alike.
+- **The too-easy line in section 4 understates what is unchecked.** `too_easy: exact 105, searched 83` includes B-lib and B-rand recovery rows, whose `exact` flag substitution cannot move. The statistic substitution moves directly is B-sparse out of dictionary; recovery shares could move only through `kept` (section 8 above), and `kept` did not change here. On its 30 rows, 5 are exact (1 by R2, 4 exhaustive), 3 are searched in a stratum with a control, and 22 are searched with no control. It also reads ORACLE on the same 30 units: 9 exact, 21 searched. 7 of the 30 B-sparse rows carry a found miss, the largest |Δ| 0.00442, and none changes the count. 7 of the 30 close the gap; a share of 0.7 needs 21, so 14 more. The 14th smallest shift needed is 0.02266 (dev-013 s3), and 13 rows need 0.02198 or less.
+- Do not read the gates as far from their limits on the strength of this check. The largest Δ found, 0.02198, is on dev-012 s3, an in-dictionary truth and so not one of those 30 rows. It is above the C1 (0.0217), C2 (0.0148) and C3 (0.0100) figures of the withdrawn stress test and just under its 0.0227. Those figures assumed a shift on every row in one direction, and B-sparse's found Δs have mixed signs, so this is neither a bound nor a threat estimate.
+- C2's second condition: CI 0.014792505887358457 to 0.030626581033161644 stored, 0.0134072923559961 to 0.03036450265337871 corrected, low end above 0 in both. C1's smallest margin is 0.0266 at dev-002 (SE 0.0049, so 0.0217 above the SE), stored and corrected alike.
 - Each gate's limit, for S4: too-easy share ≥ 0.7; too-hard every system < 0.1; C1 margin > SE, zero underfit flags, no -inf; C2 p < 0.05 and CI low > 0; C3 median ≥ -0.01.
 
 ### Uncertified points
 
 `uncertified_better` counts only points with a score, so failed solves are not covered by its 0. On the two fits enumerated, every uncertified point was a solver failure with L = -inf, and a retry through Clarabel failed too. ORACLE dev-010 s1's failed point has a certified neighbour 0.36 nats below the chosen L, so a better fit there cannot be ruled out. 49 of the 70 points were not enumerated.
 
-Section 2.2's per-fit count, 70 points on 17 identity fits (`system, G: count`):
+Section 2.2's per-fit count, 70 points on 17 identity fits (`system, G: count`). On searched fits the count is over the points R1 visited, 1,221 to 2,994 per fit, not over G:
 
 | Class | Fits |
 |---|---|

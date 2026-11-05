@@ -66,7 +66,7 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 from typing import Final, Literal
 
 import numpy as np
@@ -84,6 +84,7 @@ from sciagent.harness.live import HARNESS_VERSION
 from sciagent.harness.record import canonical_json
 from sciagent.investigation.policy import PolicySettings, policy_config
 from sciagent.investigation.prompts import (
+    PROMPT_VARIANTS,
     Arm,
     PromptError,
     PromptVariant,
@@ -209,6 +210,10 @@ class TruthEntry:
     stratum: str
     nearest_distance: float
     dsl: str
+    #: The split the truth's record belongs to (``TruthRecord.split``). Not
+    #: addressed (the digest hashes the record, which holds it): the guard of
+    #: :mod:`sciagent.campaign.freeze` reads it.
+    split: str
 
     @property
     def structure(self) -> Structure:
@@ -409,6 +414,24 @@ PILOT_ARMS: Final = (
     LLMArm("AG-c", "anon"),
     LLMArm("AG-o", "anon"),
 )
+
+#: The prompt variant P4's arms are frozen on (Δ6: the owner's (A), LOG 2026-10-29).
+P4_PROMPT_VARIANT: Final[PromptVariant] = "link-neutral"
+#: The pilot's arms on the frozen variant. :data:`PILOT_ARMS` and the field
+#: default of :attr:`LLMArm.prompt_variant` stay ``v1``: they name the sessions
+#: the pilot ran, which the rescore finds under those names. A campaign outside
+#: the dev split cannot run anything else (:mod:`sciagent.campaign.freeze`).
+P4_ARMS: Final = tuple(
+    replace(arm, prompt_variant=P4_PROMPT_VARIANT) for arm in PILOT_ARMS
+)
+
+
+def system_variant(system: str) -> PromptVariant:
+    """The prompt variant an LLM system's name states (:meth:`LLMArm.system`)."""
+    for part in system.split("+")[1:]:
+        if part in PROMPT_VARIANTS:
+            return as_variant(part)
+    return "v1"
 
 
 @dataclass(frozen=True)

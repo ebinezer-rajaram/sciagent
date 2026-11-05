@@ -42,6 +42,7 @@ def entry(truth_id: str) -> TruthEntry:
         stratum="near",
         nearest_distance=0.18,
         dsl=truth_id,
+        split="dev",
     )
 
 

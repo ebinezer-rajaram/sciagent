@@ -43,6 +43,7 @@ from typing import Any, Final, NamedTuple
 
 from pilot import (
     ROOT,
+    campaign_config,
     load_split,
     pointproc_environment,
     select,
@@ -778,7 +779,6 @@ def main() -> None:
         B_SYM_10F,
         BASELINES,
         METRIC_VERSION,
-        CampaignConfig,
     )
     from sciagent.campaign.store import ResultStore
     from sciagent.glm.fit import FIT_VERSION
@@ -789,12 +789,7 @@ def main() -> None:
     env = pointproc_environment(all_records)
     seeds = tuple(int(s) for s in args.seeds.split(","))
     control = tuple(int(s) for s in args.control_seeds.split(",") if int(s) in seeds)
-    config = CampaignConfig(
-        seeds=seeds,
-        control_seeds=control,
-        max_turns=args.max_turns,
-        control_truths=args.b10f_truths,
-    )
+    config = campaign_config(args)
     truths = truth_entries(records)
     with ResultStore(args.root, read_only=True) as store:
         tab = analysis.load_rows(store, env, config, truths, sessions=args.sessions)
@@ -1214,8 +1209,8 @@ def main() -> None:
         r = scored.get((x.truth, x.seed, x.system))
         return -1e9 if r is None or r.gap_closed is None else r.gap_closed
 
-    named = [x for x in ago if x.system.endswith("/named")]
-    anon = [x for x in ago if x.system.endswith("/anon")]
+    named = [x for x in ago if config.arm_of(x.system).condition == "named"]
+    anon = [x for x in ago if config.arm_of(x.system).condition == "anon"]
 
     def has_closed(x: Any) -> bool:
         # The corrected rule (T4): a flagged gap closed never chooses a pick.

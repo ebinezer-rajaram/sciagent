@@ -622,6 +622,7 @@ def _fake_main(
             *,
             fingerprint: str,
             reuse_from: str | None = None,
+            surface_pins: object = None,
         ) -> None:
             events.append(("campaign", fingerprint, reuse_from, settings.rescore_llm))
 

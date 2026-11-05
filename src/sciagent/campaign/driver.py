@@ -34,7 +34,9 @@ refuses, before the store is opened, to resume a store written under another
 one unless ``reuse_from`` names it (the permission is recorded beside the
 cells); rescore mode is guarded the same way. The store is written only by
 this process's main thread (pool workers and LLM sessions return results), so
-the guard and the lock below cover every cell write.
+the guard and the lock below cover every cell write. A campaign on truths
+outside the dev split also passes the prompt freeze
+(:mod:`~sciagent.campaign.freeze`, with the caller's ``surface_pins``).
 
 **Rescore mode** (``DriverSettings.rescore_llm``, P4-PROPOSAL §2.2). A
 fitter change gives every session a new address, so the normal plan would
@@ -121,6 +123,7 @@ from sciagent.campaign.execute import (
     run_score_job,
 )
 from sciagent.campaign.fingerprint import FINGERPRINT_FILE, StoreLock, guard_store
+from sciagent.campaign.freeze import check_arms, check_store, check_surfaces
 from sciagent.campaign.llm import SessionOutcome, run_session, run_session_isolated
 from sciagent.campaign.plan import (
     B_LIB,
@@ -252,14 +255,19 @@ class Campaign:
         *,
         fingerprint: str,
         reuse_from: str | None = None,
+        surface_pins: Mapping[str, str] | None = None,
     ) -> None:
         ids = [t.id for t in truths]
         if len(set(ids)) != len(ids):
             raise CampaignError("truth ids must be distinct")
+        # Before anything is created: the prompt freeze, outside the dev split.
+        check_arms(config, truths)
+        check_surfaces(config, env, truths, surface_pins or {})
         # Before the store is opened (or created) and before any unit runs; the
         # lock is held until close(), so no other driver writes this store.
         self._lock = StoreLock(root)
         try:
+            check_store(root, truths)
             guarded = guard_store(
                 root, fingerprint, reuse_from=reuse_from, lock=self._lock
             )

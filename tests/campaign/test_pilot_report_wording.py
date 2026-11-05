@@ -90,6 +90,7 @@ def _render(
     table: Table,
     *,
     subset: int | None = SUBSET,
+    extra_argv: tuple[str, ...] = (),
 ) -> str:
     """The report ``main()`` writes for ``table``."""
     store = tmp_path / "store"
@@ -100,6 +101,7 @@ def _render(
         "pilot_report.py",
         *("--root", str(store), "--split", str(SPLIT), "--out", str(out)),
         *("--truths", str(len(TRUTHS)), "--seeds", "1,2,3", "--resamples", "200"),
+        *extra_argv,
     ]
     if subset is not None:
         argv += ["--b10f-truths", str(subset)]

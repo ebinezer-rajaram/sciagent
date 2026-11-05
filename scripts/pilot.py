@@ -67,6 +67,23 @@ DEFAULT_SPLIT: Final = ROOT / "data" / "v2" / "truths" / "dev"
 DEFAULT_ROOT: Final = ROOT / ".cache" / "pilot"
 #: The anonymised channel names SPEC §5 fixes for pointproc.
 ANON_CHANNELS: Final = {"size": "m1", "sign": "m2"}
+#: The rendered surface of each P4 arm on pointproc at the default budgets
+#: (``sciagent.campaign.freeze``). An arm or budget not here does not launch
+#: outside the dev split. Changing a digest is unfreezing a prompt.
+P4_SURFACES: Final[dict[str, str]] = {
+    "AG-c/named|link-neutral|none|experiments=8|fits=40": (
+        "b25bcb0ab8a461b67ebc8745b6d47f5e0a74599fc3de7b744ce255ec51afd285"
+    ),
+    "AG-o/named|link-neutral|none|experiments=8|fits=40": (
+        "47775904c37bfbcb6acb7e6b5bf9d1e8e6452782055320441248fbd2dc60eb3c"
+    ),
+    "AG-c/anon|link-neutral|none|experiments=8|fits=40": (
+        "6045c7182b1724c110fbdbeecbfb7b5663524b2395f61ef01bc0e212af9dce13"
+    ),
+    "AG-o/anon|link-neutral|none|experiments=8|fits=40": (
+        "bb95a51d4e37cf713757ffea327938e75682028ea1f7d8f6d7e5f2f361254776"
+    ),
+}
 #: pointproc's own leak terms beyond the default list.
 FORBIDDEN: Final = ("size", "sign", "arrival")
 #: The investigation environment's name (as scripts/investigate.py).
@@ -197,6 +214,7 @@ def truth_entries(records: tuple[TruthRecord, ...]) -> tuple[TruthEntry, ...]:
             stratum=r.stratum,
             nearest_distance=r.nearest_distance,
             dsl=r.dsl,
+            split=r.split,
         )
         for r in records
     )
@@ -298,6 +316,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--arms", default=None, help="comma-separated LLM arms, e.g. AG-o/anon"
     )
+    p.add_argument(
+        "--arm-set",
+        choices=("pilot", "p4"),
+        default="pilot",
+        help="the pilot's arms (v1 prompt) or P4's (the frozen variant); a split "
+        "other than dev runs p4 only (sciagent.campaign.freeze)",
+    )
     p.add_argument("--wait", type=float, default=0.0, help="wait for the split (s)")
     p.add_argument(
         "--reuse-from",
@@ -313,15 +338,25 @@ def campaign_config(args: argparse.Namespace) -> CampaignConfig:
     """The run's :class:`CampaignConfig` from :func:`build_parser`'s arguments
     (shared with ``scripts/session_check.py``, which must rebuild exactly the
     configuration a run used)."""
-    from sciagent.campaign.plan import BASELINES, PILOT_ARMS, CampaignConfig, LLMArm
+    from sciagent.campaign.plan import (
+        BASELINES,
+        P4_ARMS,
+        PILOT_ARMS,
+        CampaignConfig,
+        LLMArm,
+    )
 
     seeds = tuple(int(s) for s in args.seeds.split(","))
     control = tuple(int(s) for s in args.control_seeds.split(",") if int(s) in seeds)
     baselines = BASELINES if args.systems is None else tuple(args.systems.split(","))
-    arms: tuple[LLMArm, ...] = PILOT_ARMS
+    arms: tuple[LLMArm, ...] = P4_ARMS if args.arm_set == "p4" else PILOT_ARMS
     if args.arms is not None:
-        wanted = args.arms.split(",")
-        arms = tuple(a for a in PILOT_ARMS if f"{a.arm}/{a.condition}" in wanted)
+        wanted = [name for name in args.arms.split(",") if name]
+        names = {f"{a.arm}/{a.condition}" for a in arms}
+        unknown = sorted(set(wanted) - names)
+        if unknown:
+            raise SystemExit(f"refused: unknown arms {unknown}; known {sorted(names)}")
+        arms = tuple(a for a in arms if f"{a.arm}/{a.condition}" in wanted)
     return CampaignConfig(
         seeds=seeds,
         control_seeds=control,
@@ -374,6 +409,7 @@ def main() -> None:
             settings,
             fingerprint=fingerprint,
             reuse_from=args.reuse_from,
+            surface_pins=P4_SURFACES,
         )
     except CampaignError as error:
         raise SystemExit(f"refused: {error}") from error

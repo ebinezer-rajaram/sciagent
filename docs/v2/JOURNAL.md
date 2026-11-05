@@ -2552,7 +2552,7 @@ Corrects the hand-over above: its third decision (T2 and fit/5) is no longer the
 
 **Done since the checkpoint.** Slow T2 and its regressions on v2: `25 passed, 19 deselected in 1187.12s (0:19:47)`, exit 0, so the pinned list's one known loss reproduces at its recorded gap here. Queue and inbox ticked, LEDGER row in (0.66 hours, an upper bound from wall time at 2 cores).
 
-**Checks.** T2's file is the only code since e04d68c: its fast tests pass, 16 tests, exit 0; ruff clean on it; the slow run above. The repository's fast tier and mypy were not rerun after the cherry-pick, which touched that test file alone.
+**Checks.** T2's file is the only code since e04d68c: its fast tests pass, 16 tests, exit 0; ruff clean on it; the slow run above. After the cherry-pick `ruff check .` `All checks passed!` and mypy `no issues found in 265 source files`; the repository's fast tier was not rerun, as that test file alone changed.
 
 **Not verified.** Whether the control room or the owner has read the stop point: the message reached the control room's inbox, and the phone push did not go out.
 

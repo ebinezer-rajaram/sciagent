@@ -978,7 +978,10 @@ def args_schema(
 def _number(arg: ArgSpec, value: ArgValue) -> float:
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise DiagnosticArgumentError(f"{arg.name} must be a number, got {value!r}")
-    result = float(value)
+    try:
+        result = float(value)
+    except OverflowError:
+        raise DiagnosticArgumentError(f"{arg.name} is too large: {value!r}") from None
     if not math.isfinite(result):
         raise DiagnosticArgumentError(f"{arg.name} must be finite, got {value!r}")
     return result

@@ -328,6 +328,42 @@ def test_a_bad_diagnostic_argument_leaks_nothing() -> None:
     _scan(_call_all(layer, calls, errored=False))
 
 
+def test_a_huge_integer_argument_is_a_refusal_not_a_harness_fault() -> None:
+    """JSON integers have no size limit. Past the float range, ``float()`` raises
+    ``OverflowError``, which is no ``SciAgentError``: the layer would not catch it
+    and the session would end as a harness fault. Every numeric argument of every
+    diagnostic, through both tools that read one."""
+    the_lab = _anon_lab()
+    layer = believing(the_lab)
+    calls: list[tuple[str, dict[str, Any]]] = []
+    for agent, native in the_lab.view.diagnostics():
+        spec = catalogue.get(native)
+        for arg in spec.args:
+            if arg.kind is catalogue.ArgKind.CHANNEL:
+                continue
+            args = {**_valid_args(spec, the_lab), arg.name: 10**400}
+            calls.append(
+                ("diagnostic", {"name": agent, "data_id": "obs", "args": args})
+            )
+            calls.append(
+                (
+                    "predict",
+                    {
+                        "experiment": 0,
+                        "diagnostic": agent,
+                        "args": args,
+                        "hypothesis": "null",
+                        "interval": [0.0, 1.0],
+                        "level": 0.5,
+                    },
+                )
+            )
+    assert len(calls) > 20
+    texts = _call_all(layer, calls)
+    assert all("is too large" in text for text in texts.values()), texts
+    _scan(texts)
+
+
 @pytest.mark.parametrize("horizon", [0.001, 24.0], ids=["empty", "few-events"])
 def test_a_short_run_leaks_nothing_where_a_diagnostic_cannot_be_read(
     horizon: float,

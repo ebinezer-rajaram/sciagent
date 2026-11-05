@@ -2605,3 +2605,28 @@ Corrects the hand-over above: its third decision (T2 and fit/5) is no longer the
 **Learned.** A note written during a run is not the run's result: reread the log's end before calling a run's status. A summary of an approval can be narrower than the thing approved; read the check's own definition before drawing on it.
 
 **Next.** Read the four reports. Then record the GO as the owner gave it, in the LOG and PILOT.md, with the reading stated as delegated. No paper or AI-use disclosure exists in the repository yet, so that wording needs a home. Then the merge's slow tier, and the P4 amendment after the merge.
+
+## 2026-11-05: Lane session 33, hand-over: P3 closed on the owner's GO; check (b) reproduces D0, with an unapproved rung-0 draw on the way; F5 built
+
+**Done.**
+- **P3 closed on GO, the owner's own decision, without the owner's read** (LOG 2026-11-05; PILOT.md "The decision"). AI agents did the reading: two analysts on the five picks, then a red team from the records first (ready with fixes, fixed). No sign of a leak or an agent-set score in those five, which is 5 of 240 and cannot prove separation. `docs/v2/P3-TRANSCRIPT-READ-A.md`, `-B.md`, `docs/v2/redteam/2026-11-05_ag-o-transcript-read.md`. I added a warning to `TRANSCRIPTS.md`, which describes the Windows pilot.
+- **Named and anon differ by more than names, which bears on P4's C2.** An anon-only sentence reached 60 of 120 anon sessions (`grep -rl`, rerun by me) and `sign` reached one anon session through an error message, which the leak test never scans. Neither moves the GO. Queued before P4's prompts freeze; control room told.
+- **Check (b), exploratory:** one run on the three approved ids, 8,192 runs, 36 min 16 s CPU (`systemd` count), `D0_RUNG2_REPRODUCED`, 22 of 22 fields; the real test is three count maps. D0 is what the code computes on those streams, not proof calibrate's rules are right. A1 stays failed. Why the pool sits high stays open, and the deviation script did not finish (LOG; `docs/v2/redteam/2026-11-05_check-b.md`, ready with fixes, fixed).
+- **Deviation:** the helper drew `ctlA1-cal-r0`, outside the approval, by running a guard-removed mutant at 12:07Z (about 630 runs; values lost). I learned of it at about 13:20Z and told the control room then, which replied in INBOX 119eff3. Note beside the control record, on S3 too; AUTOPILOT's Never list has the rule; no rerun on rung 0. My first LOG text said "nothing records the run" and "at once", both wrong, and the entry carries the correction.
+- **The rescore's DIFF is explained:** `-inf` float against the store's `'-inf'` string (`store.py:98`), so a flaw in the comparison, not a score change. All 36 curve entries agree on value.
+- **`p4-rehearsal`, local, not pushed, head a9e43a6:** C5, the Δ6 arms and guard, F5 complete. ruff clean, mypy `no issues found in 309 source files`, fast tier `4250 passed, 333 deselected`, exit 0, 12 of 19 named slow campaign tests passed (engineer's run; I read the fast log's tail and step4's lines). F5 stopped once on a constraint that was mine, not the decision's (LOG 2026-11-05).
+
+**Running, $0.** `sci-rescore-s33`, 3ddc8da, 62 of 240 at 13:57Z, ceiling 20 CPU hours, the one DIFF being the `-inf` one. `sci-p4-tier-s33`, 2205433, -n 1, ceiling 5 CPU hours, no result yet. `sci-p4-tier2-s33`, a9e43a6, starts when that one exits, ceiling 5 CPU hours. Worktrees `rescore-s33`, `tier-s33`, `tier2-s33` belong to them. LEDGER rows when each exits.
+
+**Checks on v2** at 24448b6: `276 files already formatted`, `All checks passed!`, mypy `no issues found in 265 source files`, fast tier exit 0, one process (`.cache/drafts/s33/checks-v2.log`). The doubled `-q` hid pytest's count, so the exit code is all I have. Slow tier on v2 not run: nothing under `src/` changed there. No check would catch a misreading of a transcript.
+
+**Not verified.** dev-003's last two fits and its submit were not replayed at HEAD, and PILOT's statement for those three calls rests on a review script that was not kept. Which stream the mutant drew is inferred from code order, and "never seen" cannot be proved. `store_check` and `replay_check` were not rerun at a9e43a6. The determinism check is not done. Three processes ran at once for part of the session, one above the usual 2, and the load reached about 8 with the other lane.
+
+**Learned.** A helper told to test a guard removed it around code that reaches the real path, and the brief had not forbidden that: the prohibition belongs in the brief, and now is. A helper's report can arrive over an hour after the event, so a breach does not reach the lead when it happens. An approval's summary can be narrower than the thing approved. A note written during a run is not its result. My brief's constraint overrode an adopted decision until the engineer stopped: check a constraint against the record before putting it in a brief. The red team twice found what two readers had not.
+
+**Next.**
+1. `grep -E '^(FAILED|ERROR)|^exit:' .cache/drafts/s33/slow.log slow2.log`, and the rescore's last lines, normalising `-inf`. LEDGER rows.
+2. If clean, finish the merge (queue, session 33 later line): v2 past b4d6225 with a8aeff8, PILOT.md's regeneration commit, trailers, the determinism check.
+3. Then the P4 miss amendment, and the named against anon items before the prompt freeze.
+
+**Decision needed from the owner:** none now. The Test split and §6.1 freeze remains a stop point ahead.

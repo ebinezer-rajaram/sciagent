@@ -43,7 +43,11 @@ Caveat to carry: 2.6 item 3 weighs more here. Sessions cannot be replayed under 
 ## Steps, after a GO and the p4-deltas merge
 
 1. Amendment under the `preregister` skill and 2.10's own steps: new document, new frozen version, new output directory, one red-team round. The pilot's records and label stay as they are.
-2. Script changes test first (SPEC §6.3): guards, two split hashes, tiers, the contrast substitution. Toy tables only.
+2. Script changes test first (SPEC §6.3): guards, two split hashes, tiers, the contrast substitution, and the SIGTERM race below. Toy tables only.
 3. Rehearse on the pilot store, on rows and contrasts of the dev split. Exploratory, and it may not be cited as a P4 result.
 4. Freeze with or before the §6.1 commit, which is itself a stop point.
 5. After the P4 campaign, run it before any contrast is read.
+
+## A defect to fix in the amended script
+
+`_run_stage` reads `_stop_reason()` and then `self.terminating`. A SIGTERM landing between the two kills the jobs and returns `None`, which means "stage finished", so on the last stage the run reports `complete` with a job killed and no journal line for it (session 32, reproduced by forcing the order, `.cache/drafts/s32/sigterm_race.py`). It also makes `test_sigterm_at_sixty_hours_is_the_wall_limit` fail now and then in the fast tier. The pilot's run was not affected: systemd logged no stop, the unit's result is `success`, and `shortfall` is 0 on tier 1, tier 2 and S2. A change to the frozen script is an amendment, so it is left alone until this one.

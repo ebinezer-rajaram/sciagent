@@ -22,11 +22,19 @@ table; gap closed within its paired noise is shown as "flagged" (T4); control
 
     uv run python scripts/pilot_report.py --root .cache/pilot --interim \
         --out <scratch>/PILOT.md
+
+SPEC §2.2: the certified share and the coordinate-optimal share come from each
+row's score cell (:func:`row_cells`; a ``Row`` keeps neither, and ``analysis`` is
+frozen by the search-miss check's guard). Uncertified fits stay in every number,
+as the rules read them, and are flagged wherever an arm's final-fit scores are
+printed. A cell's ``certified`` is 1, 0, NaN (no GLM fit) or absent, and only 1
+and 0 enter a share.
 """
 
 from __future__ import annotations
 
 import json
+import math
 import statistics
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -48,6 +56,13 @@ NOTES_CLOSE: Final = "<!-- /notes -->"
 THIN: Final = 5
 #: Session-detail keys only an old-format session cell has (LOG 2026-10-27).
 OLD_SESSION_DETAIL: Final = frozenset({"total_cost_usd", "duration_api_ms"})
+#: The states of a score cell's ``certified`` reading (:func:`certified_state`).
+CERTIFIED: Final = "certified"
+UNCERTIFIED: Final = "uncertified"
+NOT_A_FIT: Final = "not a GLM fit"
+UNRECORDED: Final = "unrecorded"
+
+type RowKey = tuple[str, int, str]
 
 
 def fmt(x: float | None, spec: str = ".4f") -> str:
@@ -250,6 +265,227 @@ def session_times(root: Path, sessions: Sequence[Any]) -> dict[str, dict[str, An
             )
         out[digest] = rec
     return out
+
+
+def row_cells(
+    store: Any, env: Any, config: Any, truths: Sequence[Any], *, sessions: str
+) -> dict[RowKey, Mapping[str, Any]]:
+    """Each row's score cell, by the addresses ``analysis.load_rows`` reads.
+
+    A cell of another configuration has another address and is never read.
+    """
+    from sciagent.campaign.plan import (
+        baseline_key,
+        baseline_units,
+        llm_units,
+        score_key,
+        session_key,
+    )
+    from sciagent.campaign.rescore import stored_sessions
+
+    by_id = {t.id: t for t in truths}
+    order = [t.id for t in truths]
+    found = stored_sessions(store, env, config, truths) if sessions == "stored" else {}
+    out: dict[RowKey, Mapping[str, Any]] = {}
+    for u in baseline_units(order, config):
+        key = baseline_key(u, by_id[u.truth_id], env, config)
+        if store.done(key):
+            out[(u.truth_id, u.seed, u.system)] = store.cell(key.digest)
+    for u in llm_units(order, config):
+        if sessions == "stored":
+            skey = found[u][0] if u in found else None
+        else:
+            skey = session_key(u, by_id[u.truth_id], env, config)
+        if skey is None or not store.done(skey):
+            continue
+        ckey = score_key(u, skey, env, config)
+        if store.done(ckey):
+            out[(u.truth_id, u.seed, u.system)] = store.cell(ckey.digest)
+    return out
+
+
+def certified_state(reading: Mapping[str, str]) -> str:
+    """The state of a cell's ``certified`` reading (hex, as stored).
+
+    A cell without the field says nothing about its fit, so it is
+    :data:`UNRECORDED`, never certified. NaN is what a model that is not a GLM
+    fit stores (``execute._certified``).
+    """
+    from sciagent.campaign.plan import CampaignError
+
+    raw = reading.get("certified")
+    if raw is None:
+        return UNRECORDED
+    value = float.fromhex(raw)
+    if math.isnan(value):
+        return NOT_A_FIT
+    if value not in (0.0, 1.0):
+        raise CampaignError(f"certified must be 0, 1 or NaN, got {raw!r}")
+    return CERTIFIED if value == 1.0 else UNCERTIFIED
+
+
+def psi_search_of(
+    r: Any, detail: Mapping[str, Any], channels: Any, full_grid_max: int
+) -> str:
+    """``FitResult.psi_search`` of a row's final fit, which no cell stores.
+
+    Exact, not estimated. ``fit``'s ``_search`` branches on the grid size alone,
+    the limit is in the cell's address (``FitConfig.key``), and the one final fit
+    that takes no search is ORACLE's kept truth-ψ refit.
+    """
+    from sciagent.campaign.plan import CampaignError
+    from sciagent.glm.fit import _Slots
+    from sciagent.glm.syntax import parse
+
+    if r.structure is None:
+        raise CampaignError(f"{r.system} {r.truth} seed {r.seed}: no structure")
+    if detail.get("oracle_psi_source") == "truth":
+        return "fixed"
+    size = _Slots.of(parse(r.structure, channels)).size
+    return "exhaustive" if size <= full_grid_max else "coordinate"
+
+
+class FitFlag(NamedTuple):
+    """One row's SPEC §2.2 flags."""
+
+    state: str
+    #: ``FitResult.psi_search``; ``None``: not a certificate's answer.
+    psi_search: str | None
+
+
+def fit_flags(
+    rows: Sequence[Any],
+    cells: Mapping[RowKey, Mapping[str, Any]],
+    channels: Any,
+    full_grid_max: int,
+) -> dict[RowKey, FitFlag]:
+    """Each row's flags from its cell; a row with no cell has none recorded."""
+    out: dict[RowKey, FitFlag] = {}
+    for r in rows:
+        key = (r.truth, r.seed, r.system)
+        cell = cells.get(key)
+        if cell is None:
+            out[key] = FitFlag(UNRECORDED, None)
+            continue
+        state = certified_state(cell["reading"])
+        search = (
+            psi_search_of(r, cell["detail"]["result"], channels, full_grid_max)
+            if state in (CERTIFIED, UNCERTIFIED)
+            else None
+        )
+        out[key] = FitFlag(state, search)
+    return out
+
+
+def flag_of(r: Any, flags: Mapping[RowKey, FitFlag]) -> FitFlag:
+    return flags[(r.truth, r.seed, r.system)]
+
+
+def uncertified_rows(rows: Sequence[Any], flags: Mapping[RowKey, FitFlag]) -> list[Any]:
+    """The rows among ``rows`` whose final fit is uncertified, in a fixed order."""
+    found = [r for r in rows if flag_of(r, flags).state == UNCERTIFIED]
+    return sorted(found, key=lambda r: (r.system, r.truth, r.seed))
+
+
+def flagged(text: str, rows: Sequence[Any], flags: Mapping[RowKey, FitFlag]) -> str:
+    """``text`` as printed for ``rows``, marked if any of them is uncertified."""
+    n = len(uncertified_rows(rows, flags))
+    return f"{text} ({n} uncertified)" if n else text
+
+
+def share_text(part: int, whole: int) -> str:
+    """A share and its counts; ``-`` when there is nothing to take it over."""
+    return f"{part / whole:.1%} ({part}/{whole})" if whole else "-"
+
+
+def certification_row(
+    name: str, mine: Sequence[Any], flags: Mapping[RowKey, FitFlag]
+) -> list[str]:
+    """One row of the certification table, over the rows ``mine``."""
+    states = [flag_of(r, flags) for r in mine]
+    certified = sum(f.state == CERTIFIED for f in states)
+    uncertified = sum(f.state == UNCERTIFIED for f in states)
+    unrecorded = [r for r in mine if flag_of(r, flags).state == UNRECORDED]
+    no_fit = sum(not (r.ok and r.submitted) for r in unrecorded)
+    coordinate = sum(
+        f.state == CERTIFIED and f.psi_search == "coordinate" for f in states
+    )
+    return [
+        name,
+        str(len(mine)),
+        str(certified),
+        str(uncertified),
+        str(sum(f.state == NOT_A_FIT for f in states)),
+        f"{len(unrecorded)}" + (f" ({no_fit} with no fit)" if no_fit else ""),
+        share_text(certified, certified + uncertified),
+        share_text(coordinate, certified + uncertified),
+    ]
+
+
+def certification_lines(
+    systems: Sequence[str],
+    rows: Sequence[Any],
+    flags: Mapping[RowKey, FitFlag],
+    full_grid_max: int,
+) -> list[str]:
+    """The SPEC §2.2 section: both shares per system, and each uncertified fit."""
+    body = [
+        certification_row(s, mine, flags)
+        for s in systems
+        if (mine := [r for r in rows if r.system == s])
+    ]
+    out = [
+        "## Fit certification (SPEC §2.2)",
+        "",
+        "Read from each scored row's `certified` reading: the final fit behind the "
+        "row's submitted model, under the current fitter. The fits inside a "
+        "search, a selection or a curve are not in the rows. Certified means the "
+        "inner solve at the chosen ψ and at every ψ point evaluated is certified: "
+        "a certificate in θ, which does not say ψ is the best point of its grid. "
+        "Shares are over units (truth x seed), not truths, of the rows reading 0 "
+        "or 1. No GLM fit (the reading is NaN: B-np, and B-lib when an "
+        "out-of-grammar member won) and unrecorded (no `certified` field) enter "
+        "neither side of a share. A no-submission or failed row has no field "
+        "because it has no fit, and is counted among the unrecorded as such.",
+        "",
+        'The coordinate-optimal share is of fits "certified in θ, coordinate-optimal '
+        "in ψ\". No cell stores `psi_search`, so it is recomputed from the row's "
+        f"structure, exactly: `fit` searches a grid of at most {full_grid_max} points "
+        "exhaustively and any larger one coordinate-wise. An uncertified fit and "
+        "ORACLE's kept truth-ψ refit (ψ fixed, no search) are not in it, whatever "
+        "their grid.",
+        "",
+    ]
+    out += table(
+        [
+            "system",
+            "units",
+            "certified",
+            "uncertified",
+            "no GLM fit",
+            "unrecorded",
+            "certified share",
+            "coordinate-optimal share",
+        ],
+        [*body, certification_row("all", rows, flags)],
+    )
+    bad = uncertified_rows(rows, flags)
+    if not bad:
+        return [*out, "No uncertified fit.", ""]
+    out += [
+        f"Uncertified fits: {len(bad)}, marked `(n uncertified)` where an arm's "
+        "final-fit scores are printed: the go/no-go shares, the per-system and "
+        "group tables and the transcript picks. Each fit stays in every number, "
+        "as the rules read it. Non-LLM rows among them (the only rows the §7.1 "
+        f"verdict reads): {sum(not r.llm for r in bad)}.",
+        "",
+    ]
+    out += [
+        f"- {r.system} {r.truth} seed {r.seed}: gap {fmt(r.gap)}, gap closed "
+        f"{closed_text(r)}."
+        for r in bad
+    ]
+    return [*out, ""]
 
 
 def closed_text(r: Any) -> str:
@@ -554,7 +790,19 @@ def main() -> None:
     truths = truth_entries(records)
     with ResultStore(args.root, read_only=True) as store:
         tab = analysis.load_rows(store, env, config, truths, sessions=args.sessions)
+        full_grid_max = config.fit_config.psi_full_grid_max
+        flags = fit_flags(
+            tab.rows,
+            row_cells(store, env, config, truths, sessions=args.sessions),
+            env.channels,
+            full_grid_max,
+        )
     rows = tab.rows
+
+    def arm(system: str) -> str:
+        """An arm as the tables of its final-fit scores print it (SPEC §2.2)."""
+        return flagged(system, [r for r in rows if r.system == system], flags)
+
     voided = analysis.void_counts(tab)
     session_versions: dict[str, int] = {}
     for x in tab.sessions:
@@ -693,7 +941,7 @@ def main() -> None:
     L += table(
         ["system", "recovers (exact)", "closes (≥ 0.9)"],
         [
-            [s, pct(verdict.recovery.get(s)), pct(verdict.close.get(s))]
+            [arm(s), pct(verdict.recovery.get(s)), pct(verdict.close.get(s))]
             for s in BASELINES
             if s != "ORACLE"
         ],
@@ -799,7 +1047,7 @@ def main() -> None:
         thin = " (thin)" if m.truths < THIN else ""
         srows.append(
             [
-                s + thin,
+                arm(s) + thin,
                 str(m.units),
                 str(voided.get(s, 0)) if s in llm_systems else "",
                 str(m.failed),
@@ -855,10 +1103,11 @@ def main() -> None:
                     any_rows = True
                 m = analysis.summarise(mine, s)
                 thin = "*" if 0 < m.truths < THIN else ""
-                cells.append(
+                text = (
                     f"{pct(m.recovery)} / {pct(m.close)} / {fmt(m.gap_median, '.3f')}"
                     f" (n={m.truths}{thin})"
                 )
+                cells.append(flagged(text, mine, flags))
             if any_rows:
                 v = str(voided.get(s, 0)) if s in llm_systems else ""
                 out.append([s, *cells, v])
@@ -871,6 +1120,9 @@ def main() -> None:
         ("in", "out"),
     )
     L += [f"`*` fewer than {THIN} truths: inconclusive.", ""]
+
+    # -- SPEC §2.2 ----------------------------------------------------------
+    L += certification_lines(systems, rows, flags, full_grid_max)
 
     # -- efficiency ---------------------------------------------------------
     L += [
@@ -974,12 +1226,14 @@ def main() -> None:
     pick("best gap closed (anonymised)", [x for x in anon if has_closed(x)], closed)
     for why, x in picks:
         r = scored.get((x.truth, x.seed, x.system))
+        unit = flagged(
+            f"{x.system} {x.truth} seed {x.seed}", [] if r is None else [r], flags
+        )
         path = (
             f"{shown(args.root)}/{x.detail.get('record_dir')}/{x.detail.get('record')}"
         )
         L += [
-            f"- **{why}**: {x.system} {x.truth} seed {x.seed}, gap closed "
-            f"{closed_text(r)}, exact "
+            f"- **{why}**: {unit}, gap closed {closed_text(r)}, exact "
             f"{None if r is None else r.exact}, record `{path}`; submitted "
             f"`{x.detail.get('submission')}` vs truth `{by_id[x.truth].dsl}`."
         ]

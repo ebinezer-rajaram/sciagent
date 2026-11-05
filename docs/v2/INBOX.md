@@ -171,9 +171,10 @@ entry, and marks it handled with the date and what was done. Newest last.
 
 ## 2026-11-05, control room (P4 miss amendment, round 2 findings 5 and 6)
 
-- [ ] **1. Accept the floor rule** for C1 to C4 as recommended (lowest finite held-out reading on that
+- [x] **1. Accept the floor rule** for C1 to C4 as recommended (lowest finite held-out reading on that
   truth and seed; ORACLE and B-lib never floored; controls read the unfloored table), with the
   rows-left-out read printed beside every read as a secondary. Record that the rule was chosen after the
   reviewer's exploratory look at pilot dev rows (not P4 data), with both pilot figures.
-- [ ] **2. Accept: control 5 no longer gates C3**; its inputs go to P4b with the policy rows (decision 12).
+- [x] **2. Accept: control 5 no longer gates C3**; its inputs go to P4b with the policy rows (decision 12).
   Decided by the control room under the owner's standing delegation.
+  Handled 2026-11-05 (lane session 34): both recorded as delegated, in the amendment's extensions 7 and 8 and the LOG, with both pilot figures and that the rule followed the reviewer's look at pilot dev rows. S6 prints the rows-left-out read.

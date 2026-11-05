@@ -148,3 +148,13 @@ entry, and marks it handled with the date and what was done. Newest last.
   one id was the lane's wording error, not a limit the owner chose. Scope: rung 2 only, about 14 CPU
   min, ceiling 1 CPU hour, $0, outputs only under .cache/drafts/fsd-seedlead/, exploratory, no change
   to A1's scored failure. Record the wording error and this scope in the LOG.
+
+## 2026-11-05, control room (unapproved rung-0 draw during check (b))
+
+- [ ] **Record it as a protocol deviation, then carry on.** Beyond the LOG and JOURNAL entries: (1) add a
+  short deviation note beside the FSD control record (which stream, when, how, that the values were
+  never written or seen, and that the hash check covering it was taken after the draw), so any later
+  use of ctlA1 rung 0 carries it; (2) standing rule for helpers: never remove or bypass the guard, not
+  even in a mutant or test, and test only on non-control ids; (3) check (b)'s result gets its one
+  red-team round before it is reported as more than exploratory. No rerun on rung 0. Reported to the
+  owner by the control room. Decided by the control room under the owner's standing delegation.

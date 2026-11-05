@@ -109,3 +109,11 @@ entry, and marks it handled with the date and what was done. Newest last.
   Lane note 2026-11-04 (session 28): rule frozen after three red-team rounds (more than the one asked, because the first two said not ready); `F` 3226f9b, `R` 5e5a169, control room told. Not launched; stays open until the check reports.
   Lane note 2026-11-04 (session 29): launched 11:59:49Z, guards passed, running in `sci-search-misses`. Stays open until the check reports.
   Handled 2026-11-05 (lane session 31): the check ran complete; label `GO_SURVIVES_FOUND_MISSES`, 25 miss rows on 25 fits, largest |Δ| found 0.02198, no clause moved (`docs/v2/PILOT-MISSES.md`, red-teamed; LOG 2026-11-05). fit/6 stays a SPEC-level item, and the T2 pin stays off v2.
+
+## 2026-11-05, control room
+
+- [ ] **T2 and P4 on fit/5.** T2 asserts only what it tested: the listed known losses, with no
+  general bound and no "found stratum" wording. P4 runs on fit/5, with the frozen pilot miss check
+  (prereg 3226f9b, same rules) applied to its fits before its verdict is read; fit/6 stays a SPEC item
+  for after P4. Decided by the control room under the owner's standing delegation; record it as
+  delegated. The P3 go/no-go and check (b) stay with the owner.

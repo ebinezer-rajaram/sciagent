@@ -168,3 +168,12 @@ entry, and marks it handled with the date and what was done. Newest last.
   c81749a was the control room's loose wording, not a reversal. P4's miss amendment covers C1, C2, C3
   (AG-o against AG-c) and C4. The narrow second red-team round is fine, as the preregister skill allows.
   Handled 2026-11-05 (lane session 34): the amendment's reads are C1, the four C2 reads, C3 (AG-o against AG-c) and C4; recorded there and in the LOG; second round sent. SPEC §7's P4 row still says C1 to C5, left alone as a stop point.
+
+## 2026-11-05, control room (P4 miss amendment, round 2 findings 5 and 6)
+
+- [ ] **1. Accept the floor rule** for C1 to C4 as recommended (lowest finite held-out reading on that
+  truth and seed; ORACLE and B-lib never floored; controls read the unfloored table), with the
+  rows-left-out read printed beside every read as a secondary. Record that the rule was chosen after the
+  reviewer's exploratory look at pilot dev rows (not P4 data), with both pilot figures.
+- [ ] **2. Accept: control 5 no longer gates C3**; its inputs go to P4b with the policy rows (decision 12).
+  Decided by the control room under the owner's standing delegation.

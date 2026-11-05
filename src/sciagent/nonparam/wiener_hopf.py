@@ -289,7 +289,7 @@ def driver_weights(
         m = np.asarray(log.marks[spec.name], dtype=np.float64)
         if spec.kind is ChannelKind.SIGN:
             if not np.all(np.abs(m) == 1.0):
-                raise WienerHopfError(f"sign channel {spec.name!r} not in {{-1, +1}}")
+                raise WienerHopfError(f"binary channel {spec.name!r} not in {{-1, +1}}")
             rows.append(m.copy())
         else:
             if not spec.scale > 0.0:

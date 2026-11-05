@@ -137,7 +137,7 @@ def _render_source(source: Source) -> str:
     if source.kind is SourceKind.ALL:
         return "all"
     if source.channel is None:
-        raise DslSyntaxError("a signed source needs a sign channel", 0, "a channel")
+        raise DslSyntaxError("a filtered source needs a binary channel", 0, "a channel")
     return f"{_name(source.channel)}={source.kind.value}"
 
 
@@ -334,7 +334,7 @@ class _Parser:
 
     def _source(self) -> Source:
         tok = self._tok
-        expected = "a source ('all' or '<sign channel>=+' / '<sign channel>=-')"
+        expected = "a source ('all' or '<binary channel>=+' / '<binary channel>=-')"
         if tok.kind != "ident":
             raise self._fail(expected)
         self._advance()

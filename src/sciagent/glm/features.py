@@ -414,7 +414,7 @@ def _source_mask(source: Source, ctx: _Ctx) -> Bools:
     s = ctx.raw(source.channel)
     if not np.all((s == 1.0) | (s == -1.0)):
         raise FeatureDataError(
-            f"sign channel {source.channel!r} holds values other than ±1"
+            f"binary channel {source.channel!r} holds values other than ±1"
         )
     want = 1.0 if source.kind is SourceKind.POSITIVE else -1.0
     mask: Bools = s == want

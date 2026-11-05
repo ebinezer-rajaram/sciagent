@@ -79,5 +79,6 @@ Fabricate a number: every number comes from a command run in this session or a c
 and numbers are produced only on dm-devbox. Edit an instrument while a run uses it. Delete
 results, stores or S3 objects. Rewrite pushed history. Write test-split records inside the
 repository. Create AWS access keys. Use browser automation. Reinterpret a preregistered rule
-after seeing numbers. If time is short, stop at a clean point and record, commit and push
+after seeing numbers. Remove or bypass a stream guard, even in a mutant or a test: test guards on
+non-control ids only, and say so in every helper's brief (INBOX 119eff3). If time is short, stop at a clean point and record, commit and push
 first.

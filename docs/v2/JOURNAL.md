@@ -2510,3 +2510,25 @@ Checkpoint, not the final hand-over. The go/no-go is not yet pushed to the owner
 **Running.** A narrow red team on the fixes, PILOT.md's three hand edits and the Fit certification section.
 
 **Next.** Read it, fix, then the stop point: tell the control room (session `agent-control-b6`) and push the owner. The owner's decisions are unchanged: the go/no-go after the transcripts, check (b), and what T2 asserts.
+
+
+## 2026-11-05: Lane session 31 hand-over: stop point, the computed GO survives the misses found
+
+**Stop point.** The answer in one line: the miss check ended `GO_SURVIVES_FOUND_MISSES`, so the hold is released and the go/no-go is the owner's, after the AG-o transcripts.
+- Evidence: `docs/v2/PILOT-MISSES.md`; `docs/v2/redteam/2026-11-05_pilot-misses.md` and `-round2.md`; PILOT.md's decisions; LOG 2026-11-05; records on S3 under `sciagent/p3-linux/search-misses-3226f9b9521fe3a8c1d2445d1654cd1609b1eb2d/`.
+- Numbers: M 25 rows on 25 fits, 23 baseline; largest |Δ| found 0.02198; corrected verdict go, no clause moved; H2, H3 falsified, H1, H4 not; 25.41 CPU hours, $0.
+- Caveats: nothing is said about misses not found, on 131 of the 397 fits the verdict reads. 13 of the 25 sit in the 51 fits with no control. On B-sparse out of dictionary, 22 of 30 rows are searched with no control. R1, R2 and the hunt were not rerun by anyone, and 49 of 70 uncertified points were not enumerated. Curves and BIC selection stay unchecked.
+- Recommendation: read the transcripts; do not read the gates as far from their limits on this check. Since H3 fell on exact fits as well, settle what T2 asserts and whether P4 runs on fit/5 before P4 starts.
+- Decision needed from the owner: the go/no-go, check (b), and T2 / fit/5.
+
+**Done since the checkpoint.** Round 2 (narrow): ready with fixes, three blocking, all text. Fixed: decision 1 now carries the whole per-gate line, C1's margin corrected to 0.0266, the coverage claim narrowed; also findings 4 to 8, 10 and part of 9. It confirmed SPEC §2.2's shares by a route with no shared code. Round 2's fixes were not sent back for a third read; I checked each replacement applied once, not its figures beyond the report's. Round 2's own copied figures (the 63 and 240 warnings, the 0.36-nat neighbour, the transcript search) rest on round 1.
+
+Control room told by message to `agent-control-b6`, in its inbox, not yet read when sent. The phone push failed: `Mobile push not sent (Remote Control inactive)`, as session 26 found from a lane.
+
+**Checks.** At e04d68c: `276 files already formatted`, `All checks passed!`, mypy `no issues found in 265 source files`, fast tier `3397 passed`, exit 0. Later commits are docs only. Slow tier not run: nothing under `src/` changed.
+
+**Learned.**
+- A hand line can quietly mislabel a statistic: margin minus SE went out as C1's margin, and only a second read caught it. Copy a figure with its label.
+- The Stop hook fires while a helper still runs if the tree is dirty, so commit a checkpoint before waiting.
+
+**Next.** Nothing in the queue is unblocked: the go/no-go, the test split and T2 wait on the owner, the p4-deltas merge waits on T2 and the go, and Haiku and Opus sizing waits on P4.0. Only the minor wording of round 2's finding 9 is open. If the owner has not answered, a session should do that and stop.

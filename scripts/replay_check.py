@@ -14,13 +14,34 @@ pointproc investigation environment built from ``--split`` as
 per record: ``PASS`` with the steps, budgets used and seconds, or ``FAIL`` with
 the divergence step and field (a
 :class:`~sciagent.harness.errors.ReplayDivergenceError`), or the typed error
-that stopped the record being replayed (it does not load, names a truth the
-split does not hold, or the sandbox is unavailable). ``--arm`` and
-``--digests`` (prefixes of the ``llm/`` directory names) filter; ``--limit N``
-replays the first N selected records, so a subset is deterministic. A record
-that does not load is never filtered out by ``--arm``. Exit status 0 when
-every replayed record passes, 1 when one fails or none is found, 2 on a usage
-error. Read-only: records are loaded, never saved; AG-o sandboxes run under a
+that stopped the record being replayed (it does not load, names no harness
+version, names a truth the split does not hold, or the sandbox is
+unavailable), or ``REFUSED``.
+
+A record is ``REFUSED`` (:class:`~sciagent.harness.errors.HarnessVersionMismatchError`)
+when the ``harness_version`` of its config entry is not this code's
+:data:`~sciagent.harness.live.HARNESS_VERSION`: another harness's tools and
+budgets are not this one's, so replaying it here would diverge by design and
+say nothing about the harness. The line names both versions and where to
+replay it: a ``harness/1`` record at the pilot's commit 900e66a (LOG
+2026-10-29, :data:`REPLAY_AT`), any other at a checkout with that harness. The
+version is checked before the truth, since nothing else this checkout says
+about such a record means anything. The live loop has written
+``harness_version`` into every record's config since P2 (558d600), so a record
+without it (or with anything but a non-empty string) came from no harness
+this project has run and no checkout is known to replay it: it is a ``FAIL``
+(:class:`~sciagent.harness.errors.HarnessVersionMissingError`), not a refusal,
+so it cannot leave the failure count by losing a field.
+
+``--arm`` and ``--digests`` (prefixes of the ``llm/`` directory names) filter;
+``--limit N`` replays the first N selected records, so a subset is
+deterministic. A record that does not load is never filtered out by ``--arm``.
+The summary counts the selected records, then passed, failed and refused.
+Exit status: 0 (``REPLAY OK``) when every selected record passes; 1
+(``REPLAY FAILED``) when one fails, whatever else was refused, or none is
+found; 3 (``REPLAY REFUSED``) when none fails but at least one was refused, so
+the store needs another checkout to be checked in full; 2 on a usage error.
+Read-only: records are loaded, never saved; AG-o sandboxes run under a
 temporary directory.
 """
 
@@ -32,7 +53,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 from pilot import (
     DEFAULT_SPLIT,
@@ -41,8 +62,14 @@ from pilot import (
     reconfigure_stdout,
 )
 
+from sciagent.campaign.plan import LEGACY_HARNESS_VERSION
 from sciagent.core.errors import SciAgentError
-from sciagent.harness.errors import ReplayDivergenceError
+from sciagent.harness.errors import (
+    HarnessVersionMismatchError,
+    HarnessVersionMissingError,
+    ReplayDivergenceError,
+)
+from sciagent.harness.live import HARNESS_VERSION
 from sciagent.harness.record import SessionRecord
 
 if TYPE_CHECKING:
@@ -53,6 +80,52 @@ if TYPE_CHECKING:
 LLM_DIR = "llm"
 #: How much of a failure's message is printed.
 SHOWN = 400
+#: Where a record of an earlier harness is replayed: the commit whose code
+#: wrote it (LOG 2026-10-29: the Linux pilot's ``harness/1`` sessions ran at
+#: v2 900e66a, and the merge keeps no frozen ``harness/1`` tool layer).
+REPLAY_AT: Final = {LEGACY_HARNESS_VERSION: "900e66a"}
+
+
+def check_harness_version(record: SessionRecord) -> str:
+    """The record's harness version, if it is this code's; raise otherwise.
+
+    Raises :class:`HarnessVersionMismatchError` for another version and
+    :class:`HarnessVersionMissingError` when the leading config entry names
+    none (or the record has no config entry).
+    """
+    configs = record.of_kind("config")
+    recorded = configs[0].body.get("harness_version") if configs else None
+    if not isinstance(recorded, str) or not recorded:
+        raise HarnessVersionMissingError(
+            f"the record names no harness version (harness_version "
+            f"{recorded!r}); this code runs {HARNESS_VERSION}, and no checkout "
+            "is known to replay it",
+            running=HARNESS_VERSION,
+        )
+    if recorded != HARNESS_VERSION:
+        commit = REPLAY_AT.get(recorded)
+        where = (
+            f"replay it at {commit}, the commit that ran {recorded}"
+            if commit is not None
+            else f"replay it at a checkout whose HARNESS_VERSION is {recorded}"
+        )
+        raise HarnessVersionMismatchError(
+            f"the record was written under {recorded}, this code runs "
+            f"{HARNESS_VERSION}: its tools are not this harness's; {where}",
+            recorded=recorded,
+            running=HARNESS_VERSION,
+            commit=commit,
+        )
+    return recorded
+
+
+def exit_status(failed: int, refused: int) -> tuple[int, str]:
+    """The exit status and last line: a failure outranks a refusal."""
+    if failed:
+        return 1, "REPLAY FAILED"
+    if refused:
+        return 3, "REPLAY REFUSED"
+    return 0, "REPLAY OK"
 
 
 @dataclass(frozen=True)
@@ -106,12 +179,18 @@ def load(root: Path, path: Path) -> Stored:
 
 
 def replay_one(stored: Stored, env: EnvironmentSpec, truths: frozenset[str]) -> str:
-    """The record's ``PASS`` or ``FAIL`` line."""
+    """The record's ``PASS``, ``FAIL`` or ``REFUSED`` line."""
     from sciagent.investigation.runner import replay_investigation
 
     if stored.record is None:
         assert stored.error is not None
         return f"FAIL {stored.label}: {_named(stored.error)}"
+    try:
+        check_harness_version(stored.record)
+    except HarnessVersionMismatchError as error:
+        return f"REFUSED {stored.label}: {_named(error)}"
+    except HarnessVersionMissingError as error:
+        return f"FAIL {stored.label}: {_named(error)}"
     truth = stored.investigation.get("truth_id")
     if truth is not None and truth not in truths:
         return f"FAIL {stored.label}: truth {truth} is not in the split"
@@ -173,7 +252,10 @@ def main(argv: list[str] | None = None) -> int:
     from sciagent.glm.fit import FIT_VERSION
 
     split_sha = hashlib.sha256((args.split / "truths.json").read_bytes()).hexdigest()
-    print(f"sciagent from {Path(sciagent.__file__).parent}; {FIT_VERSION}")
+    print(
+        f"sciagent from {Path(sciagent.__file__).parent}; {FIT_VERSION}; "
+        f"{HARNESS_VERSION}"
+    )
     print(f"split: {args.split} truths.json sha256 {split_sha}")
     digests = tuple(args.digests.split(",")) if args.digests else ()
     stored = [load(args.root, p) for p in discover(args.root, digests)]
@@ -194,17 +276,21 @@ def main(argv: list[str] | None = None) -> int:
     env = pointproc_environment(records).investigation
     assert env is not None
     truths = frozenset(r.id for r in records)
-    failed = 0
+    passed = failed = refused = 0
     for s in chosen:
         line = replay_one(s, env, truths)
-        failed += line.startswith("FAIL")
+        passed += line.startswith("PASS ")
+        failed += line.startswith("FAIL ")
+        refused += line.startswith("REFUSED ")
         print(line, flush=True)
+    assert passed + failed + refused == len(chosen)
     print(
         f"replayed: {len(chosen)} of {len(stored)}; "
-        f"passed: {len(chosen) - failed}; failed: {failed}"
+        f"passed: {passed}; failed: {failed}; refused: {refused}"
     )
-    print("REPLAY OK" if failed == 0 else "REPLAY FAILED")
-    return 0 if failed == 0 else 1
+    code, verdict = exit_status(failed, refused)
+    print(verdict)
+    return code
 
 
 if __name__ == "__main__":

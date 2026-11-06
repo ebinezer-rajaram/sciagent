@@ -5,16 +5,20 @@ tree. ``pairwise_rows`` promises a *fixed order*: every row is folded by one
 tree that depends only on the row's length, so its value is the same for every
 run, every batching of rows and every CPU, and its error is within the
 pairwise bound. ``ExactSum`` promises the correctly rounded sum, so it must
-agree with :func:`math.fsum` bit for bit.
+agree with :func:`math.fsum` bit for bit wherever ``fsum`` answers, and with
+exact rational arithmetic (:class:`fractions.Fraction`) everywhere: ``fsum``
+gives up with ``OverflowError`` when a *partial* sum overflows, even when the
+total is representable, so it cannot be the reference there.
 """
 
 from __future__ import annotations
 
 import math
+from fractions import Fraction
 
 import numpy as np
 import pytest
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 from hypothesis.extra import numpy as hnp
 
@@ -28,6 +32,18 @@ from sciagent.core.reductions import (
 )
 
 U = 2.0**-53
+MAX = 1.7976931348623157e308
+TINY = 2.0**-1074
+
+
+def _exact(values: list[float]) -> float | None:
+    """The correctly rounded sum of finite ``values`` by rational arithmetic,
+    or ``None`` when that sum lies beyond the largest double."""
+    exact = sum((Fraction(v) for v in values), Fraction(0))
+    try:
+        return float(exact)
+    except OverflowError:
+        return None
 
 
 def _halve(values: list[float]) -> float:
@@ -221,15 +237,96 @@ class TestExactSum:
         hnp.arrays(np.float64, st.integers(0, 100), elements=finite),
         finite,
     )
+    # The corpus counterexample, pinned in source: editing this test's body
+    # changes its database key, which orphans the corpus entry it was saved
+    # under, so the corpus alone cannot keep it.
+    @example(
+        np.array(
+            [1.0484168695292626e307, 7.339271331761592e302, 8.988465674311582e307, 0.0]
+        ),
+        np.array([MAX]),
+        0.0,
+    )
     def test_merge_negate_and_scalar(
         self, a: np.ndarray, b: np.ndarray, s: float
     ) -> None:
-        try:
-            expected = math.fsum([*a.tolist(), *(-b).tolist(), s])
-        except OverflowError:
+        addends = [*a.tolist(), *(-b).tolist(), s]
+        acc = ExactSum.of(a) - ExactSum.of(b) + ExactSum.of(np.array([s]))
+        expected = _exact(addends)
+        if expected is None:
+            with pytest.raises(ExecutionError, match="overflow"):
+                acc.value()
             return
-        got = (ExactSum.of(a) - ExactSum.of(b) + ExactSum.of(np.array([s]))).value()
+        got = acc.value()
         assert got == expected
+        try:
+            via_fsum = math.fsum(addends)
+        except OverflowError:
+            return  # fsum's partial sums overflowed; the rational reference stands
+        assert got == via_fsum
+
+    @pytest.mark.parametrize(
+        "x",
+        [
+            # The corpus counterexample: fsum overflows taking these in this
+            # order, while the exact total is about -7.94e307.
+            [
+                1.0484168695292626e307,
+                7.339271331761592e302,
+                8.988465674311582e307,
+                -MAX,
+            ],
+            [MAX, MAX, -MAX, -MAX, 1.0],
+            [MAX, MAX, -MAX, -MAX],
+            [MAX, MAX, -MAX, 2.0**969],  # under half an ulp of MAX: rounds down
+            [MAX, MAX, -MAX, -(2.0**970), 3.0],
+            [-MAX, -MAX, MAX, 1e300, -1e-300],
+        ],
+    )
+    def test_partial_overflow_with_a_finite_total(self, x: list[float]) -> None:
+        with pytest.raises(OverflowError):
+            math.fsum(x)  # the premise: fsum itself cannot answer these
+        expected = _exact(x)
+        assert expected is not None
+        got = ExactSum.of(np.array(x)).value()
+        assert got == expected
+        assert math.copysign(1.0, got) == math.copysign(1.0, expected)
+
+    def test_partial_overflow_keeps_subnormal_bits(self) -> None:
+        """Huge addends that cancel must not cost the subnormal ones a bit."""
+        x = [MAX, MAX, TINY, -MAX, 3 * TINY, -MAX, -TINY, 2.0**-1060]
+        expected = _exact(x)
+        assert expected == 3 * TINY + 2.0**-1060
+        assert ExactSum.of(np.array(x)).value() == expected
+
+    def test_partial_overflow_across_merged_sums(self) -> None:
+        small = np.array([2.0**-1074, 1.5, -(2.0**-1000), 1e-310])
+        huge = ExactSum.of(np.array([MAX, MAX]))
+        acc = huge + ExactSum.of(small) - huge + ExactSum.of(np.array([MAX]))
+        assert acc.value() == _exact([MAX, *small.tolist()])
+
+    @pytest.mark.parametrize(
+        "x",
+        [
+            [MAX, MAX],
+            [-MAX, -MAX, 1.0],
+            [MAX, 2.0**970],  # half an ulp of MAX, ties to even: rounds up, out
+            [MAX, MAX, -MAX, 2.0**971],
+        ],
+    )
+    def test_an_overflowing_total_is_a_typed_error(self, x: list[float]) -> None:
+        assert _exact(x) is None
+        with pytest.raises(ExecutionError, match="overflow"):
+            ExactSum.of(np.array(x)).value()
+
+    def test_non_finite_wins_over_partial_overflow(self) -> None:
+        """An infinite addend makes the sum infinite, as in fsum, even where
+        fsum would first have tripped over the finite addends overflowing."""
+        assert ExactSum.of(np.array([MAX, MAX, math.inf])).value() == math.inf
+        assert ExactSum.of(np.array([-MAX, -MAX, -math.inf])).value() == -math.inf
+        assert math.isnan(ExactSum.of(np.array([MAX, MAX, math.nan])).value())
+        with pytest.raises(ValueError, match="inf"):
+            ExactSum.of(np.array([MAX, MAX, math.inf, -math.inf])).value()
 
     def test_non_finite_follows_fsum(self) -> None:
         assert ExactSum.of(np.array([1.0, math.inf])).value() == math.inf

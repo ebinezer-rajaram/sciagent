@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from claude_agent_sdk import (
     AssistantMessage,
@@ -28,6 +28,7 @@ from claude_agent_sdk import (
     Message,
     ResultMessage,
     SdkMcpTool,
+    ServerToolUseBlock,
     SystemMessage,
     TextBlock,
     ThinkingBlock,
@@ -39,18 +40,33 @@ from claude_agent_sdk.types import ContentBlock, ModelUsage
 
 __all__ = ["ScriptedDriver", "Step"]
 
+#: What becomes of a call naming no tool the session offers (a foreign tool).
+type Foreign = Literal["denied", "executed", "unanswered"]
+#: The server tools a scripted turn can emit a ``server_tool_use`` block for.
+type ServerTool = Literal["web_search", "web_fetch", "code_execution"]
+
 
 @dataclass(frozen=True)
 class Step:
     """One assistant turn. ``calls`` are ``(tool name, args)``; names are the
     layer's short names unless ``raw_names`` (to emulate a built-in tool such as
-    ``Bash``). ``delay_s`` is slept before the turn is emitted."""
+    ``Bash``). ``delay_s`` is slept before the turn is emitted.
+
+    ``foreign`` is what happens to a call naming no tool the session offers:
+    ``denied`` (an error result, as Claude Code's "No such tool available"),
+    ``executed`` (a non-error result, as if the tool had run) or
+    ``unanswered`` (no result at all). ``server_tools`` adds a
+    ``server_tool_use`` block per name to the turn. The last two exist to show
+    the void policy (P4 Δ8) separates what it must: a real session under the
+    hermetic options produces neither."""
 
     text: str | None = None
     thinking: str | None = None
     calls: tuple[tuple[str, Mapping[str, Any]], ...] = ()
     raw_names: bool = False
     delay_s: float = 0.0
+    foreign: Foreign = "denied"
+    server_tools: tuple[ServerTool, ...] = ()
 
 
 class ScriptedDriver:
@@ -126,6 +142,12 @@ class ScriptedDriver:
                     )
                 )
             content.extend(uses)
+            content.extend(
+                ServerToolUseBlock(
+                    id=f"srvtoolu_{self.turns:03d}_{k}", name=name, input={}
+                )
+                for k, name in enumerate(step.server_tools)
+            )
             yield AssistantMessage(
                 content=content,
                 model=model,
@@ -140,12 +162,17 @@ class ScriptedDriver:
             for use in uses:
                 spec = tools.get(use.name)
                 if spec is None:
+                    if step.foreign == "unanswered":
+                        continue
+                    executed = step.foreign == "executed"
                     results.append(
                         ToolResultBlock(
                             tool_use_id=use.id,
-                            content=f"<tool_use_error>Error: No such tool available: "
+                            content=f"{use.name} ran"
+                            if executed
+                            else f"<tool_use_error>Error: No such tool available: "
                             f"{use.name}</tool_use_error>",
-                            is_error=True,
+                            is_error=not executed,
                         )
                     )
                     continue

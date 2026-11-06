@@ -30,9 +30,11 @@ What changes here:
 The session manifest (the ``init`` message) is recorded and checked: if it
 lists any tool that is not one of the layer's, the run is refused with
 :class:`~sciagent.harness.errors.HermeticityError`. A tool use naming anything
-else in the stream is recorded and voids the run (SPEC §9: "any hit voids the
-run"), and every served model is checked against the pinned one as the
-provider does.
+else in the stream is recorded and classified by the void policy of
+:mod:`sciagent.harness.voids` (P4 Δ8): it voids the run if it executed, if
+nothing shows it was denied, or if it was a server tool; a denied call to an
+unknown name is counted in ``unknown_tool_attempts``. Every served model is
+checked against the pinned one as the provider does.
 
 Driving the loop without a model
 --------------------------------
@@ -47,6 +49,13 @@ planted-hint positive control (SPEC §6.4) can be run.
 Tool handlers run in a worker thread (``asyncio.to_thread``), so a sandbox call
 that takes seconds does not stall the SDK's message pump; the layer's lock fixes
 the call order.
+
+The end of the session is a line in the layer's log. The wall time cancels the
+await, not the thread, so the loop closes the layer as soon as the stream has
+ended and before it decides anything: every call the layer logged by then is
+in the record (:meth:`_Session.flush`), and a call still running or queued has
+no ``tool_call`` entry and never commits. The outcome is decided from the
+closed layer, so the record cannot be told a submission it has no call for.
 """
 
 from __future__ import annotations
@@ -89,6 +98,7 @@ from sciagent.harness.errors import (
 )
 from sciagent.harness.record import SessionRecord, canonical_json
 from sciagent.harness.tools import ToolCall, ToolLayer, ToolOutput
+from sciagent.harness.voids import assess, foreign_reasons
 from sciagent.systems.llm.agent_sdk_provider import (
     CONTAMINATING_VARIABLES,
     _foreign_providers,
@@ -108,7 +118,10 @@ __all__ = [
 ]
 
 #: Recorded in every config entry; bump when the record's meaning changes.
-HARNESS_VERSION: Final = "harness/1"
+#: /2 (P4 Δ7): truncation at the event cap (Δ2), designs (Δ3), beliefs and the
+#: stop reason (Δ4), the budget line (Δ12) and the harness-level void policy
+#: (Δ8) change what a session record means; the pilot's records are /1.
+HARNESS_VERSION: Final = "harness/2"
 
 #: The three models of SPEC §4.1, by tier letter's name.
 MODELS: Final[Mapping[str, str]] = {
@@ -169,7 +182,12 @@ class AgentConfig:
 class InvestigationResult:
     """A finished run. ``outcome`` is one of ``submitted``, ``max_turns``,
     ``wall_time``, ``refused``, ``output_ceiling``, ``session_error``,
-    ``ended_without_submit``."""
+    ``ended_without_submit``.
+
+    ``foreign_tool_uses`` is every tool use naming no layer tool, in stream
+    order (``server:<name>`` for a server tool). ``void_reasons`` and
+    ``unknown_tool_attempts`` are the void policy over them and the record
+    (:func:`sciagent.harness.voids.assess`)."""
 
     record: SessionRecord
     outcome: str
@@ -177,11 +195,13 @@ class InvestigationResult:
     served_models: tuple[str, ...]
     foreign_tool_uses: tuple[str, ...]
     num_turns: int | None
+    void_reasons: tuple[str, ...]
+    unknown_tool_attempts: int
 
     @property
     def void(self) -> bool:
-        """True if the model reached for any tool the layer does not provide."""
-        return bool(self.foreign_tool_uses)
+        """True if the void policy voids the run (``void_reasons``)."""
+        return bool(self.void_reasons)
 
 
 def _undated(model: str) -> str:
@@ -511,6 +531,7 @@ class _Session:
                 self.append_call(call, None, None)
 
     def finish(self, reason: str, extra: Mapping[str, Any] | None = None) -> None:
+        self.layer.close()
         self.flush()
         submission = self.layer.submission
         self.append(
@@ -633,6 +654,7 @@ class _Session:
                 f"{type(error).__name__}: {error}",
                 record=self.record,
             ) from error
+        self.layer.close()
         if self.fault is not None:
             self.finish("harness_fault", {"error": type(self.fault).__name__})
             raise HarnessFaultError(
@@ -644,6 +666,7 @@ class _Session:
         self.finish(reason)
         served = self.check_served_model()
         submission = self.layer.submission
+        verdict = assess(foreign_reasons(self.foreign), self.record)
         return InvestigationResult(
             record=self.record,
             outcome=reason,
@@ -651,6 +674,8 @@ class _Session:
             served_models=served,
             foreign_tool_uses=tuple(self.foreign),
             num_turns=None if self.result is None else self.result.num_turns,
+            void_reasons=verdict.reasons,
+            unknown_tool_attempts=verdict.unknown_tool_attempts,
         )
 
     def consume(self, message: Message) -> None:

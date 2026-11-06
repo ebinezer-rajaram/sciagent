@@ -210,9 +210,10 @@ def _require_store(root: Path) -> Path:
 
 
 def matches_env(env_version: str, env: str) -> bool:
-    """Whether a key's ``env_version`` (``<env name>|<FIT_VERSION>``) names
-    ``env``: the whole text, its fitter part, or the fitter's last dotted
-    component (``fit/5`` for ``sciagent.glm.fit/5``)."""
+    """Whether a key's ``env_version`` (``<env name>|<FIT_VERSION>``, or
+    ``<env name>|domain:<sha256>|<FIT_VERSION>`` since F5) names ``env``: the
+    whole text, its fitter part, or the fitter's last dotted component
+    (``fit/5`` for ``sciagent.glm.fit/5``)."""
     fitter = env_version.split("|")[-1]
     return env in (env_version, fitter) or fitter.endswith("." + env)
 
@@ -939,7 +940,7 @@ def check_sessions(
     try:
         # An AG-o digest names the sandbox image, read from its build context.
         digests = {
-            s: session_config_digest(config.arm_of(s), config)
+            s: session_config_digest(config.arm_of(s), config, env)
             for s in config.llm_systems()
         }
     except CampaignError as error:

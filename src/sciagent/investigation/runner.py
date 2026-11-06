@@ -11,7 +11,8 @@ changed tool, a numerics drift or a perturbed sandbox result is detected.
 What the record's config holds. The harness records ``AgentConfig.as_json()``;
 :class:`InvestigationAgentConfig` adds an ``investigation`` field with the
 :class:`InvestigationSpec` (environment name, truth id, arm, condition, seed,
-budgets, sandbox limits). That is what :func:`layer_factory` rebuilds from.
+budgets, sandbox limits, and in policy mode the policy and its settings).
+That is what :func:`layer_factory` rebuilds from.
 The config is framework-side: the model sees only the system prompt, the
 opening prompt and the tool schemas, none of which carry the truth id. The
 truth itself is never in the record; it is resolved by id from the
@@ -39,6 +40,7 @@ from typing import Any, Final
 from sciagent.anonymise import DEFAULT_FORBIDDEN
 from sciagent.diagnostics import catalogue
 from sciagent.glm.grammar import ChannelSpec, Structure
+from sciagent.glm.simulate import MarkSampler
 from sciagent.glm.syntax import parse
 from sciagent.harness.errors import (
     HarnessFaultError,
@@ -50,8 +52,27 @@ from sciagent.harness.live import AgentConfig, SessionDriver, run_investigation
 from sciagent.harness.record import SessionRecord
 from sciagent.harness.replay import LayerFactory, ReplayReport, replay
 from sciagent.harness.tools import ToolLayer
-from sciagent.investigation.prompts import Arm, opening_prompt, system_prompt
-from sciagent.investigation.tools import FIT_CONFIG, Lab, LabError, PredictionOutcome
+from sciagent.harness.voids import INFRASTRUCTURE, assess, foreign_reasons
+from sciagent.harness.voids import OUT_OF_BOUNDS as OUT_OF_BOUNDS_REASON
+from sciagent.investigation.policy import NEEDS_MARKS, PolicySettings
+from sciagent.investigation.prompts import (
+    Arm,
+    PolicyName,
+    PromptError,
+    PromptVariant,
+    as_policy,
+    as_variant,
+    check_policy_arm,
+    opening_prompt,
+    system_prompt,
+)
+from sciagent.investigation.tools import (
+    FIT_CONFIG,
+    Lab,
+    LabError,
+    PredictionOutcome,
+    tool_specs,
+)
 from sciagent.investigation.view import Condition, make_view
 from sciagent.investigation.world import OBSERVATIONAL, Truth, World
 from sciagent.sandbox import (
@@ -62,6 +83,7 @@ from sciagent.sandbox import (
     ensure_image,
     image_id,
 )
+from sciagent.scoring.seeds import truth_policy_seed
 
 __all__ = [
     "OUT_OF_BOUNDS",
@@ -77,6 +99,7 @@ __all__ = [
     "layer_factory",
     "leak_terms",
     "out_of_bounds",
+    "rendered_config",
     "rendered_surface",
     "replay_investigation",
     "run",
@@ -109,6 +132,10 @@ OUT_OF_BOUNDS: Final = (
 #: spec's defaults, and what :func:`run` gives every AG-o run.
 SANDBOX_WALL_SECONDS: Final = 60.0
 SANDBOX_MEMORY_MB: Final = 2048
+#: Seconds a finished session waits for a tool call that outlived it before
+#: cleanup. ``asyncio.run`` has already joined the worker threads for up to
+#: 300 s by then, so this is only the last call's way out of the layer.
+IDLE_WAIT_S: Final = 5.0
 
 
 def run_sandbox_limits() -> SandboxLimits:
@@ -135,13 +162,17 @@ class EnvironmentSpec:
     ``resolve`` maps a truth id to a :class:`Truth` (a registry lookup, so
     replay needs only the id). ``anon_channels`` maps native channel names to
     anonymised ones; ``forbidden`` adds the environment's own leak terms to
-    :data:`~sciagent.anonymise.DEFAULT_FORBIDDEN`.
+    :data:`~sciagent.anonymise.DEFAULT_FORBIDDEN`. ``marks`` is the
+    environment's mark law, which the EIG and FSD policies need to simulate
+    fitted structures (P4 Δ11, as B-sym's policies and the scorer use it);
+    an environment without it cannot run them.
     """
 
     name: str
     anon_channels: Mapping[str, str]
     forbidden: tuple[str, ...]
     resolve: Callable[[str], Truth]
+    marks: MarkSampler | None = None
 
 
 @dataclass(frozen=True)
@@ -157,9 +188,17 @@ class InvestigationSpec:
     fits: int = 40
     sandbox_wall_seconds: float = SANDBOX_WALL_SECONDS
     sandbox_memory_mb: int = SANDBOX_MEMORY_MB
+    #: The system prompt's variant (P4 Δ6); a record without it is ``v1``.
+    prompt_variant: PromptVariant = "v1"
+    #: The experiment-choice policy (P4 Δ11); a record without it has none.
+    policy: PolicyName | None = None
+    #: Policy mode's settings; None is the defaults (recorded explicitly).
+    policy_settings: PolicySettings | None = None
 
     def as_json(self) -> dict[str, Any]:
-        return {
+        """The recorded form. Without a policy it holds exactly the keys it
+        held before policy mode, so a non-policy record is unchanged."""
+        data: dict[str, Any] = {
             "environment": self.environment,
             "truth_id": self.truth_id,
             "arm": self.arm,
@@ -172,7 +211,13 @@ class InvestigationSpec:
             "fit_config": FIT_CONFIG.key(),
             # AG-c has no sandbox, and its records keep their bytes.
             **({"sandbox": self.sandbox_json()} if self.arm == "AG-o" else {}),
+            "prompt_variant": self.prompt_variant,
         }
+        if self.policy is not None:
+            settings = self.policy_settings or PolicySettings()
+            data["policy"] = self.policy
+            data["policy_settings"] = settings.as_json()
+        return data
 
     def sandbox_limits(self) -> SandboxLimits:
         """The limits of every ``python`` call of an AG-o run."""
@@ -195,6 +240,12 @@ class InvestigationSpec:
                 f"the record was made with fit configuration "
                 f"{data.get('fit_config')!r}, this code pins {FIT_CONFIG.key()!r}"
             )
+        try:
+            variant = as_variant(data.get("prompt_variant", "v1"))
+            policy = as_policy(data.get("policy"))
+        except PromptError as error:
+            raise LabError(f"bad prompt variant or policy in record: {error}") from None
+        settings = data.get("policy_settings")
         spec = InvestigationSpec(
             environment=str(data["environment"]),
             truth_id=str(data["truth_id"]),
@@ -205,6 +256,11 @@ class InvestigationSpec:
             fits=int(data["fits"]),
             sandbox_wall_seconds=float(data["sandbox_wall_seconds"]),
             sandbox_memory_mb=int(data["sandbox_memory_mb"]),
+            prompt_variant=variant,
+            policy=policy,
+            policy_settings=None
+            if policy is None or settings is None
+            else PolicySettings.from_json(settings),
         )
         if arm == "AG-o" and data.get("sandbox") != spec.sandbox_json():
             raise LabError(
@@ -226,7 +282,11 @@ class InvestigationAgentConfig(AgentConfig):
 
 @dataclass(frozen=True)
 class InvestigationOutcome:
-    """What one finished investigation produced (framework-side)."""
+    """What one finished investigation produced (framework-side).
+
+    ``void`` and ``void_reasons`` follow the void policy of
+    :mod:`sciagent.harness.voids` (P4 Δ8); ``unknown_tool_attempts`` counts the
+    denied calls to unknown tool names, which do not void the run."""
 
     record_path: Path
     head: str
@@ -237,6 +297,7 @@ class InvestigationOutcome:
     fits_used: int
     void: bool
     void_reasons: tuple[str, ...]
+    unknown_tool_attempts: int
     predictions: tuple[PredictionOutcome, ...]
     num_turns: int | None
     wall_s: float | None
@@ -267,7 +328,8 @@ def build_lab(
             f"not {env.name!r}"
         )
     truth = env.resolve(spec.truth_id)
-    world = World(truth, spec.seed)
+    # P4 Δ2: an experiment that reaches the event cap is truncated and kept.
+    world = World(truth, spec.seed, truncate=True)
     view = make_view(spec.condition, world.channels, env.anon_channels)
     sandbox = None
     if spec.arm == "AG-o":
@@ -289,6 +351,11 @@ def build_lab(
         fits=spec.fits,
         sandbox=sandbox,
         fit_workers=fit_workers,
+        prompt_variant=spec.prompt_variant,
+        policy=spec.policy,
+        policy_settings=spec.policy_settings,
+        policy_seed=truth_policy_seed(spec.truth_id, spec.seed),
+        marks=env.marks,
     )
 
 
@@ -339,25 +406,87 @@ def check_image_id(recorded: Mapping[str, Any], lab: Lab) -> None:
         )
 
 
-def _prompts(lab: Lab) -> tuple[str, str]:
+def _prompts(lab: Lab, wall_time_s: float) -> tuple[str, str]:
     observational = lab.world.datasets[OBSERVATIONAL]
     system = system_prompt(
-        lab.view, lab.arm, experiments=lab.experiments, fits=lab.fits
+        lab.view,
+        lab.arm,
+        experiments=lab.experiments,
+        fits=lab.fits,
+        wall_time_s=wall_time_s,
+        variant=lab.prompt_variant,
+        policy=lab.policy,
     )
     opening = opening_prompt(lab.view, observational.log.n, observational.log.horizon)
     return system, opening
 
 
-def rendered_surface(lab: Lab) -> dict[str, Any]:
+def rendered_surface(lab: Lab, *, wall_time_s: float) -> dict[str, Any]:
     """Everything the agent is shown before its first call, by label.
 
     The system prompt, the opening prompt and every tool schema: the input to
-    the anonymisation leak test.
+    the anonymisation leak test. Without the opening prompt it equals
+    :func:`rendered_config` for the lab's configuration. ``wall_time_s`` is the
+    session's limit, which the lab does not hold and the prompt states.
     """
-    system, opening = _prompts(lab)
+    system, opening = _prompts(lab, wall_time_s)
     surface: dict[str, Any] = {"system_prompt": system, "opening_prompt": opening}
     for schema in lab.layer().schemas():
         surface[f"tool:{schema['name']}"] = schema
+    return surface
+
+
+def rendered_config(
+    env: EnvironmentSpec,
+    channels: tuple[ChannelSpec, ...],
+    arm: Arm,
+    condition: Condition,
+    *,
+    experiments: int,
+    fits: int,
+    wall_time_s: float,
+    prompt_variant: str = "v1",
+    policy: str | None = None,
+) -> dict[str, Any]:
+    """The session surface from configuration alone (P4 Δ7).
+
+    :func:`rendered_surface` without the opening prompt (which reads the
+    observational log's size and horizon), rendered without resolving a truth
+    or building a world: the system prompt and every tool schema, by label.
+    Its inputs are the channel specs, the anonymised names, the arm, the
+    condition, the budgets, the wall limit, the prompt variant, the policy (P4
+    Δ11; it is validated here, and runs on AG-c only) and this package's constants; the
+    truth, the seed and the sandbox limits are not among them. The campaign's
+    session key hashes it, so a prompt or schema edit moves the key. A lab
+    built from the same configuration shows exactly this.
+    """
+    if arm not in ("AG-c", "AG-o"):
+        raise LabError(f"arm must be 'AG-c' or 'AG-o', got {arm!r}")
+    if experiments < 0 or fits < 0:
+        raise LabError("budgets must be non-negative")
+    try:
+        variant = as_variant(prompt_variant)
+        policy_name = as_policy(policy)
+        check_policy_arm(arm, policy_name)
+    except PromptError as error:
+        raise LabError(str(error)) from None
+    view = make_view(condition, channels, env.anon_channels)
+    surface: dict[str, Any] = {
+        "system_prompt": system_prompt(
+            view,
+            arm,
+            experiments=experiments,
+            fits=fits,
+            wall_time_s=wall_time_s,
+            variant=variant,
+            policy=policy_name,
+        )
+    }
+    specs = tool_specs(
+        view, arm, experiments=experiments, fits=fits, policy=policy_name
+    )
+    for spec in specs:
+        surface[f"tool:{spec.name}"] = spec.schema()
     return surface
 
 
@@ -435,15 +564,44 @@ def run(
     sandbox_root: Path | None = None,
     keep_sandbox: bool = False,
     fit_workers: int = 1,
+    prompt_variant: str = "v1",
+    policy: str | None = None,
+    policy_settings: PolicySettings | None = None,
 ) -> InvestigationOutcome:
     """Run one investigation, save its record under ``out_dir``, and return it.
 
     A run aborted by the harness (hermeticity, served model, session failure,
     a tool bug) saves its partial record as ``aborted-<head>.json`` and
-    re-raises. An AG-o sandbox is recovered and removed afterwards
+    re-raises. ``prompt_variant`` picks the system prompt's variant (P4 Δ6).
+    ``policy`` names an experiment-choice policy (P4 Δ11: ``random``, ``EIG``
+    or ``FSD``, AG-c only), which puts the lab in policy mode
+    (:mod:`sciagent.investigation.policy`); ``policy_settings`` overrides its
+    replicates and menus (tests). An unknown policy, a policy on AG-o, or EIG
+    or FSD in an environment without a mark law is refused before anything
+    runs. An AG-o sandbox is recovered and removed afterwards
     (:func:`_discard_sandbox`); if that fails, the record is still saved and
-    the run is void for an infrastructure fault (``sandbox cleanup``).
+    the run is void for an infrastructure fault (``sandbox cleanup``). A tool
+    call that outlives the session (a worker thread cannot be cancelled) leaves
+    the sandbox in place, since removing it under a running call could fail
+    and void the run for a call the record does not hold: the session's owner
+    recovers it once the process is gone
+    (:func:`sciagent.campaign.llm.run_session_isolated`).
+
+    Everything returned is read from the record or from the lab's committed
+    read-outs (:class:`~sciagent.investigation.tools.Committed`), so a call
+    with no ``tool_call`` entry reaches no field of the outcome.
     """
+    try:
+        variant = as_variant(prompt_variant)
+        policy_name = as_policy(policy)
+        check_policy_arm(arm, policy_name)
+    except PromptError as error:
+        raise LabError(str(error)) from None
+    if policy_name in NEEDS_MARKS and env.marks is None:
+        raise LabError(
+            f"policy {policy_name!r} needs the environment's mark law "
+            "(EnvironmentSpec.marks)"
+        )
     limits = run_sandbox_limits()
     spec = InvestigationSpec(
         environment=env.name,
@@ -455,9 +613,12 @@ def run(
         fits=fits,
         sandbox_wall_seconds=limits.wall_seconds,
         sandbox_memory_mb=limits.memory_mb,
+        prompt_variant=variant,
+        policy=policy_name,
+        policy_settings=policy_settings,
     )
     lab = build_lab(spec, env, sandbox_root=sandbox_root, fit_workers=fit_workers)
-    system, opening = _prompts(lab)
+    system, opening = _prompts(lab, wall_time_s)
     try:
         investigation = investigation_json(spec, lab)
     except SandboxError:
@@ -475,8 +636,9 @@ def run(
     )
     out_dir.mkdir(parents=True, exist_ok=True)
     cleanup_fault: str | None = None
+    layer = lab.layer()
     try:
-        result = run_investigation(config, lab.layer(), driver=driver)
+        result = run_investigation(config, layer, driver=driver)
     except (
         HarnessFaultError,
         HermeticityError,
@@ -486,16 +648,32 @@ def run(
         error.record.save(out_dir / f"aborted-{error.record.head[:16]}.json")
         raise
     finally:
+        layer.close()
         if lab.sandbox is not None:
-            cleanup_fault = _discard_sandbox(lab.sandbox, keep=keep_sandbox)
+            if layer.idle(IDLE_WAIT_S):
+                cleanup_fault = _discard_sandbox(lab.sandbox, keep=keep_sandbox)
+            else:
+                _log.warning(
+                    "a tool call outlived the session; %s is left for the "
+                    "session's owner to recover",
+                    lab.sandbox.run_dir,
+                )
     record = result.record
     path = out_dir / f"investigation-{record.head[:16]}.json"
     record.save(path)
-    reasons = [f"foreign tool: {name}" for name in result.foreign_tool_uses]
-    reasons += [f"infrastructure: {f}" for f in lab.infrastructure_faults]
-    if cleanup_fault is not None:
-        reasons.append(f"infrastructure: sandbox cleanup: {cleanup_fault}")
-    reasons += [f"out of bounds: {h}" for h in out_of_bounds(record)]
+    # The void policy (P4 Δ8) over every raw reason at once, so the reasons
+    # come out in the order the analysis gets from a cell storing these raw
+    # reasons (``sciagent.campaign.voids``).
+    cleanup = () if cleanup_fault is None else (f"sandbox cleanup: {cleanup_fault}",)
+    verdict = assess(
+        [
+            *foreign_reasons(result.foreign_tool_uses),
+            *(INFRASTRUCTURE + f for f in lab.infrastructure_faults),
+            *(INFRASTRUCTURE + f for f in cleanup),
+            *(OUT_OF_BOUNDS_REASON + h for h in out_of_bounds(record)),
+        ],
+        record,
+    )
     results = record.of_kind("result")
     usage = results[-1].body.get("usage") if results else None
     wall = record.timing.get("wall_s")
@@ -505,10 +683,11 @@ def run(
         outcome=result.outcome,
         submission=lab.submitted,
         report=lab.report,
-        experiments_used=lab.world.experiments_run,
+        experiments_used=lab.experiments_used,
         fits_used=lab.fits_used,
-        void=bool(reasons),
-        void_reasons=tuple(reasons),
+        void=verdict.void,
+        void_reasons=verdict.reasons,
+        unknown_tool_attempts=verdict.unknown_tool_attempts,
         predictions=lab.prediction_outcomes,
         num_turns=result.num_turns,
         wall_s=None if wall is None else float(wall),

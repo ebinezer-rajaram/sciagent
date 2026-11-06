@@ -42,6 +42,7 @@ def entry(truth_id: str) -> TruthEntry:
         stratum="near",
         nearest_distance=0.18,
         dsl=truth_id,
+        split="dev",
     )
 
 
@@ -56,6 +57,7 @@ def environment() -> CampaignEnvironment:
         ),
         prior=ScenarioPrior(STRUCTURE_PRIOR, v2.CHANNELS, 0.5),
         prior_id="test-prior",
+        domain_text=v2.domain_text(),
         investigation=EnvironmentSpec(
             name="pointproc-v2",
             anon_channels=ANON_CHANNELS,

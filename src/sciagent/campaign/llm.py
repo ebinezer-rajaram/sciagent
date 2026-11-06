@@ -6,7 +6,10 @@ scripted driver), then reads the saved, hash-chained record back for what the
 campaign keeps: outcome, cost (turns, tokens), budgets used,
 predictions (SPEC §4.4), tool-call counts, the submitted structure and every
 charged fit's structure in fit order (native DSL, for the efficiency curve in
-:func:`sciagent.campaign.execute.run_score_job`).
+:func:`sciagent.campaign.execute.run_score_job`). Turns and tokens are the
+SDK's own figures, from the record's ``result`` entry; a session with none (a
+wall-time end) has no such reading fields. Old cells hold 0 there instead, so
+whether a session has them is read from its record, not from a zero.
 
 **What is recorded and what is retried.** A session that ran to an outcome
 (submitted, max turns, wall time, ended without submit, refused, output
@@ -14,8 +17,12 @@ ceiling) is a result. So is a run the harness aborted for a reason that is
 about the run: :class:`~sciagent.harness.errors.HermeticityError` (the session
 offered a foreign tool) and :class:`~sciagent.harness.errors.HarnessFaultError`
 (a tool handler raised; a framework bug, recorded so it is visible). A void run
-(foreign tool use, sandbox infrastructure fault, out-of-bounds code) is a
-result with ``void = 1``.
+under the void policy of :mod:`sciagent.harness.voids` (P4 Δ8: a foreign tool
+that executed or has no recorded denial, server tool use, a sandbox
+infrastructure fault, out-of-bounds code) is a result with ``void = 1``. A
+denied call to an unknown tool name does not void it; the reading counts it
+in ``unknown_tool_attempts``, and ``void_reasons`` in the detail are the
+policy's.
 
 Retryable (:attr:`SessionOutcome.retryable`), never recorded as a result: the
 SDK session failing (:class:`~sciagent.harness.errors.SessionFailedError`), a
@@ -59,6 +66,7 @@ from sciagent.campaign.plan import (
     CampaignError,
     TruthEntry,
     Unit,
+    session_policy_settings,
 )
 from sciagent.glm.canonical import canonicalise
 from sciagent.glm.syntax import render
@@ -93,6 +101,9 @@ OUTCOMES: Final = (
 #: Seconds past the session's wall time before an isolated session's process
 #: is killed (:func:`run_session_isolated`).
 HARD_TIMEOUT_GRACE_S: Final = 600.0
+#: Seconds an isolated session's process has to exit once it has answered,
+#: before it is killed (:func:`_run_isolated`).
+EXIT_GRACE_S: Final = 10.0
 #: Outcomes that are retried rather than recorded (module docstring).
 RETRY_OUTCOMES: Final = ("session_error",)
 #: What a session outcome carries beside its cell, for its ``timing.jsonl``
@@ -205,6 +216,11 @@ def run_session(
             wall_time_s=config.wall_time_s,
             driver=driver,
             sandbox_root=sandbox_root,
+            prompt_variant=arm.prompt_variant,
+            policy=arm.policy,
+            policy_settings=None
+            if arm.policy is None
+            else session_policy_settings(config.policy),
         )
     except (SessionFailedError, ServedModelError, SandboxError) as error:
         return _retry(unit, error, start)
@@ -257,6 +273,9 @@ def run_session(
             unit, True, {}, detail, None, (), time.perf_counter() - start, {}
         )
     evaluated = [p for p in outcome.predictions if p.value is not None]
+    # Turns and tokens exist only in the SDK's ``result`` message. A session
+    # with none (a wall-time end) has no such reading, rather than a 0 that
+    # would read as a session that cost nothing.
     reading = {
         "status": 1.0,
         "outcome": float(OUTCOMES.index(outcome.outcome))
@@ -264,14 +283,15 @@ def run_session(
         else -1.0,
         "submitted": 0.0 if outcome.submission is None else 1.0,
         "void": 1.0 if outcome.void else 0.0,
-        "turns": float(outcome.num_turns or 0),
+        "unknown_tool_attempts": float(outcome.unknown_tool_attempts),
+        **({"turns": float(outcome.num_turns or 0)} if results else {}),
         "fits_used": float(outcome.fits_used),
         "experiments_used": float(outcome.experiments_used),
         "tool_calls": float(sum(counts.values())),
         "predictions": float(len(outcome.predictions)),
         "predictions_evaluated": float(len(evaluated)),
         "predictions_covered": float(sum(p.covered for p in evaluated)),
-        **_usage(outcome.usage),
+        **(_usage(outcome.usage) if results else {}),
     }
     return SessionOutcome(
         unit,
@@ -402,7 +422,12 @@ def run_session_isolated(
     session gets ``wall_time_s + grace_s``; past that its process is killed and
     the unit is recorded as ``hard_timeout`` (void, nothing scored, no record
     saved), so one runaway experiment cannot block the campaign. A process
-    that dies without an answer is retryable.
+    that dies without an answer is retryable. A process that has answered gets
+    :data:`EXIT_GRACE_S` to exit and is then killed: its outcome and record are
+    in hand, and all that can keep it alive is a tool call that outlived the
+    session, which interpreter exit would join however long it runs. Measured
+    in the pilot: two wall-time sessions held their slot 1,034 s and 1,455 s
+    past the end of their records, both past the hard deadline.
 
     An AG-o session gets a sandbox root of its own (an opaque temporary
     directory under ``sandbox_root``). A killed process leaves its sandbox
@@ -468,6 +493,7 @@ def _run_isolated(
     grace_s: float,
     *,
     target: SessionTarget = _child,
+    exit_grace_s: float = EXIT_GRACE_S,
 ) -> SessionOutcome:
     """The process part of :func:`run_session_isolated`.
 
@@ -487,7 +513,9 @@ def _run_isolated(
     try:
         if receive.poll(deadline):
             outcome: SessionOutcome = receive.recv()
-            process.join()
+            process.join(exit_grace_s)
+            if process.is_alive():
+                _kill_session(process)
             # The driver's clock, spawn included, as for a hard timeout below,
             # so the unit's wall time is one measurement whatever the outcome.
             return dataclasses.replace(outcome, wall_s=time.perf_counter() - start)

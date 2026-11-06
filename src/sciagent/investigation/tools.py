@@ -31,42 +31,136 @@ ledger for its index *before* it draws, runs, then evaluates every committed
 prediction for that index by computing the named diagnostic on the agent-view
 dataset. The agent never supplies an observed value: :class:`Prediction`
 has no field for one, and ``predict``'s schema has none either.
+
+Truncation (P4 Δ2). The world truncates an experiment that reaches
+:data:`~sciagent.investigation.world.MAX_EVENTS` at its cap's event, at τ,
+instead of stopping it. The run is charged and its dataset is kept; the
+record carries ``truncated_at`` (native τ) and ``analysis_horizon``. Agent-side
+analysis -- diagnostics, kernels, the sandbox files, prediction evaluation --
+reads the dataset clipped to ``[0, shown]``
+(:func:`~sciagent.investigation.view.clip_to_analysis`), where ``shown`` is τ
+unless an excluded window holds τ, in which case it is that window's start, so
+the time of an unseen event is never shown. Fits read the native dataset,
+whose likelihood already leaves out the tail after τ. The runaway guards
+still stop a run; that path is unchanged.
+
+Designs (P4 Δ3). ``run_experiment`` reads a design: the experiment JSON with
+generators (:data:`~sciagent.glm.designs.DESIGN_SCHEMA`), expanded to arrays
+before validation, so the record holds arrays only. AG-o may instead name a
+JSON file it wrote in ``/work`` (``{"intervention": {"from": "/work/x.json"}}``):
+a regular file, reached through no link, at most
+:data:`MAX_DESIGN_FILE_BYTES`, whose sha256 is recorded. Replay re-runs the
+sandbox calls that wrote it, so the digest checks the file.
+
+Budget line (P4 Δ12). Every result -- success, error, or the layer's own
+refusal -- ends with one line giving the experiments and fits left
+(:func:`budget_line`), appended by the layer after charging.
+
+Beliefs (P4 Δ4, SPEC §4.4). ``belief(favoured, rivals, confidence)`` is free
+and records the agent's favoured structure, one to :data:`MAX_RIVALS` rivals
+(distinct from it and from each other after canonicalisation) and a
+confidence in (0, 1). Its record is ``{"belief": i, "favoured", "rivals",
+"confidence", "experiments_run": k}`` with every structure as canonical native
+DSL text, the input of :func:`~sciagent.investigation.timeline.timeline`. A
+belief is *fresh* when no experiment has run since it was recorded;
+``run_experiment`` and ``submit`` are refused, uncharged, without a fresh one.
+The gate is checked before anything else in those handlers, so a refused call
+reads no design, seals no ledger entry and draws nothing. ``submit`` also
+records a ``stop_reason`` (:data:`~sciagent.investigation.prompts.STOP_REASONS`)
+and an optional ``note``. ``predict``'s ``hypothesis`` is a structure only,
+recorded as canonical native text; free commentary goes in ``note``, which is
+recorded and never shown back. Every hypothesis label in the record is
+``render(canonicalise(parse(text)))`` in native names, so one structure has one
+label whatever the spelling or the naming condition.
+
+Policy mode (P4 Δ11, SPEC §4.2). A lab built with a ``policy`` (AG-c only)
+offers ``run_experiment`` with no arguments: after the belief gate, the
+framework's policy (:mod:`sciagent.investigation.policy`) fits the latest
+belief's structures (uncharged, unshown), chooses a design and a diagnostic
+from its menus, and the design runs through the same path as an agent's design
+(``_run``), so the charge, the ledger seal, truncation and the summary are the
+same. The result adds the design (in the agent's names and units) and the
+chosen diagnostic's value on the new dataset; the decision, with its scores,
+weights and degeneracy summary, is in the output's ``record`` only, under
+``policy``. Without a policy every schema, text and record is as before.
+
+Read-outs. A handler changes the lab as it goes, before the layer logs its call,
+and a handler running when a session is cut cannot be stopped. So the runner
+reads :class:`Committed`, taken whenever the layer commits a call, and never
+the live state: a call the session's record does not hold moves no read-out.
 """
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import math
+import os
 import re
-from collections.abc import Mapping, Sequence
+import stat
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Any, Final
 
 import numpy as np
 
-from sciagent.core.errors import SciAgentError
+from sciagent.core.errors import GrammarError, SciAgentError
 from sciagent.diagnostics import catalogue
 from sciagent.glm.canonical import canonicalise, structure_hash
 from sciagent.glm.data import Dataset
+from sciagent.glm.designs import DESIGN_SCHEMA
 from sciagent.glm.fit import FitConfig, FitResult, fit, fit_cache_key
 from sciagent.glm.grammar import ChannelKind, Structure, n_columns, psi_slots
 from sciagent.glm.interventions import (
     DEFAULT_HORIZON,
-    EXPERIMENT_SCHEMA,
+    Experiment,
     canonical_json,
 )
 from sciagent.glm.simulate import (
     ExplosionError,
+    MarkSampler,
     NegativeIntensityError,
     SimulationError,
 )
 from sciagent.glm.syntax import render
 from sciagent.harness.ledger import Prediction, PredictionLedger
 from sciagent.harness.record import canonical_json as record_json
-from sciagent.harness.tools import ToolLayer, ToolOutput, ToolSpec
-from sciagent.investigation.prompts import Arm, num
-from sciagent.investigation.view import AgentView
+from sciagent.harness.tools import (
+    BudgetMeter,
+    Handler,
+    ToolCall,
+    ToolLayer,
+    ToolOutput,
+    ToolSpec,
+)
+from sciagent.investigation.policy import (
+    DEFAULT_SETTINGS,
+    PolicyDecision,
+    PolicyMode,
+    PolicySettings,
+)
+from sciagent.investigation.prompts import (
+    MAX_DESIGN_FILE_BYTES,
+    STOP_REASONS,
+    WORK_PREFIX,
+    Arm,
+    PolicyName,
+    PromptError,
+    PromptVariant,
+    as_policy,
+    as_variant,
+    budget_line,
+    check_policy_arm,
+    num,
+)
+from sciagent.investigation.view import (
+    AgentView,
+    ViewError,
+    clip_to_analysis,
+    shown_truncation,
+)
 from sciagent.investigation.world import (
     MAX_EVENTS,
     OBSERVATIONAL,
@@ -88,12 +182,18 @@ __all__ = [
     "BUDGET_SUBMIT",
     "ENDOGENOUS_COLUMN",
     "FIT_CONFIG",
+    "MAX_DESIGN_FILE_BYTES",
+    "MAX_NOTE",
+    "MAX_RIVALS",
     "SUMMARY_DIAGNOSTICS",
+    "Committed",
     "Lab",
     "LabError",
     "PredictionOutcome",
+    "budget_line",
     "python_tool_json",
     "python_tool_text",
+    "tool_specs",
 ]
 
 #: The one fit configuration every ``fit`` call uses (``workers`` aside, which
@@ -117,7 +217,17 @@ SUMMARY_DIAGNOSTICS: Final = (
 )
 _MAX_NOTEBOOK_APPEND: Final = 20_000
 _MAX_CODE: Final = 50_000
+#: Most rivals one belief may name (P4 Δ4).
+MAX_RIVALS: Final = 3
+#: Longest free ``note`` on ``predict`` or ``submit``, in characters.
+MAX_NOTE: Final = 1_000
 _DATA_ID: Final = re.compile(r"^(obs|e(0|[1-9][0-9]*))$")
+#: A design file's path as the agent writes it: under /work, plain segments.
+_WORK_PATH: Final = re.compile(r"^/work(/[A-Za-z0-9_.-]+)+$")
+#: The key that names a design file in place of an inline intervention.
+FROM_KEY: Final = "from"
+#: ``st_file_attributes`` bit of a Windows reparse point (junction, link).
+_FILE_ATTRIBUTE_REPARSE_POINT: Final = 0x400
 
 
 def python_tool_text(result: SandboxResult) -> str:
@@ -218,6 +328,26 @@ class _State:
     submitted: Structure | None = None
     report: str | None = None
     infrastructure_faults: list[str] = field(default_factory=list)
+    #: Beliefs recorded so far (the next belief's index).
+    beliefs: int = 0
+    #: ``World.experiments_run`` when the latest belief was recorded.
+    belief_at: int | None = None
+    #: The latest belief's structures, favoured first, as ``(native label,
+    #: native structure)``: policy mode's entertained candidates.
+    belief_structures: tuple[tuple[str, Structure], ...] = ()
+
+
+@dataclass(frozen=True)
+class Committed:
+    """What the lab's read-outs say as of its last committed call (module
+    docstring). Calls are serial, so this is the state between two handlers."""
+
+    fits_used: int = 0
+    experiments_used: int = 0
+    submitted: Structure | None = None
+    report: str | None = None
+    prediction_outcomes: tuple[PredictionOutcome, ...] = ()
+    infrastructure_faults: tuple[str, ...] = ()
 
 
 class Lab:
@@ -233,6 +363,11 @@ class Lab:
         fits: int,
         sandbox: Sandbox | None = None,
         fit_workers: int = 1,
+        prompt_variant: str = "v1",
+        policy: str | None = None,
+        policy_settings: PolicySettings | None = None,
+        policy_seed: int | None = None,
+        marks: MarkSampler | None = None,
     ) -> None:
         if arm not in ("AG-c", "AG-o"):
             raise LabError(f"arm must be 'AG-c' or 'AG-o', got {arm!r}")
@@ -240,17 +375,43 @@ class Lab:
             raise LabError("AG-o needs a sandbox and AG-c must not have one")
         if experiments < 0 or fits < 0:
             raise LabError("budgets must be non-negative")
+        try:
+            variant = as_variant(prompt_variant)
+            policy_name = as_policy(policy)
+            check_policy_arm(arm, policy_name)
+        except PromptError as error:
+            raise LabError(str(error)) from None
+        if policy_name is not None and policy_seed is None:
+            raise LabError("policy mode needs a seed for the policy")
         self.world = world
         self.view = view
         self.arm: Arm = arm
         self.experiments = experiments
         self.fits = fits
         self.sandbox = sandbox
+        #: The system prompt's variant (P4 Δ6). The tools do not depend on it;
+        #: it is kept here so everything the agent is shown renders from the lab.
+        self.prompt_variant: PromptVariant = variant
         # Pinned framework-side (invariant 2): no agent argument reaches the
         # fit configuration, so certification cannot be loosened by a request.
         self.fit_config = replace(FIT_CONFIG, workers=fit_workers)
         self.ledger = PredictionLedger()
         self.state = _State()
+        self.committed = Committed()
+        #: The experiment-choice policy (P4 Δ11); None: the agent designs.
+        self.policy: PolicyName | None = policy_name
+        self.policy_mode: PolicyMode | None = None
+        if policy_name is not None and policy_seed is not None:
+            self.policy_mode = PolicyMode(
+                policy_name,
+                policy_seed,
+                DEFAULT_SETTINGS if policy_settings is None else policy_settings,
+                world.channels,
+                view,
+                world.datasets[OBSERVATIONAL],
+                marks,
+                self.fit_config,
+            )
         if sandbox is not None:
             self._publish(OBSERVATIONAL)
 
@@ -258,29 +419,47 @@ class Lab:
 
     @property
     def submitted(self) -> Structure | None:
-        return self.state.submitted
+        return self.committed.submitted
 
     @property
     def report(self) -> str | None:
-        return self.state.report
+        return self.committed.report
 
     @property
     def prediction_outcomes(self) -> tuple[PredictionOutcome, ...]:
-        return tuple(self.state.outcomes)
+        return self.committed.prediction_outcomes
 
     @property
     def infrastructure_faults(self) -> tuple[str, ...]:
-        return tuple(self.state.infrastructure_faults)
+        return self.committed.infrastructure_faults
 
     @property
     def fits_used(self) -> int:
-        return len(self.state.fits)
+        return self.committed.fits_used
+
+    @property
+    def experiments_used(self) -> int:
+        return self.committed.experiments_used
+
+    def _commit(self, _call: ToolCall) -> None:
+        """Take the read-outs: the layer has just committed a call."""
+        self.committed = Committed(
+            fits_used=len(self.state.fits),
+            experiments_used=self.world.experiments_run,
+            submitted=self.state.submitted,
+            report=self.state.report,
+            prediction_outcomes=tuple(self.state.outcomes),
+            infrastructure_faults=tuple(self.state.infrastructure_faults),
+        )
 
     # -- data helpers -------------------------------------------------------------
 
     def _agent_data(self, data_id: str) -> Dataset:
+        """The dataset the agent analyses: clipped to ``[0, shown]`` if truncated."""
         native = self._native_data(data_id)
-        return self.view.dataset(native)
+        return self.view.dataset(
+            clip_to_analysis(native, self.world.truncated_at(data_id))
+        )
 
     def _native_data(self, data_id: object) -> Dataset:
         if not isinstance(data_id, str):
@@ -338,7 +517,52 @@ class Lab:
     # -- run_experiment -------------------------------------------------------
 
     def run_experiment(self, args: Mapping[str, Any]) -> ToolOutput:
+        self._require_belief("an experiment")
+        if self.policy_mode is not None:
+            return self._run_policy(self.policy_mode, args)
+        args, source = self._design_args(args)
         native = self.view.experiment_native(args)
+        provenance = {} if source is None else {"design_file": source}
+        return self._run(native, provenance)
+
+    def _run_policy(self, mode: PolicyMode, args: Mapping[str, Any]) -> ToolOutput:
+        """Policy mode: the framework chooses the experiment (module docstring)."""
+        if args:
+            raise LabError(
+                "run_experiment takes no arguments here: the framework chooses "
+                "the experiment. Nothing was run and nothing was charged."
+            )
+        datasets = self.world.datasets
+        try:
+            chosen = mode.decide(
+                self.world.experiments_run,
+                self.state.belief_structures,
+                [datasets[i] for i in _ordered_ids(datasets)],
+            )
+        except SciAgentError as error:
+            # A fault inside the framework's decision (the policy core, its
+            # fits, simulations or diagnostics), not an agent act: its message
+            # may carry policy numbers or native names, so it is recorded (and
+            # voids the run), and the agent is told only that nothing ran. The
+            # layer would otherwise show any SciAgentError's message verbatim.
+            self.state.infrastructure_faults.append(
+                f"policy {mode.name}: {type(error).__name__}: {error}"
+            )
+            return ToolOutput(
+                "the framework could not choose an experiment; nothing was run "
+                "and nothing was charged",
+                is_error=True,
+            )
+        return self._run(chosen.experiment, {}, chosen)
+
+    def _run(
+        self,
+        native: Experiment,
+        provenance: Mapping[str, Any],
+        chosen: PolicyDecision | None = None,
+    ) -> ToolOutput:
+        """Seal, run and summarise one experiment, chosen by the agent or, with
+        ``chosen``, by the policy; charged alike (the layer charges a success)."""
         index = self.world.experiments_run
         if index != self.ledger.next_experiment:
             raise LabError("internal: ledger and world disagree on the next index")
@@ -352,45 +576,180 @@ class Lab:
             reason = _stop_reason(error)
             self.ledger.evaluate(index, lambda _p: math.nan)
             self._record_outcomes(index, failed=reason)
-            return ToolOutput(
+            stopped = [
                 f"experiment {experiment_id(index)} was stopped and produced no "
-                f"dataset: {reason}. It counts against the budget.",
-                record={
-                    "experiment": index,
-                    "design": design,
-                    "horizon": native.horizon,
-                    "stopped": True,
-                },
-            )
-        data_id = experiment_id(index)
-        if self.sandbox is not None:
-            self._publish(data_id)
-        values = self._evaluate(index, data_id)
-        used = self.world.experiments_run
-        text = [
-            f"experiment {data_id} done ({used} of {self.experiments} experiments "
-            f"used).",
-            self._summary(data_id),
-        ]
-        if values:
-            text.append("committed predictions for this experiment:")
-            text.extend(_outcome_line(o, self.view) for o in values)
-        return ToolOutput(
-            "\n".join(text),
-            record={
+                f"dataset: {reason}. It counts against the budget."
+            ]
+            stopped_record: dict[str, Any] = {
                 "experiment": index,
                 "design": design,
                 "horizon": native.horizon,
-                "n_events": self.world.datasets[data_id].log.n,
-                "predictions": [o.as_json() for o in values],
-            },
+                "stopped": True,
+                **provenance,
+            }
+            if chosen is not None:
+                stopped.append(self._design_text(chosen))
+                no_data = "the experiment was stopped"
+                stopped.append(self._diagnostic_text(chosen, None, no_data))
+                stopped_record["policy"] = self._policy_record(chosen, None, no_data)
+            return ToolOutput("\n".join(stopped), record=stopped_record)
+        data_id = experiment_id(index)
+        dataset = self.world.datasets[data_id]
+        tau = self.world.truncated_at(data_id)
+        empty = False
+        if tau is not None:
+            try:
+                clip_to_analysis(dataset, tau)
+            except ViewError:
+                empty = True  # cut at time 0: nothing to analyse
+        if self.sandbox is not None and not empty:
+            self._publish(data_id)
+        values = self._evaluate(index, data_id, empty=empty)
+        used = self.world.experiments_run
+        text = [
+            f"experiment {data_id} done ({used} of {self.experiments} experiments "
+            f"used)."
+        ]
+        if chosen is not None:
+            text.append(self._design_text(chosen))
+        record: dict[str, Any] = {
+            "experiment": index,
+            "design": design,
+            "horizon": native.horizon,
+            "n_events": dataset.log.n,
+        }
+        if tau is not None:
+            end = shown_truncation(dataset, tau)
+            text.append(self._truncation_text(end, native.horizon))
+            record["truncated_at"] = tau
+            record["analysis_horizon"] = end
+        text.append(
+            f"dataset `{data_id}`: nothing was observed before the cut, so there "
+            "is nothing to analyse; it can still be fitted."
+            if empty
+            else self._summary(data_id)
+        )
+        if chosen is not None and self.policy_mode is not None:
+            shown, why = self.policy_mode.value(
+                chosen, None if empty else self._agent_data(data_id).log
+            )
+            text.append(self._diagnostic_text(chosen, shown, why, data_id))
+            record["policy"] = self._policy_record(chosen, shown, why)
+        if values:
+            text.append("committed predictions for this experiment:")
+            text.extend(_outcome_line(o, self.view) for o in values)
+        record["predictions"] = [o.as_json() for o in values]
+        record.update(provenance)
+        return ToolOutput("\n".join(text), record=record)
+
+    # -- policy mode's texts and record (P4 Δ11) ----------------------------------
+
+    @staticmethod
+    def _design_text(chosen: PolicyDecision) -> str:
+        return "design chosen by the framework: " + json.dumps(
+            chosen.design, sort_keys=True
         )
 
-    def _evaluate(self, index: int, data_id: str) -> list[PredictionOutcome]:
-        log = self._agent_data(data_id).log
+    def _diagnostic_text(
+        self,
+        chosen: PolicyDecision,
+        value: float | None,
+        why: str | None,
+        data_id: str | None = None,
+    ) -> str:
+        choice = chosen.diagnostic
+        name = self.view.diagnostic(choice.name)
+        head = (
+            f"diagnostic chosen by the framework: {name} "
+            f"(arguments: {_args_text(dict(choice.args))})"
+        )
+        if value is not None and data_id is not None:
+            return f"{head} on {data_id} = {num(value)}"
+        return f"{head}: not available ({why})"
+
+    def _policy_record(
+        self, chosen: PolicyDecision, value: float | None, why: str | None
+    ) -> dict[str, Any]:
+        """The framework-only decision, plus what was shown of it."""
+        choice = chosen.diagnostic
+        return {
+            **chosen.record,
+            "shown": {
+                "design": chosen.design,
+                "diagnostic": {
+                    "name": self.view.diagnostic(choice.name),
+                    "args": dict(choice.args),
+                },
+                "value": value,
+                "error": why,
+            },
+        }
+
+    def _truncation_text(self, end: float, horizon: float) -> str:
+        shown = num(self.view.time(end))
+        return (
+            f"truncated: the run reached the limit of {MAX_EVENTS} events and was "
+            f"cut short; this dataset covers [0, {shown}] of the planned horizon "
+            f"{num(self.view.time(horizon))}, and nothing after {shown} was "
+            "observed."
+        )
+
+    def _design_args(
+        self, args: Mapping[str, Any]
+    ) -> tuple[Mapping[str, Any], dict[str, Any] | None]:
+        """Resolve ``{"intervention": {"from": path}}`` (AG-o) to the file's JSON.
+
+        Returns the arguments with the intervention inlined, and the file's
+        provenance for the record (None for an inline design).
+        """
+        intervention = args.get("intervention")
+        if not isinstance(intervention, Mapping) or FROM_KEY not in intervention:
+            return args, None
+        if self.sandbox is None:
+            raise LabError(
+                "a design can be read from a file only with the python sandbox; "
+                "give the intervention inline"
+            )
+        if len(intervention) != 1:
+            raise LabError(
+                f"an intervention read from a file has exactly one key, "
+                f"{FROM_KEY!r}; got keys {sorted(map(str, intervention))}"
+            )
+        path = intervention[FROM_KEY]
+        if not isinstance(path, str):
+            raise LabError(f"{FROM_KEY!r} must be a path string, got {path!r}")
+        payload = _read_work_file(self.sandbox.work_dir, path)
+        try:
+            loaded = json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError, RecursionError):
+            raise LabError(f"design file {path} is not valid JSON") from None
+        if (
+            not isinstance(loaded, dict)
+            or "type" not in loaded
+            or "intervention" in loaded
+        ):
+            raise LabError(
+                f"design file {path} must hold one intervention object (with a "
+                "'type' key), not an experiment; give the horizon as an argument"
+            )
+        inlined = {**args, "intervention": loaded}
+        source = {
+            "path": path,
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "bytes": len(payload),
+        }
+        return inlined, source
+
+    def _evaluate(
+        self, index: int, data_id: str, *, empty: bool = False
+    ) -> list[PredictionOutcome]:
+        log = None if empty else self._agent_data(data_id).log
         errors: dict[int, str] = {}
 
         def statistic(prediction: Prediction) -> float:
+            if log is None:
+                errors[id(prediction)] = "nothing was observed before the cut"
+                return math.nan
             spec = json.loads(prediction.statistic)
             try:
                 return catalogue.compute(
@@ -616,7 +975,11 @@ class Lab:
         experiment = args["experiment"]
         if isinstance(experiment, bool) or not isinstance(experiment, int | float):
             raise LabError("experiment must be an integer index")
-        if float(experiment) != int(experiment):
+        try:
+            as_float = float(experiment)
+        except OverflowError:
+            raise LabError(f"experiment is too large: {experiment!r}") from None
+        if not math.isfinite(as_float) or as_float != int(experiment):
             raise LabError("experiment must be an integer index")
         index = int(experiment)
         if index >= self.experiments:
@@ -633,7 +996,12 @@ class Lab:
         catalogue.resolve_args(
             name, given, observational, self.view.channels, check_bounds=False
         )
-        hypothesis = self.view.parse(str(args["hypothesis"]))
+        hypothesis = self._structure(
+            args["hypothesis"],
+            "hypothesis",
+            hint="give the structure only and put any commentary in `note`",
+        )
+        note = _note(args.get("note"))
         interval = args["interval"]
         if not isinstance(interval, list | tuple) or len(interval) != 2:
             raise LabError("interval must be [low, high]")
@@ -647,7 +1015,97 @@ class Lab:
             level=level,
             hypothesis=_native_text(hypothesis),
         )
-        return self.ledger.commit_tool(prediction)
+        out = self.ledger.commit_tool(prediction)
+        if out.is_error or out.record is None:
+            return out
+        return ToolOutput(
+            out.text,
+            record={
+                **out.record,
+                "hypothesis": prediction.hypothesis,
+                "note": note,
+            },
+        )
+
+    # -- belief (P4 Δ4) -----------------------------------------------------------
+
+    def belief(self, args: Mapping[str, Any]) -> ToolOutput:
+        favoured = canonicalise(self._structure(args["favoured"], "favoured"))
+        given = args["rivals"]
+        if not isinstance(given, list) or not 1 <= len(given) <= MAX_RIVALS:
+            raise LabError(
+                f"rivals must be a list of 1 to {MAX_RIVALS} structures, got {given!r}"
+            )
+        rivals = [
+            canonicalise(self._structure(r, f"rival {k}"))
+            for k, r in enumerate(given, start=1)
+        ]
+        label = _native_text(favoured)
+        labels = [_native_text(r) for r in rivals]
+        for k, rival in enumerate(labels, start=1):
+            if rival == label:
+                raise LabError(
+                    f"rival {k} is the favoured structure written another way; "
+                    "each rival must differ from the favoured structure"
+                )
+            if rival in labels[: k - 1]:
+                raise LabError(
+                    f"rival {k} repeats rival {labels.index(rival) + 1} (the same "
+                    "structure written another way); rivals must be distinct"
+                )
+        confidence = _confidence(args["confidence"])
+        index = self.state.beliefs
+        run = self.world.experiments_run
+        self.state.beliefs += 1
+        self.state.belief_at = run
+        self.state.belief_structures = (
+            (label, favoured),
+            *zip(labels, rivals, strict=True),
+        )
+        view = self.view
+        lines = [
+            f"belief {index} recorded (after {run} of {self.experiments} experiments).",
+            f"favoured: {view.render(favoured)}",
+            *(f"rival {k}: {view.render(r)}" for k, r in enumerate(rivals, start=1)),
+            f"confidence: {num(confidence)}",
+        ]
+        return ToolOutput(
+            "\n".join(lines),
+            record={
+                "belief": index,
+                "favoured": label,
+                "rivals": labels,
+                "confidence": confidence,
+                "experiments_run": run,
+            },
+        )
+
+    def _require_belief(self, action: str) -> None:
+        """Refuse ``action`` unless a belief was recorded since the last experiment."""
+        if self.state.belief_at == self.world.experiments_run:
+            return
+        when = (
+            "no belief has been recorded yet"
+            if self.state.belief_at is None
+            else "an experiment has run since your last belief"
+        )
+        raise LabError(
+            f"record your current belief with `belief` before {action}: {when}. "
+            "Nothing was run and nothing was charged."
+        )
+
+    def _structure(self, text: object, what: str, *, hint: str = "") -> Structure:
+        """Agent DSL ``text`` as a native structure; errors name ``what``."""
+        tail = f"; {hint}" if hint else ""
+        if not isinstance(text, str):
+            raise LabError(
+                f"{what} must be a structure in the modelling language, got "
+                f"{text!r}{tail}"
+            )
+        try:
+            return self.view.parse(text)
+        except (GrammarError, ViewError) as error:
+            raise LabError(f"{what} is not a structure: {error}{tail}") from None
 
     # -- notebook and python (AG-o) ---------------------------------------------
 
@@ -688,6 +1146,13 @@ class Lab:
     # -- submit -----------------------------------------------------------------
 
     def submit(self, args: Mapping[str, Any]) -> ToolOutput:
+        self._require_belief("submitting")
+        reason = args["stop_reason"]
+        if not isinstance(reason, str) or reason not in STOP_REASONS:
+            raise LabError(
+                f"stop_reason must be one of {', '.join(STOP_REASONS)}; got {reason!r}"
+            )
+        note = _note(args.get("note"))
         structure = self.view.parse(str(args["structure"]))
         report = str(args["report"])
         self.state.submitted = structure
@@ -697,164 +1162,32 @@ class Lab:
             record={
                 "structure": _native_text(structure),
                 "structure_hash": structure_hash(structure),
+                "stop_reason": reason,
+                "note": note,
             },
         )
 
     # -- the layer --------------------------------------------------------------
 
     def specs(self) -> list[ToolSpec]:
-        view = self.view
-        experiment_schema = {
-            k: v for k, v in EXPERIMENT_SCHEMA.items() if k not in ("$schema", "title")
-        }
-        data_id = _string("A dataset id: `obs`, or `e0`, `e1`, ... for experiments.")
-        diagnostic_names = [agent for agent, _ in view.diagnostics()]
-        specs = [
-            ToolSpec(
-                "run_experiment",
-                "Run one new experiment: a fresh realisation of the process from "
-                "empty history on [0, horizon] under an intervention (see the "
-                f"system prompt). Costs one of the {self.experiments} experiments. "
-                f"Default horizon {num(view.time(DEFAULT_HORIZON))}. Returns a "
-                "summary and the new dataset's id, and evaluates any predictions "
-                "committed "
-                "for this experiment.",
-                experiment_schema,
-                self.run_experiment,
-                budget=BUDGET_EXPERIMENTS,
-            ),
-            ToolSpec(
-                "diagnostic",
-                "Compute one catalogue statistic on one dataset. Time arguments "
-                "are in the dataset's time units and default to multiples of its "
-                "mean gap between events. Catalogue:\n" + _catalogue_text(view),
-                _schema(
-                    {
-                        "name": {"type": "string", "enum": diagnostic_names},
-                        "args": {
-                            "type": "object",
-                            "description": "The statistic's arguments; omit for "
-                            "defaults.",
-                        },
-                        "data_id": data_id,
-                    },
-                    ["name", "data_id"],
-                ),
-                self.diagnostic,
-            ),
-            ToolSpec(
-                "nonparam_kernels",
-                "Model-free linear estimate of how past events raise the rate "
-                "(Wiener-Hopf equations solved from second-order statistics, no "
-                "structure assumed). Drivers: `events` (every past event, weight "
-                "1) and one per mark channel (weight z for real-valued channels, "
-                "the value for -1/+1 channels). Reports each driver's kernel on a "
-                "lag grid and its integral. Sees only linear second-order "
-                "structure: gates, thresholds and non-identity links are "
-                "invisible to it.",
-                _schema({"data_id": data_id}, ["data_id"]),
-                self.nonparam_kernels,
-            ),
-            ToolSpec(
-                "fit",
-                "Certified maximum-likelihood fit of a structure (modelling-language "
-                "text) jointly over the named datasets: log-likelihood, BIC, "
-                "time-rescaling KS test, fitted coefficients and shape parameters. "
-                f"Costs one of the {self.fits} fits unless the same structure "
-                "was already fitted on the same data.",
-                _schema(
-                    {
-                        "structure": _string("A structure in the modelling language."),
-                        "data_ids": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "minItems": 1,
-                            "description": "Dataset ids to fit jointly.",
-                        },
-                    },
-                    ["structure", "data_ids"],
-                ),
-                self.fit,
-                budget=BUDGET_FITS,
-            ),
-            ToolSpec(
-                "predict",
-                "Commit a prediction for an experiment that has not run yet. The "
-                "framework computes the named catalogue diagnostic on that "
-                "experiment's data when it runs and reports whether it fell in "
-                "your interval. Refused for an experiment that already ran.",
-                _schema(
-                    {
-                        "experiment": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "description": "Experiment index (0 for e0, ...).",
-                        },
-                        "diagnostic": {"type": "string", "enum": diagnostic_names},
-                        "args": {
-                            "type": "object",
-                            "description": "The diagnostic's arguments; omit for "
-                            "defaults (resolved on the experiment's data).",
-                        },
-                        "hypothesis": _string(
-                            "The structure this prediction follows from."
-                        ),
-                        "interval": {
-                            "type": "array",
-                            "items": {"type": "number"},
-                            "minItems": 2,
-                            "maxItems": 2,
-                            "description": "[low, high], a central interval.",
-                        },
-                        "level": {
-                            "type": "number",
-                            "exclusiveMinimum": 0,
-                            "exclusiveMaximum": 1,
-                            "description": "Probability the interval holds the value.",
-                        },
-                    },
-                    ["experiment", "diagnostic", "hypothesis", "interval", "level"],
-                ),
-                self.predict,
-            ),
-        ]
-        if self.arm == "AG-o":
-            specs += [
-                ToolSpec(
-                    "notebook",
-                    "Append to your lab notebook; the whole notebook is shown back.",
-                    _schema({"append": _string("Text to append.")}, ["append"]),
-                    self.notebook,
-                ),
-                ToolSpec(
-                    "python",
-                    "Run Python code in the isolated sandbox (fresh process per "
-                    "call; data read-only in /data; persist files in /work). "
-                    "Returns the exit code, stdout and stderr.",
-                    _schema({"code": _string("Python source to run.")}, ["code"]),
-                    self.python,
-                ),
-            ]
-        specs.append(
-            ToolSpec(
-                "submit",
-                "Submit your final structure and a short report. Once; ends the "
-                "investigation.",
-                _schema(
-                    {
-                        "structure": _string(
-                            "The structure in the modelling language."
-                        ),
-                        "report": _string("A short report of what you found and why."),
-                    },
-                    ["structure", "report"],
-                ),
-                self.submit,
-                budget=BUDGET_SUBMIT,
-                terminal=True,
-            )
+        return tool_specs(
+            self.view,
+            self.arm,
+            experiments=self.experiments,
+            fits=self.fits,
+            policy=self.policy,
+            handlers={
+                "run_experiment": self.run_experiment,
+                "diagnostic": self.diagnostic,
+                "nonparam_kernels": self.nonparam_kernels,
+                "fit": self.fit,
+                "predict": self.predict,
+                "belief": self.belief,
+                "notebook": self.notebook,
+                "python": self.python,
+                "submit": self.submit,
+            },
         )
-        return specs
 
     def budgets(self) -> dict[str, int]:
         return {
@@ -863,8 +1196,312 @@ class Lab:
             BUDGET_SUBMIT: 1,
         }
 
+    def _footer(self, meters: Mapping[str, BudgetMeter]) -> str:
+        experiments = meters[BUDGET_EXPERIMENTS]
+        fits = meters[BUDGET_FITS]
+        return budget_line(
+            experiments.remaining, experiments.limit, fits.remaining, fits.limit
+        )
+
     def layer(self) -> ToolLayer:
-        return ToolLayer(self.specs(), self.budgets())
+        return ToolLayer(
+            self.specs(), self.budgets(), footer=self._footer, on_commit=self._commit
+        )
+
+
+def tool_specs(
+    view: AgentView,
+    arm: Arm,
+    *,
+    experiments: int,
+    fits: int,
+    handlers: Mapping[str, Handler] | None = None,
+    policy: str | None = None,
+) -> list[ToolSpec]:
+    """Every tool the agent is offered, for one view, arm and budget.
+
+    A pure function of its arguments and this module's constants: no world is
+    read, so the schemas render from configuration alone
+    (:func:`~sciagent.investigation.runner.rendered_config`, the session key's
+    input, P4 Δ7). :meth:`Lab.specs` passes its bound handlers; without
+    ``handlers`` each tool's handler refuses (a rendering, not a lab).
+    ``policy`` (P4 Δ11, AG-c only) gives ``run_experiment`` policy mode's
+    description and an empty schema; every other spec is unchanged.
+    """
+    try:
+        policy_name = as_policy(policy)
+        check_policy_arm(arm, policy_name)
+    except PromptError as error:
+        raise LabError(str(error)) from None
+
+    def handler(name: str) -> Handler:
+        if handlers is None:
+            return _render_only
+        return handlers[name]
+
+    data_id = _string("A dataset id: `obs`, or `e0`, `e1`, ... for experiments.")
+    diagnostic_names = [agent for agent, _ in view.diagnostics()]
+    specs = [
+        _run_experiment_spec(view, arm, experiments, policy_name, handler),
+        ToolSpec(
+            "diagnostic",
+            "Compute one catalogue statistic on one dataset. Time arguments "
+            "are in the dataset's time units and default to multiples of its "
+            "mean gap between events. Catalogue:\n" + _catalogue_text(view),
+            _schema(
+                {
+                    "name": {"type": "string", "enum": diagnostic_names},
+                    "args": {
+                        "type": "object",
+                        "description": "The statistic's arguments; omit for defaults.",
+                    },
+                    "data_id": data_id,
+                },
+                ["name", "data_id"],
+            ),
+            handler("diagnostic"),
+        ),
+        ToolSpec(
+            "nonparam_kernels",
+            "Model-free linear estimate of how past events raise the rate "
+            "(Wiener-Hopf equations solved from second-order statistics, no "
+            "structure assumed). Drivers: `events` (every past event, weight "
+            "1) and one per mark channel (weight z for real-valued channels, "
+            "the value for -1/+1 channels). Reports each driver's kernel on a "
+            "lag grid and its integral. Sees only linear second-order "
+            "structure: gates, thresholds and non-identity links are "
+            "invisible to it.",
+            _schema({"data_id": data_id}, ["data_id"]),
+            handler("nonparam_kernels"),
+        ),
+        ToolSpec(
+            "fit",
+            "Certified maximum-likelihood fit of a structure (modelling-language "
+            "text) jointly over the named datasets: log-likelihood, BIC, "
+            "time-rescaling KS test, fitted coefficients and shape parameters. "
+            f"Costs one of the {fits} fits unless the same structure "
+            "was already fitted on the same data.",
+            _schema(
+                {
+                    "structure": _string("A structure in the modelling language."),
+                    "data_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "minItems": 1,
+                        "description": "Dataset ids to fit jointly.",
+                    },
+                },
+                ["structure", "data_ids"],
+            ),
+            handler("fit"),
+            budget=BUDGET_FITS,
+        ),
+        ToolSpec(
+            "predict",
+            "Commit a prediction for an experiment that has not run yet. The "
+            "framework computes the named catalogue diagnostic on that "
+            "experiment's data when it runs and reports whether it fell in "
+            "your interval. Refused for an experiment that already ran.",
+            _schema(
+                {
+                    "experiment": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Experiment index (0 for e0, ...).",
+                    },
+                    "diagnostic": {"type": "string", "enum": diagnostic_names},
+                    "args": {
+                        "type": "object",
+                        "description": "The diagnostic's arguments; omit for "
+                        "defaults (resolved on the experiment's data).",
+                    },
+                    "hypothesis": _string(
+                        "The structure this prediction follows from: "
+                        "modelling-language text only (commentary goes in "
+                        "`note`)."
+                    ),
+                    "interval": {
+                        "type": "array",
+                        "items": {"type": "number"},
+                        "minItems": 2,
+                        "maxItems": 2,
+                        "description": "[low, high], a central interval.",
+                    },
+                    "level": {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "exclusiveMaximum": 1,
+                        "description": "Probability the interval holds the value.",
+                    },
+                    "note": _string(
+                        f"Optional free text (at most {MAX_NOTE} characters), "
+                        "e.g. why you expect this. Recorded, not shown back."
+                    ),
+                },
+                ["experiment", "diagnostic", "hypothesis", "interval", "level"],
+            ),
+            handler("predict"),
+        ),
+        ToolSpec(
+            "belief",
+            "Record your current belief: the structure you favour, 1 to "
+            f"{MAX_RIVALS} rival structures you have not ruled out (the first "
+            "is your runner-up), and your confidence, a probability strictly "
+            "between 0 and 1, that the favoured structure is the true "
+            "mechanism. All must be different structures. Free. Needed "
+            "before every experiment (after the previous one) and before "
+            "`submit`.",
+            _schema(
+                {
+                    "favoured": _string("The structure you currently favour."),
+                    "rivals": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "minItems": 1,
+                        "maxItems": MAX_RIVALS,
+                        "description": "Rival structures, runner-up first.",
+                    },
+                    "confidence": {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "exclusiveMaximum": 1,
+                        "description": "Probability that the favoured "
+                        "structure is the true mechanism.",
+                    },
+                },
+                ["favoured", "rivals", "confidence"],
+            ),
+            handler("belief"),
+        ),
+    ]
+    if arm == "AG-o":
+        specs += [
+            ToolSpec(
+                "notebook",
+                "Append to your lab notebook; the whole notebook is shown back.",
+                _schema({"append": _string("Text to append.")}, ["append"]),
+                handler("notebook"),
+            ),
+            ToolSpec(
+                "python",
+                "Run Python code in the isolated sandbox (fresh process per "
+                "call; data read-only in /data; persist files in /work). "
+                "Returns the exit code, stdout and stderr.",
+                _schema({"code": _string("Python source to run.")}, ["code"]),
+                handler("python"),
+            ),
+        ]
+    specs.append(
+        ToolSpec(
+            "submit",
+            "Submit your final structure and a short report, with why you are "
+            "stopping. Once; ends the investigation. Refused, uncharged, "
+            "unless you have recorded a `belief` since the last experiment.",
+            _schema(
+                {
+                    "structure": _string("The structure in the modelling language."),
+                    "report": _string("A short report of what you found and why."),
+                    "stop_reason": {
+                        "type": "string",
+                        "enum": list(STOP_REASONS),
+                        "description": "Why you are stopping now.",
+                    },
+                    "note": _string(
+                        f"Optional free text (at most {MAX_NOTE} characters) "
+                        "on the stopping decision. Recorded, not shown back."
+                    ),
+                },
+                ["structure", "report", "stop_reason"],
+            ),
+            handler("submit"),
+            budget=BUDGET_SUBMIT,
+            terminal=True,
+        )
+    )
+    return specs
+
+
+def _run_experiment_spec(
+    view: AgentView,
+    arm: Arm,
+    experiments: int,
+    policy: PolicyName | None,
+    handler: Callable[[str], Handler],
+) -> ToolSpec:
+    """``run_experiment``: the agent's design, or policy mode's no arguments."""
+    if policy is not None:
+        return ToolSpec(
+            "run_experiment",
+            "Run the next experiment, chosen by the framework (see the system "
+            "prompt): a design, run on a fresh realisation of the process, and "
+            "one catalogue diagnostic to read on its data. Takes no arguments. "
+            f"Costs one of the {experiments} experiments. A run that reaches "
+            f"the limit of {MAX_EVENTS} events is truncated there and kept. "
+            "Returns the design that was run, a summary, the chosen "
+            "diagnostic's value and the new dataset's id, and evaluates any "
+            "predictions committed for this experiment. Refused, uncharged, "
+            "unless you have recorded a `belief` since the last experiment.",
+            _schema({}, []),
+            handler("run_experiment"),
+            budget=BUDGET_EXPERIMENTS,
+        )
+    return ToolSpec(
+        "run_experiment",
+        "Run one new experiment: a fresh realisation of the process from "
+        "empty history on [0, horizon] under an intervention (see the "
+        f"system prompt). Costs one of the {experiments} experiments. "
+        f"Default horizon {num(view.time(DEFAULT_HORIZON))}. Forced times "
+        "may be a generator {start, step, n} and marks a pattern "
+        "{constant}, {alternate} or {repeat}. A run that reaches the "
+        f"limit of {MAX_EVENTS} events is truncated there and kept. "
+        "Returns a summary and the new dataset's id, and evaluates any "
+        "predictions committed for this experiment. Refused, uncharged, "
+        "unless you have recorded a `belief` since the last experiment.",
+        _design_schema(arm),
+        handler("run_experiment"),
+        budget=BUDGET_EXPERIMENTS,
+    )
+
+
+def _design_schema(arm: Arm) -> dict[str, Any]:
+    """``run_experiment``'s input schema: the design schema, plus for AG-o
+    the ``{"from": "/work/..."}`` alternative for the intervention.
+
+    It carries no time-valued constant, so it is the same in both
+    conditions (times are in the agent's units by construction).
+    """
+    schema: dict[str, Any] = {
+        k: copy.deepcopy(v)
+        for k, v in DESIGN_SCHEMA.items()
+        if k not in ("$schema", "title")
+    }
+    if arm == "AG-o":
+        properties: dict[str, Any] = schema["properties"]
+        properties["intervention"] = {
+            "oneOf": [
+                properties["intervention"],
+                {
+                    "type": "object",
+                    "properties": {
+                        FROM_KEY: {
+                            "type": "string",
+                            "pattern": _WORK_PATH.pattern,
+                            "description": "A JSON file you wrote under "
+                            f"{WORK_PREFIX} holding one intervention "
+                            "(generators allowed); at most "
+                            f"{MAX_DESIGN_FILE_BYTES} bytes.",
+                        }
+                    },
+                    "required": [FROM_KEY],
+                    "additionalProperties": False,
+                },
+            ]
+        }
+    return schema
+
+
+def _render_only(args: Mapping[str, Any]) -> ToolOutput:
+    raise LabError("these tool specs were rendered without a lab; they run nothing")
 
 
 # --------------------------------------------------------------------------
@@ -922,14 +1559,41 @@ def _counted(data: Dataset) -> int:
 def _finite(value: object, what: str) -> float:
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise LabError(f"{what} must be a number, got {value!r}")
-    v = float(value)
+    try:
+        v = float(value)
+    except OverflowError:
+        raise LabError(f"{what} is too large: {value!r}") from None
     if not math.isfinite(v):
         raise LabError(f"{what} must be finite, got {value!r}")
     return v
 
 
 def _native_text(structure: Structure) -> str:
-    return render(structure)
+    """The record's label of a structure: its canonical form, in native names."""
+    return render(canonicalise(structure))
+
+
+def _confidence(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise LabError(f"confidence must be a number in (0, 1), got {value!r}")
+    try:
+        c = float(value)
+    except OverflowError:
+        raise LabError(f"confidence is too large: {value!r}") from None
+    if not (math.isfinite(c) and 0.0 < c < 1.0):
+        raise LabError(f"confidence must be strictly between 0 and 1, got {value!r}")
+    return c
+
+
+def _note(value: object) -> str | None:
+    """An optional free ``note``: recorded, never shown back."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise LabError(f"note must be text, got {value!r}")
+    if len(value) > MAX_NOTE:
+        raise LabError(f"note must be at most {MAX_NOTE} characters")
+    return value
 
 
 def _args_text(args: Mapping[str, object]) -> str:
@@ -989,15 +1653,57 @@ def _driver_text(driver: str, view: AgentView) -> str:
     )
 
 
+def _read_work_file(work_dir: Path, path: str) -> bytes:
+    """The bytes of the agent's design file ``path`` (``/work/...``), checked.
+
+    Refused (:class:`LabError`): a path not of the form ``/work/<segments>``
+    (no ``.``/``..`` segments, no backslashes), a missing file, any link or
+    Windows reparse point on the way (every component is ``lstat``-ed, none is
+    followed), anything but a regular file, and a file over
+    :data:`MAX_DESIGN_FILE_BYTES`. The size is checked again on the bytes read.
+    """
+    segments = path.split("/")[2:]
+    if not _WORK_PATH.match(path) or any(s in (".", "..") for s in segments):
+        raise LabError(
+            f"a design file must be under {WORK_PREFIX} (a path such as "
+            f"{WORK_PREFIX}design.json, without '.' or '..' parts), got {path!r}"
+        )
+    current = work_dir
+    for k, segment in enumerate(segments):
+        current = current / segment
+        try:
+            info = os.lstat(current)
+        except FileNotFoundError:
+            raise LabError(f"no file {path}") from None
+        attributes = getattr(info, "st_file_attributes", 0)
+        if stat.S_ISLNK(info.st_mode) or attributes & _FILE_ATTRIBUTE_REPARSE_POINT:
+            raise LabError(f"design file {path} is reached through a link; refused")
+        last = k == len(segments) - 1
+        if not last and not stat.S_ISDIR(info.st_mode):
+            raise LabError(f"no file {path}")
+        if last and not stat.S_ISREG(info.st_mode):
+            raise LabError(f"design file {path} is not a regular file")
+        if last and info.st_size > MAX_DESIGN_FILE_BYTES:
+            raise LabError(
+                f"design file {path} is larger than {MAX_DESIGN_FILE_BYTES} bytes"
+            )
+    with current.open("rb") as handle:
+        payload = handle.read(MAX_DESIGN_FILE_BYTES + 1)
+    if len(payload) > MAX_DESIGN_FILE_BYTES:
+        raise LabError(
+            f"design file {path} is larger than {MAX_DESIGN_FILE_BYTES} bytes"
+        )
+    return payload
+
+
 def _stop_reason(error: SimulationError) -> str:
     if isinstance(error, ExplosionError):
-        # The event cap, the candidate cap and the runaway-bound guard all
-        # raise this; event counts are unit-free, so the text is the same in
-        # every condition.
+        # Reaching the event cap truncates the run (P4 Δ2); what still raises
+        # is the candidate cap and the runaway-bound guard. Event counts are
+        # unit-free, so the text is the same in every condition.
         return (
-            f"the process exceeded the simulation limit of {MAX_EVENTS} events "
-            "per experiment (it produced more, or its event rate grew without "
-            "bound)"
+            "the process's event rate grew without bound, so the simulation "
+            f"was stopped before it reached the limit of {MAX_EVENTS} events"
         )
     if isinstance(error, NegativeIntensityError):
         return "the event rate became negative under this design"

@@ -27,6 +27,9 @@ if TYPE_CHECKING:  # pragma: no cover - import cycle, not behaviour
 __all__ = [
     "HarnessError",
     "HarnessFaultError",
+    "HarnessVersionError",
+    "HarnessVersionMismatchError",
+    "HarnessVersionMissingError",
     "HermeticityError",
     "PredictionRefusedError",
     "RecordError",
@@ -74,6 +77,40 @@ class RecordIntegrityError(RecordError):
 
 class RecordOverwriteError(RecordError):
     """A save would replace a different record; records are append-only."""
+
+
+class HarnessVersionError(RecordError):
+    """A record cannot be replayed by this checkout's harness.
+
+    ``running`` is the code's ``HARNESS_VERSION``; ``recorded`` is the
+    ``harness_version`` of the record's config entry, ``None`` when it has none.
+    """
+
+    def __init__(self, message: str, *, recorded: str | None, running: str) -> None:
+        super().__init__(message)
+        self.recorded = recorded
+        self.running = running
+
+
+class HarnessVersionMismatchError(HarnessVersionError):
+    """A record was written under another harness version than the running one.
+
+    Its tools and budgets are that harness's, so it must be replayed at a
+    checkout with that harness: ``commit`` names one when it is known.
+    """
+
+    def __init__(
+        self, message: str, *, recorded: str, running: str, commit: str | None
+    ) -> None:
+        super().__init__(message, recorded=recorded, running=running)
+        self.commit = commit
+
+
+class HarnessVersionMissingError(HarnessVersionError):
+    """A record names no harness version, so no checkout is known to replay it."""
+
+    def __init__(self, message: str, *, running: str) -> None:
+        super().__init__(message, recorded=None, running=running)
 
 
 class ReplayDivergenceError(HarnessError):

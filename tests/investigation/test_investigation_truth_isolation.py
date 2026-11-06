@@ -19,7 +19,10 @@ from typing import Any
 
 import pytest
 from investigation_support import (
+    BELIEF,
     POINTPROC,
+    STOP,
+    WALL_TIME_S,
     clean_environment,
     lab,
     plain_run,
@@ -39,7 +42,7 @@ from sciagent.investigation.runner import leak_terms, rendered_surface
 
 PACKAGE = Path(__file__).resolve().parents[2] / "src" / "sciagent" / "investigation"
 #: Modules whose code runs on an agent request or renders what the agent sees.
-AGENT_FACING = ("tools.py", "view.py", "prompts.py")
+AGENT_FACING = ("tools.py", "view.py", "prompts.py", "policy.py")
 #: The only World methods allowed to touch ``self._truth``.
 TRUTH_READERS = {"__init__", "_simulate"}
 #: Native-unit constants that must not survive into the anonymised view.
@@ -72,6 +75,38 @@ def test_agent_facing_modules_never_name_the_truth(module: str) -> None:
         for alias in node.names
     }
     assert imported <= {"MAX_EVENTS", "OBSERVATIONAL", "World", "experiment_id"}
+
+
+@pytest.mark.parametrize("module", ["tools.py", "prompts.py", "policy.py", "view.py"])
+def test_agent_facing_modules_never_import_the_truth_aware_control(
+    module: str,
+) -> None:
+    """``policy_controls`` gets the truth through its constructor (control 5,
+    P4 Δ11); the tool layer and what renders the agent's surface never import
+    it, directly or by name."""
+    tree = ast.parse((PACKAGE / module).read_text(encoding="utf-8"))
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            modules.add(node.module)
+            modules.update(f"{node.module}.{a.name}" for a in node.names)
+        elif isinstance(node, ast.Import):
+            modules.update(a.name for a in node.names)
+    assert not [m for m in modules if "policy_controls" in m], modules
+    assert "policy_controls" not in _names(tree)
+    assert "TruthFSDPolicy" not in _names(tree)
+
+
+def test_the_control_import_guard_would_catch_an_import() -> None:
+    """Positive control for the guard above."""
+    tree = ast.parse("from sciagent.systems.v2 import policy_controls")
+    modules = {
+        f"{n.module}.{a.name}"
+        for n in ast.walk(tree)
+        if isinstance(n, ast.ImportFrom) and n.module
+        for a in n.names
+    }
+    assert [m for m in modules if "policy_controls" in m]
 
 
 def test_world_touches_the_truth_only_in_its_readers() -> None:
@@ -139,7 +174,7 @@ def _probing_script(condition_channel: str) -> list[Step]:
                 ),
             )
         ),
-        Step(calls=(("run_experiment", plain_run(400.0)),)),
+        Step(calls=(BELIEF, ("run_experiment", plain_run(400.0)))),
         Step(
             calls=(
                 ("fit", {"structure": "Excite(ExpK, One, all)", "data_ids": ["obs"]}),
@@ -148,11 +183,13 @@ def _probing_script(condition_channel: str) -> list[Step]:
         ),
         Step(
             calls=(
+                BELIEF,
                 (
                     "submit",
                     {
                         "structure": f"Excite(GammaK, Above({condition_channel}), all)",
                         "report": "probe",
+                        **STOP,
                     },
                 ),
             )
@@ -169,7 +206,7 @@ def test_no_tool_output_shows_the_truth(
     assert outcome.outcome == "submitted"
     record = SessionRecord.load(outcome.record_path)
     calls = record.of_kind("tool_call")
-    assert len(calls) == 7
+    assert len(calls) == 9
     assert not any(c.body["is_error"] for c in calls), [
         c.body["text"] for c in calls if c.body["is_error"]
     ]
@@ -188,7 +225,7 @@ def test_no_tool_output_shows_the_truth(
 def test_anonymised_prompts_and_schemas_do_not_leak(arm: Arm, tmp_path: Path) -> None:
     # Rendering needs no container: the image is named, not asked of Docker.
     the_lab = lab(arm, "anon", sandbox_root=tmp_path, image="sciagent-sandbox:unused")
-    surface = rendered_surface(the_lab)
+    surface = rendered_surface(the_lab, wall_time_s=WALL_TIME_S)
     terms = leak_terms(POINTPROC, tuple(c.name for c in v2.CHANNELS))
     assert {"size", "sign", "arrival", "mean_rate", "hawkes"} <= set(terms)
     assert_no_leaks(surface, terms, numeric_constants=NATIVE_CONSTANTS)
@@ -198,7 +235,7 @@ def test_the_leak_test_would_catch_a_leak(tmp_path: Path) -> None:
     """Positive control: the same scan fails on the named condition."""
     from sciagent.anonymise import LeakError
 
-    surface = rendered_surface(lab("AG-c", "named"))
+    surface = rendered_surface(lab("AG-c", "named"), wall_time_s=WALL_TIME_S)
     terms = leak_terms(POINTPROC, tuple(c.name for c in v2.CHANNELS))
     with pytest.raises(LeakError) as caught:
         assert_no_leaks(surface, terms, numeric_constants=NATIVE_CONSTANTS)
@@ -217,7 +254,7 @@ def test_anonymised_run_outputs_do_not_leak(
     predict: dict[str, Any] = dict(script[2].calls[0][1])
     predict["diagnostic"] = rate
     script[2] = Step(calls=(("predict", predict),))
-    script[3] = Step(calls=(("run_experiment", plain_run(8 * 400.0)),))
+    script[3] = Step(calls=(BELIEF, ("run_experiment", plain_run(8 * 400.0))))
     outcome = scripted_run(script, tmp_path, condition="anon")
     assert outcome.outcome == "submitted"
     record = SessionRecord.load(outcome.record_path)

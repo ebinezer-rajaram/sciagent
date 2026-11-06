@@ -67,6 +67,24 @@ DEFAULT_SPLIT: Final = ROOT / "data" / "v2" / "truths" / "dev"
 DEFAULT_ROOT: Final = ROOT / ".cache" / "pilot"
 #: The anonymised channel names SPEC §5 fixes for pointproc.
 ANON_CHANNELS: Final = {"size": "m1", "sign": "m2"}
+#: The rendered surface of each P4 arm on pointproc at the default budgets
+#: and wall limit (``sciagent.campaign.freeze``). An arm, budget or limit not
+#: here does not launch outside the dev split. Changing a digest is unfreezing a
+#: prompt.
+P4_SURFACES: Final[dict[str, str]] = {
+    "AG-c/named|link-neutral|none|experiments=8|fits=40|wall_time_s=3600.0": (
+        "ae7d3d2341afa07e156daa686c9c63abcf81988f2a130dcfd7b4d76601904e8f"
+    ),
+    "AG-o/named|link-neutral|none|experiments=8|fits=40|wall_time_s=3600.0": (
+        "75ff7f428bdc1407b5e936d4079cef1414165c05e07aa3c221e9357487fa4dd1"
+    ),
+    "AG-c/anon|link-neutral|none|experiments=8|fits=40|wall_time_s=3600.0": (
+        "a241b9ca5eda774246952edff0cd12fc78a59203ff108d339a71177a6eff6605"
+    ),
+    "AG-o/anon|link-neutral|none|experiments=8|fits=40|wall_time_s=3600.0": (
+        "dd1eea72c55eb7a09807ef0dcc3f49fe745066911513ddf1b59c82436e6c887d"
+    ),
+}
 #: pointproc's own leak terms beyond the default list.
 FORBIDDEN: Final = ("size", "sign", "arrival")
 #: The investigation environment's name (as scripts/investigate.py).
@@ -197,6 +215,7 @@ def truth_entries(records: tuple[TruthRecord, ...]) -> tuple[TruthEntry, ...]:
             stratum=r.stratum,
             nearest_distance=r.nearest_distance,
             dsl=r.dsl,
+            split=r.split,
         )
         for r in records
     )
@@ -248,11 +267,15 @@ def pointproc_environment(records: tuple[TruthRecord, ...]) -> CampaignEnvironme
         ),
         prior=ScenarioPrior(STRUCTURE_PRIOR, v2.CHANNELS, share),
         prior_id=f"{config_digest(SAMPLER_CONFIG, environment())}|ood={share!r}",
+        domain_text=v2.domain_text(),
         investigation=EnvironmentSpec(
             name=ENV_NAME,
             anon_channels=ANON_CHANNELS,
             forbidden=FORBIDDEN,
             resolve=RecordResolver(records),
+            # The EIG and FSD policy arms simulate fitted structures with the
+            # environment's mark law (P4 Δ11); it enters no session address.
+            marks=v2.mark_sampler,
         ),
     )
 
@@ -295,6 +318,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--arms", default=None, help="comma-separated LLM arms, e.g. AG-o/anon"
     )
+    p.add_argument(
+        "--arm-set",
+        choices=("pilot", "p4"),
+        default="pilot",
+        help="the pilot's arms (v1 prompt) or P4's (the frozen variant); a split "
+        "other than dev runs p4 only (sciagent.campaign.freeze)",
+    )
     p.add_argument("--wait", type=float, default=0.0, help="wait for the split (s)")
     p.add_argument(
         "--reuse-from",
@@ -310,15 +340,25 @@ def campaign_config(args: argparse.Namespace) -> CampaignConfig:
     """The run's :class:`CampaignConfig` from :func:`build_parser`'s arguments
     (shared with ``scripts/session_check.py``, which must rebuild exactly the
     configuration a run used)."""
-    from sciagent.campaign.plan import BASELINES, PILOT_ARMS, CampaignConfig, LLMArm
+    from sciagent.campaign.plan import (
+        BASELINES,
+        P4_ARMS,
+        PILOT_ARMS,
+        CampaignConfig,
+        LLMArm,
+    )
 
     seeds = tuple(int(s) for s in args.seeds.split(","))
     control = tuple(int(s) for s in args.control_seeds.split(",") if int(s) in seeds)
     baselines = BASELINES if args.systems is None else tuple(args.systems.split(","))
-    arms: tuple[LLMArm, ...] = PILOT_ARMS
+    arms: tuple[LLMArm, ...] = P4_ARMS if args.arm_set == "p4" else PILOT_ARMS
     if args.arms is not None:
-        wanted = args.arms.split(",")
-        arms = tuple(a for a in PILOT_ARMS if f"{a.arm}/{a.condition}" in wanted)
+        wanted = [name for name in args.arms.split(",") if name]
+        names = {f"{a.arm}/{a.condition}" for a in arms}
+        unknown = sorted(set(wanted) - names)
+        if unknown:
+            raise SystemExit(f"refused: unknown arms {unknown}; known {sorted(names)}")
+        arms = tuple(a for a in arms if f"{a.arm}/{a.condition}" in wanted)
     return CampaignConfig(
         seeds=seeds,
         control_seeds=control,
@@ -371,6 +411,7 @@ def main() -> None:
             settings,
             fingerprint=fingerprint,
             reuse_from=args.reuse_from,
+            surface_pins=P4_SURFACES,
         )
     except CampaignError as error:
         raise SystemExit(f"refused: {error}") from error

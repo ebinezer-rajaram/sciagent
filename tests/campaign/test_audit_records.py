@@ -304,7 +304,9 @@ def test_a_stored_void_the_policy_does_not_void_is_a_warning(tmp_path: Path) -> 
             {"status": 1.0, "void": 1.0},
             {
                 "unit": unit_json("llm-session", unit.system, "hawkes", 1),
-                "session_config": session_text(config.arm_of(unit.system), config),
+                "session_config": session_text(
+                    config.arm_of(unit.system), config, environment()
+                ),
                 "session": {
                     "outcome": "submitted",
                     "record": "record.json",
@@ -337,7 +339,9 @@ def test_two_stored_sessions_for_one_unit_are_an_issue(tmp_path: Path) -> None:
                 {"status": 1.0, "void": 0.0},
                 {
                     "unit": unit_json("llm-session", unit.system, "hawkes", 1),
-                    "session_config": session_text(config.arm_of(unit.system), config),
+                    "session_config": session_text(
+                        config.arm_of(unit.system), config, environment()
+                    ),
                     "session": {"outcome": "submitted", "record_dir": "llm/x"},
                 },
             )

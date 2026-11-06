@@ -381,7 +381,7 @@ def _mark_dispersion(
     values = _marks(log, args)
     mean = reductions.mean(values)
     if mean <= 0.0:
-        raise InsufficientDataError("mark dispersion needs a positive mean")
+        raise InsufficientDataError("the marks' mean must be positive")
     return reductions.variance(values) / (mean * mean)
 
 
@@ -978,7 +978,10 @@ def args_schema(
 def _number(arg: ArgSpec, value: ArgValue) -> float:
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise DiagnosticArgumentError(f"{arg.name} must be a number, got {value!r}")
-    result = float(value)
+    try:
+        result = float(value)
+    except OverflowError:
+        raise DiagnosticArgumentError(f"{arg.name} is too large: {value!r}") from None
     if not math.isfinite(result):
         raise DiagnosticArgumentError(f"{arg.name} must be finite, got {value!r}")
     return result
@@ -1052,16 +1055,24 @@ def resolve_args(
     unknown, missing, mistyped or out-of-bounds argument. ``check_bounds=False``
     skips only the log-relative bounds on time arguments (used when an argument
     resolved on one log is applied to replicates of it).
+
+    ``name`` is native and these messages reach the agent (the tool's refusal,
+    the dataset summary, a prediction's outcome, the policy's reading), so none
+    of them spells it: each of those texts names the diagnostic itself, in the
+    agent's names.
     """
     spec = get(name)
     if log.n < spec.min_events:
         raise InsufficientDataError(
-            f"{name} needs at least {spec.min_events} event(s), the log has {log.n}"
+            f"this diagnostic needs at least {spec.min_events} event(s), the log has "
+            f"{log.n}"
         )
     known = [a.name for a in spec.args]
     unknown = sorted(k for k in args if k not in known)
     if unknown:
-        raise DiagnosticArgumentError(f"{name} takes {known}; unknown: {unknown}")
+        raise DiagnosticArgumentError(
+            f"this diagnostic takes {known}; unknown: {unknown}"
+        )
     return {
         arg.name: _resolve_one(arg, args.get(arg.name), log, channels, check_bounds)
         for arg in spec.args
@@ -1080,7 +1091,7 @@ def compute(
     resolved = resolve_args(name, args, log, channels, check_bounds=check_bounds)
     result = float(get(name).function(log, channels, resolved))
     if not math.isfinite(result):
-        raise DiagnosticError(f"{name} produced a non-finite value: a catalogue bug")
+        raise DiagnosticError("a non-finite value was produced: a catalogue bug")
     return result
 
 

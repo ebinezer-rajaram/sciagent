@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 
 import numpy as np
 import pytest
@@ -127,3 +128,61 @@ def test_size_excitation_is_visible_to_the_cross_mark_diagnostics() -> None:
     assert s11_corr < -0.05
     assert abs(hawkes_corr) < 0.05
     assert compute("next_gap_after_large_mark", s11, v2.CHANNELS, args) < 0.9
+
+
+# --------------------------------------------------------------------------
+# The domain's address text (F5; LOG 2026-10-27)
+# --------------------------------------------------------------------------
+
+
+def test_domain_text_is_repeatable_and_names_both_parts() -> None:
+    text = v2.domain_text()
+    assert text == v2.domain_text()
+    assert text.startswith("channels=(")
+    assert "; marks=" in text
+
+
+def test_domain_text_reads_the_channels(monkeypatch: pytest.MonkeyPatch) -> None:
+    before = v2.domain_text()
+    monkeypatch.setattr(v2, "CHANNELS", (v2.SIZE, v2.SIGN))
+    assert v2.domain_text() != before
+
+
+def test_domain_text_reads_the_mark_law(monkeypatch: pytest.MonkeyPatch) -> None:
+    before = v2.domain_text()
+    real = v2.mark_sampler
+
+    def doubled(rng: np.random.Generator) -> Mapping[str, float]:
+        marks = real(rng)
+        return {"sign": marks["sign"], "size": 2.0 * marks["size"]}
+
+    monkeypatch.setattr(v2, "mark_sampler", doubled)
+    assert v2.domain_text() != before
+
+
+def test_domain_text_reads_the_draw_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Same law, other stream: the world's bytes change, so the text must."""
+    before = v2.domain_text()
+
+    def sign_first(rng: np.random.Generator) -> Mapping[str, float]:
+        sign = 1.0 if rng.random() < 0.5 else -1.0
+        return {"sign": sign, "size": -math.log1p(-rng.random())}
+
+    monkeypatch.setattr(v2, "mark_sampler", sign_first)
+    assert v2.domain_text() != before
+
+
+def test_domain_text_survives_a_last_digit_of_libm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Output bytes are per machine class; an address must not be (the probe
+    rounds, so a one-ulp difference in ``log1p`` does not reach the text)."""
+    before = v2.domain_text()
+    real = v2.mark_sampler
+
+    def one_ulp(rng: np.random.Generator) -> Mapping[str, float]:
+        marks = real(rng)
+        return {**marks, "size": math.nextafter(marks["size"], math.inf)}
+
+    monkeypatch.setattr(v2, "mark_sampler", one_ulp)
+    assert v2.domain_text() == before

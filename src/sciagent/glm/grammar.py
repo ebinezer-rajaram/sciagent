@@ -368,7 +368,7 @@ def _validate(feature: Feature, by_name: dict[str, ChannelSpec]) -> None:
                     _kind(by_name, c)
                 case ExpOf(channel=c) | Above(channel=c):
                     if _kind(by_name, c) is ChannelKind.SIGN:
-                        raise InvalidStructureError(f"{mark} on a sign channel")
+                        raise InvalidStructureError(f"{mark} on a binary channel")
             if source.kind is SourceKind.ALL:
                 if source.channel is not None:
                     raise InvalidStructureError("Source ALL takes no channel")
@@ -376,7 +376,7 @@ def _validate(feature: Feature, by_name: dict[str, ChannelSpec]) -> None:
                 _kind(by_name, source.channel) is not ChannelKind.SIGN
             ):
                 raise InvalidStructureError(
-                    f"signed source needs a sign channel: {source}"
+                    f"a filtered source needs a binary channel: {source}"
                 )
             if (
                 isinstance(mark, Mark)
@@ -398,4 +398,6 @@ def _validate(feature: Feature, by_name: dict[str, ChannelSpec]) -> None:
                 isinstance(cond, LastMarkAbove)
                 and _kind(by_name, cond.channel) is ChannelKind.SIGN
             ):
-                raise InvalidStructureError(f"LastMarkAbove on a sign channel: {cond}")
+                raise InvalidStructureError(
+                    f"LastMarkAbove on a binary channel: {cond}"
+                )

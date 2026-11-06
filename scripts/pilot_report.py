@@ -43,6 +43,7 @@ from typing import Any, Final, NamedTuple
 
 from pilot import (
     ROOT,
+    campaign_config,
     load_split,
     pointproc_environment,
     select,
@@ -61,6 +62,9 @@ CERTIFIED: Final = "certified"
 UNCERTIFIED: Final = "uncertified"
 NOT_A_FIT: Final = "not a GLM fit"
 UNRECORDED: Final = "unrecorded"
+#: The start of the line a softplus fit carries when its θ could not be converted
+#: to the agent's units (``investigation/tools.py``, ``Lab._fit_text``).
+SOFTPLUS_NOTE: Final = "note: softplus-link coefficients are reported as fitted"
 
 type RowKey = tuple[str, int, str]
 
@@ -204,15 +208,11 @@ def recorded_text(values: Sequence[float | None], total: int) -> str:
     return _part_text(values, total, "recorded")
 
 
-def counts_recorded(root: Path, session: Any) -> bool:
-    """Whether the session's stored record has an SDK ``result`` entry, which
-    carries its turn count and token usage (a ``wall_time`` end has none).
-
-    Read from the record under ``root`` (the detail's ``record_dir`` and
-    ``record``), never from the outcome or a zero reading.
+def session_record_path(root: Path, session: Any, unknown: str) -> Path:
+    """The session's stored record under ``root`` (the detail's ``record_dir``
+    and ``record``). A cell that names none raises, saying what stays ``unknown``.
     """
     from sciagent.campaign.plan import CampaignError
-    from sciagent.harness.record import SessionRecord
 
     detail = session.detail
     if not isinstance(detail.get("record_dir"), str) or not isinstance(
@@ -220,11 +220,76 @@ def counts_recorded(root: Path, session: Any) -> bool:
     ):
         raise CampaignError(
             f"session cell {session.digest} ({session.system} {session.truth} "
-            f"seed {session.seed}) names no record; its turn and token counts "
-            "cannot be told recorded or not"
+            f"seed {session.seed}) names no record; {unknown}"
         )
-    path = root / detail["record_dir"] / detail["record"]
+    return root / str(detail["record_dir"]) / str(detail["record"])
+
+
+def counts_recorded(root: Path, session: Any) -> bool:
+    """Whether the session's stored record has an SDK ``result`` entry, which
+    carries its turn count and token usage (a ``wall_time`` end has none).
+
+    Read from the record under ``root``, never from the outcome or a zero
+    reading.
+    """
+    from sciagent.harness.record import SessionRecord
+
+    path = session_record_path(
+        root, session, "its turn and token counts cannot be told recorded or not"
+    )
     return bool(SessionRecord.load(path).of_kind("result"))
+
+
+def shown_softplus_note(root: Path, session: Any) -> bool:
+    """Whether a ``fit`` result in the session's record carries the note.
+
+    Only ``fit``: the note is the framework's, and an agent can put the same
+    words into a ``notebook`` or ``python`` output itself. A free repeat repeats
+    the fit's text, so it counts; a refused fit has no note to show.
+    """
+    from sciagent.harness.record import SessionRecord
+
+    path = session_record_path(
+        root, session, "whether it was shown the softplus note cannot be told"
+    )
+    return any(
+        entry.body["name"] == "fit" and SOFTPLUS_NOTE in entry.body["text"]
+        for entry in SessionRecord.load(path).of_kind("tool_call")
+    )
+
+
+def softplus_note_table(root: Path, systems: Sequence[str], tab: Any) -> list[str]:
+    """The sessions shown the softplus note, per arm with sessions, and what the
+    count means (LOG 2026-11-05, session 34). Void sessions count among the
+    sessions shown it; the scored columns are what a contrast reads."""
+    rows = []
+    for s in systems:
+        sess = [x for x in tab.sessions if x.system == s]
+        if not sess:
+            continue
+        shown = [shown_softplus_note(root, x) for x in sess]
+        scored = [n for x, n in zip(sess, shown, strict=True) if not x.void.void]
+        rows.append(
+            [s, str(len(sess)), str(sum(shown)), str(len(scored)), str(sum(scored))]
+        )
+    return [
+        *table(
+            [
+                "arm",
+                "sessions",
+                "shown the note",
+                "scored sessions",
+                "scored, shown the note",
+            ],
+            rows,
+        ),
+        f"Sessions with at least one `fit` result reading `{SOFTPLUS_NOTE}`, from "
+        "the records. Softplus θ cannot be converted to the agent's time units, so "
+        "the anonymised condition is told, and the named condition, whose units "
+        "are not converted, is not: C2 compares conditions that include this note "
+        "(LOG 2026-11-05).",
+        "",
+    ]
 
 
 def session_wall_times(root: Path, sessions: Sequence[Any]) -> dict[str, float]:
@@ -636,22 +701,24 @@ def interim_controls(tab: Any, resamples: int) -> list[str]:
     return [*out, ""]
 
 
-def cost_table(
-    root: Path, systems: Sequence[str], sessions: Sequence[Any]
-) -> list[str]:
+def cost_table(root: Path, systems: Sequence[str], tab: Any) -> list[str]:
     """The LLM arms' cost and behaviour table: a row per arm with sessions.
 
     Turns and tokens come from the SDK's ``result`` message only; a session
-    without one reads them as 0 (``campaign.llm.run_session``). They are
-    medians over the sessions whose record has a ``result`` entry
-    (:func:`counts_recorded`), with ``(n/total recorded)`` when some have
-    none, and a note then says so.
+    without one has no such reading fields, or 0 in a cell written before
+    that (``campaign.llm.run_session``). They are medians over the sessions
+    whose record has a ``result`` entry (:func:`counts_recorded`), so both
+    forms read alike, with ``(n/total recorded)`` when some have none, and a
+    note then says so. Prediction columns read ``analysis.prediction_tally``,
+    which leaves policy-arm sessions out (P4 Δ11).
     """
-    stimes = session_times(root, sessions)
+    from sciagent.campaign import analysis
+
+    stimes = session_times(root, tab.sessions)
     crows = []
     unrecorded = 0
     for s in systems:
-        sess = [x for x in sessions if x.system == s]
+        sess = [x for x in tab.sessions if x.system == s]
         if not sess:
             continue
         rd = [x.reading for x in sess]
@@ -681,8 +748,12 @@ def cost_table(
         child_text = timed_text(
             [_cpu(line, "cpu_children_s") for line in lines], len(sess)
         )
-        evaluated = sum(r.get("predictions_evaluated", 0.0) for r in rd)
-        covered = sum(r.get("predictions_covered", 0.0) for r in rd)
+        tally = analysis.prediction_tally(tab, s)
+        if tally.read:
+            any_prediction = pct(tally.predicting / tally.read)
+            coverage = f"{tally.covered}/{tally.evaluated}"
+        else:  # every session is a policy arm's: its predictions are not read
+            any_prediction = coverage = "excl."
         crows.append(
             [
                 s,
@@ -699,11 +770,12 @@ def cost_table(
                 med("fits_used"),
                 med("experiments_used"),
                 pct(sum(r.get("experiments_used", 0.0) == 0.0 for r in rd) / len(rd)),
-                pct(sum(r.get("predictions", 0.0) > 0.0 for r in rd) / len(rd)),
+                any_prediction,
                 str(sum(x.void.void for x in sess)),
                 str(sum(x.void.stored_void for x in sess)),
                 str(sum(x.void.unknown_tool_attempts for x in sess)),
-                f"{int(covered)}/{int(evaluated)}",
+                coverage,
+                f"{tally.excluded} ({tally.excluded_predictions})",
             ]
         )
     out = table(
@@ -727,6 +799,7 @@ def cost_table(
             "void (stored)",
             "unknown-tool attempts",
             "predictions covered/evaluated",
+            "policy (excl.): sessions (predictions)",
         ],
         crows,
     )
@@ -771,7 +844,6 @@ def main() -> None:
         B_SYM_10F,
         BASELINES,
         METRIC_VERSION,
-        CampaignConfig,
     )
     from sciagent.campaign.store import ResultStore
     from sciagent.glm.fit import FIT_VERSION
@@ -782,12 +854,7 @@ def main() -> None:
     env = pointproc_environment(all_records)
     seeds = tuple(int(s) for s in args.seeds.split(","))
     control = tuple(int(s) for s in args.control_seeds.split(",") if int(s) in seeds)
-    config = CampaignConfig(
-        seeds=seeds,
-        control_seeds=control,
-        max_turns=args.max_turns,
-        control_truths=args.b10f_truths,
-    )
+    config = campaign_config(args)
     truths = truth_entries(records)
     with ResultStore(args.root, read_only=True) as store:
         tab = analysis.load_rows(store, env, config, truths, sessions=args.sessions)
@@ -1157,13 +1224,21 @@ def main() -> None:
 
     # -- LLM ---------------------------------------------------------------
     L += ["## LLM arms: cost and behaviour (under Max)", ""]
-    L += cost_table(args.root, llm_systems, tab.sessions)
+    L += cost_table(args.root, llm_systems, tab)
     L += [
         "Medians per investigation. Prediction coverage is SPEC §4.4 calibration "
         "raw; falsification-seeking, revision and stopping need a belief timeline "
-        "the record does not carry explicitly, and are not computed here.",
+        "the record does not carry explicitly, and are not computed here. "
+        "Predictions made in a policy arm are not read (P4 Δ11: the agent did "
+        "not choose the experiment); the last column counts what was left out.",
+        "",
+        "C3 (AG-o against AG-c): AG-o can read a clock through its own code and "
+        "AG-c cannot, so the wall limit the prompt states helps the two arms "
+        "unequally, and C3 reads with that difference (LOG 2026-11-05).",
         "",
     ]
+    L += ["### The softplus note", ""]
+    L += softplus_note_table(args.root, llm_systems, tab)
     flagged_runs = [x for x in tab.sessions if x.void.void or x.void.stored_void]
     L += [
         "### Void runs",
@@ -1205,8 +1280,8 @@ def main() -> None:
         r = scored.get((x.truth, x.seed, x.system))
         return -1e9 if r is None or r.gap_closed is None else r.gap_closed
 
-    named = [x for x in ago if x.system.endswith("/named")]
-    anon = [x for x in ago if x.system.endswith("/anon")]
+    named = [x for x in ago if config.arm_of(x.system).condition == "named"]
+    anon = [x for x in ago if config.arm_of(x.system).condition == "anon"]
 
     def has_closed(x: Any) -> bool:
         # The corrected rule (T4): a flagged gap closed never chooses a pick.

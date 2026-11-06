@@ -178,3 +178,13 @@ entry, and marks it handled with the date and what was done. Newest last.
 - [x] **2. Accept: control 5 no longer gates C3**; its inputs go to P4b with the policy rows (decision 12).
   Decided by the control room under the owner's standing delegation.
   Handled 2026-11-05 (lane session 34): both recorded as delegated, in the amendment's extensions 7 and 8 and the LOG, with both pilot figures and that the rule followed the reviewer's look at pilot dev rows. S6 prints the rows-left-out read.
+
+## 2026-11-06, control room
+
+- [ ] **Truths control 1 cannot check leave the reads: yes**, as the code does, with the unchecked truths
+  printed beside the reads on both tables; record it as set before any P4 data. Findings 9 and 10 stand
+  as they are. Decided by the control room under the owner's standing delegation.
+- [ ] **Guard block at 06:47:35Z:** it was a false match. The command's path ran through
+  `.claude/worktrees/`, which the guard reads as `~/.claude`. Leave the guard as it is; for edits inside
+  a worktree, use the Edit tool from the start. The rule for helpers stands: a block means stop and
+  report, whatever tool could make the write.

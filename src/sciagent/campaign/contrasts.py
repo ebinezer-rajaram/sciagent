@@ -67,7 +67,9 @@ the read and is counted (:attr:`FloorRead.no_common_seed`).
 ``default_rng(SeedSequence([seed, i]))``, so a read's interval does not depend on
 another read's rows. Truths enter sorted, and every fold is exactly rounded, so a
 read does not depend on row order. A truth leaving a read makes a new resample
-matrix, which moves an interval's end by itself.
+matrix, which moves an interval's end by itself. ``SeedSequence([seed, 0])`` gives
+the same stream as ``SeedSequence([seed])`` and ``default_rng(seed)``, so read 0's
+stream is the bare root: nothing else may draw from that root bare.
 
 **``rows``** holds both sides and the ORACLE on each matched (truth, seed), and for
 each floored row the row or rows that set its floor, so substituting a row that

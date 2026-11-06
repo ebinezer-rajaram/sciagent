@@ -285,9 +285,9 @@ def softplus_note_table(root: Path, systems: Sequence[str], tab: Any) -> list[st
         ),
         f"Sessions with at least one `fit` result reading `{SOFTPLUS_NOTE}`, from "
         "the records. Softplus θ cannot be converted to the agent's time units, so "
-        "the anonymised condition is told, and the named condition, whose units "
-        "are not converted, is not: C2 compares conditions that include this note "
-        "(LOG 2026-11-05).",
+        "the rescaled and anonymised conditions are told, and the named condition, "
+        "whose units are not converted, is not: C2's time reads include this note "
+        "and its names reads do not (LOG 2026-11-05, 2026-11-06).",
         "",
     ]
 

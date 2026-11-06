@@ -172,6 +172,9 @@ class Row:
     #: B-sym policy arms: the ``(name, args)`` of every diagnostic the policy
     #: chose on an experiment that left data (None: not a policy arm's cell).
     computed: tuple[tuple[str, tuple[tuple[str, Json], ...]], ...] | None = None
+    #: A failed unit's message, which ``error`` (the exception's type) does not
+    #: hold. P4's pair rule splits failures by cause on it (:mod:`.contrasts`).
+    message: str | None = None
 
 
 @dataclass(frozen=True)
@@ -268,6 +271,7 @@ def row_from_cell(
         oracle_underfit=underfit,
         oracle_psi_source=psi_source,
         computed=_computed(detail.get("computed")),
+        message=None if ok else detail.get("message"),
     )
 
 

@@ -188,10 +188,11 @@ def test_non_policy_surfaces_are_byte_identical_to_before_policy_mode(
         prompt_variant=variant,
         policy=None,
     )
-    # These digests predate the wall limit's sentence too, and stay as they were:
-    # less that one sentence, nothing moved (LOG 2026-11-05, session 34).
+    # These digests predate the wall limit's sentence too. ``v1`` never took it,
+    # so its text is the digest's as it stands; ``link-neutral`` did, and less
+    # that one sentence nothing moved (LOG 2026-11-05, session 34).
     sentence = "\n" + WALL_SENTENCE.format(wall=f"{WALL_TIME_S:g}") + "\n"
-    assert surface["system_prompt"].count(sentence) == 1
+    assert surface["system_prompt"].count(sentence) == (variant != "v1")
     before = {
         **surface,
         "system_prompt": surface["system_prompt"].replace(sentence, ""),

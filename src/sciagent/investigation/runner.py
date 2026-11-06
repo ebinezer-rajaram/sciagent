@@ -73,7 +73,7 @@ from sciagent.investigation.tools import (
     PredictionOutcome,
     tool_specs,
 )
-from sciagent.investigation.view import Condition, make_view
+from sciagent.investigation.view import CONDITIONS, Condition, make_view
 from sciagent.investigation.world import OBSERVATIONAL, Truth, World
 from sciagent.sandbox import (
     HANDOFF_HELPER_SHA256,
@@ -233,7 +233,7 @@ class InvestigationSpec:
     def from_json(data: Mapping[str, Any]) -> InvestigationSpec:
         arm = data["arm"]
         condition = data["condition"]
-        if arm not in ("AG-c", "AG-o") or condition not in ("named", "anon"):
+        if arm not in ("AG-c", "AG-o") or condition not in CONDITIONS:
             raise LabError(f"bad arm/condition in record: {arm!r}, {condition!r}")
         if data.get("fit_config") != FIT_CONFIG.key():
             raise LabError(

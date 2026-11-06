@@ -198,7 +198,20 @@ def test_the_table_says_what_it_counts(tmp_path: Path, report: ModuleType) -> No
     assert "C2" in text
 
 
-@pytest.mark.parametrize(("condition", "shown"), [("anon", True), ("named", False)])
+def test_the_table_says_which_c2_reads_hold_the_note(
+    tmp_path: Path, report: ModuleType
+) -> None:
+    """Rescaled shows the note too, so C2's time read holds it and its names read
+    does not (LOG 2026-11-06)."""
+    sessions = [_session(tmp_path, ANON, 1, [_call("fit", FITTED)])]
+    text = "\n".join(report.softplus_note_table(tmp_path, [ANON], _table(sessions)))
+    assert "the rescaled and anonymised conditions are told" in text
+    assert "C2's time reads include this note and its names reads do not" in text
+
+
+@pytest.mark.parametrize(
+    ("condition", "shown"), [("anon", True), ("rescaled", True), ("named", False)]
+)
 def test_the_needle_is_what_a_real_softplus_fit_prints(
     condition: Any, shown: bool, report: ModuleType
 ) -> None:

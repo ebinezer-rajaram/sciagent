@@ -84,6 +84,12 @@ P4_SURFACES: Final[dict[str, str]] = {
     "AG-o/anon|link-neutral|none|experiments=8|fits=40|wall_time_s=3600.0": (
         "dd1eea72c55eb7a09807ef0dcc3f49fe745066911513ddf1b59c82436e6c887d"
     ),
+    "AG-c/rescaled|link-neutral|none|experiments=8|fits=40|wall_time_s=3600.0": (
+        "22017b29efdf9280eaacc2449eaa8dfc21af72f0a5767ad379dd881c2e65ed0c"
+    ),
+    "AG-o/rescaled|link-neutral|none|experiments=8|fits=40|wall_time_s=3600.0": (
+        "025235c508eff22bc74260e4c08719ab3f21f715229e403150b27d712391ec74"
+    ),
 }
 #: pointproc's own leak terms beyond the default list.
 FORBIDDEN: Final = ("size", "sign", "arrival")
@@ -320,10 +326,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--arm-set",
-        choices=("pilot", "p4"),
+        choices=("pilot", "p4", "p4-sonnet"),
         default="pilot",
-        help="the pilot's arms (v1 prompt) or P4's (the frozen variant); a split "
-        "other than dev runs p4 only (sciagent.campaign.freeze)",
+        help="the pilot's arms (v1 prompt), P4's grid (the frozen variant) or P4's "
+        "Sonnet config (the grid and the rescaled arms); a split other than dev "
+        "runs the frozen variant only (sciagent.campaign.freeze)",
     )
     p.add_argument("--wait", type=float, default=0.0, help="wait for the split (s)")
     p.add_argument(
@@ -343,6 +350,7 @@ def campaign_config(args: argparse.Namespace) -> CampaignConfig:
     from sciagent.campaign.plan import (
         BASELINES,
         P4_ARMS,
+        P4_SONNET_ARMS,
         PILOT_ARMS,
         CampaignConfig,
         LLMArm,
@@ -351,7 +359,12 @@ def campaign_config(args: argparse.Namespace) -> CampaignConfig:
     seeds = tuple(int(s) for s in args.seeds.split(","))
     control = tuple(int(s) for s in args.control_seeds.split(",") if int(s) in seeds)
     baselines = BASELINES if args.systems is None else tuple(args.systems.split(","))
-    arms: tuple[LLMArm, ...] = P4_ARMS if args.arm_set == "p4" else PILOT_ARMS
+    arm_sets: dict[str, tuple[LLMArm, ...]] = {
+        "pilot": PILOT_ARMS,
+        "p4": P4_ARMS,
+        "p4-sonnet": P4_SONNET_ARMS,
+    }
+    arms = arm_sets[args.arm_set]
     if args.arms is not None:
         wanted = [name for name in args.arms.split(",") if name]
         names = {f"{a.arm}/{a.condition}" for a in arms}

@@ -5,11 +5,16 @@ runner → the real tool layer over a real world) and reads its saved
 :class:`SessionRecord` with framework code only. Each must also separate what
 it claims to: control 4 fails when the two conditions saw different data,
 control 6 fails when one evaluated prediction comes out the other way.
+
+Control 4's gaps here are real ones: each condition's own submission, fitted by
+the framework on the world's observational log and scored on the held-out log
+against the truth's fit, as :func:`~sciagent.campaign.execute.run_score_job` does.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import math
 from pathlib import Path
 from typing import Final
 
@@ -25,11 +30,15 @@ from investigation_support import (
 
 from environments.pointproc import v2
 from sciagent.glm.canonical import canonicalise, structure_hash
+from sciagent.glm.fit import fit
+from sciagent.glm.grammar import Structure
 from sciagent.glm.syntax import parse, render
 from sciagent.harness.record import SessionRecord
 from sciagent.harness.scripted import ScriptedDriver, Step
-from sciagent.investigation import run
+from sciagent.investigation import replay_investigation, run
+from sciagent.investigation.tools import FIT_CONFIG
 from sciagent.investigation.view import Condition
+from sciagent.investigation.world import OBSERVATIONAL, World
 from sciagent.scoring.controls_p4 import (
     BEHAVIOUR_EXPERIMENTS,
     NAMING_CONDITIONS,
@@ -39,8 +48,11 @@ from sciagent.scoring.controls_p4 import (
     behaviour_script,
     naming_null,
     planted_hint_script,
+    session_facts,
 )
 from sciagent.scoring.errors import ScoringError
+from sciagent.scoring.heldout import held_out_dataset, predictive_gap
+from sciagent.systems.v2.models import GLMModel
 
 CHANNELS: Final = v2.CHANNELS
 TRUTH: Final = "size_excitation"
@@ -71,20 +83,58 @@ def _planted(condition: Condition, out: Path, seed: int = SEED) -> SessionRecord
     return SessionRecord.load(outcome.record_path)
 
 
-def test_control_4_named_and_anon_give_identical_submissions_and_fits(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def _model(structure: Structure, seed: int) -> GLMModel:
+    data = World(POINTPROC.resolve(TRUTH), seed).datasets[OBSERVATIONAL]
+    result = fit(structure, [data], CHANNELS, config=FIT_CONFIG)
+    return GLMModel(structure.link.value, result, CHANNELS, v2.mark_sampler)
+
+
+def _gap(record: SessionRecord, seed: int = SEED) -> float:
+    """The held-out gap of the record's own submission (module docstring)."""
+    submission = session_facts(record).submission
+    assert submission is not None
+    truth = POINTPROC.resolve(TRUTH)
+    held = held_out_dataset(truth, TRUTH, seed)
+    model = _model(canonicalise(parse(submission, CHANNELS)), seed)
+    oracle = _model(canonicalise(v2.TRUTHS[TRUTH].structure), seed)
+    return predictive_gap(model, oracle, [held]).gap
+
+
+@pytest.fixture(scope="module")
+def planted(tmp_path_factory: pytest.TempPathFactory) -> dict[str, SessionRecord]:
+    """One planted-hint session per condition, on one (truth, seed)."""
+    patch = pytest.MonkeyPatch()
+    clean_environment(patch)
+    root = tmp_path_factory.mktemp("planted")
+    records = {c: _planted(c, root / c) for c in NAMING_CONDITIONS}
+    patch.undo()
+    return records
+
+
+def _equal_gaps(value: float = -0.125) -> dict[str, float]:
+    return dict.fromkeys(NAMING_CONDITIONS, value)
+
+
+def test_the_null_runs_in_all_three_conditions() -> None:
+    assert NAMING_CONDITIONS == ("named", "rescaled", "anon")
+
+
+@pytest.mark.slow
+def test_control_4_all_three_give_identical_submissions_fits_and_gaps(
+    planted: dict[str, SessionRecord],
 ) -> None:
-    clean_environment(monkeypatch)
-    records = {c: _planted(c, tmp_path / c) for c in NAMING_CONDITIONS}
-    v = naming_null(records)
+    gaps = {c: _gap(planted[c]) for c in NAMING_CONDITIONS}
+    v = naming_null(planted, gaps)
     assert v.passed, v.mismatches
-    assert v.conditions == NAMING_CONDITIONS == ("named", "anon")
+    assert v.conditions == NAMING_CONDITIONS
+    assert math.isfinite(gaps["named"])
+    assert v.gaps == tuple((c, gaps[c]) for c in NAMING_CONDITIONS)
     named = dict(v.facts)["named"]
     truth = canonicalise(v2.TRUTHS[TRUTH].structure)
     assert named.submission == render(truth)
     assert named.submission_hash == structure_hash(truth)
     # The hint first, then the truth, on obs and then on obs + e0: four fits,
-    # every one finite, and the anon run's are the same floats bit for bit.
+    # every one finite, and the other runs' are the same floats bit for bit.
     assert len(named.fits) == PLANTED_FITS == 4
     assert [f.data_ids for f in named.fits] == [
         ("obs",),
@@ -92,37 +142,75 @@ def test_control_4_named_and_anon_give_identical_submissions_and_fits(
         ("obs", "e0"),
         ("obs", "e0"),
     ]
-    anon = dict(v.facts)["anon"]
-    assert [f.log_likelihood.hex() for f in anon.fits] == [
-        f.log_likelihood.hex() for f in named.fits
-    ]
+    for condition in ("rescaled", "anon"):
+        other = dict(v.facts)[condition]
+        assert [f.log_likelihood.hex() for f in other.fits] == [
+            f.log_likelihood.hex() for f in named.fits
+        ]
+        assert gaps[condition].hex() == gaps["named"].hex()
 
 
-def test_control_4_fails_when_the_conditions_saw_different_data(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("odd", ["rescaled", "anon"])
+def test_control_4_fails_when_a_condition_saw_different_data(
+    odd: Condition,
+    planted: dict[str, SessionRecord],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     clean_environment(monkeypatch)
-    records = {
-        "named": _planted("named", tmp_path / "named"),
-        "anon": _planted("anon", tmp_path / "anon", seed=SEED + 1),
-    }
-    v = naming_null(records)
+    records = {**planted, odd: _planted(odd, tmp_path / odd, seed=SEED + 1)}
+    v = naming_null(records, _equal_gaps())
     assert not v.passed
-    assert any("fit" in m for m in v.mismatches), v.mismatches
+    assert any("fit" in m and odd in m for m in v.mismatches), v.mismatches
     # Same submission (the script submits the truth either way).
     facts = dict(v.facts)
-    assert facts["named"].submission == facts["anon"].submission
+    assert facts["named"].submission == facts[odd].submission
+
+
+@pytest.mark.parametrize("odd", ["rescaled", "anon"])
+def test_control_4_fails_on_a_gap_one_float_away(
+    odd: str, planted: dict[str, SessionRecord]
+) -> None:
+    """Exact: the factor is a power of two, so no tolerance is owed to it."""
+    gaps = _equal_gaps()
+    gaps[odd] = math.nextafter(gaps[odd], 0.0)
+    v = naming_null(planted, gaps)
+    assert not v.passed
+    assert [m for m in v.mismatches if m.startswith(f"gap: {odd}")], v.mismatches
+
+
+def test_control_4_passes_equal_gaps_only_when_they_are_real(
+    planted: dict[str, SessionRecord],
+) -> None:
+    """Three equal nothings are not a null result."""
+    assert naming_null(planted, _equal_gaps()).passed
+    for value in (math.nan, -math.inf):
+        v = naming_null(planted, _equal_gaps(value))
+        assert not v.passed
+        assert any(m.startswith("named: no finite gap") for m in v.mismatches)
 
 
 def test_control_4_needs_exactly_the_preregistered_conditions(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    planted: dict[str, SessionRecord],
 ) -> None:
-    clean_environment(monkeypatch)
-    named = _planted("named", tmp_path / "named")
+    named = planted["named"]
     with pytest.raises(ScoringError):
-        naming_null({"named": named})
+        naming_null({"named": named}, _equal_gaps())
     with pytest.raises(ScoringError):
-        naming_null({"named": named, "anon": named, "rescaled": named})
+        naming_null({"named": named, "anon": named}, _equal_gaps())
+    with pytest.raises(ScoringError):
+        naming_null(planted, {"named": 0.0, "anon": 0.0})
+
+
+@pytest.mark.parametrize("condition", NAMING_CONDITIONS)
+def test_a_planted_session_replays_in_its_condition(
+    condition: str, planted: dict[str, SessionRecord]
+) -> None:
+    """Replay compares every tool text, so the rescaled session's numbers come
+    back from its record alone."""
+    record = planted[condition]
+    report = replay_investigation(record, POINTPROC)
+    assert report.steps == len(record.of_kind("tool_call"))
 
 
 def test_the_planted_script_proposes_the_hint_first() -> None:

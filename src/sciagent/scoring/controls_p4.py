@@ -10,20 +10,20 @@ SPEC (choice 18).
 
 **Control 4, the naming null (gates C2).** A scripted planted-hint agent
 (:func:`planted_hint_script`) runs through the tool layer once per naming
-condition on the same (truth, seed). The anon view renames channels and
-diagnostics and multiplies time by a power of two, so every conversion is
-bit-exact and the framework's native numbers must not move:
-:func:`naming_null` passes only when the canonical submission and every fit's
-``(structure, data, log-likelihood)`` are *exactly* equal (float equality, no
-tolerance) between each condition and ``named``. The script proposes the
+condition on the same (truth, seed). The rescaled view multiplies time by a power
+of two and the anon view also renames channels and diagnostics, so every
+conversion is bit-exact and the framework's native numbers must not move:
+:func:`naming_null` passes only when the canonical submission, every fit's
+``(structure, data, log-likelihood)`` and the submission's held-out gap are
+*exactly* equal (float equality, no tolerance) between each condition and
+``named``, and that gap is finite. The gaps are the score cells' readings, which
+no record holds, so the caller passes them. The script proposes the
 truth's :func:`~sciagent.systems.v2.search.hint` first, as SPEC §6.4's
 planted-hint agent does, fits it and the truth on the observational log, runs
 one unintervened experiment (so a design crosses the view's time conversion),
 fits both again on ``obs + e0`` and submits the truth (the hint keeps no mark
 function, so only the truth's text carries channel names through the
-anonymiser). **Δ9 hook:** the rescaled condition (names kept, time x8) is not
-built yet. When it is, it joins :data:`NAMING_CONDITIONS` and nothing else
-here changes: every condition is compared with :data:`NAMING_REFERENCE`.
+anonymiser). Every condition is compared with :data:`NAMING_REFERENCE`.
 
 **Control 5, policy separation (gates C3/C5).** ``B-sym+truthFSD`` (FSD
 against the truth, ``systems/v2/policy_controls.py``) must observe the
@@ -130,8 +130,8 @@ def _calls(record: SessionRecord) -> list[Mapping[str, Json]]:
 
 #: The condition every other is compared with.
 NAMING_REFERENCE: Final = "named"
-#: The preregistered conditions. Δ9 adds "rescaled" here (module docstring).
-NAMING_CONDITIONS: Final = ("named", "anon")
+#: The preregistered conditions (P4-PROPOSAL §4, control 4).
+NAMING_CONDITIONS: Final = ("named", "rescaled", "anon")
 #: Fits the planted script spends (its session's fit budget).
 PLANTED_FITS: Final = 4
 
@@ -241,6 +241,7 @@ class NamingNullVerdict:
     passed: bool
     conditions: tuple[str, ...]
     facts: tuple[tuple[str, SessionFacts], ...]
+    gaps: tuple[tuple[str, float], ...]
     mismatches: tuple[str, ...]
 
 
@@ -249,13 +250,17 @@ def _same(a: float, b: float) -> bool:
     return a.hex() == b.hex()
 
 
-def naming_null(records: Mapping[str, SessionRecord]) -> NamingNullVerdict:
-    """Control 4 over one planted-hint session per naming condition."""
-    if set(records) != set(NAMING_CONDITIONS):
-        raise ScoringError(
-            f"control 4 needs exactly the conditions {list(NAMING_CONDITIONS)}, "
-            f"got {sorted(records)}"
-        )
+def naming_null(
+    records: Mapping[str, SessionRecord], gaps: Mapping[str, float]
+) -> NamingNullVerdict:
+    """Control 4 over one planted-hint session per naming condition, and the
+    held-out gap each session's submission scored."""
+    for what, given in (("records", records), ("gaps", gaps)):
+        if set(given) != set(NAMING_CONDITIONS):
+            raise ScoringError(
+                f"control 4 needs {what} for exactly the conditions "
+                f"{list(NAMING_CONDITIONS)}, got {sorted(given)}"
+            )
     facts = tuple((c, session_facts(records[c])) for c in NAMING_CONDITIONS)
     by = dict(facts)
     ref = by[NAMING_REFERENCE]
@@ -264,6 +269,9 @@ def naming_null(records: Mapping[str, SessionRecord]) -> NamingNullVerdict:
         bad.append(f"{NAMING_REFERENCE}: no submission")
     if not ref.fits:
         bad.append(f"{NAMING_REFERENCE}: no fit")
+    ref_gap = gaps[NAMING_REFERENCE]
+    if not math.isfinite(ref_gap):
+        bad.append(f"{NAMING_REFERENCE}: no finite gap ({ref_gap!r})")
     for c, got in facts:
         if c == NAMING_REFERENCE:
             continue
@@ -272,6 +280,8 @@ def naming_null(records: Mapping[str, SessionRecord]) -> NamingNullVerdict:
             ref.submission_hash,
         ):
             bad.append(f"submission: {c} {got.submission!r} != {ref.submission!r}")
+        if not _same(gaps[c], ref_gap):
+            bad.append(f"gap: {c} {gaps[c]!r} != {ref_gap!r}")
         if len(got.fits) != len(ref.fits):
             bad.append(f"fit count: {c} {len(got.fits)} != {len(ref.fits)}")
         for i, (g, r) in enumerate(zip(got.fits, ref.fits, strict=False)):
@@ -282,7 +292,8 @@ def naming_null(records: Mapping[str, SessionRecord]) -> NamingNullVerdict:
                     f"fit {i + 1}: {c} log L {g.log_likelihood!r} != "
                     f"{r.log_likelihood!r}"
                 )
-    return NamingNullVerdict(not bad, NAMING_CONDITIONS, facts, tuple(bad))
+    shown = tuple((c, gaps[c]) for c in NAMING_CONDITIONS)
+    return NamingNullVerdict(not bad, NAMING_CONDITIONS, facts, shown, tuple(bad))
 
 
 # --------------------------------------------------------------------------

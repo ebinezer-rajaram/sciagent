@@ -397,7 +397,8 @@ class LLMArm:
     experiments): one of ``random``, ``EIG`` or ``FSD``, on AG-c only. Both
     enter the session key and, when not the default, the system name.
     AG-S-boed (SPEC §4.1) is ``LLMArm("AG-c", "named", policy="EIG")`` on the
-    Sonnet letter: its system name is ``AG-c-S/named+policy=EIG``.
+    Sonnet letter: its system name is ``AG-c-S/named+policy=EIG``. The condition
+    is ``named``, ``rescaled`` (P4 Δ9) or ``anon``.
     """
 
     arm: Arm
@@ -448,6 +449,17 @@ P4_PROMPT_VARIANT: Final[PromptVariant] = "link-neutral"
 P4_ARMS: Final = tuple(
     replace(arm, prompt_variant=P4_PROMPT_VARIANT) for arm in PILOT_ARMS
 )
+
+
+#: Δ9's arms: names kept, time as anon has it, both tiers. On Sonnet only
+#: (decision 11, A), so they are not in :data:`P4_ARMS`, the grid every model runs.
+P4_RESCALED_ARMS: Final = (
+    LLMArm("AG-c", "rescaled", P4_PROMPT_VARIANT),
+    LLMArm("AG-o", "rescaled", P4_PROMPT_VARIANT),
+)
+#: P4's Sonnet config: the grid, then Δ9's arms, so they add units after each
+#: seed's grid and reorder none.
+P4_SONNET_ARMS: Final = (*P4_ARMS, *P4_RESCALED_ARMS)
 
 
 def system_variant(system: str) -> PromptVariant:
@@ -916,8 +928,10 @@ def _float_fields(limits: SandboxLimits) -> dict[str, int | float]:
 
 def legacy_session_config_digest(arm: LLMArm, config: CampaignConfig) -> str | None:
     """The SHA-256 of :func:`legacy_session_text_v1`; ``None`` for an arm the
-    pilot could not have run (a non-default variant or a policy)."""
+    pilot could not have run (a non-default variant, a policy or ``rescaled``)."""
     if arm.prompt_variant != "v1" or arm.policy is not None:
+        return None
+    if arm.condition == "rescaled":
         return None
     return _sha(legacy_session_text_v1(arm, config))
 

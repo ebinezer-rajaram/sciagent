@@ -6,7 +6,10 @@ everything the agent writes (DSL text, experiment designs, channel and
 diagnostic names) passes through it on the way in. The ``named`` view is the
 identity. The ``anon`` view renames channels and diagnostics with a
 :class:`~sciagent.anonymise.NameMap` and multiplies time by its factor ``c``
-(a power of two, so every conversion is bit-exact).
+(a power of two, so every conversion is bit-exact). The ``rescaled`` view (P4
+Δ9) keeps every name and has the same factor, through a map that sends each
+name to itself (:func:`~sciagent.anonymise.time_only_map`), so it converts
+time by anon's code and not by a copy of it.
 
 What is computed *in* the agent's view
 --------------------------------------
@@ -49,6 +52,7 @@ from sciagent.anonymise import (
     anonymise_structure,
     deanonymise_structure,
     make_name_map,
+    time_only_map,
 )
 from sciagent.core.errors import SciAgentError
 from sciagent.diagnostics import catalogue
@@ -82,6 +86,7 @@ from sciagent.glm.interventions import (
 )
 
 __all__ = [
+    "CONDITIONS",
     "PSI_TIME_POWER",
     "AgentView",
     "Condition",
@@ -92,7 +97,9 @@ __all__ = [
     "shown_truncation",
 ]
 
-type Condition = Literal["named", "anon"]
+type Condition = Literal["named", "rescaled", "anon"]
+#: Every condition, named first. C2 reads each neighbouring pair (P4 Δ9).
+CONDITIONS: Final[tuple[Condition, ...]] = ("named", "rescaled", "anon")
 
 
 class ViewError(SciAgentError):
@@ -368,8 +375,11 @@ def make_view(
     """The view for a condition. ``anon_channels`` maps native -> anonymised."""
     if condition == "named":
         return AgentView("named", channels, None)
+    if condition == "rescaled":
+        names = (c.name for c in channels)
+        return AgentView("rescaled", channels, time_only_map(names, catalogue.names()))
     if condition != "anon":
-        raise ViewError(f"condition must be 'named' or 'anon', got {condition!r}")
+        raise ViewError(f"condition must be one of {CONDITIONS}, got {condition!r}")
     missing = sorted({c.name for c in channels} - set(anon_channels))
     if missing:
         raise ViewError(f"no anonymised name for channel(s) {missing}")

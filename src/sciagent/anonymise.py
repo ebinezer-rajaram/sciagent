@@ -103,6 +103,7 @@ __all__ = [
     "scan_for_leaks",
     "scan_for_numeric_leaks",
     "scan_json_for_leaks",
+    "time_only_map",
 ]
 
 
@@ -378,6 +379,24 @@ def make_name_map(
     return NameMap(
         channels=tuple(sorted(channel_pairs.items())),
         diagnostics=tuple((d, f"d{i + 1:0{width}d}") for i, d in enumerate(ordered)),
+        time_factor=float(time_factor),
+    )
+
+
+def time_only_map(
+    channel_names: Iterable[str],
+    diagnostic_names: Iterable[str],
+    time_factor: float = DEFAULT_TIME_FACTOR,
+) -> NameMap:
+    """A :class:`NameMap` that renames nothing and scales time (P4 Δ9).
+
+    The ``rescaled`` condition's map: every name maps to itself, so everything
+    that converts time goes through the code the anonymised condition uses, at
+    the same default factor.
+    """
+    return NameMap(
+        channels=tuple((c, c) for c in sorted(channel_names)),
+        diagnostics=tuple((d, d) for d in sorted(diagnostic_names)),
         time_factor=float(time_factor),
     )
 

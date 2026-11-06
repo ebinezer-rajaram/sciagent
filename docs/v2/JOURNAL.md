@@ -2740,7 +2740,7 @@ Corrects the hand-over above: its third decision (T2 and fit/5) is no longer the
 - **p4-deltas integrated:** determinism at b0853a1 clean, all merges pushed with their shape kept.
 - **`F2` = 9031943** frozen after round 3. **Real plan** on v2. **SPEC updated**, claims narrowed, as the control room ruled.
 - **Control 4's runner and the report's refusal** on v2. **Miss script** on v2, 48db3b4: all five steps, 394 tests on the engineer's run. Not `R2`, and no review or rehearsal yet.
-- **B-sym:** the gap found and answered within the hour, deviation in PILOT.md. The tuning draft went to red team: not ready, 6 blocking. Not fixed, nothing run, so nothing is spoiled.
+- **B-sym:** the gap found and answered within the hour, deviation in PILOT.md. The tuning draft went to red team: not ready, 6 blocking. Rewritten, not re-reviewed, nothing run, so nothing is spoiled.
 
 **Stop points.** Both this session's were answered by the control room. The phone push did not go out, Remote Control inactive, so they went by session message. Nothing is waiting on the owner now, except the written choice on a softplus seed below, which can be the lane's recommendation first.
 
@@ -2759,7 +2759,7 @@ Corrects the hand-over above: its third decision (T2 and fit/5) is no longer the
 **Learned.** Three red teams this session each stopped something real: the SPEC text would have kept a claim its read cannot test, and the tuning draft would have spent 100 CPU hours on candidates that do not reach B-sym's failure. A requirement written once in a table and never queued goes missing for a month, which is how the tuning was lost; the §6.1 list in the queue is there so that does not happen twice. A plain `git pull --rebase` after a merge is what the Stop hook asks for and is wrong here: fetch, check, plain push, or merge origin when it has moved.
 
 **Next.**
-1. Rewrite `docs/v2/prereg/2026-11-06_bsym-tuning.md` from the report's fixes, with a written choice on the softplus seed, then its narrow second round. Tuning is the longest pole, by the reviewer's 91 to 114 CPU hours about 2 to 3 days of wall time at 2 workers, so start it first.
+1. Send `docs/v2/prereg/2026-11-06_bsym-tuning.md`, second text, to its narrow second round. I rewrote it from the report's fixes at the end of this session, unreviewed: 12 candidates plus `weak` and `c0b`, three seeds, a stage 2 check at 10×F, any label but `SELECTED` leaves `c0`, softplus seed as candidate `c11`. Its stage 2 needs B-rand's and ORACLE's stored rows exported at 9db1a46. Tuning is the longest pole, by the reviewer's 91 to 114 CPU hours about 2 to 3 days of wall time at 2 workers, so start it first.
 2. Red team on `scripts/p4_search_misses.py`, with an independent mutant pass. Guards on non-control ids only.
 3. Full slow tier on v2's head, then the rehearsal's store.
 

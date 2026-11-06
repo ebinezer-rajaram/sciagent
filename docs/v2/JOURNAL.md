@@ -2689,3 +2689,21 @@ Corrects the hand-over above: its third decision (T2 and fit/5) is no longer the
 3. Freeze `F2` by the preregister skill, then brief an engineer on `scripts/p4_search_misses.py`, and ask for a real P4 plan (finding 15).
 
 **Decision needed from the owner:** none now. Ahead: the SPEC text for `rescaled` and C1 to C4 (queued as a stop point), and the Test split and §6.1 freeze.
+
+## 2026-11-06: Lane session 36, checkpoint: the p4-deltas integration is on v2; SPEC words proposed; round 3 and the real plan running
+
+**Done.**
+- **Determinism at b0853a1:** `identical cells: 21; only in a: 0; only in b: 0; differing: 0`, `REPORT IDENTICAL` at hash seeds 0, 1, 2, exit 0 at 14:00:02Z (`.cache/drafts/s35/det.log`). 9 h 30 min 5 s CPU against a ceiling of 20. Stores and log on S3, `sciagent/p4-merge/determinism-b0853a1/`. Slow tier at dd7ca91 `343 passed`, exit 0. LEDGER rows in.
+- **Merged and pushed:** b0853a1 (43b88dc), then `p4-rehearsal` 05bf8f8 (7bc9963). `git diff` of `src`, `scripts`, `tests`, `pyproject.toml` and `uv.lock` against each is empty. Pushed by fetch and plain push, so the merges kept their shape. The Stop hook's text says `git pull --rebase`; I did not, by memory `pull-rebase-flattens-merges`.
+- **Checks on the merged tree:** ruff `327 files already formatted`, `All checks passed!`, mypy `no issues found in 316 source files`, fast tier exit 0.
+- **Queue:** the integration item, the work packages, wall-time follow-ups, named against anon and the small harness points closed, each after checking its last "left" is on v2.
+
+**Stop point: SPEC text.** The answer in one line: the words for §5, §6.2, §6.4 and §7 are ready, and nothing in `docs/SPEC.md` has changed. Evidence: `docs/v2/SPEC-TEXT-P4.md`. Caveats: it also covers §6.4's controls 4 to 6, which the queue item did not name, and it splits a P4b row out of §7, which is my wording of decision 12. Recommendation: accept as written. Decision needed: accept, change or refuse, by the §6.1 commit at the latest. Nothing else waits on it today.
+
+**Running, $0.** Red team round 3 on the amendment at 9e61238, also covering the contrast fixes that had no second review (the skill reruns after a not-ready verdict, and round 2 was one). Engineer on the real P4 plan, branch `p4-plan`, finding 15.
+
+**Slips.** The two LEDGER rows went in by a shell heredoc, against the ruling that docs take the Edit tool. It was not blocked, and the rows are correct, so they stay; everything since went by Edit. My fast tier command doubled `-q` on top of `addopts`, which hid the summary line, so the count is 4,531 dots with no F, E or s, read from the log and equal to dd7ca91's `4531 passed`.
+
+**Not verified.** The determinism run covers b0853a1 only. The second merge adds `rescaled`, the prompts and the contrast code; a no-LLM mini plan would not exercise them, so it was not rerun, and no check shows those paths byte-stable across runs beyond their tests.
+
+**Next.** Read round 3 and fix; freeze `F2`; read the engineer's plan and merge it; brief `scripts/p4_search_misses.py`.

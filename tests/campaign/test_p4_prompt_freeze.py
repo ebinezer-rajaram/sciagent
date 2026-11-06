@@ -61,6 +61,7 @@ from sciagent.campaign.plan import (
 from sciagent.campaign.store import ResultStore
 from sciagent.campaign.voids import VoidStatus
 from sciagent.harness.scripted import ScriptedDriver
+from sciagent.investigation.runner import rendered_config
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 
@@ -174,6 +175,39 @@ def test_a_rescaled_session_reads_back_in_native_names(
     assert named["outcome"] == rescaled["outcome"] == "submitted"
     assert rescaled["submission"] == named["submission"] is not None
     assert rescaled["fitted"] == named["fitted"]
+
+
+def _system_prompt(arm: LLMArm, config: CampaignConfig) -> str:
+    env = environment()
+    assert env.investigation is not None
+    surface = rendered_config(
+        env.investigation,
+        env.channels,
+        arm.arm,
+        arm.condition,
+        experiments=config.experiments,
+        fits=config.fits,
+        wall_time_s=config.wall_time_s,
+        prompt_variant=arm.prompt_variant,
+    )
+    text = surface["system_prompt"]
+    assert isinstance(text, str)
+    return text
+
+
+@pytest.mark.parametrize("wall", [3600.0, 1800.0])
+def test_every_p4_prompt_states_its_configurations_wall_limit(wall: float) -> None:
+    """On purpose: the freeze holds this sentence, for both tiers and all three
+    conditions, with the number the config gives it."""
+    config = CampaignConfig(llm_arms=P4_SONNET_ARMS, wall_time_s=wall)
+    for arm in P4_SONNET_ARMS:
+        assert f"limit of {wall:g} seconds of real time" in _system_prompt(arm, config)
+
+
+def test_no_pilot_prompt_states_a_wall_limit() -> None:
+    config = CampaignConfig()
+    for arm in PILOT_ARMS:
+        assert "real time" not in _system_prompt(arm, config)
 
 
 def test_the_pilot_could_not_have_run_rescaled() -> None:

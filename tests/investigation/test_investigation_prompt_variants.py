@@ -1,11 +1,11 @@
 """Prompt variants (P4 Δ6): ``"v1"`` and ``"link-neutral"``.
 
-The link-neutral variant differs from v1 in exactly two places: the grammar's
+The link-neutral variant differs from v1 in exactly three places: the grammar's
 examples (rotated across the identity, exp and softplus links, plus one
-depth-3 example) and the scoring paragraph (restated as held-out prediction
-and structural distance). Everything else is the same text. The variant is
-part of the recorded :class:`InvestigationSpec`; a record made before it
-existed reads as v1.
+depth-3 example), the scoring paragraph (restated as held-out prediction
+and structural distance) and the wall limit's sentence, which only it states.
+Everything else is the same text. The variant is part of the recorded
+:class:`InvestigationSpec`; a record made before it existed reads as v1.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from investigation_support import (
     BELIEF,
     POINTPROC,
     STOP,
+    WALL_SENTENCE,
     WALL_TIME_S,
     clean_environment,
     lab,
@@ -193,7 +194,10 @@ def test_the_variants_differ_only_in_examples_and_scoring(
     )
     old_rest, old_examples = _cut(old, V1_SCORING)
     new_rest, new_examples = _cut(new, LINK_NEUTRAL_SCORING)
-    assert old_rest == new_rest
+    sentence = "\n" + WALL_SENTENCE.format(wall=f"{WALL_TIME_S:g}") + "\n"
+    assert sentence not in old_rest
+    assert new_rest.count(sentence) == 1
+    assert old_rest == new_rest.replace(sentence, "")
     assert old != new
     # The example blocks hold exactly the examples (long ones wrap).
     assert _words(old_examples) == _words(" ".join(examples(view, "v1")))

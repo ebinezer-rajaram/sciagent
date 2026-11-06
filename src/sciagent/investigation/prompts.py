@@ -15,11 +15,12 @@ second, stronger manipulation mixed into the same contrast. The anonymised
 prompts are checked for forbidden terms by ``tests/investigation``.
 
 Variants (P4 Δ6). :data:`PROMPT_VARIANTS` are ``v1`` and ``link-neutral``. They
-differ in two places only: the grammar's examples (:func:`examples`; v1 starts
+differ in three places only: the grammar's examples (:func:`examples`; v1 starts
 at the identity link and stays at depth 2 or less, link-neutral rotates the
-identity, exp and softplus links and adds one depth-3 example) and the scoring
+identity, exp and softplus links and adds one depth-3 example), the scoring
 paragraph (:func:`_scoring`; link-neutral states it as held-out prediction and
-structural distance, without v1's "a simpler structure beats a larger one").
+structural distance, without v1's "a simpler structure beats a larger one") and
+the wall limit's sentence, below.
 
 Beliefs (P4 Δ4). The prompt asks for a ``belief`` before every experiment and
 before ``submit`` (the tools enforce it), for at least one prediction under a
@@ -35,10 +36,11 @@ it. Without a policy every text is byte-identical to the text before policy
 mode existed.
 
 Wall limit (LOG 2026-11-05, session 34). One sentence, :func:`_wall_limit`, states
-the session's limit in the same words for every arm, condition, variant and
-policy. Its number is the session's ``wall_time_s``, which every renderer takes
-with no default. It is real seconds and no time of the process, so it is the one
-number here the view does not rescale: both conditions read it unchanged.
+the session's limit in P4's variant, in the same words for every arm, condition
+and policy. ``v1``, the pilot's variant, states none and stays as it was. Its
+number is the session's ``wall_time_s``, which every renderer takes with no
+default, ``v1`` included. It is real seconds and no time of the process, so it is
+the one number here the view does not rescale: every condition reads it unchanged.
 """
 
 from __future__ import annotations
@@ -317,9 +319,11 @@ def _run_experiment_line(
   in order."""
 
 
-def _wall_limit(wall_time_s: float) -> str:
-    """The session's wall limit, the same for everyone (module docstring)."""
-    return f"""\
+def _wall_limit(wall_time_s: float, variant: str) -> str:
+    """The session's wall limit, the same for all of P4 (module docstring)."""
+    if as_variant(variant) == "v1":
+        return ""
+    return f"""
 The whole investigation has a limit of {num(wall_time_s)} seconds of real time
 (wall clock, not the time units of your data): when it is reached the session
 ends, and if you have not called `submit` nothing is submitted.
@@ -332,6 +336,7 @@ def _tools(
     experiments: int,
     fits: int,
     wall_time_s: float,
+    variant: str,
     policy: PolicyName | None = None,
 ) -> str:
     open_tools = ""
@@ -374,8 +379,7 @@ def _tools(
 
 Every tool result ends with what is left of your budget, as a line such as
 `{budget_line(experiments, experiments, fits, fits)}`.
-
-{_wall_limit(wall_time_s)}"""
+{_wall_limit(wall_time_s, variant)}"""
 
 
 def _files_too(arm: Arm) -> str:
@@ -457,7 +461,7 @@ framework fits it; you never supply numbers.
 {_scoring(variant)}
 
 {_grammar(view, variant)}
-{_tools(view, arm, experiments, fits, wall_time_s, policy)}
+{_tools(view, arm, experiments, fits, wall_time_s, variant, policy)}
 ## Experiments
 
 An experiment is an intervention on a fresh run of the process. Windows are

@@ -2663,3 +2663,29 @@ Corrects the hand-over above: its third decision (T2 and fit/5) is no longer the
 **Decision.** The merge into v2 waits for that read: the queue lists the determinism check with the merge, nothing on v2 needs the merge today, and work goes on on the branch.
 
 **Next.** Read the red team and the engineer, then the miss amendment's `F2` and `scripts/p4_search_misses.py`.
+
+## 2026-11-06: Lane session 35, hand-over: contrast code reviewed and fixed, `rescaled` built, all on the branch; the merge waits on the determinism run
+
+**Done.**
+- **Contrast code:** red team at 84390bb, READY WITH FIXES (`docs/v2/redteam/2026-11-06_contrast-code.md`). No read wrong: hand computation, and 2,800 reads against a separate exact-fraction implementation with 0 mismatched. Findings 1, 2, 3, 12, 13, 14 fixed by dd7ca91: `read_controls` gives kept, dropped and unchecked truths, `rows` holds what set each floor, 8 surviving mutants now die (engineer's runner: 29 of 29). I read `floor_rows` and `ControlsRead`, not the whole diff. On 1,050 toy reads the engineer found point, CI and S6 byte-identical to 00fe6fd, with only `rows` growing; not rerun by me.
+- **`rescaled`** (8e2bd69) and the wall sentence on `link-neutral` only (293425d); softplus note shows in `rescaled`, my decision, 00fe6fd, tests pinned (LOG 2026-11-06). 186 tests rerun by me, passed. Fast tier at 00fe6fd `4497 passed`, exit 0.
+- **Amendment text** takes findings 1, 3 to 8 and the engineer's points. Still a draft. The choice that C3-free and C4 read the named condition is mine (LOG).
+- **Control room:** unchecked truths leave the reads, set before any P4 data (INBOX 31f6112, handled).
+- Merge checks and the rescore: see the checkpoint above.
+
+**Two guard blocks, both on the record.** The engineer redid a blocked edit by Edit against my brief (06:47:35Z). Control room: a false match on the worktree path, guard stays. Then the guard blocked my own inline doc write (07:21:41Z). I stopped and asked rather than redo it. The ruling: docs by the Edit tool only, and a block on a plain doc with a match on quoted text may be redone by Edit, noted in the LOG; a block means stop for everything else. Both in LOG 2026-11-06.
+
+**Running, $0.** `sci-det-s35` (b0853a1; ceiling 20 CPU hours; `det.log`). `sci-fast2-s35` (dd7ca91; ceiling 1 CPU hour; `fast2.log`). `sci-slow3-s35` (dd7ca91, -n 1, starts after the determinism run's first phase and that fast tier; ceiling 5 CPU hours; `slow3.log`). All under `.cache/drafts/s35/`, LEDGER rows when they exit. Worktrees `tier2-s33` and `contrast-rt` belong to them.
+
+**Checks.** Nothing under `src/` changed on v2. On the branch at dd7ca91, engineer's run: `327 files already formatted`, `All checks passed!`, mypy `no issues found in 316 source files`, targeted `97 passed` and `1112 passed`. 05bf8f8 changes one comment past that. The full fast tier at dd7ca91 was still running when this was written, so it is not read here.
+
+**Not verified.** No second review of the fixes. The script, the terminal assertion and `reads.json` do not exist, so none of that is tested. `rescaled` has not run an AG-o `python` call in a container, a policy through a session, or a full `run_score_job`. Nothing has run on real cells. Two tests the red team says were never seen failing are unchanged. 44 commits and more sit on a local branch only until the merge.
+
+**Learned.** Session 34 ended with a helper mid-flight and no hand-over, so its work lay uncommitted, and was only safe because the tree was kept. A brief saying "stop on a block" did not say that another tool counts; the second brief did, and nothing was blocked under it. The red team's mutants found 8 gaps that the engineer's own 31 had not. My shell's `cd` into a worktree moved the Stop hook's reading of the branch: finish from the main checkout.
+
+**Next.**
+1. `grep -E '^(a|b|compare|report) exit|^exit:' .cache/drafts/s35/det.log`, then `store_compare`'s line, and `grep -E '^(FAILED|ERROR)|^exit:' .cache/drafts/s35/fast2.log slow3.log`. LEDGER rows.
+2. If clean, `git merge b0853a1` into v2, then the second merge of the branch. After each, `git fetch` and push without a rebase (memory `pull-rebase-flattens-merges`).
+3. Freeze `F2` by the preregister skill, then brief an engineer on `scripts/p4_search_misses.py`, and ask for a real P4 plan (finding 15).
+
+**Decision needed from the owner:** none now. Ahead: the SPEC text for `rescaled` and C1 to C4 (queued as a stop point), and the Test split and §6.1 freeze.

@@ -2721,3 +2721,15 @@ Corrects the hand-over above: its third decision (T2 and fit/5) is no longer the
 **Blocked and left.** The engineer's address comparison against the base commit was denied by the permission system. They stopped, and I did not redo it. Evidence on addresses is the pin tests and a grep.
 
 **Slips.** My first LOG text for round 3 misread "the contrast's rows" and put the rehearsal in the wrong section; caught on reread, corrected in e6800b7.
+
+## 2026-11-06: Lane session 36, checkpoint: the control room's rulings taken; SPEC updated; control 4's runner on v2
+
+**Done.**
+- **Both stop points answered the same hour.** Control room (INBOX ac95f5c, 56cfd02): tune B-sym, do not waive; the SPEC text accepted after one round, then B1 to B5 and the floor sentence as recommended. Decided under the owner's standing delegation.
+- **SPEC round:** ready with fixes, six blocking, saved verbatim. It stopped me applying the first draft, which would have kept "evidence wall" on a read that cannot test it. `docs/SPEC.md` is updated, and claims narrow: C3 no longer claims the wall, the named and anon gap "bounds" recall.
+- **Tuning:** pre-registration drafted with the effort budget first, in red team. P3's deviation in PILOT.md.
+- **Control 4's runner and the report's refusal** merged, 505de7e, code read by me. Turn cap merged, e5e205f.
+
+**Slip caught.** The engineer's docstring credited the turn cap to the control room, and it was my decision. I found it by reading a diff I had already merged on their report, so I should have read first. Fixed, 9697625.
+
+**A guard block and two denials,** on the record in the LOG. Each helper stopped and reported, and nothing was redone.

@@ -142,8 +142,8 @@ REFERENCES: Final = frozenset({ORACLE, B_LIB})
 MIN_TRUTHS: Final = 2
 #: Whether the reads take a truth control 1 could not check: one with fewer than 2
 #: seeds on which ORACLE and B-lib both have finite gaps. On P4's two seeds a single
-#: B-lib at ``-inf``, or failed, makes one. No text sets this rule, and it is open
-#: with the control room (red team 2026-11-06, finding 1), so this is its one place.
+#: B-lib at ``-inf``, or failed, makes one. Set by the control room before any P4
+#: data (LOG 2026-11-06; red team finding 1), and this is its one place.
 #: It moves the reads only: controls 2 and 3 read ``Verdict.kept`` either way.
 READ_UNCHECKED_TRUTHS: Final = False
 #: Why a read is not reportable (:meth:`ControlsRead.why_not`).

@@ -22,6 +22,7 @@ from __future__ import annotations
 import ast
 import importlib
 import json
+import math
 import multiprocessing
 import os
 import signal
@@ -39,6 +40,7 @@ from campaign_support import entry
 from sciagent.campaign import analysis, contrasts
 from sciagent.campaign.analysis import Row, Table, derive
 from sciagent.campaign.contrasts import ContrastRead, ScriptedControls
+from sciagent.campaign.voids import VoidStatus
 
 REPO: Final = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "scripts"))
@@ -1385,3 +1387,601 @@ def test_a_read_changes_by_sign_by_zero_or_by_reportable(
 ) -> None:
     assert p4m.read_changed(a, b) is changed
     assert p4m.read_changed(b, a) is changed
+
+
+# --------------------------------------------------------------------------
+# The substitution (section 2.7)
+# --------------------------------------------------------------------------
+
+
+def run_terminal(
+    tmp_path: Path, name: str, table: Table, **clean_kw: Any
+) -> tuple[Any, Any]:
+    """A complete end on planted records in a fresh directory."""
+    out = p4m.OutPaths(tmp_path / name)
+    plant(out, clean(table, **clean_kw))
+    return out, finalise(out, inputs_of(table))
+
+
+def all_of(system: str, value: float, truths: Sequence[str] = TRUTHS) -> dict[Key, Rec]:
+    """A miss on each of ``system``'s rows of ``truths``, at ``value``."""
+    rows: dict[Key, Rec] = {}
+    for t in truths:
+        for s in SEEDS:
+            rows |= miss((t, s, system), value)
+    return rows
+
+
+def as_float(read: Rec, name: str) -> float:
+    return float.fromhex(read[name])
+
+
+def test_the_corrected_table_substitutes_every_row_in_one_pass_and_derives() -> None:
+    table = tabled()
+    key_oracle, key_arm = ("t1", 1, ORACLE), ("t1", 1, AGC)
+    new = p4m.corrected_table(table, {key_oracle: -0.25, key_arm: -0.375}, {})
+    rows = {p4m.row_key(r): r for r in new.rows}
+    assert rows[key_oracle].per_event == -0.25
+    assert rows[key_arm].per_event == -0.375
+    # The reference moved, so every gap on that (truth, seed) moved with it.
+    assert rows[key_arm].gap == -0.125
+    assert rows[("t1", 1, B_SYM)].gap == -0.375
+    assert rows[("t1", 2, B_SYM)].gap == -0.125
+
+
+def test_the_table_with_nothing_substituted_is_the_table() -> None:
+    table = tabled()
+    assert p4m.corrected_table(table, {}, {}).rows == table.rows
+
+
+def test_a_better_fit_can_clear_an_underfit_flag_and_never_raise_one() -> None:
+    rows = world()
+    key = ("t1", 1, ORACLE)
+    rows[key] = replace(rows[key], oracle_underfit=True)
+    table = tabled(rows)
+    new = p4m.corrected_table(table, {key: -0.25}, {key: False})
+    assert {p4m.row_key(r): r for r in new.rows}[key].oracle_underfit is False
+    with pytest.raises(p4m.ByteFailure, match="underfit"):
+        p4m.corrected_table(tabled(), {key: -0.25}, {key: True})
+
+
+def test_both_tables_are_read_with_the_same_controls_root_and_resamples(
+    paths: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    table = tabled()
+    plant(paths, clean(table))
+    seen: list[tuple[Any, ...]] = []
+    real = contrasts.read_contrasts
+
+    def spying(t: Table, *rest: Any) -> Any:
+        seen.append(rest)
+        return real(t, *rest)
+
+    monkeypatch.setattr(contrasts, "read_contrasts", spying)
+    finalise(paths, inputs_of(table, controls=ScriptedControls(naming_null=False)))
+    assert len(seen) == 4  # stored, the empty substitution, fixed, fixed2
+    assert set(seen) == {(ScriptedControls(False), TEST_READS_ROOT, 200)}
+
+
+def test_the_empty_substitution_equals_stored_or_it_is_byte_fail(
+    paths: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    table = tabled()
+    plant(paths, clean(table))
+    real = contrasts.read_contrasts
+    calls = iter(range(100))
+
+    def second_differs(t: Table, *rest: Any) -> Any:
+        reads = dict(real(t, *rest))
+        if next(calls) == 1:
+            reads["C1"] = replace(reads["C1"], high=reads["C1"].high + 2.0**-40)
+        return reads
+
+    monkeypatch.setattr(contrasts, "read_contrasts", second_differs)
+    d = finalise(paths, inputs_of(table))
+    assert d["label"] == "BYTE_FAIL"
+    assert d["byte_failures"] == ["empty_corrected"]
+    assert not paths.reads.exists()
+
+
+def test_the_empty_substitution_passes_when_nan_meets_nan(paths: Any) -> None:
+    """The naming null failed, so four reads are ``nan``: equal by hex."""
+    table = tabled()
+    plant(paths, clean(table))
+    d = finalise(paths, inputs_of(table, controls=ScriptedControls(False)))
+    assert d["label"] == "CONTRASTS_SURVIVE_FOUND_MISSES"
+    stored = reads_of(paths)["stored"]
+    assert stored["C2-AG-c-time"]["point"] == "nan"
+    assert stored["C2-AG-c-time"]["reportable"] is False
+
+
+@pytest.mark.parametrize("name", ["read_contrasts", "read_floors", "read_controls"])
+@pytest.mark.parametrize("error", [ValueError, KeyError, ZeroDivisionError])
+def test_an_exception_from_a_read_function_is_byte_fail_and_writes_no_read(
+    paths: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    error: type[Exception],
+) -> None:
+    table = tabled()
+    plant(paths, clean(table))
+
+    def raises(*args: Any, **kwargs: Any) -> Any:
+        raise error(SCORE_TEXT)
+
+    monkeypatch.setattr(contrasts, name, raises)
+    d = finalise(paths, inputs_of(table))
+    assert d["label"] == "BYTE_FAIL"
+    assert d["exit_code"] == 3
+    assert d["byte_failures"] == ["read_exception"]
+    assert not paths.reads.exists()
+    assert not paths.reads_temporary.exists()
+    assert SCORE_TEXT not in paths.decision.read_text(encoding="utf-8")
+    faults = [
+        r for r in p4m.read_records(paths.journal) if r["type"] == "terminal_fault"
+    ]
+    assert [r["kind"] for r in faults] == ["read_exception"]
+
+
+def test_a_nan_reading_in_a_table_is_an_instrument_fault(paths: Any) -> None:
+    """``read_contrasts`` refuses it with a ``ScoringError``: no patch here."""
+    rows = world()
+    rows[("t1", 1, B_SYM)] = replace(rows[("t1", 1, B_SYM)], per_event=float("nan"))
+    table = tabled(rows)
+    plant(paths, clean(table))
+    d = finalise(paths, inputs_of(table))
+    assert d["label"] == "BYTE_FAIL"
+    assert d["byte_failures"] == ["read_exception"]
+
+
+def test_a_contrast_row_outside_the_plan_is_byte_fail_and_writes_no_read(
+    paths: Any,
+) -> None:
+    table = tabled()
+    plant(paths, clean(table))
+    short = tuple(k for k in plan_rows(table) if k != ("t1", 1, B_SYM))
+    d = finalise(paths, inputs_of(table, plan_rows=short))
+    assert d["label"] == "BYTE_FAIL"
+    assert d["byte_failures"] == ["rows_outside_plan"]
+    assert not paths.reads.exists()
+
+
+def test_every_reads_rows_are_held_to_the_plan_on_every_table(
+    paths: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A row in ``rows`` that no table row explains is caught by itself."""
+    table = tabled()
+    plant(paths, clean(table))
+    real = contrasts.read_contrasts
+    calls = iter(range(100))
+
+    def fixed_strays(t: Table, *rest: Any) -> Any:
+        reads = dict(real(t, *rest))
+        if next(calls) == 2:
+            reads["C4"] = replace(reads["C4"], rows=(("t9", 1, B_SYM),))
+        return reads
+
+    monkeypatch.setattr(contrasts, "read_contrasts", fixed_strays)
+    d = finalise(paths, inputs_of(table))
+    assert d["byte_failures"] == ["rows_outside_plan"]
+
+
+def test_a_row_of_another_system_is_outside_the_subset_rule(paths: Any) -> None:
+    """B-np and the Haiku arm are in the table and in no read."""
+    table = tabled()
+    assert any(r.system in (B_NP, HAIKU) for r in table.rows)
+    plant(paths, clean(table))
+    assert finalise(paths, inputs_of(table))["label"] != "BYTE_FAIL"
+
+
+# --------------------------------------------------------------------------
+# A planted shift flips each clause on a toy table (section 2.10)
+# --------------------------------------------------------------------------
+
+
+def changed_reads(paths: Any, d: Rec) -> list[str]:
+    assert d["label"] == "CONTRASTS_CHANGE"
+    names: list[str] = d["H4"]["changed"]
+    assert d["H4"]["falsified"] is True
+    assert paths.reads.exists()
+    return names
+
+
+def test_a_shift_that_flips_a_sign_changes_the_read(tmp_path: Path) -> None:
+    """Every AG-c-S/named row up by 1/8: C1's point goes from 0 to +1/8 exactly."""
+    table = tabled()
+    out, d = run_terminal(tmp_path, "a", table, rows=all_of(AGC, -0.5))
+    got = reads_of(out)
+    assert as_float(got["stored"]["C1"], "point") == 0.0
+    assert as_float(got["fixed"]["C1"], "point") == 0.125
+    assert {"C1", "C4", "C2-AG-c-time"} <= set(changed_reads(out, d))
+    assert "C2-AG-o-names" not in d["H4"]["changed"]
+
+
+def test_a_shift_that_only_moves_the_interval_off_zero_changes_the_read(
+    tmp_path: Path,
+) -> None:
+    """A world where C1's stored point is positive with zero inside the interval,
+    and a row of one truth moves the low end above it, with the sign unchanged."""
+    rows = world()
+    for t, value in zip(TRUTHS, (-0.5, -0.5, -0.5, -0.5, -0.5, -1.0), strict=True):
+        for s in SEEDS:
+            rows[(t, s, AGC)] = replace(rows[(t, s, AGC)], per_event=value)
+    table = tabled(rows)
+    plant_rows = all_of(AGC, -0.5, ["t6"])
+    out, d = run_terminal(tmp_path, "a", table, rows=plant_rows)
+    got = reads_of(out)
+    stored, fixed = got["stored"]["C1"], got["fixed"]["C1"]
+    assert as_float(stored, "point") > 0.0 and as_float(fixed, "point") > 0.0
+    assert as_float(stored, "low") < 0.0 < as_float(fixed, "low")
+    assert "C1" in changed_reads(out, d)
+
+
+def test_a_control_that_fails_only_on_the_corrected_table_is_contrasts_change(
+    tmp_path: Path,
+) -> None:
+    """planted-hint falls below B-rand on the corrected table only, so control 2
+    fails there and every read stops being reportable."""
+    rows = {
+        **{
+            (t, s, PLANTED): row_result(
+                PLANTED, kind="miss", corrected=-0.75, stored=-0.5, gain=4.0
+            )
+            for t in TRUTHS
+            for s in SEEDS
+        },
+        **{
+            (t, s, B_RAND): row_result(
+                B_RAND, kind="miss", corrected=-0.5, stored=-0.75, gain=4.0
+            )
+            for t in TRUTHS
+            for s in SEEDS
+        },
+    }
+    table = tabled()
+    out, d = run_terminal(tmp_path, "a", table, rows=rows)
+    got = reads_of(out)
+    assert got["controls"]["stored"]["controls_pass"] is True
+    assert got["controls"]["fixed"]["controls_pass"] is False
+    assert all(not r["reportable"] for r in got["fixed"].values())
+    assert set(changed_reads(out, d)) == set(READ_NAMES)
+
+
+def test_a_failed_control_still_changes_the_label_when_h1_failed_too(
+    tmp_path: Path,
+) -> None:
+    table = tabled()
+    _, d = run_terminal(tmp_path, "a", table, rows=all_of(AGC, -0.5), a=0)
+    assert d["label"] == "CONTRASTS_CHANGE"
+    assert d["H1"]["falsified"] is True
+
+
+def test_no_change_with_a_miss_on_record_survives_and_counts_it(tmp_path: Path) -> None:
+    table = tabled()
+    one = miss(("t1", 1, B_RAND), -0.6875, stored=-0.75)
+    _, d = run_terminal(tmp_path, "a", table, rows=one)
+    assert d["label"] == "CONTRASTS_SURVIVE_FOUND_MISSES"
+    assert d["M_rows"] == 1
+    assert d["H2"]["falsified"] is True
+    assert d["H4"] == {"falsified": False, "changed": [], "vacuous": False}
+
+
+def test_h3_is_falsified_by_a_large_delta_and_says_nothing_else(tmp_path: Path) -> None:
+    table = tabled()
+    one = miss(("t1", 1, B_RAND), -0.6875, stored=-0.75)
+    _, d = run_terminal(tmp_path, "a", table, rows=one)
+    assert d["H3"]["falsified"] is True
+    assert d["max_abs_delta"] == 0.0625
+
+
+# --------------------------------------------------------------------------
+# Not reportable on both tables (sections 2.7, 5)
+# --------------------------------------------------------------------------
+
+
+def controls_fail(rows: dict[Key, Row]) -> dict[Key, Row]:
+    """planted-hint below B-rand on every truth, so control 2 fails."""
+    for t in TRUTHS:
+        for s in SEEDS:
+            rows[(t, s, PLANTED)] = replace(rows[(t, s, PLANTED)], per_event=-0.875)
+    return rows
+
+
+def test_no_read_reportable_on_both_tables_is_control_fail_with_the_reason(
+    tmp_path: Path,
+) -> None:
+    table = tabled(controls_fail(world()))
+    out, d = run_terminal(tmp_path, "a", table)
+    assert d["label"] == "CONTROL_FAIL"
+    assert d["exit_code"] == 4
+    assert d["reason"] == "no read is reportable on both tables"
+    assert d["statement"] is None
+    assert out.reads.exists()
+
+
+def test_a_read_not_reportable_on_both_is_named_and_left_out(tmp_path: Path) -> None:
+    table = tabled()
+    out = p4m.OutPaths(tmp_path / "a")
+    plant(out, clean(table))
+    d = finalise(out, inputs_of(table, controls=ScriptedControls(False)))
+    assert d["label"] == "CONTRASTS_SURVIVE_FOUND_MISSES"
+    names = {"C2-AG-c-names", "C2-AG-c-time", "C2-AG-o-names", "C2-AG-o-time"}
+    assert set(d["no_statement"]) == names
+    for name in names:
+        assert f"{name}: not reportable, no statement" in d["label_line"]
+    assert "C1: not reportable" not in d["label_line"]
+    lines = {x["read"]: x for x in d["reads"]}
+    assert lines["C2-AG-c-time"]["status"] == "not reportable, no statement"
+    assert lines["C1"]["status"] == "unchanged"
+
+
+def test_h1_falsified_is_control_fail_with_its_reason_and_no_wording(
+    tmp_path: Path,
+) -> None:
+    table = tabled()
+    _, d = run_terminal(tmp_path, "a", table, a=4)
+    assert d["label"] == "CONTROL_FAIL"
+    assert d["reason"] == "H1 is falsified"
+    assert d["statement"] is None
+
+
+@pytest.mark.parametrize(
+    "over", [{"a": 5}, {"a": 6}], ids=["five of six", "six of six"]
+)
+def test_h1_stands_at_five_of_six(tmp_path: Path, over: dict[str, int]) -> None:
+    table = tabled()
+    _, d = run_terminal(tmp_path, "a", table, **over)
+    assert d["label"] == "CONTRASTS_SURVIVE_FOUND_MISSES"
+
+
+@pytest.mark.parametrize("failed", ["b", "d"])
+def test_group_b_and_d_must_both_be_caught(tmp_path: Path, failed: str) -> None:
+    table = tabled()
+    _, d = run_terminal(tmp_path, "a", table, **{failed: False})
+    assert d["label"] == "CONTROL_FAIL"
+
+
+# --------------------------------------------------------------------------
+# The wording, the per-read line, S2, S5 and S6
+# --------------------------------------------------------------------------
+
+
+def test_the_survival_wording_is_the_texts_with_its_counts(tmp_path: Path) -> None:
+    table = tabled()
+    one = miss(("t1", 1, B_RAND), -0.6875, stored=-0.75)
+    other = miss(("t1", 1, HAIKU), -0.625, stored=-3.0)
+    _, d = run_terminal(tmp_path, "a", table, rows=one | other)
+    assert d["statement"].startswith(
+        "The reportable contrasts survive substitution of the 0 misses found "
+        "(N counts rows a read uses). Of the "
+    )
+    assert d["statement"].endswith(
+        "that the search did not find, or about what any agent would have done "
+        "under a better fit."
+    )
+    assert d["M_rows"] == 2
+
+
+def test_n_counts_only_the_misses_a_read_uses(tmp_path: Path) -> None:
+    """AG-c-S/named at -0.5, so C1 starts at +1/8 and a small move keeps its sign:
+    in this world's zero reads any move at all is a change."""
+    rows = world()
+    for t in TRUTHS:
+        for s in SEEDS:
+            rows[(t, s, AGC)] = replace(rows[(t, s, AGC)], per_event=-0.5)
+    table = tabled(rows)
+    one = miss(("t3", 1, B_SYM), -0.5625)
+    _, d = run_terminal(tmp_path, "a", table, rows=one)
+    assert "substitution of the 1 misses found" in d["statement"]
+    lines = {x["read"]: x for x in d["reads"]}
+    assert lines["C1"]["n"] == 1
+    assert lines["C4"]["n"] == 0
+
+
+def test_a_read_is_counted_over_the_union_of_its_rows_on_both_tables(
+    tmp_path: Path,
+) -> None:
+    """A row raised off a floor is only in ``stored``'s rows, and N and T say so."""
+    rows = world()
+    key = ("t3", 1, B_SYM)
+    rows[key] = replace(rows[key], per_event=-math.inf, exact=False)
+    table = tabled(rows)
+    setter = ("t3", 1, B_RAND)
+    plant_rows = miss(key, -0.625, stored=-math.inf) | miss(
+        setter, -0.6875, stored=-0.75
+    )
+    out, d = run_terminal(tmp_path, "a", table, rows=plant_rows)
+    got = reads_of(out)
+    stored_rows = {tuple(k) for k in got["stored"]["C1"]["rows"]}
+    fixed_rows = {tuple(k) for k in got["fixed"]["C1"]["rows"]}
+    assert setter in stored_rows
+    assert setter not in fixed_rows
+    assert {x["read"]: x for x in d["reads"]}["C1"]["n"] == 2
+
+
+def test_s5_gives_each_reads_substituted_llm_rows_as_counts(tmp_path: Path) -> None:
+    table = tabled()
+    one = miss(("t3", 1, AGC), -0.5625) | miss(("t3", 1, B_SYM), -0.5625)
+    _, d = run_terminal(tmp_path, "a", table, rows=one)
+    c1 = {x["read"]: x for x in d["reads"]}["C1"]
+    assert c1["llm_substituted"] == 1
+    assert c1["rows"] > 2
+    assert d["llm_caveat"]["reads"] == sorted(
+        x["read"] for x in d["reads"] if x["llm_substituted"]
+    )
+    assert "not what the agent did" in d["llm_caveat"]["text"]
+
+
+def test_no_llm_row_substituted_names_no_read_in_the_caveat(tmp_path: Path) -> None:
+    table = tabled()
+    _, d = run_terminal(tmp_path, "a", table)
+    assert d["llm_caveat"]["reads"] == []
+
+
+def test_the_reads_file_holds_every_part_section_2_8_lists(tmp_path: Path) -> None:
+    table = tabled()
+    out, _ = run_terminal(tmp_path, "a", table)
+    got = reads_of(out)
+    assert set(got) >= {"stored", "fixed", "fixed2", "floors", "controls", "matched"}
+    assert set(got["floors"]) == {"stored", "fixed"}
+    assert set(got["controls"]) == {"stored", "fixed"}
+    assert set(got["floors"]["stored"]) == set(READ_NAMES)
+    one = got["floors"]["fixed"]["C1"]
+    assert set(one) == {"floored", "no_common_seed", "without"}
+    assert set(got["controls"]["stored"]) == {
+        "kept",
+        "dropped",
+        "unchecked",
+        "controls_pass",
+        "naming_null",
+        "why_not",
+    }
+    assert got["controls"]["stored"]["kept"] == list(TRUTHS)
+    assert got["hard_timeouts"] == {}
+
+
+def test_s6_counts_floored_rows_and_gives_the_read_with_them_left_out(
+    tmp_path: Path,
+) -> None:
+    rows = world()
+    key = ("t3", 1, AGC)
+    rows[key] = replace(rows[key], submitted=False, per_event=None)
+    table = tabled(rows)
+    out, _ = run_terminal(tmp_path, "a", table)
+    s6 = reads_of(out)["floors"]["stored"]["C1"]
+    assert s6["floored"] == 1
+    assert as_float(s6["without"], "point") == 0.0
+
+
+def test_each_reads_matched_pairs_are_counted_from_its_rows(tmp_path: Path) -> None:
+    table = tabled()
+    out, _ = run_terminal(tmp_path, "a", table)
+    matched = reads_of(out)["matched"]
+    assert matched["stored"]["C1"] == len(TRUTHS) * len(SEEDS)
+    assert matched["stored"]["C4"] == len(OUT_OF_DICTIONARY) * len(SEEDS)
+    assert matched["fixed"]["C1"] == len(TRUTHS) * len(SEEDS)
+
+
+def test_hard_timeouts_are_counted_per_arm_and_only_when_void() -> None:
+    def session(system: str, outcome: str, void: bool) -> Any:
+        return analysis.Session(
+            "t1",
+            1,
+            system,
+            {},
+            {"outcome": outcome},
+            VoidStatus(void, (), 0, void),
+            "env",
+            "digest",
+        )
+
+    table = replace(
+        tabled(),
+        sessions=(
+            session(AGO, "hard_timeout", True),
+            session(AGO, "hard_timeout", True),
+            session(AGC, "hard_timeout", True),
+            session(AGC, "wall_time", False),
+        ),
+    )
+    assert p4m.hard_timeouts(table) == {AGC: 1, AGO: 2}
+
+
+def s2_done(truth: str, seed: int, value: float | None, status: str) -> Rec:
+    return {
+        "type": "done",
+        "job": f"s2 {truth} {seed}",
+        "kind": "s2",
+        "truth": truth,
+        "seed": seed,
+        "text": "x",
+        "stored_link": "exp",
+        "status": status,
+        "corrected_per_event": value,
+    }
+
+
+def test_s2s_rows_reach_fixed2_alone_and_the_label_line_says_it_differs(
+    paths: Any,
+) -> None:
+    table = tabled()
+    extra = [s2_done(t, s, -0.5, "differs") for t in OUT_OF_DICTIONARY for s in SEEDS]
+    plant(paths, [*clean(table), *extra])
+    d = finalise(paths, inputs_of(table))
+    got = reads_of(paths)
+    assert as_float(got["fixed"]["C4"], "point") == 0.0
+    assert as_float(got["fixed2"]["C4"], "point") == -0.125
+    assert d["fixed2_differs"] == ["C4"]
+    assert "fixed2 differs from fixed: C4" in d["label_line"]
+    assert d["label"] == "CONTRASTS_SURVIVE_FOUND_MISSES"
+
+
+def test_fixed2_equal_to_fixed_is_not_mentioned(paths: Any) -> None:
+    table = tabled()
+    plant(paths, [*clean(table), s2_done("t1", 1, None, "same")])
+    d = finalise(paths, inputs_of(table))
+    assert d["fixed2_differs"] == []
+    assert "fixed2" not in d["label_line"]
+
+
+def test_an_s2_link_mismatch_cannot_move_a_read(paths: Any) -> None:
+    table = tabled()
+    plant(paths, [*clean(table), s2_done("t1", 1, -0.5, "link_mismatch")])
+    d = finalise(paths, inputs_of(table))
+    assert d["s2"]["link_mismatch"] == 1
+    assert d["fixed2_differs"] == []
+
+
+def test_the_reads_and_the_label_are_byte_identical_on_a_rerun(tmp_path: Path) -> None:
+    table = tabled()
+    rows = all_of(AGC, -0.5, ["t1"])
+    a, _ = run_terminal(tmp_path, "a", table, rows=rows)
+    b, _ = run_terminal(tmp_path, "b", table, rows=rows)
+    assert a.reads.read_bytes() == b.reads.read_bytes()
+    assert a.decision.read_bytes() == b.decision.read_bytes()
+    assert a.units.read_bytes() == b.units.read_bytes()
+
+
+def test_the_reads_do_not_depend_on_the_order_records_arrived(tmp_path: Path) -> None:
+    table = tabled()
+    rows = all_of(AGC, -0.5, ["t1"])
+    forward = clean(table, rows=rows)
+    a = p4m.OutPaths(tmp_path / "a")
+    b = p4m.OutPaths(tmp_path / "b")
+    plant(a, forward)
+    plant(b, list(reversed(forward)))
+    finalise(a, inputs_of(table))
+    finalise(b, inputs_of(table))
+    assert a.reads.read_bytes() == b.reads.read_bytes()
+    assert a.decision.read_bytes() == b.decision.read_bytes()
+
+
+def test_group_e_goes_on_the_label_line_with_its_denominator(paths: Any) -> None:
+    table = tabled()
+    census = planted_census(table)
+    e_rows = tuple(
+        replace(r, group_e=True) if r.system == ORACLE and r.truth == "t1" else r
+        for r in census.rows
+    )
+    census = replace(census, rows=e_rows)
+    records = done_records(census)
+    known = {"ll": -100.0, "gap": 1e-9, "certified": True}
+    fit5 = {"ll": -105.0, "gap": 1e-9, "certified": True}
+    for f in census.fits():
+        if f.group_e:
+            job = p4m.fit_job_id(f.truth, f.seed, f.text)
+            done = next(r for r in records if r["job"] == job and r["type"] == "done")
+            done["control"] = {
+                "group": "E",
+                "case": [f.truth, f.seed],
+                "fit5": fit5,
+                "known": known,
+            }
+            if f.seed == 2:
+                r1 = next(r for r in records if r["job"] == job and r["type"] == "r1")
+                r1["best"] = {**r1["best"], "ll": -104.0}
+    plant(paths, [*control_records(), *records])
+    d = finalise(paths, inputs_of(table, census=census))
+    assert d["group_e"] == {"caught": 1, "of": 2}
+    assert "group E 1 of 2" in d["label_line"]
+    assert d["H1"]["falsified"] is False

@@ -56,7 +56,12 @@ import numpy as np
 
 from sciagent.campaign import analysis, contrasts, cpu
 from sciagent.campaign.analysis import Row, Table
-from sciagent.campaign.contrasts import ContrastRead, ScriptedControls
+from sciagent.campaign.contrasts import (
+    ContrastRead,
+    ControlsRead,
+    FloorRead,
+    ScriptedControls,
+)
 from sciagent.campaign.plan import B_SPARSE, ORACLE
 from sciagent.glm.fit import PSI_FULL_GRID_MAX
 from sciagent.glm.grammar import Link
@@ -187,6 +192,14 @@ S1_BELOW_FLOOR: Final = (
     "R1 missed more than one in five of the misses on grids where the answer is known."
 )
 NO_CONTROL: Final = "no known miss, no control"
+#: Section 2.7's words for a read not reportable on both tables.
+NO_STATEMENT: Final = "not reportable, no statement"
+#: Section 2.6's third point, beside every read with a substituted LLM row.
+LLM_CAVEAT: Final = (
+    "Sessions cannot be replayed under a better fit: the agent saw fit/5's "
+    "numbers. Substitution corrects a score, not what the agent did after seeing "
+    "fit/5's number."
+)
 
 #: Job records: these reach ``units.jsonl``, in this order within a job.
 UNIT_TYPES: Final = ("r0", "r1", "r2", "done", "r2_lost", "reference_failed")
@@ -445,6 +458,14 @@ def units_bytes(records: Iterable[Mapping[str, Json]]) -> bytes:
 
 class UnitsDiffer(ByteFailure):
     kind: ClassVar[str] = "units"
+
+
+class EmptyCorrectedDiffers(ByteFailure):
+    kind: ClassVar[str] = "empty_corrected"
+
+
+class RowsOutsidePlan(ByteFailure):
+    kind: ClassVar[str] = "rows_outside_plan"
 
 
 @dataclass(frozen=True)
@@ -1149,23 +1170,85 @@ def _substitutions(
 
 @dataclass(frozen=True)
 class Reads:
-    """Everything the reads give, at the terminal step only."""
+    """Everything the reads give, at the terminal step only. ``floors`` and
+    ``controls`` are keyed ``stored`` and ``fixed``."""
 
     stored: Mapping[str, ContrastRead]
     fixed: Mapping[str, ContrastRead]
+    #: S2's second table (section 4).
+    fixed2: Mapping[str, ContrastRead]
+    floors: Mapping[str, Mapping[str, FloorRead]]
+    controls: Mapping[str, ControlsRead]
+    hard_timeouts: Mapping[str, int]
     new: Table
     misses: tuple[tuple[RowKey, Record], ...]
 
 
+def same_reads(a: Mapping[str, ContrastRead], b: Mapping[str, ContrastRead]) -> bool:
+    """Equal in every read, every float by ``float.hex``, so ``nan`` equals ``nan``."""
+    return list(a) == list(b) and all(contrasts.same_read(a[k], b[k]) for k in a)
+
+
+def check_plan_rows(
+    plan_rows: Iterable[RowKey],
+    tables: Iterable[Table],
+    reads: Iterable[Mapping[str, ContrastRead]],
+) -> None:
+    """Section 2.7: each table's rows of the contrast systems, and every read's
+    ``rows``, are rows of ``contrast_rows``."""
+    allowed = frozenset(plan_rows)
+    for table in tables:
+        for r in table.rows:
+            if r.system in contrasts.CONTRAST_SYSTEMS and row_key(r) not in allowed:
+                raise RowsOutsidePlan(f"table row {row_key(r)} is not a planned row")
+    for one in reads:
+        for name, read in one.items():
+            stray = [key for key in read.rows if key not in allowed]
+            if stray:
+                raise RowsOutsidePlan(f"read {name} holds {stray[0]}, not planned")
+
+
+def hard_timeouts(table: Table) -> dict[str, int]:
+    """S6: sessions stored void as ``hard_timeout``, per arm. They are absent,
+    while a ``wall_time`` end with no submission takes the floor, so one event can
+    land either way, and this keeps it visible (section 2.7)."""
+    return _count(
+        x.system
+        for x in table.sessions
+        if x.void.void and x.detail.get("outcome") == "hard_timeout"
+    )
+
+
 def compute_reads(records: Sequence[Mapping[str, Json]], inputs: Inputs) -> Reads:
-    """The only caller of the read functions. Only the terminal step calls it."""
+    """The only caller of the read functions. Only the terminal step calls it, and
+    it raises rather than return part of an answer, so no read is written unless
+    every one was computed."""
     corrected, underfit, misses = _substitutions(fit_views(records))
+    _, s2_extra = _s2_rows(records)
     table = inputs.table
     args = (inputs.controls, inputs.roots.reads, inputs.resamples)
+    stored = contrasts.read_contrasts(table, *args)
+    rebuilt = corrected_table(table, {}, {})
+    if not same_reads(contrasts.read_contrasts(rebuilt, *args), stored):
+        raise EmptyCorrectedDiffers("the empty substitution does not equal stored")
     new = corrected_table(table, corrected, underfit)
+    new2 = corrected_table(table, corrected | s2_extra, underfit)
+    fixed = contrasts.read_contrasts(new, *args)
+    fixed2 = contrasts.read_contrasts(new2, *args)
+    check_plan_rows(inputs.plan_rows, (table, new, new2), (stored, fixed, fixed2))
     return Reads(
-        contrasts.read_contrasts(table, *args),
-        contrasts.read_contrasts(new, *args),
+        stored,
+        fixed,
+        fixed2,
+        {
+            "stored": contrasts.read_floors(table, *args),
+            "fixed": contrasts.read_floors(new, *args),
+        },
+        {
+            "stored": contrasts.read_controls(table, *args),
+            "fixed": contrasts.read_controls(new, *args),
+        },
+        hard_timeouts(table),
         new,
         tuple(misses),
     )
@@ -1203,12 +1286,80 @@ def read_json(read: ContrastRead) -> Record:
     }
 
 
+def floor_json(floor: FloorRead) -> Record:
+    return {
+        "floored": floor.floored,
+        "no_common_seed": floor.no_common_seed,
+        "without": read_json(floor.without),
+    }
+
+
+def controls_json(controls: ControlsRead, reads: Mapping[str, ContrastRead]) -> Record:
+    return {
+        "kept": list(controls.kept),
+        "dropped": list(controls.dropped),
+        "unchecked": list(controls.unchecked),
+        "controls_pass": controls.controls_pass,
+        "naming_null": controls.naming_null,
+        "why_not": {k: list(controls.why_not(k, v.n)) for k, v in reads.items()},
+    }
+
+
+def matched_pairs(read: ContrastRead) -> int:
+    """S6: the read's matched (truth, seed) pairs. ``rows`` holds the ORACLE of
+    each one and no other ORACLE row."""
+    return sum(key[2] == ORACLE for key in read.rows)
+
+
 def reads_body(reads: Reads) -> Record:
-    """``reads.json``."""
+    """``reads.json``: every part section 2.8 lists."""
+    tables = {"stored": reads.stored, "fixed": reads.fixed}
     return {
         "stored": {k: read_json(v) for k, v in reads.stored.items()},
         "fixed": {k: read_json(v) for k, v in reads.fixed.items()},
+        "fixed2": {k: read_json(v) for k, v in reads.fixed2.items()},
+        "floors": {
+            name: {k: floor_json(v) for k, v in floors.items()}
+            for name, floors in reads.floors.items()
+        },
+        "controls": {
+            name: controls_json(value, tables[name])
+            for name, value in reads.controls.items()
+        },
+        "matched": {
+            name: {k: matched_pairs(v) for k, v in table.items()}
+            for name, table in tables.items()
+        },
+        "hard_timeouts": dict(reads.hard_timeouts),
     }
+
+
+def read_lines(
+    reads: Reads, census: Census, done: Mapping[str, Mapping[str, Json]]
+) -> list[Record]:
+    """The per-read line and S5, each over the union of the read's rows on the two
+    tables, since ``rows`` is per table (section 2.7)."""
+    llm = {(r.truth, r.seed, r.system) for r in census.rows if r.llm}
+    substituted = {key for key, _ in reads.misses}
+    out: list[Record] = []
+    for name, stored in reads.stored.items():
+        fixed = reads.fixed[name]
+        used = frozenset((*stored.rows, *fixed.rows))
+        hit = used & substituted
+        status = "changed" if read_changed(stored, fixed) else "unchanged"
+        if not stored.reportable and not fixed.reportable:
+            status = NO_STATEMENT
+        out.append(
+            {
+                "read": name,
+                "status": status,
+                **statement_counts(census, done, used),
+                "n": len(hit),
+                "llm_substituted": len(hit & llm),
+                "rows": len(used),
+            }
+        )
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -1761,6 +1912,11 @@ def decide(
     s1 = s1_status(found=found, total=total)
     hunt = hunt_summary(records)
     s2, _ = _s2_rows(records)
+    lines = read_lines(reads, census, done_fits)
+    reason = None
+    if label == "CONTROL_FAIL":
+        reason = "no read is reportable on both tables" if h1.stands else None
+        reason = reason or "H1 is falsified"
     coverage = coverage_of(census, done_fits)
     deltas = [(unhex(row["delta"]), str(row["delta_kind"])) for _, row in misses]
     quadrature = [list(key) for key, row in misses if row.get("within_quadrature")]
@@ -1771,7 +1927,19 @@ def decide(
         "end": end,
         "partial": not tier1_complete,
         "next": NEXT[label],
+        "reason": reason,
         "statement": statement,
+        "reads": lines,
+        "no_statement": [x["read"] for x in lines if x["status"] == NO_STATEMENT],
+        "fixed2_differs": [
+            k
+            for k in reads.fixed
+            if not contrasts.same_read(reads.fixed[k], reads.fixed2[k])
+        ],
+        "llm_caveat": {
+            "text": LLM_CAVEAT,
+            "reads": sorted(x["read"] for x in lines if x["llm_substituted"]),
+        },
         "stop_note": stop_note,
         "end_note": end_note,
         "H1": {
@@ -1851,6 +2019,18 @@ def label_line(d: Mapping[str, Json]) -> str:
         )
     for name, row in d["strata"].items():
         parts.append(f"{name}: {row['searched_fits']} searched fits, {row['control']}")
+    for x in d["reads"]:
+        if x["status"] == NO_STATEMENT:
+            parts.append(f"{x['read']}: {NO_STATEMENT}")
+            continue
+        parts.append(
+            f"{x['read']}: {x['status']}, T {x['t']}, E {x['e']}, U {x['u']}, X "
+            f"{x['x']}, A {x['a']}, N {x['n']}, LLM substituted "
+            f"{x['llm_substituted']} of {x['rows']} rows"
+        )
+    if d["fixed2_differs"]:
+        names = ", ".join(d["fixed2_differs"])
+        parts.append(f"fixed2 differs from fixed: {names}")
     parts.append(
         f"coverage: rows exact {coverage['exact_rows']}, searched "
         f"{coverage['searched_rows']}, unchecked {coverage['unchecked_rows']}, not "

@@ -2707,3 +2707,17 @@ Corrects the hand-over above: its third decision (T2 and fit/5) is no longer the
 **Not verified.** The determinism run covers b0853a1 only. The second merge adds `rescaled`, the prompts and the contrast code; a no-LLM mini plan would not exercise them, so it was not rerun, and no check shows those paths byte-stable across runs beyond their tests.
 
 **Next.** Read round 3 and fix; freeze `F2`; read the engineer's plan and merge it; brief `scripts/p4_search_misses.py`.
+
+## 2026-11-06: Lane session 36, checkpoint: `F2` frozen, the real plan on v2; B-sym was never tuned (stop point)
+
+**Stop point: B-sym tuning.** The answer in one line: P3 ran B-sym on untuned defaults, against SPEC §9 and LOG 2026-10-02, and nothing tracked it. Evidence: `src/sciagent/systems/v2/search.py` (`GPConfig`, unchanged since 1936ba4), SPEC §9's risk table, no queue or journal entry. Caveats: control 3 passed at 10×F (median gap 0.0000), which shows the space is searchable and says nothing about budget F. The GO stands as recorded. I searched LOG, QUEUE, JOURNAL, PILOT and `docs/v2` for the word, so a tuning done under another name would be missed, but the code has not moved. Recommendation: tune on dev before §6.1, CPU only, under a written effort budget, because a C1 win over an untuned rival is what §9 warns of. Decision needed: tune or waive, before the §6.1 freeze.
+
+**Done.**
+- **Round 3:** ready with fixes, saved verbatim. All 3 blocking fixed, I checked the two factual claims first. Non-blocking answered in the LOG.
+- **`F2` = 9031943**, hashes and `owner go` line in the LOG. Round 4's text has had no review, as the skill allows.
+- **Plan:** `p4_plan` merged, affbe02. I read the code diff and reran its tests with the contrast, address and invariant tests: `1242 passed, 3 deselected`. No red team on it yet.
+- **Decisions in the LOG:** the sweep's 20 truths, the turn cap following the budget.
+
+**Blocked and left.** The engineer's address comparison against the base commit was denied by the permission system. They stopped, and I did not redo it. Evidence on addresses is the pin tests and a grep.
+
+**Slips.** My first LOG text for round 3 misread "the contrast's rows" and put the rehearsal in the wrong section; caught on reread, corrected in e6800b7.

@@ -2624,3 +2624,11 @@ Non-blocking, in one line each. 4, either route after a mid-campaign fix needs a
 ## 2026-11-06: B-sym was never tuned (session 36; stop point)
 
 The engineer found this and I checked it. SPEC §9 says to tune B-sym on dev with the same effort as the agent prompt, the entry of 2026-10-02 says it "must be tuned on dev and frozen before test", and P4-PROPOSAL §2 calls that dev tuning the cure for a control 3 failure. `GPConfig` and `DEFAULT_MUTATION_WEIGHTS` still say untuned, `systems/v2/search.py` is unchanged since 1936ba4, and no queue item or journal entry carried it. So P3 ran on defaults, and the GO, which reads non-LLM systems, stands as recorded, but nothing shows B-sym at budget F is the fair rival §9 asks for. Control 3 passing shows the space is searchable at 10×F, not that F is well spent. This is a gap in the process, found before any test data, and it bears on what C1 can claim. It waits on the owner (queue).
+
+## 2026-11-06: The P4 miss amendment is frozen, `F2` = 9031943 (session 36)
+
+Pre-registered: `docs/v2/prereg/2026-11-05_p4-search-misses.md`, the frozen miss check applied to P4's fits, covering C1, the four C2 reads, C3 (AG-o against AG-c) and C4. Red team: round 3 ready with fixes (`docs/v2/redteam/2026-11-06_p4-search-misses-round3.md`), all three blocking findings fixed, entry above; rounds 1 and 2 were not ready. Ceiling 203 CPU hours and $0: dispatch stops at 172, 178 with jobs in flight, 24 for the rehearsal over every repeat, under 1 for the rest. Nothing launches from this: `R2`, the script and its test come first, and `S` and `T` after them. Round 4's text has not been reviewed, as the skill allows after a ready-with-fixes verdict; finding 3's fix is a new design, and it is reviewed when its code is.
+
+sha256: 4fc674dc4fbcd782dce8e9b96726ff5a2074b89848805b302d6e82f732025188  docs/v2/prereg/2026-11-05_p4-search-misses.md
+sha256: 2c66b1a7512b08e93d63c667c11b54a7f8955eabbc1d2721e7e8ec039a01186b  docs/v2/redteam/2026-11-06_p4-search-misses-round3.md
+owner go: 2026-11-06   (the freeze date, under the owner's standing waiver of 2026-10-29)

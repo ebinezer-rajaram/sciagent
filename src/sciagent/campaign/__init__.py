@@ -4,6 +4,7 @@ Built for the P3 pilot and meant to carry into P4.
 
 * :mod:`~sciagent.campaign.plan` -- the units, their content addresses, and the
   order they run in.
+* :mod:`~sciagent.campaign.p4plan` -- P4's configs, as a function of the split.
 * :mod:`~sciagent.campaign.store` -- the append-only, content-addressed results
   store: a :class:`~sciagent.registry.ledger.CampaignLedger` of numbers plus
   one exclusively-created JSON detail file per cell.

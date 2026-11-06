@@ -4,6 +4,14 @@
 ORACLE, B-lib, B-np, B-rand, B-sym, B-sparse, the planted-hint control and the
 B-sym at 10xF control (:data:`B_SYM_10F`, run on :attr:`CampaignConfig.control_seeds`
 only). LLM arms are ``<arm>-<letter>/<condition>``, e.g. ``AG-c-S/named``.
+:attr:`CampaignConfig.only_truths` narrows a config to some truths of the
+campaign, as the budget sweep needs (:mod:`sciagent.campaign.p4plan`).
+
+**A budget in a name.** A row key has no budget field, so a system at a budget
+other than a plan's main one carries it in its name: :data:`B_SYM_F80`, and
+:attr:`LLMArm.budget`. :class:`CampaignConfig` refuses a name that misstates its
+budget. Neither moves an address that exists: B-sym@F=80 is a new system with
+its own key, and an arm with no budget keeps its name and text.
 
 **Data.** Every system on a (truth, seed) sees the same observational dataset:
 the one :class:`~sciagent.investigation.world.World` draws for that seed, so a
@@ -166,6 +174,11 @@ B_SYM: Final = "B-sym"
 B_SPARSE: Final = "B-sparse"
 PLANTED: Final = "planted-hint"
 B_SYM_10F: Final = "B-sym@10F"
+#: B-sym at the sweep's largest fit budget (P4-PROPOSAL §4). A config running it
+#: must have this many fits, so the name cannot misstate the budget. It is no
+#: default baseline: it runs only when a config names it.
+B_SYM_F80_FITS: Final = 80
+B_SYM_F80: Final = "B-sym@F=80"
 
 #: Every non-LLM system, in report order.
 BASELINES: Final = (ORACLE, B_LIB, B_NP, B_RAND, B_SYM, B_SPARSE, PLANTED, B_SYM_10F)
@@ -188,7 +201,7 @@ POLICY_ARMS: Final = (B_SYM_RANDOM, B_SYM_EIG, B_SYM_FSD, B_SYM_TRUTH_FSD)
 #: Units run only when named in ``CampaignConfig.baselines`` (module docstring).
 POLICY_UNITS: Final = (*POLICY_ARMS, TELLING)
 #: Every system ``CampaignConfig.baselines`` may name.
-KNOWN_BASELINES: Final = (*BASELINES, *POLICY_UNITS)
+KNOWN_BASELINES: Final = (*BASELINES, *POLICY_UNITS, B_SYM_F80)
 
 #: The scorer's version: held-out gap, structure, battery, efficiency curve.
 #: Its digest covers every value constant a system or the scorer reads
@@ -399,12 +412,18 @@ class LLMArm:
     AG-S-boed (SPEC §4.1) is ``LLMArm("AG-c", "named", policy="EIG")`` on the
     Sonnet letter: its system name is ``AG-c-S/named+policy=EIG``. The condition
     is ``named``, ``rescaled`` (P4 Δ9) or ``anon``.
+
+    ``budget`` is the ``(experiments, fits)`` a swept arm states in its name
+    (module docstring; ``None``: it states none). The session's text holds the
+    config's budgets already, so this enters the key through the name alone, and
+    :class:`CampaignConfig` refuses one that is not its own.
     """
 
     arm: Arm
     condition: Condition
     prompt_variant: PromptVariant = "v1"
     policy: str | None = None
+    budget: tuple[int, int] | None = None
 
     def __post_init__(self) -> None:
         try:
@@ -422,13 +441,16 @@ class LLMArm:
 
     def system(self, letter: str) -> str:
         """``<arm>-<letter>/<condition>``, plus ``+<variant>`` for a non-default
-        variant and ``+policy=<name>`` for a policy (the pilot's arms keep
-        their names)."""
+        variant, ``+policy=<name>`` for a policy and ``+E=<e>,F=<f>`` for a
+        stated budget (the pilot's arms keep their names)."""
         name = f"{self.arm}-{letter}/{self.condition}"
         if self.prompt_variant != "v1":
             name += f"+{self.prompt_variant}"
         if self.policy is not None:
             name += f"+policy={self.policy}"
+        if self.budget is not None:
+            experiments, fits = self.budget
+            name += f"+E={experiments},F={fits}"
         return name
 
 
@@ -480,6 +502,11 @@ class CampaignConfig:
     #: campaign is given them) only; None: every truth. Not addressed: it
     #: selects which units run, never what a unit computes.
     control_truths: int | None = None
+    #: Run on these truths of the campaign only, in the order the campaign is
+    #: given them; None: every truth. Not addressed, as ``control_truths``. A
+    #: named truth the campaign lacks is refused (:func:`baseline_units`), and
+    #: unlike ``control_truths`` the units do not depend on the order given.
+    only_truths: tuple[str, ...] | None = None
     fits: int = 40
     experiments: int = 8
     control_factor: int = 10
@@ -508,8 +535,21 @@ class CampaignConfig:
             raise CampaignError("the B-sym policy arms need fits ≥ 2 (two epochs)")
         if self.control_truths is not None and self.control_truths < 0:
             raise CampaignError("control_truths must be ≥ 0")
+        chosen = self.only_truths
+        if chosen is not None and (not chosen or len(set(chosen)) != len(chosen)):
+            raise CampaignError("only_truths must be non-empty and distinct")
         if self.fits < 1 or self.experiments < 0 or self.control_factor < 1:
             raise CampaignError("budgets must be positive")
+        if B_SYM_F80 in self.baselines and self.fits != B_SYM_F80_FITS:
+            raise CampaignError(
+                f"{B_SYM_F80} runs at {B_SYM_F80_FITS} fits, not {self.fits}"
+            )
+        for arm in self.llm_arms:
+            if arm.budget not in (None, (self.experiments, self.fits)):
+                raise CampaignError(
+                    f"{arm.system(self.llm_letter)} states a budget this config "
+                    f"does not run: experiments={self.experiments}, fits={self.fits}"
+                )
         if self.sparse.workers != 1 or self.fit_config.workers != 1:
             raise CampaignError("units run single-threaded: workers must be 1")
         # Agents' fits always use the lab's FIT_CONFIG (the runner takes no
@@ -555,6 +595,17 @@ def search_seed(truth_id: str, seed: int) -> int:
 # --------------------------------------------------------------------------
 
 
+def _config_truths(truth_ids: Sequence[str], config: CampaignConfig) -> Sequence[str]:
+    """The campaign's truths this config runs on, in the order given."""
+    if config.only_truths is None:
+        return truth_ids
+    missing = sorted(set(config.only_truths) - set(truth_ids))
+    if missing:
+        raise CampaignError(f"only_truths names truths not in the campaign: {missing}")
+    chosen = set(config.only_truths)
+    return [t for t in truth_ids if t in chosen]
+
+
 def baseline_units(
     truth_ids: Sequence[str], config: CampaignConfig
 ) -> tuple[Unit, ...]:
@@ -564,10 +615,11 @@ def baseline_units(
     ``config.control_truths`` truths when that is set.
     """
     units: list[Unit] = []
+    ids = _config_truths(truth_ids, config)
     k = config.control_truths
-    controlled = set(truth_ids if k is None else truth_ids[:k])
+    controlled = set(ids if k is None else ids[:k])
     for seed in config.seeds:
-        for t in truth_ids:
+        for t in ids:
             for s in config.baselines:
                 if s == B_SYM_10F and (
                     seed not in config.control_seeds or t not in controlled
@@ -586,11 +638,12 @@ def llm_units(truth_ids: Sequence[str], config: CampaignConfig) -> tuple[Unit, .
     complete before seed 2 starts.
     """
     conditions = list(dict.fromkeys(a.condition for a in config.llm_arms))
+    ids = _config_truths(truth_ids, config)
     units: list[Unit] = []
     for seed in config.seeds:
         for condition in conditions:
             arms = [a for a in config.llm_arms if a.condition == condition]
-            for t in truth_ids:
+            for t in ids:
                 for a in arms:
                     units.append(Unit(t, seed, a.system(config.llm_letter)))
     return tuple(units)
@@ -698,7 +751,7 @@ def system_config_text(
                 f"budget={b_rand.budget}; "
                 f"max_draws_factor={b_rand.max_draws_factor}; prior={env.prior_id}"
             )
-        case "B-sym" | "B-sym@10F" | "planted-hint":
+        case "B-sym" | "B-sym@10F" | "B-sym@F=80" | "planted-hint":
             return f"budget={budget}; gp={config.gp!r}; seeds={seeds}"
         case "B-sparse":
             return f"sparse: {config.sparse!r}"
@@ -928,8 +981,9 @@ def _float_fields(limits: SandboxLimits) -> dict[str, int | float]:
 
 def legacy_session_config_digest(arm: LLMArm, config: CampaignConfig) -> str | None:
     """The SHA-256 of :func:`legacy_session_text_v1`; ``None`` for an arm the
-    pilot could not have run (a non-default variant, a policy or ``rescaled``)."""
-    if arm.prompt_variant != "v1" or arm.policy is not None:
+    pilot could not have run (a non-default variant, a policy, a stated budget
+    or ``rescaled``)."""
+    if arm.prompt_variant != "v1" or arm.policy is not None or arm.budget is not None:
         return None
     if arm.condition == "rescaled":
         return None

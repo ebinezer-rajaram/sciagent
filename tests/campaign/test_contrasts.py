@@ -1449,9 +1449,9 @@ def _sonnet(*, rescaled: bool) -> CampaignConfig:
 
 
 def _p4_shaped(*, rescaled: bool) -> tuple[CampaignConfig, ...]:
-    """P4-PROPOSAL §4's blocks as far as a config can name them: the Sonnet grid,
-    Haiku and Opus, and the budget sweep with the budget in the system's name
-    (here through the letter: no arm carries a budget yet)."""
+    """A stand-in with P4-PROPOSAL §4's blocks, the sweep's budget in the name
+    through the letter and on every truth. The real plan is ``p4plan.p4_plan``,
+    tested in ``test_p4_plan.py``."""
     named = tuple(a for a in P4_ARMS if a.condition == "named")
     models = tuple(
         CampaignConfig(seeds=(1, 2), baselines=(), llm_arms=P4_ARMS, llm_letter=letter)

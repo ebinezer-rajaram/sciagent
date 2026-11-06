@@ -80,6 +80,7 @@ from sciagent.campaign.plan import (
     B_SPARSE,
     B_SYM,
     B_SYM_10F,
+    B_SYM_F80,
     B_SYM_TRUTH_FSD,
     ORACLE,
     PLANTED,
@@ -264,7 +265,7 @@ def _run_system(
             result = b_np_system().run(data)
         case "B-rand":
             result = b_rand_system(env, config, seed=rng_seed).run(data)
-        case "B-sym" | "B-sym@10F":
+        case "B-sym" | "B-sym@10F" | "B-sym@F=80":
             factor = config.control_factor if system == B_SYM_10F else 1
             result = BSym(
                 env.sym_seeds,
@@ -373,7 +374,18 @@ def run_baseline_job(job: BaselineJob) -> tuple[UnitResult, ...]:
 
 
 _KNOWN: Final = frozenset(
-    {ORACLE, B_LIB, B_NP, B_RAND, B_SYM, B_SYM_10F, PLANTED, B_SPARSE, *POLICY_UNITS}
+    {
+        ORACLE,
+        B_LIB,
+        B_NP,
+        B_RAND,
+        B_SYM,
+        B_SYM_10F,
+        B_SYM_F80,
+        PLANTED,
+        B_SPARSE,
+        *POLICY_UNITS,
+    }
 )
 
 

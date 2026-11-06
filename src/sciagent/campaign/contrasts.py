@@ -33,7 +33,9 @@ truth before any drop. A plan is the sequence of its
 model letter and one budget. A key has no budget field, so a key that two units
 of the plan share is refused: a system at another budget must carry the budget
 in its name. Reading no score and no cell, the function cannot depend on an
-outcome.
+outcome. A config with ``control_truths`` set is refused: it takes a prefix of
+the order given, so tier 1 would follow that order, and the rows are a set of the
+plan's.
 
 **The fixed order** (:func:`read_contrasts`). Only contrast rows enter. A table
 from :func:`~sciagent.campaign.analysis.load_rows` holds planned units only, so
@@ -293,6 +295,11 @@ def contrast_rows(
     seen: set[RowKey] = set()
     keys: list[RowKey] = []
     for config in plan:
+        if config.control_truths is not None:
+            raise CampaignError(
+                "a config with control_truths has rows that follow the truths' "
+                "order: use only_truths"
+            )
         for unit in (*baseline_units(ids, config), *llm_units(ids, config)):
             key = (unit.truth_id, unit.seed, unit.system)
             if key in seen:

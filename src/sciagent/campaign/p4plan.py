@@ -40,9 +40,9 @@ the rule's reason would be gone, so that is refused.
 the main grid has, so the sweep measures the budget and not the cap. A full-budget
 session at E = 8, F = 40 is 58 tool calls under a cap of 100, so 42 are spare. So
 the cap is 100 unless the budget needs more: (8, 80) has 140, (16, 40) has 116, and
-the rest 100 (control room, 2026-11-06). The cap enters a session's text, so it
-moves those two configs' session addresses and nothing else: it is in no surface,
-and in no baseline's key.
+the rest 100 (the lane's decision, LOG 2026-11-06). The cap enters a session's
+text, so it moves those two configs' session addresses and nothing else: it is in
+no surface, and in no baseline's key.
 
 The plan reads a truth's id and kind and nothing else, and sets no
 ``control_truths``, so neither it nor its contrast rows depend on truth order.

@@ -39,8 +39,9 @@ This is the primary question.
 **Q2 — Reasoning vs retrieval.** How much of the agent's success survives
 anonymisation, i.e. stripping every domain-meaningful name (`arrival`, `size`,
 `magnitude`, `earthquake`) from tools, data and DSL? The gap between the named
-and anonymised conditions measures reliance on pretraining recall. This is v1's
-R1, now measurable.
+and anonymised conditions bounds reliance on pretraining recall, since it mixes
+names and time. On Sonnet, `rescaled` splits it in two (§5). On Haiku and Opus,
+and on real data, only the mixed gap exists. This is v1's R1, now measurable.
 
 **Q3 — The evidence wall.** Does an agent that chooses its own experiments and
 diagnostics gather the discriminating evidence that BOED over the entertained
@@ -316,10 +317,11 @@ replayed.
 | **B-sym** | symbolic search over the DSL (genetic programming / beam, PySR-style) using F fits | the serious comparator |
 | **B-sparse** | group lasso over a fixed dictionary of all features up to depth 2 at every ψ grid point; one convex fit, regularisation path chosen by held-out likelihood | the strongest non-search rival; succeeds wherever the truth is in the dictionary |
 | **B-np** | Wiener–Hopf nonparametric kernels (§2.3); proposes no structure | model-free rival |
-| **B-boed** | v1's V1 adapted: BOED over the library | v1 continuity |
+| **B-boed** | v1's V1 adapted: BOED over the library (P4b) | v1 continuity |
 | **ORACLE** | fits the true structure | upper bound, positive control |
 
-Each LLM arm runs in **named** and **anonymised** conditions (§5).
+Each LLM arm runs in **named** and **anonymised** conditions, and AG-c-S and
+AG-o-S also in `rescaled` (§5). AG-S-boed runs named only.
 
 The truth sampler places a declared share of test truths **outside the
 B-sparse dictionary** (depth 3, gates, interactions). Without that, B-sparse
@@ -403,6 +405,15 @@ rescaled by a fixed factor, so familiar magnitudes and Omori-like constants
 aren't recognisable by value. DSL production names are kept, because they
 describe mathematics, not a domain.
 
+A third condition, `rescaled`, keeps every name and takes time as the anonymised
+condition has it, at the same fixed factor. It splits the step from named to
+anonymised in two: named to `rescaled` changes time, and `rescaled` to anonymised
+changes names. Any interaction between the two is not attributed. It runs on
+Sonnet only, in both tiers. A softplus-link coefficient is not covariant under
+the time factor, so where time is rescaled the agent is told such coefficients
+are reported as fitted. That note shows in `rescaled` and in the anonymised
+condition, and not in the named one.
+
 A leak test greps every rendered prompt in the anonymised condition for a
 forbidden-term list and fails on any hit.
 
@@ -411,22 +422,33 @@ forbidden-term list and fails on any hit.
 ## 6. Preregistration and positive controls
 
 ### 6.1 Frozen before the test campaign
-DSL version, truth sampler and its seed, the test-split hash, budgets, the four
-scores, the contrasts in 6.2 and the analysis code. All committed in one commit
-whose hash is quoted in the results.
+DSL version, truth sampler and its seed, the test-split hash, budgets, B-sym's
+tuned setting, the four scores, the contrasts in 6.2 and the analysis code. All
+committed in one commit whose hash is quoted in the results. P4b's contrasts, C5
+and C3's AG-S-boed half, are frozen in their own commit before any P4 contrast
+is read.
 
 ### 6.2 Preregistered contrasts
 - **C1 (Q1):** AG-c-S vs B-sym on the held-out predictive gap, paired by truth,
   test split, named condition. Paired bootstrap 95% CI.
-- **C2 (Q2):** AG-c-S and AG-o-S, each named vs anonymised, same metric, paired.
-- **C3 (Q3):** AG-c-S vs AG-S-boed (who chooses the evidence), and AG-o-S vs AG-c-S
-  at equal E (does free analysis break the evidence wall).
+- **C2 (Q2):** AG-c-S and AG-o-S, each as two paired differences on the same
+  metric: named vs `rescaled` (time) and `rescaled` vs anonymised (names). Four
+  reads. The softplus note of §5 sits inside the time reads and outside the names
+  reads. Named vs anonymised is printed for every model as a labelled secondary.
+- **C3 (Q7, Q3):** AG-o-S vs AG-c-S at equal E, named condition, on the held-out
+  gap: does free analysis predict better on the same evidence. It does not
+  measure the evidence wall, which needs the telling diagnostic (§4.2). In P4.
+  AG-c-S vs AG-S-boed (Q3, who chooses the evidence) moves to P4b.
 - **C4 (Q1, the hard rival):** AG-c-S vs B-sparse on **out-of-dictionary**
-  truths.
+  truths. Named condition.
 - **C5 (Q6):** FSD vs EIG on the held-out gap, and on the rate of observing
-  the telling diagnostic.
+  the telling diagnostic. In P4b.
 - **C6 (Q7):** AG-o-S vs AG-c-S on the §4.4 behaviour measures; exploratory.
 - Secondary: everything else, labelled exploratory.
+
+A row with no finite outcome takes the lowest finite reading of its truth and
+seed among the contrast rows (LOG 2026-11-05), and the read with those rows left
+out is printed beside every read.
 
 ### 6.3 Instrument tests (the only acceptance tests v2 requires)
 1. Likelihood matches the analytic value for Poisson and Hawkes, and matches
@@ -452,14 +474,26 @@ whose hash is quoted in the results.
 10. Predictions are evaluated by the framework only, and an interval stated
     after its experiment ran is refused.
 
-### 6.4 Positive controls (run before any contrast is reported)
-- ORACLE beats B-lib on every test truth. If not, the truth is not
-  identifiable and is dropped by the preregistered rule.
-- A **planted-hint agent**, scripted to propose the truth's top-level
-  production first, beats B-rand by a clear margin. This proves the efficiency
-  curve can separate a good proposer from a bad one.
-- B-sym at a very large budget (10× F) approaches ORACLE. This proves the space
-  is searchable in principle, so a B-sym loss at budget F is about efficiency.
+### 6.4 Positive controls (each must pass before the contrast it gates is reported)
+1. ORACLE beats B-lib on every test truth. If not, the truth is not
+   identifiable and is dropped by the preregistered rule.
+2. A **planted-hint agent**, scripted to propose the truth's top-level
+   production first, beats B-rand by a clear margin. This proves the efficiency
+   curve can separate a good proposer from a bad one.
+3. B-sym at a very large budget (10× F) approaches ORACLE. This proves the space
+   is searchable in principle, so a B-sym loss at budget F is about efficiency.
+4. **Naming null (gates C2).** A scripted agent that holds the truth records a
+   belief, fits, runs one experiment and submits, in the named, `rescaled` and
+   anonymised conditions, on the same truth and seed. Submissions, every fit and
+   the held-out gap must be identical and the gap finite. The time factor is a
+   power of two, so equality is exact. It covers belief, fit, experiment and
+   submit, and no other tool. It is a null: it shows the conditions do not differ
+   when nothing should, and that C2 can separate rests on controls 1 to 3.
+5. **Policy separation (gates C5 and C3's AG-S-boed half, in P4b).** A truth-aware
+   FSD policy must beat random on the telling-diagnostic rate.
+6. **Behaviour instrument (gates C6).** A scripted agent with a known timeline of
+   committed beliefs (§4.4) must reproduce known calibration, falsification and
+   revision values.
 
 ---
 
@@ -473,7 +507,8 @@ Each phase ends in something demonstrable. Phase 3 is a go/no-go gate.
 | **P1 Core** | `sciagent/glm/`: feature grammar, canonicaliser, feature precomputation, exact likelihood, certified fitter, feature-set distance, simulator; `sciagent/nonparam/`: Wiener–Hopf; the §2.4 proposition written up in `docs/v2/evidence-wall.md` | Instrument tests 1–5 pass |
 | **P2 Scenarios + agent harness** | truth sampler, splits, intervention language, tool layer with budgets as MCP tools, Agent SDK harness with recording/replay, Python sandbox, notebook, `predict`, anonymiser, B-sparse dictionary | Instrument tests 6–10 pass; one end-to-end AG-o run replays offline |
 | **P3 Pilot** | 20 dev truths × 3 seeds: AG-c-S and AG-o-S (named + anon), B-lib, B-rand, B-sym, B-sparse, B-np, ORACLE, planted-hint | Go/no-go read (below); a few AG-o transcripts read in full by you |
-| **P4 Main campaign** | test split, all arms, Haiku/Sonnet/Opus, both naming conditions, budget sweep; evidence-policy comparison (§4.2) | C1–C5 reported with CIs |
+| **P4 Main campaign** | test split, AG-c and AG-o on Haiku/Sonnet/Opus, named and anonymised, `rescaled` on Sonnet, the non-LLM systems but B-boed, budget sweep | C1–C4 reported with CIs |
+| **P4b Evidence policies** | evidence-policy comparison (§4.2), AG-S-boed, B-boed | C5 and C3's AG-S-boed half reported with CIs |
 | **P5 Real data** | QTM: agent investigates the real catalogue (observational only, no interventions), named + anon | Recovery of size-dependent triggering reported |
 | **P6 Write-up** | Paper draft (workshop length), blog post, figures, README rewrite around results | Draft reviewed |
 | P7 later | Other providers; second domain (e.g. ODE/epidemic) | Only after P4 holds |
@@ -485,7 +520,7 @@ Each phase ends in something demonstrable. Phase 3 is a go/no-go gate.
   calibration, then re-pilot.
 - **Too hard:** ORACLE-relative gap closes for < 10% of truths with *every*
   system, including B-sym at 10×F. Lower depth, then re-pilot.
-- **Controls fail** (§6.4): fix the instrument before anything else.
+- **Controls 1 to 3 fail** (§6.4): fix the instrument before anything else.
 - **Go:** controls pass and difficulty is in band, *regardless* of whether the
   agent wins. A well-instrumented "LLM ≈ symbolic search at equal budget" is a
   reportable result; v1's forced tie was not.
@@ -564,7 +599,7 @@ trustworthy, and they cost little:
 
 | Risk | Mitigation |
 |---|---|
-| The LLM simply wins easily (space too friendly to language priors) | Anonymised condition plus B-sym at 10×F; a large named/anon gap is itself the Q2 finding |
+| The LLM simply wins easily (space too friendly to language priors) | Anonymised condition plus B-sym at 10×F; a large gap on the `rescaled` to anonymised step is itself the Q2 finding |
 | B-sym is a weak strawman | Use an established GP/beam setup, tune it on dev with the same effort as the agent prompt, and report its 10×F curve |
 | Max rate limits make P4 slow | Measured in P3; campaign is resumable (v1's driver) and replay-cached; size the truth count to the quota |
 | Contamination even when anonymised (Omori-like shapes are recognisable) | That's reasoning from data shape, which is what Q2 wants to credit; time rescaling removes value-level recall |
@@ -591,8 +626,8 @@ results or abstracts, not read in full.
   inference. It asks the LLM for a "novel unnamed mechanism" when residuals are
   large, and scores held-out interventional prediction on synthetic benchmarks.
   It is the closest prior work and overlaps with the loop itself. Our AG-S-boed
-  arm is essentially its design applied in our domain, which makes C3 a direct
-  test of "agent-chosen evidence vs VOI-chosen evidence".
+  arm is essentially its design applied in our domain, which makes C3's AG-S-boed
+  half, in P4b, a direct test of "agent-chosen evidence vs VOI-chosen evidence".
 - **BoxingGym** (Gandhi et al., arXiv 2501.01540) and **Automated Statistical
   Model Discovery with Language Models** (Li, Fox, Goodman, ICML 2024).
   Experiment-then-model-discovery with programs the LM writes, and a
@@ -602,9 +637,9 @@ results or abstracts, not read in full.
   ICML 2025; transformed and synthetic equations), NewtonBench† (ICLR 2026;
   counterfactually shifted laws), DiscoverPhysics† (arXiv 2605.26087).
   They resist recall by changing the *law*. We resist it by changing the
-  *names* while keeping the law. The two are complementary, and a clean
-  named-vs-anonymised ablation inside an interactive agent benchmark was not
-  found.
+  *names* while keeping the law. The two are complementary, and a
+  named-vs-anonymised ablation inside an interactive agent benchmark, with time
+  and names separated on synthetic data, was not found.
 
 **Lineage.** FunSearch (Nature 2024) and LLM-SR (ICLR 2025) established
 that an LLM proposes structure and an evaluator fits and scores it; our
@@ -629,9 +664,10 @@ forecasting, not discovery. The QTM catalogue is Ross et al., *Science* 2019.
    agent's library, giving a controlled version of the M-open case.
 3. An equal-fit-budget comparison against symbolic search, with positive
    controls that show the comparison can separate systems.
-4. A named-vs-anonymised ablation in an interactive agent setting, carried from
-   synthetic data to a real catalogue where the expected finding (magnitude-
-   dependent triggering) is established in the domain literature.
+4. A named-vs-anonymised ablation in an interactive agent setting, with time and
+   names separated on synthetic data and together on a real catalogue, where the
+   expected finding (magnitude-dependent triggering) is established in the domain
+   literature.
 
 The risk is that Model Discovery Agent's later revisions add (2) or (4).
 Re-read it before P6.

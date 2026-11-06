@@ -198,18 +198,19 @@ entry, and marks it handled with the date and what was done. Newest last.
   tuned settings in the 6.1 commit. Record P3's untuned run as a deviation from SPEC section 9, and
   say in P3's write-up that its B-sym was untuned.
   In progress 2026-11-06 (lane session 36): deviation recorded in PILOT.md and the LOG; effort budget written first, in `docs/v2/prereg/2026-11-06_bsym-tuning.md` (draft, in red team). Stays open until the tuned settings are frozen in the §6.1 commit.
-- [ ] **SPEC-TEXT-P4.md: accept as drafted**, provided it has had one red-team round. If it has not, run
+- [x] **SPEC-TEXT-P4.md: accept as drafted**, provided it has had one red-team round. If it has not, run
   one first and fix any blocking findings. Any wording that changes what the paper claims comes back
   here.
-  In progress 2026-11-06 (lane session 36): round run, ready with fixes, six blocking (`docs/v2/redteam/2026-11-06_spec-text-p4.md`). The lane's fixes are in `docs/v2/SPEC-TEXT-P4.md` part A. Findings 1 to 4 and B-boed change claims, so they came back as rulings B1 to B5 in part B. SPEC not applied; waits on those.
+  In progress 2026-11-06 (lane session 36): round run, ready with fixes, six blocking (`docs/v2/redteam/2026-11-06_spec-text-p4.md`). The lane's fixes are in `docs/v2/SPEC-TEXT-P4.md` part A. Findings 1 to 4 and B-boed change claims, so they came back as rulings B1 to B5 in part B. Handled the same day: ruled on below, and SPEC applied.
   Both decided by the control room under the owner's standing delegation.
 
 ## 2026-11-06, control room (SPEC-TEXT-P4 part B)
 
-- [ ] **Accept all five recommendations and the floor sentence.** B1: drop the wall claim for P4's C3, and
+- [x] **Accept all five recommendations and the floor sentence.** B1: drop the wall claim for P4's C3, and
   Q7's wall question stays unanswered by P4's confirmatory reads. B2: "bounds" for "measures", with §9
   and §10 qualified and named minus anon printed per model as a labelled secondary. B3: control 5 gates
   C5 and C3's AG-S-boed half, in P4b. B4: freeze P4b's contrasts before any P4 read opens; no extra
   sessions. B5: B-boed moves to P4b. Floor rule: the one sentence under §6.2. These narrow the claims,
   which is the honest direction; record them as decided by the control room under the owner's standing
   delegation.
+  Handled 2026-11-06 (lane session 36): parts A and B and the floor sentence applied to `docs/SPEC.md`; recorded as delegated in the LOG. What they create is queued: the named minus anon secondary, and P4b's freeze before P4's reads.

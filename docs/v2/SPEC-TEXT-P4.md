@@ -1,6 +1,6 @@
 # SPEC text for P4's reads and controls: proposed words (stop point)
 
-**Status: proposal, revised after its one red-team round, 2026-11-06 (lane session 36). `docs/SPEC.md` is unchanged.** The round: `docs/v2/redteam/2026-11-06_spec-text-p4.md`, ready with fixes, six blocking. The control room accepted the first draft provided it had that round, and said wording that changes what the paper claims comes back (INBOX 2026-11-06). So part A is ready to apply, and part B holds five rulings that are the control room's. Nothing is applied until part B is ruled on, because A and B touch the same lines.
+**Status: APPLIED to `docs/SPEC.md` on 2026-11-06, parts A and B and the floor sentence, by the control room's rulings (INBOX 56cfd02; LOG 2026-11-06). The rest of this file is the record of what was proposed; the "still owed" list at its end stays open.** The round: `docs/v2/redteam/2026-11-06_spec-text-p4.md`, ready with fixes, six blocking. The control room accepted the first draft provided it had that round, and said wording that changes what the paper claims comes back (INBOX 2026-11-06). So part A is ready to apply, and part B holds five rulings that are the control room's. Nothing is applied until part B is ruled on, because A and B touch the same lines.
 
 Most of this writes down what P4-PROPOSAL §5 approved. Two points are the lane's own choices, not decisions the owner took, and are marked: the named condition in C3 and C4 (LOG 2026-11-06), and the softplus note showing in `rescaled` (LOG 2026-11-06).
 

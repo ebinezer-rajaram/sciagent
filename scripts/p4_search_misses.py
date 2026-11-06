@@ -232,7 +232,6 @@ DEV_SPLIT: Final = "dev"
 #: repeat after a fix is not a fresh start over another run's records.
 DRAFTS: Final = Path(".cache") / "drafts"
 REHEARSAL_DIR: Final = "p4-search-misses-rehearsal"
-REHEARSAL_NAMING_NULL: Final = Path("p4-naming-null-rehearsal") / "naming-null.json"
 REHEARSAL_HUNT_SIZE: Final = 5
 REHEARSAL_MIN_KEPT: Final = 6
 REHEARSAL_MIN_OUT_OF_DICTIONARY: Final = 2
@@ -4556,9 +4555,9 @@ def rehearsal_setup(args: argparse.Namespace, repo: Path) -> Setup:
         env=pilot.pointproc_environment(records),
         plan=rehearsal_configs(spec),
         truths=pilot.truth_entries(tuple(chosen)),
-        controls=scripted_controls(
-            head, split=DEV_SPLIT, path=repo / DRAFTS / REHEARSAL_NAMING_NULL
-        ),
+        # Section 2.10's list does not change control 4, and a rehearsal has no
+        # ``T``, so section 2.7's rule gives False and the C2 reads stay unreportable.
+        controls=ScriptedControls(naming_null=False),
         group_b=group_b_job(truth, dev_env, REHEARSAL_ROOTS.seed),
         store=args.store,
         rehearsal=True,

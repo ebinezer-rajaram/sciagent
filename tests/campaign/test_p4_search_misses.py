@@ -4544,17 +4544,15 @@ def test_the_mode_changes_exactly_the_texts_list(
     assert len(setup.plan) == 1
 
 
-def test_control_4_in_a_rehearsal_is_a_dev_record_at_its_own_path(
+def test_control_4_in_a_rehearsal_is_false_and_reads_no_record(
     rehearsal: Rehearsal, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Section 2.10 lists what the mode changes, and control 4 is not on it. A
+    rehearsal has no ``T``, so section 2.7's rule gives False."""
     calls: list[Any] = []
-    setup_of(rehearsal, monkeypatch, calls)
-    (call,) = [c for c in calls if c[0] == "controls"]
-    assert call[1] == ("h" * 40,)
-    assert call[2]["split"] == "dev"
-    drafts = rehearsal.repo / ".cache" / "drafts"
-    assert call[2]["path"].is_relative_to(drafts)
-    assert call[2]["path"] != record_module.NAMING_NULL_RECORD
+    setup = setup_of(rehearsal, monkeypatch, calls)
+    assert not [c for c in calls if c[0] == "controls"]
+    assert setup.controls == ScriptedControls(naming_null=False)
 
 
 def test_the_output_moves_with_the_script_and_the_plan(

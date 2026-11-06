@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import inspect
 import math
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import cast
@@ -397,6 +398,41 @@ def test_oracle_and_b_lib_are_never_floored() -> None:
     assert by[("t3", 1, ORACLE)].per_event is None
 
 
+def test_a_baseline_side_takes_the_floor() -> None:
+    """B-sym at -inf on (t1, 1) takes -0.75, so its t1 gaps are -1/4, -1/8, -1/8,
+    mean -1/6, against AG-c-S's -1/8: d = +1/24 on t1, point +1/144. The pilot's
+    floored rows on C1's sides were all of this kind (PILOT.md)."""
+    rows = world()
+    score(rows, "t1", 1, B_SYM, -math.inf)
+    got = read(tabled(rows))["C1"]
+    assert got.point == pytest.approx(1 / 144, abs=1e-12)
+    assert ("t1", 1, B_SYM) in got.rows
+
+
+def test_b_lib_sets_a_floor() -> None:
+    """With B-rand raised, B-lib's -0.6875 is the lowest finite row on (t1, 1), as
+    it was on 54 of the pilot's 60 floors. AG-c-S's t1 gaps are -3/16, -1/8, -1/8,
+    mean -7/48, against -1/8: d = -1/48 on t1, point -1/288."""
+    rows = world()
+    score(rows, "t1", 1, B_RAND, -0.5)
+    score(rows, "t1", 1, AGC, -math.inf)
+    got = read(tabled(rows))["C1"]
+    assert got.point == pytest.approx(-1 / 288, abs=1e-12)
+
+
+def test_the_oracle_sets_a_floor() -> None:
+    """A gap reference takes no floor, and it still sets one."""
+    rows = world()
+    for key in [
+        k for k in rows if k[:2] == ("t1", 1) and _contrast(k) and k[2] != ORACLE
+    ]:
+        score(rows, *key, -0.25)
+    score(rows, "t1", 1, AGC, -math.inf)
+    out, _ = floor_rows(tuple(rows[k] for k in sorted(rows) if _contrast(k)))
+    by = {(r.truth, r.seed, r.system): r for r in out}
+    assert by[("t1", 1, AGC)].per_event == -0.5
+
+
 def test_a_failure_of_any_other_cause_is_absent_and_seeds_stay_matched() -> None:
     """B-sym's seed 1 is at gap 0, against -1/8 on its other seeds, and AG-c-S
     has no row on seed 1. Both sides are then averaged over seeds 2 and 3 only, so
@@ -434,6 +470,14 @@ def test_a_void_row_is_absent_and_sets_no_floor() -> None:
     assert got["C2-AG-c-names"].point == pytest.approx(1 / 144, abs=1e-12)
 
 
+def test_a_live_sessions_row_stays_in() -> None:
+    """A table holds a session per LLM unit, and only a void one takes its row."""
+    live = VoidStatus(False, (), 0, False)
+    session = Session("t1", 1, AGC, {}, {}, live, "env", "digest")
+    got = read(tabled(world(), (session,)))["C1"]
+    assert ("t1", 1, AGC) in got.rows
+
+
 def test_rows_with_no_finite_row_on_their_truth_and_seed_are_absent() -> None:
     rows = world()
     for key in [k for k in rows if k[:2] == ("t3", 1)]:
@@ -459,6 +503,23 @@ def test_a_truth_with_no_seed_in_common_leaves_the_read_and_is_counted() -> None
     floors = read_floors(table, PASS, ROOT, 200)
     assert floors["C1"].no_common_seed == 1
     assert floors["C3-free"].no_common_seed == 0
+
+
+def test_c4_counts_its_own_truths_as_no_common_seed_and_no_other() -> None:
+    """C4 reads the out-of-dictionary truths, t1 and t2. An in-dictionary truth was
+    never C4's to lose, so it does not count, whole or with its B-sparse rows gone.
+    An out-of-dictionary truth that loses them does."""
+    assert read_floors(tabled(world()), PASS, ROOT, 200)["C4"].no_common_seed == 0
+    rows = world()
+    for seed in SEEDS:
+        del rows[("t3", seed, B_SPARSE)]
+    assert read_floors(tabled(rows), PASS, ROOT, 200)["C4"].no_common_seed == 0
+    for seed in SEEDS:
+        del rows[("t1", seed, B_SPARSE)]
+    table = tabled(rows)
+    got = read_floors(table, PASS, ROOT, 200)["C4"]
+    assert got.no_common_seed == 1
+    assert read(table)["C4"].n == 1
 
 
 def test_the_floor_reads_only_contrast_rows_and_keeps_rows_it_does_not_touch() -> None:
@@ -888,6 +949,18 @@ def test_s6_counts_a_reads_floored_rows_and_reads_it_with_them_absent() -> None:
     assert got["C3-free"].floored == 2
 
 
+def test_s6_leaves_out_a_floored_second_side() -> None:
+    """B-sym, C1's second side, at -inf on (t1, 1). With that pair left out every
+    remaining d is 0."""
+    rows = world()
+    score(rows, "t1", 1, B_SYM, -math.inf)
+    got = read_floors(tabled(rows), PASS, ROOT, 200)["C1"]
+    assert got.floored == 1
+    assert ("t1", 1, B_SYM) not in got.without.rows
+    assert ("t1", 1, AGC) not in got.without.rows
+    assert got.without.point == 0.0
+
+
 def test_s6_with_nothing_floored_is_the_read_itself() -> None:
     table = tabled(_spread_world())
     got = read_floors(table, PASS, ROOT, 200)
@@ -994,6 +1067,21 @@ def test_row_keys_are_unique_over_a_p4_shaped_plan_or_refused() -> None:
     twice = CampaignConfig(seeds=(1,), baselines=(B_SYM,), llm_arms=(), fits=80)
     with pytest.raises(CampaignError, match="budget"):
         contrast_rows((*plan, twice), _entries(20))
+
+
+def test_a_key_twice_outside_the_contrast_systems_is_refused() -> None:
+    """Section 2.7 says unique over the plan, so a collision is refused even where
+    no row of it enters a read: an LLM arm of another model, and a baseline."""
+    haiku = CampaignConfig(seeds=(1,), baselines=(), llm_arms=P4_ARMS, llm_letter="H")
+    assert HAIKU not in contrasts.CONTRAST_SYSTEMS
+    assert len(contrast_rows((haiku,), _entries(2))) == 0
+    with pytest.raises(CampaignError, match=f"{re.escape(HAIKU)}.*budget"):
+        contrast_rows((haiku, replace(haiku, experiments=0)), _entries(2))
+    lone = CampaignConfig(seeds=(1,), baselines=(B_NP,), llm_arms=())
+    assert B_NP not in contrasts.CONTRAST_SYSTEMS
+    assert len(contrast_rows((lone,), _entries(2))) == 0
+    with pytest.raises(CampaignError, match=f"{B_NP}.*budget"):
+        contrast_rows((lone, replace(lone, fits=80)), _entries(2))
 
 
 def test_a_duplicated_truth_is_refused() -> None:

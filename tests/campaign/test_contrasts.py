@@ -24,10 +24,14 @@ from __future__ import annotations
 
 import inspect
 import math
+import os
 import re
+import subprocess
+import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
-from typing import cast
+from pathlib import Path
+from typing import Final, cast
 
 import numpy as np
 import pytest
@@ -55,6 +59,8 @@ from sciagent.campaign.plan import (
     CampaignConfig,
     CampaignError,
     TruthEntry,
+    baseline_units,
+    llm_units,
 )
 from sciagent.campaign.store import ResultStore
 from sciagent.campaign.voids import VoidStatus
@@ -1155,6 +1161,96 @@ def test_a_different_root_gives_a_different_interval() -> None:
     assert read(table, seed=11)["C1"].low != read(table, seed=12)["C1"].low
 
 
+def _hash_seed_table() -> Table:
+    """A table with every path a set or a dict could reach: floors, a tie at a floor,
+    both kinds of failure, a truth unchecked, and a void and a live session."""
+    rows = _spread_world()
+    score(rows, "t1", 1, AGC, -math.inf)
+    score(rows, "t1", 1, B_SYM, -math.inf)
+    score(rows, "t2", 1, B_SPARSE, -0.75)  # level with B-rand
+    score(rows, "t2", 1, AGO, -math.inf)
+    failed(rows, ("t3", 2, AGC), FIT_FAILURE)
+    failed(rows, ("t4", 2, AGO), "the session timed out")
+    no_submission(rows, ("t6", 3, B_SYM))
+    for seed in (1, 2):
+        del rows[("t5", seed, B_LIB)]
+    void = Session("t3", 1, AGO, {}, {}, _void(), "env", "digest")
+    live = Session("t4", 1, AGC, {}, {}, VoidStatus(False, (), 0, False), "e", "d")
+    return tabled(rows, (void, live))
+
+
+def _no_b_lib_table() -> Table:
+    return tabled({k: v for k, v in world().items() if k[2] != B_LIB})
+
+
+def _text(r: ContrastRead) -> str:
+    floats = (r.point.hex(), r.low.hex(), r.high.hex())
+    return f"{floats} {r.reportable} {r.n} {r.rows}"
+
+
+def reads_text() -> str:
+    """All three entry points on the table above, every float by ``float.hex``, and
+    step 1 on a table with every truth unchecked: one unchecked truth has no order
+    to lose, and the table above can spare only one and still pass control 2."""
+    table = _hash_seed_table()
+    gate = contrasts.read_controls(table, PASS, ROOT, 200)
+    lines = [f"{gate}", f"{controlled(_no_b_lib_table())}"]
+    lines += [f"{k} {_text(r)}" for k, r in read(table).items()]
+    lines += [
+        f"{k} {f.floored} {f.no_common_seed} {_text(f.without)}"
+        for k, f in read_floors(table, PASS, ROOT, 200).items()
+    ]
+    return "\n".join(lines)
+
+
+_HASH_SEED_CHILD: Final = """
+import sys
+from test_contrasts import reads_text
+print(hash("sciagent"))
+sys.stdout.write(reads_text())
+"""
+
+
+@pytest.mark.slow
+def test_the_reads_are_identical_bytes_across_hash_seeds() -> None:
+    """Hash randomisation is per process, so a repeat in this one cannot see a
+    dependence on set order. Each child's first line is its ``hash``, the control
+    that the seeds really differed."""
+    here = str(Path(__file__).parent)
+    path = os.pathsep.join(filter(None, (here, os.environ.get("PYTHONPATH"))))
+    hashes: list[bytes] = []
+    texts: list[bytes] = []
+    for hash_seed in ("0", "1", "4242"):
+        done = subprocess.run(
+            [sys.executable, "-c", _HASH_SEED_CHILD],
+            env={**os.environ, "PYTHONHASHSEED": hash_seed, "PYTHONPATH": path},
+            capture_output=True,
+            check=True,
+            timeout=300,
+        )
+        first, text = done.stdout.split(b"\n", 1)
+        hashes.append(first)
+        texts.append(text)
+    assert len(set(hashes)) == 3
+    assert len(set(texts)) == 1
+    assert texts[0] == reads_text().encode()
+
+
+def test_the_hash_seed_table_reaches_what_it_says() -> None:
+    """So that the test above compares real reads, not seven ``nan``s."""
+    table = _hash_seed_table()
+    gate = contrasts.read_controls(table, PASS, ROOT, 200)
+    assert gate.unchecked == ("t5",) and gate.controls_pass
+    reads = read(table)
+    assert all(r.reportable for r in reads.values())
+    floors = read_floors(table, PASS, ROOT, 200)
+    # (t1, 1) on both sides, the failed fit on (t3, 2), no submission on (t6, 3).
+    assert floors["C1"].floored == 4
+    assert ("t2", 1, B_RAND) in reads["C3-free"].rows
+    assert ("t2", 1, B_SPARSE) in reads["C3-free"].rows
+    assert controlled(_no_b_lib_table()).unchecked == TRUTHS
+
+
 def test_nan_compares_equal_by_hex_and_any_other_difference_does_not() -> None:
     nan = ContrastRead(math.nan, math.nan, math.nan, False, 0, ())
     assert same_read(nan, ContrastRead(math.nan, math.nan, math.nan, False, 0, ()))
@@ -1402,9 +1498,14 @@ def test_row_keys_are_unique_over_a_p4_shaped_plan_or_refused() -> None:
     """The key has no budget field, so the name must carry it. A sweep arm under
     the main arm's name is the collision the text warns of: refused."""
     plan = _p4_shaped(rescaled=False)
-    assert len(set(contrast_rows(plan, _entries(20)))) == len(
-        contrast_rows(plan, _entries(20))
-    )
+    ids = [t.id for t in _entries(20)]
+    every = [
+        (unit.truth_id, unit.seed, unit.system)
+        for config in plan
+        for unit in (*baseline_units(ids, config), *llm_units(ids, config))
+    ]
+    assert len(every) > 420 and len(set(every)) == len(every)
+    assert len(contrast_rows(plan, _entries(20))) == 420  # 840 on 40 truths
     named = tuple(a for a in P4_ARMS if a.condition == "named")
     collide = CampaignConfig(
         seeds=(1,), baselines=(), llm_arms=named, experiments=0
@@ -1464,10 +1565,7 @@ def test_contrast_rows_reads_no_cell_and_no_score(
 
 
 def test_contrast_rows_take_every_truth_before_any_drop() -> None:
-    """A truth control 1 drops is still in tier 1; its rows just leave the reads."""
-    rows = world()
-    for seed in SEEDS:
-        score(rows, "t2", seed, B_LIB, -0.25)
+    """Tier 1 reads no score, so no drop can reach it: every truth is in it."""
     plan = (
         CampaignConfig(
             seeds=SEEDS,

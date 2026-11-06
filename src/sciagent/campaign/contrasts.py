@@ -43,9 +43,12 @@ that ``read_contrasts`` is not given.
 1. Controls 1 to 3 and their drop rule read the table as given, unfloored
    (:func:`~sciagent.campaign.analysis.verdict`), with control 2's bootstrap on
    stream :data:`CONTROL_2_STREAM`. So an ORACLE at ``-inf`` still fails control 1,
-   and control 2 and 3 still rank a ``-inf``. The truths kept are
-   :attr:`Verdict.kept`: one the check could not reach (fewer than 2 paired seeds)
-   is not kept, as it is not in any share of the verdict.
+   and control 2 and 3 still rank a ``-inf``. Their result on a table is a
+   :class:`ControlsRead`, which :func:`read_controls` returns, so that a caller need
+   not run this step itself. A truth control 1 could not reach, with fewer than 2
+   seeds on which ORACLE and B-lib both have finite gaps, is ``unchecked``: neither
+   checked nor dropped. It is not kept, as it is not in any share of the verdict,
+   and :data:`READ_UNCHECKED_TRUTHS` alone says so.
 2. The pair rule floors a copy (:func:`floor_rows`).
 3. :func:`~sciagent.campaign.analysis.derive` runs on the copy.
 4. The reads.
@@ -78,8 +81,9 @@ only through the truths kept or through a control are not in ``rows``.
 :class:`ScriptedControls` value, a scripted run outside the table) gates the C2
 reads. A read needs its gates passed and ``n``, its truths, at least 2. Otherwise
 ``point``, ``low`` and ``high`` are ``nan``, and ``n`` and ``rows`` still say what
-the read had. Compare reads with :func:`same_read`, which goes by ``float.hex``, so
-``nan`` equals ``nan``.
+the read had. :meth:`ControlsRead.why_not` gives the reason, from the same rule
+that sets ``reportable``. Compare reads with :func:`same_read`, which goes by
+``float.hex``, so ``nan`` equals ``nan``.
 
 **S6** (:func:`read_floors`). For each read, how many of its rows took a floor,
 and the read with those rows absent. It draws read ``i``'s own stream afresh, so
@@ -134,6 +138,16 @@ FAILED_FIT: Final = "the submitted structure could not be fitted"
 REFERENCES: Final = frozenset({ORACLE, B_LIB})
 #: A read needs at least this many truths.
 MIN_TRUTHS: Final = 2
+#: Whether the reads take a truth control 1 could not check: one with fewer than 2
+#: seeds on which ORACLE and B-lib both have finite gaps. On P4's two seeds a single
+#: B-lib at ``-inf``, or failed, makes one. No text sets this rule, and it is open
+#: with the control room (red team 2026-11-06, finding 1), so this is its one place.
+#: It moves the reads only: controls 2 and 3 read ``Verdict.kept`` either way.
+READ_UNCHECKED_TRUTHS: Final = False
+#: Why a read is not reportable (:meth:`ControlsRead.why_not`).
+CONTROLS_FAILED: Final = "controls 1 to 3 did not pass"
+NAMING_NULL_FAILED: Final = "control 4, the naming null, did not pass"
+TOO_FEW_TRUTHS: Final = f"n is below {MIN_TRUTHS}"
 
 
 def _sonnet(tier: str, condition: str) -> str:
@@ -204,6 +218,35 @@ class ScriptedControls:
     the same value in the stored and the corrected call."""
 
     naming_null: bool
+
+
+@dataclass(frozen=True)
+class ControlsRead:
+    """Step 1 on one table (module docstring). It holds no read. Each truth of the
+    table is in ``dropped``, or ``unchecked``, or passed control 1 and is in
+    ``kept``, each sorted; ``kept`` is the truths the reads take."""
+
+    kept: tuple[str, ...]
+    dropped: tuple[str, ...]
+    unchecked: tuple[str, ...]
+    #: Controls 1 to 3.
+    controls_pass: bool
+    #: Control 4.
+    naming_null: bool
+
+    def why_not(self, name: str, n: int) -> tuple[str, ...]:
+        """Every reason the read called ``name``, on this table with ``n`` truths, is
+        not reportable, as :data:`CONTROLS_FAILED`, :data:`NAMING_NULL_FAILED` and
+        :data:`TOO_FEW_TRUTHS`, in that order. Empty means reportable. ``n`` is the
+        read's own, so a left-out read of S6 is asked with its own ``n``."""
+        naming = next((spec.naming for spec in READS if spec.name == name), None)
+        if naming is None:
+            raise ScoringError(f"no read is named {name!r}")
+        return (
+            *((CONTROLS_FAILED,) if not self.controls_pass else ()),
+            *((NAMING_NULL_FAILED,) if naming and not self.naming_null else ()),
+            *((TOO_FEW_TRUTHS,) if n < MIN_TRUTHS else ()),
+        )
 
 
 @dataclass(frozen=True)
@@ -335,12 +378,8 @@ def _checked_rows(table: Table) -> list[Row]:
 class _Frame:
     """What every read of one table reads, after steps 1 to 3."""
 
-    #: Truths kept by control 1, sorted.
-    kept: tuple[str, ...]
+    controls: ControlsRead
     out_of_dictionary: frozenset[str]
-    #: Controls 1 to 3, and control 4.
-    controls_pass: bool
-    naming_null: bool
     #: Each (truth, system)'s finite gaps by seed.
     gaps: Mapping[tuple[str, str], Mapping[int, float]]
     #: Each floored key, with the rows that set its floor.
@@ -364,13 +403,20 @@ def _frame(
     for r in analysis.derive(copy):
         if r.gap is not None and math.isfinite(r.gap):
             gaps.setdefault((r.truth, r.system), {})[r.seed] = r.gap
+    unchecked = tuple(sorted(set(table.truths) - {*verdict.kept, *verdict.dropped}))
     return _Frame(
-        kept=tuple(sorted(verdict.kept)),
+        controls=ControlsRead(
+            kept=tuple(
+                sorted((*verdict.kept, *(unchecked if READ_UNCHECKED_TRUTHS else ())))
+            ),
+            dropped=tuple(sorted(verdict.dropped)),
+            unchecked=unchecked,
+            controls_pass=verdict.controls_pass,
+            naming_null=controls.naming_null,
+        ),
         out_of_dictionary=frozenset(
             t for t, entry in table.truths.items() if not entry.in_dictionary
         ),
-        controls_pass=verdict.controls_pass,
-        naming_null=controls.naming_null,
         gaps=gaps,
         floored=floored,
         seed=seed,
@@ -404,7 +450,7 @@ def _pairs(spec: ContrastSpec, frame: _Frame, absent: frozenset[RowKey]) -> _Pai
     sides: list[RowKey] = []
     used: list[RowKey] = []
     no_common_seed = 0
-    for truth in frame.kept:
+    for truth in frame.controls.kept:
         if spec.out_of_dictionary and truth not in frame.out_of_dictionary:
             continue
         a = frame.gaps.get((truth, spec.first), {})
@@ -439,8 +485,7 @@ def _pairs(spec: ContrastSpec, frame: _Frame, absent: frozenset[RowKey]) -> _Pai
 def _read(index: int, spec: ContrastSpec, frame: _Frame, pairs: _Pairs) -> ContrastRead:
     """Read ``index`` of ``pairs``."""
     n = len(pairs.first)
-    gated = frame.controls_pass and (frame.naming_null or not spec.naming)
-    if not gated or n < MIN_TRUTHS:
+    if frame.controls.why_not(spec.name, n):
         return ContrastRead(math.nan, math.nan, math.nan, False, n, pairs.rows)
     ci = paired_bootstrap_ci(
         pairs.first,
@@ -449,6 +494,15 @@ def _read(index: int, spec: ContrastSpec, frame: _Frame, pairs: _Pairs) -> Contr
         resamples=frame.resamples,
     )
     return ContrastRead(ci.mean, ci.low, ci.high, True, n, pairs.rows)
+
+
+def read_controls(
+    table: Table, controls: ScriptedControls, seed: int, resamples: int
+) -> ControlsRead:
+    """Step 1 on ``table`` (a table after ``derive``), for the same arguments as the
+    reads of that table: control 2 draws on :data:`CONTROL_2_STREAM`, and no read
+    stream is drawn."""
+    return _frame(table, controls, seed, resamples).controls
 
 
 def read_contrasts(

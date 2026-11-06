@@ -791,13 +791,206 @@ def test_a_truth_control_1_cannot_check_is_not_kept() -> None:
     rows = world()
     for seed in (1, 2):
         del rows[("t3", seed, B_LIB)]
-    got = read(tabled(rows))["C1"]
+    table = tabled(rows)
+    got = read(table)["C1"]
     assert got.n == 5
     assert all(key[0] != "t3" for key in got.rows)
+    assert controlled(table).unchecked == ("t3",)
 
 
+def controlled(
+    table: Table, controls: ScriptedControls = PASS
+) -> contrasts.ControlsRead:
+    return contrasts.read_controls(table, controls, ROOT, 200)
+
+
+def _two_seeds() -> World:
+    """P4's seeds: one lost B-lib row leaves a truth one paired seed."""
+    return {k: v for k, v in world().items() if k[1] != 3}
+
+
+def test_read_controls_holds_the_truths_of_a_table() -> None:
+    """Four truths kept: four wins of four is p = 1/16, so control 2 fails here."""
+    rows = world()
+    for seed in SEEDS:
+        score(rows, "t2", seed, B_LIB, -0.25)  # ORACLE does not beat B-lib here
+    for seed in (1, 2):
+        del rows[("t5", seed, B_LIB)]
+    got = controlled(tabled(rows))
+    assert got.kept == ("t1", "t3", "t4", "t6")
+    assert got.dropped == ("t2",)
+    assert got.unchecked == ("t5",)
+    assert got.controls_pass is False
+    assert got.naming_null is True
+
+
+@pytest.mark.parametrize(
+    "outcome", [_floored_by_inf, _floored_by_failed_fit], ids=["minus-inf", "failed"]
+)
+def test_on_two_seeds_one_lost_b_lib_row_leaves_a_truth_unchecked(
+    outcome: object,
+) -> None:
+    """Finding 1: at ``-inf`` or failed, B-lib leaves one paired seed. Such a truth
+    is neither checked nor dropped, and it leaves all seven reads, with the controls
+    passing and nothing else on the table to show it."""
+    assert callable(outcome)
+    rows = _two_seeds()
+    outcome(rows, ("t3", 2, B_LIB))
+    table = tabled(rows)
+    got = controlled(table)
+    assert got.unchecked == ("t3",)
+    assert got.kept == ("t1", "t2", "t4", "t5", "t6")
+    assert got.dropped == ()
+    assert got.controls_pass
+    reads = read(table)
+    assert reads["C1"].n == 5 and reads["C1"].reportable
+    assert not any(k[0] == "t3" for r in reads.values() for k in r.rows)
+
+
+def test_with_no_b_lib_row_every_truth_is_unchecked_and_nothing_raises() -> None:
+    table = tabled({k: v for k, v in world().items() if k[2] != B_LIB})
+    got = controlled(table)
+    assert got.unchecked == TRUTHS
+    assert got.kept == () and got.dropped == ()
+    assert not got.controls_pass
+    assert got.why_not("C1", read(table)["C1"].n) == (
+        contrasts.CONTROLS_FAILED,
+        contrasts.TOO_FEW_TRUTHS,
+    )
+
+
+def test_read_controls_is_verdicts_answer_on_control_2s_stream() -> None:
+    rows = world()
+    for seed in SEEDS:
+        score(rows, "t2", seed, B_LIB, -0.25)
+    table = tabled(rows)
+    given = replace(
+        table, rows=tuple(r for r in table.rows if r.system not in (B_NP, HAIKU))
+    )
+    rng = np.random.default_rng(np.random.SeedSequence([ROOT, CONTROL_2_STREAM]))
+    direct = analysis.verdict(given, rng, resamples=200)
+    got = controlled(table)
+    assert got.kept == tuple(sorted(direct.kept))
+    assert got.dropped == tuple(sorted(direct.dropped))
+    assert got.controls_pass == direct.controls_pass
+
+
+def test_read_controls_draws_no_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    def refuse(*args: object, **kwargs: object) -> object:
+        raise AssertionError("read_controls drew a read's bootstrap")
+
+    monkeypatch.setattr(contrasts, "paired_bootstrap_ci", refuse)
+    assert controlled(tabled(world())).controls_pass
+
+
+def test_the_unchecked_rule_is_one_constant(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The control room has the rule open (finding 1): a truth with fewer than 2
+    paired seeds is not kept. It stays so here, and the constant is all that says
+    so: turned over, the truth is read and still listed as unchecked."""
+    assert contrasts.READ_UNCHECKED_TRUTHS is False
+    rows = _two_seeds()
+    score(rows, "t3", 2, B_LIB, -math.inf)
+    table = tabled(rows)
+    assert read(table)["C1"].n == 5
+    monkeypatch.setattr(contrasts, "READ_UNCHECKED_TRUTHS", True)
+    got = controlled(table)
+    assert got.unchecked == ("t3",)
+    assert got.kept == TRUTHS
+    assert read(table)["C1"].n == 6
+
+
+def test_why_not_is_empty_for_a_reportable_read() -> None:
+    table = tabled(world())
+    got = controlled(table)
+    reads = read(table)
+    assert all(got.why_not(name, reads[name].n) == () for name in NAMES)
+
+
+def test_why_not_tells_a_failed_gate_from_too_few_truths() -> None:
+    """The same ``nan`` read, for the three different reasons a report must give."""
+    few = world()
+    for key in [k for k in few if k[2] == B_SPARSE and k[0] == "t2"]:
+        del few[key]
+    table = tabled(few)
+    assert not_reportable(read(table)["C4"])
+    assert controlled(table).why_not("C4", 1) == (contrasts.TOO_FEW_TRUTHS,)
+
+    bad = world()
+    score_all(bad, PLANTED, -0.75)  # control 2 fails
+    failing = tabled(bad)
+    reads = read(failing)
+    assert not_reportable(reads["C1"]) and reads["C1"].n == 6
+    assert controlled(failing).why_not("C1", 6) == (contrasts.CONTROLS_FAILED,)
+
+    table = tabled(world())
+    naming = controlled(table, FAIL_NAMING)
+    assert naming.naming_null is False and naming.controls_pass
+    for name in C2_READS:
+        assert naming.why_not(name, 6) == (contrasts.NAMING_NULL_FAILED,)
+    for name in OTHER_READS:
+        assert naming.why_not(name, 6) == ()
+
+
+def test_why_not_gives_every_reason_that_holds() -> None:
+    rows = world()
+    score_all(rows, PLANTED, -0.75)
+    got = controlled(tabled(rows), FAIL_NAMING)
+    assert got.why_not("C2-AG-c-time", 0) == (
+        contrasts.CONTROLS_FAILED,
+        contrasts.NAMING_NULL_FAILED,
+        contrasts.TOO_FEW_TRUTHS,
+    )
+
+
+def test_why_not_takes_only_a_read_that_exists() -> None:
+    with pytest.raises(ScoringError, match="C5"):
+        controlled(tabled(world())).why_not("C5", 6)
+
+
+def _gate_cases() -> list[tuple[Table, ScriptedControls]]:
+    """Tables a read's state turns on: each gate, a drop, a truth lost to S6."""
+    bad = world()
+    score_all(bad, PLANTED, -0.75)
+    drop = world()
+    for seed in SEEDS:
+        score(drop, "t2", seed, B_LIB, -0.25)
+    floored = world()
+    for seed in SEEDS:
+        score(floored, "t1", seed, AGC, -math.inf)
+    return [
+        (tabled(world()), PASS),
+        (tabled(world()), FAIL_NAMING),
+        (tabled(bad), PASS),
+        (tabled(drop), PASS),
+        (tabled(drop), FAIL_NAMING),
+        (tabled(floored), PASS),
+    ]
+
+
+def test_why_not_and_reportable_never_disagree() -> None:
+    """Over every read and every left-out read: one rule gives both. On the floored
+    table C4's left-out read has one truth, and its gates pass."""
+    tested = 0
+    for table, controls in _gate_cases():
+        got = controlled(table, controls)
+        floors = read_floors(table, controls, ROOT, 200)
+        reads = read(table, controls)
+        for name in NAMES:
+            for r in (reads[name], floors[name].without):
+                assert r.reportable == (not got.why_not(name, r.n))
+                tested += 1
+    assert tested == 6 * len(NAMES) * 2
+    last = _gate_cases()[-1][0]
+    left_out = read_floors(last, PASS, ROOT, 200)["C4"].without
+    assert left_out.n == 1
+    assert controlled(last).why_not("C4", left_out.n) == (contrasts.TOO_FEW_TRUTHS,)
+
+
+@pytest.mark.parametrize(
+    "entry_point", ["read_contrasts", "read_floors", "read_controls"]
+)
 def test_the_controls_read_the_table_as_given_with_stream_1000(
-    monkeypatch: pytest.MonkeyPatch,
+    entry_point: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     seen: list[tuple[Table, Mapping[str, object], int]] = []
     real = analysis.verdict
@@ -814,7 +1007,7 @@ def test_the_controls_read_the_table_as_given_with_stream_1000(
     score(rows, "t1", 1, AGC, -math.inf)
     no_submission(rows, ("t1", 1, PLANTED))
     table = tabled(rows)
-    read_contrasts(table, PASS, ROOT, 150)
+    getattr(contrasts, entry_point)(table, PASS, ROOT, 150)
     assert len(seen) == 1
     given, state, resamples = seen[0]
     assert resamples == 150

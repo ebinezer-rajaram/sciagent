@@ -27,12 +27,14 @@ import pytest
 
 from sciagent.campaign.execute import UnitResult
 from sciagent.campaign.plan import CampaignError
+from sciagent.harness.record import SessionRecord
 from sciagent.scenarios.records import TruthRecord, read_split
 from sciagent.scoring.controls_p4 import (
     NAMING_CONDITIONS,
     FitFact,
     NamingNullVerdict,
     SessionFacts,
+    naming_null,
 )
 from sciagent.scoring.errors import ScoringError
 from sciagent.systems.llm.agent_sdk_provider import CONTAMINATING_VARIABLES
@@ -543,27 +545,31 @@ def _clean(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(name, raising=False)
 
 
-@pytest.fixture(scope="module")
-def real(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, ModuleType]:
-    """``main`` once, end to end, on dev truths; the tree may be dirty here, so
-    the fingerprint alone is stubbed."""
-    patch = pytest.MonkeyPatch()
-    _clean(patch)
-    patch.syspath_prepend(str(SCRIPTS))
-    module = importlib.import_module("p4_naming_null")
-    patch.setattr(module, "code_fingerprint", lambda: f"commit={COMMIT},tree=clean")
-    path = tmp_path_factory.mktemp("naming") / "naming-null.json"
-    assert module.main(["--split", str(SPLIT), "--record", str(path)]) == 0
-    reader = importlib.import_module("naming_null_record")
-    patch.undo()
-    return path, reader
+def _session(sessions: Path, truth: str, condition: str) -> SessionRecord:
+    (found,) = (sessions / truth / condition).glob("investigation-*.json")
+    return SessionRecord.load(found)
 
 
 @pytest.mark.slow
-def test_a_real_run_passes_on_both_dev_truths(real: tuple[Path, ModuleType]) -> None:
-    path, reader = real
+def test_a_real_run_end_to_end_on_dev_truths(
+    runner: ModuleType,
+    record_module: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``main`` once, about 9 CPU minutes, so everything that needs a real record
+    is this one test: a shared fixture would run again on each ``-n`` worker.
+    The tree may be dirty here, so the fingerprint alone is stubbed."""
+    _clean(monkeypatch)
+    monkeypatch.setattr(
+        runner, "code_fingerprint", lambda: f"commit={COMMIT},tree=clean"
+    )
+    path = tmp_path / "naming-null.json"
+    argv = ["--split", str(SPLIT), "--record", str(path)]
+    assert runner.main(argv) == 0
+
     body = json.loads(path.read_text(encoding="utf-8"))
-    assert body["schema"] == reader.SCHEMA
+    assert body["schema"] == record_module.SCHEMA
     assert body["commit"] == COMMIT
     assert body["split"] == "dev"
     assert body["seed"] == 1
@@ -587,34 +593,35 @@ def test_a_real_run_passes_on_both_dev_truths(real: tuple[Path, ModuleType]) -> 
         ]
         assert named["submission"] is not None
 
+    # The reader: true at its commit and split, and nowhere else.
+    read = record_module.read_naming_null
+    assert read(COMMIT, split="dev", path=path) is True
+    assert read(OTHER, split="dev", path=path) is False
+    assert read(COMMIT, path=path) is False
 
-@pytest.mark.slow
-def test_a_real_record_reads_true_at_its_commit_only(
-    real: tuple[Path, ModuleType],
-) -> None:
-    path, reader = real
-    assert reader.read_naming_null(COMMIT, split="dev", path=path) is True
-    assert reader.read_naming_null(OTHER, split="dev", path=path) is False
-    assert reader.read_naming_null(COMMIT, path=path) is False
-
-
-@pytest.mark.slow
-def test_a_real_record_refuses_a_second_run(
-    real: tuple[Path, ModuleType], runner: ModuleType
-) -> None:
-    path, _ = real
+    # A second run is refused and leaves the bytes.
     before = path.read_bytes()
-    assert runner.main(["--split", str(SPLIT), "--record", str(path)]) == 2
+    assert runner.main(argv) == 2
     assert path.read_bytes() == before
 
-
-@pytest.mark.slow
-def test_a_real_record_keeps_its_sessions_beside_it(
-    real: tuple[Path, ModuleType],
-) -> None:
-    path, _ = real
-    sessions = path.parent / "naming-null-sessions"
-    for truth in ("dev-000", "dev-001"):
-        for condition in NAMING_CONDITIONS:
-            found = list((sessions / truth / condition).glob("investigation-*.json"))
-            assert len(found) == 1, (truth, condition)
+    # The negative case, on real sessions at no further simulation: a condition
+    # that saw another truth's world fails the control, and so does the record.
+    sessions = tmp_path / "naming-null-sessions"
+    crossed = {
+        "named": _session(sessions, "dev-000", "named"),
+        "rescaled": _session(sessions, "dev-001", "rescaled"),
+        "anon": _session(sessions, "dev-000", "anon"),
+    }
+    verdict = naming_null(crossed, dict.fromkeys(NAMING_CONDITIONS, 0.0))
+    assert not verdict.passed
+    assert any("rescaled" in m for m in verdict.mismatches), verdict.mismatches
+    failed = {
+        **body,
+        "verdicts": [
+            runner.verdict_json("dev-000", "in", verdict),
+            body["verdicts"][1],
+        ],
+    }
+    bad = tmp_path / "failed.json"
+    record_module.write_record(bad, failed)
+    assert read(COMMIT, split="dev", path=bad) is False

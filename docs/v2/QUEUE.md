@@ -334,7 +334,7 @@ Each item says when it is done. Move finished items to the bottom section after 
   2026-11-05 (session 34): usage and predict counts over all 240 records done (`scripts/p3_report/first_turn_and_predict.py`, follow-up in READ-B): one first-turn total per arm, so no change in length with the truth; what the tail holds stays unknown. "Any prediction" was already on PILOT.md line 52. Wall limit: goes in P4's prompt (LOG 2026-11-05); the sentence itself is left to do on `p4-rehearsal`.
   2026-11-06 (session 35): the sentence was already in at 32da0f7; 293425d keeps it on `link-neutral` only (LOG 2026-11-06). Reaches v2 with the second merge.
 - [ ] **SPEC text for `rescaled` (stop point).** §5 has no `rescaled`, and §6.2's C2 still reads named against anonymised; §7's P4 row says C1 to C5. Decisions 11 and 12 approved the content; the words need the owner, with the §6.1 commit at the latest (LOG 2026-11-06).
-  2026-11-06 (session 36): proposed words in `docs/v2/SPEC-TEXT-P4.md`: §5, §6.2 C2, C3, C5, §6.4 controls 4 to 6 (also missing from the SPEC, decision 13), §7's P4 row. SPEC unchanged. Waits on the owner or the control room.
+  2026-11-06 (session 36): proposed words in `docs/v2/SPEC-TEXT-P4.md`. Control room accepted provided one red-team round; the round found six blocking, four of them claim wording. Part A ready, part B holds rulings B1 to B5 (C3's metric, Q2's measure, control 5's gate, P4b's freeze, B-boed). SPEC unchanged. Waits on those rulings. More SPEC text is owed before §6.1, listed at the file's end.
 
 - [ ] **AI-use disclosure for the paper.** No paper or disclosure text exists in the repository yet. When one does, it must carry the sentence in LOG 2026-11-05 ("P3 closes on GO"), as the owner asked.
 

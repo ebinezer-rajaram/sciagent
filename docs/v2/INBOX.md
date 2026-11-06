@@ -201,4 +201,5 @@ entry, and marks it handled with the date and what was done. Newest last.
 - [ ] **SPEC-TEXT-P4.md: accept as drafted**, provided it has had one red-team round. If it has not, run
   one first and fix any blocking findings. Any wording that changes what the paper claims comes back
   here.
+  In progress 2026-11-06 (lane session 36): round run, ready with fixes, six blocking (`docs/v2/redteam/2026-11-06_spec-text-p4.md`). The lane's fixes are in `docs/v2/SPEC-TEXT-P4.md` part A. Findings 1 to 4 and B-boed change claims, so they came back as rulings B1 to B5 in part B. SPEC not applied; waits on those.
   Both decided by the control room under the owner's standing delegation.

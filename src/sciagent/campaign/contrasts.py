@@ -83,8 +83,9 @@ a label.
 
 A table the rules do not cover raises :class:`ScoringError` rather than guess: a
 repeated key, an unknown truth, ``nan`` or ``+inf``, a scored row with no reading,
-or rows that are not ``derive``'s output (their gaps would be stale). An exception
-from here is an instrument fault, and gives ``BYTE_FAIL``.
+or rows whose ``gap`` or ``gap_closed`` is not what ``derive`` gives (it would be
+stale). No read uses another field ``derive`` writes, so none is compared. An
+exception from here is an instrument fault, and gives ``BYTE_FAIL``.
 """
 
 from __future__ import annotations
@@ -308,7 +309,11 @@ def _checked_rows(table: Table) -> list[Row]:
         elif math.isnan(r.per_event) or r.per_event == math.inf:
             raise ScoringError(f"row {key} has per_event {r.per_event}")
         rows.append(r)
-    if analysis.derive(rows) != rows:
+    derived = analysis.derive(rows)
+    if any(
+        (r.gap, r.gap_closed) != (d.gap, d.gap_closed)
+        for r, d in zip(rows, derived, strict=True)
+    ):
         raise ScoringError("the table's rows are not derive's output: stale gaps")
     return rows
 

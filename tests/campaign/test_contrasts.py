@@ -914,6 +914,35 @@ def test_a_table_not_derived_from_its_own_scores_is_refused() -> None:
         read(replace(table, rows=stale))
 
 
+def test_a_stale_gap_or_gap_closed_alone_is_refused() -> None:
+    table = tabled(world())
+    row = next(r for r in table.rows if r.system == AGC)
+    for changed in (replace(row, gap=-0.0625), replace(row, gap_closed=0.0625)):
+        stale = tuple(changed if r is row else r for r in table.rows)
+        with pytest.raises(ScoringError, match="derive"):
+            read(replace(table, rows=stale))
+
+
+def test_a_nan_in_a_curve_no_read_uses_is_not_a_stale_gap() -> None:
+    """Finding 12: this table is derive's output, and ``nan`` != ``nan`` made the
+    whole-row comparison call it stale, so a field no read uses gave BYTE_FAIL."""
+    rows = world()
+    key = ("t2", 1, AGC)
+    rows[key] = replace(rows[key], curve=((1, math.nan),))
+    assert all_same(read(tabled(rows)), read(tabled(world())))
+
+
+def test_the_stale_check_reads_only_what_the_reads_read() -> None:
+    table = tabled(world())
+    other = tuple(
+        replace(r, curve_gaps=((1, 0.5),), closed_flagged=True)
+        if r.system == AGC
+        else r
+        for r in table.rows
+    )
+    assert all_same(read(replace(table, rows=other)), read(table))
+
+
 def test_a_row_of_an_unknown_truth_is_refused() -> None:
     table = tabled(world())
     stranger = replace(table.rows[0], truth="t9")

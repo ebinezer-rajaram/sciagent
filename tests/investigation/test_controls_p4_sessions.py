@@ -35,7 +35,7 @@ from sciagent.glm.grammar import Structure
 from sciagent.glm.syntax import parse, render
 from sciagent.harness.record import SessionRecord
 from sciagent.harness.scripted import ScriptedDriver, Step
-from sciagent.investigation import run
+from sciagent.investigation import replay_investigation, run
 from sciagent.investigation.tools import FIT_CONFIG
 from sciagent.investigation.view import Condition
 from sciagent.investigation.world import OBSERVATIONAL, World
@@ -200,6 +200,17 @@ def test_control_4_needs_exactly_the_preregistered_conditions(
         naming_null({"named": named, "anon": named}, _equal_gaps())
     with pytest.raises(ScoringError):
         naming_null(planted, {"named": 0.0, "anon": 0.0})
+
+
+@pytest.mark.parametrize("condition", NAMING_CONDITIONS)
+def test_a_planted_session_replays_in_its_condition(
+    condition: str, planted: dict[str, SessionRecord]
+) -> None:
+    """Replay compares every tool text, so the rescaled session's numbers come
+    back from its record alone."""
+    record = planted[condition]
+    report = replay_investigation(record, POINTPROC)
+    assert report.steps == len(record.of_kind("tool_call"))
 
 
 def test_the_planted_script_proposes_the_hint_first() -> None:

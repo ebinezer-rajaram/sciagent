@@ -181,10 +181,12 @@ entry, and marks it handled with the date and what was done. Newest last.
 
 ## 2026-11-06, control room
 
-- [ ] **Truths control 1 cannot check leave the reads: yes**, as the code does, with the unchecked truths
+- [x] **Truths control 1 cannot check leave the reads: yes**, as the code does, with the unchecked truths
   printed beside the reads on both tables; record it as set before any P4 data. Findings 9 and 10 stand
   as they are. Decided by the control room under the owner's standing delegation.
-- [ ] **Guard block at 06:47:35Z:** it was a false match. The command's path ran through
+  Handled 2026-11-06 (lane session 35): recorded as delegated and as set before any P4 data (LOG 2026-11-06; amendment section 2.7). The code keeps this rule; the engineer's fix prints the lists.
+- [x] **Guard block at 06:47:35Z:** it was a false match. The command's path ran through
   `.claude/worktrees/`, which the guard reads as `~/.claude`. Leave the guard as it is; for edits inside
   a worktree, use the Edit tool from the start. The rule for helpers stands: a block means stop and
   report, whatever tool could make the write.
+  Handled 2026-11-06 (lane session 35): LOG corrected, guard left alone, helpers briefed to use Edit in worktrees and to stop on a block. A second block, on the lead's own doc write at 07:21:41Z, was ruled on by the control room the same morning (LOG 2026-11-06).

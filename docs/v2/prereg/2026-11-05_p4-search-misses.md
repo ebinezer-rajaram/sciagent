@@ -96,7 +96,7 @@ same_read(a, b)                                                # every float com
 
 An exception from `read_contrasts` or `read_floors` is an instrument fault and gives `BYTE_FAIL`.
 
-**Which truths a read may hold.** A truth is dropped if ORACLE does not beat B-lib. A truth with fewer than 2 seeds on which ORACLE and B-lib both have finite gaps cannot be checked and is not kept; on P4's two seeds one B-lib at `-inf` or one failed B-lib row does this. Both kinds leave every read, and both lists are printed beside the reads, on both tables. (Second sentence open with the control room, red team 2026-11-06 finding 1; settled before `F2`.)
+**Which truths a read may hold.** A truth is dropped if ORACLE does not beat B-lib. A truth with fewer than 2 seeds on which ORACLE and B-lib both have finite gaps cannot be checked and is not kept; on P4's two seeds one B-lib at `-inf` or one failed B-lib row does this. Both kinds leave every read, and both lists are printed beside the reads, on both tables. (The second sentence was set by the control room on 2026-11-06, before any P4 data; INBOX 31f6112.)
 
 **What `rows` holds.** Both sides and the ORACLE on each matched (truth, seed), and for each floored row the row or rows that set its floor. N, T and S5 count `rows`. Rows that act only through the kept truths or a control are not in `rows`; a read can change through them, and the report then names them.
 

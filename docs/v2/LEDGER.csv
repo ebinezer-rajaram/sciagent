@@ -38,3 +38,4 @@ date,item,provider,hours,usd,stage
 2026-11-05,p4-rehearsal slow tier (sci-p4-tier-s33; 2205433; -n 1; 333 passed; exit 0 at 15:23:36Z; 2 h 58 min 36 s CPU by the kernel count; ceiling 5 CPU hours and $0),dm-devbox,2.98,0,p3
 2026-11-05,p4-rehearsal slow tier (sci-p4-tier2-s33; b0853a1; -n 1; 333 passed; exit 0 at 17:25:40Z; 2 h 26 min 55 s CPU by the kernel count; ceiling 5 CPU hours and $0),dm-devbox,2.45,0,p3
 2026-11-05,Full rescore of the pilot's 240 sessions (sci-rescore-s33; 3ddc8da; 230 identical and 10 equal once -inf is normalised; exit 0 at 18:29:45Z; 6 h 27 min 23 s CPU by the kernel count; ceiling 20 CPU hours and $0),dm-devbox,6.46,0,p3
+2026-11-06,p4-rehearsal fast tiers (sci-fast-s35 at 00fe6fd 4497 passed; sci-fast2-s35 at dd7ca91 4531 passed; exit 0 each; 11 min 23 s CPU by the kernel count; ceiling 1 CPU hour each and $0),dm-devbox,0.19,0,p3

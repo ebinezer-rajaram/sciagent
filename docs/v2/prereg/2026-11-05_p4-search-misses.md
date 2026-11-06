@@ -45,7 +45,7 @@ The population is every cell the frozen P4 report reads from the P4 store, class
 
 **Tier 1 and tier 2, replacing PR 8's definition.** Tier 1 is every fit on a row returned by `contrast_rows(plan, truths)`, LLM rows included. That is a pure function frozen with the contrast code. It reads no score and no cell, and it covers every truth before any drop, gap references and the rows the §6.4 controls read included. So tier 1 cannot depend on an outcome, and a truth kept only in the corrected table still has its rows in tier 1. Tier 2 is every other checkable fit in the population.
 
-**What the store must hold, replacing PR's "0 missing".** Expected rows are the planned units from the frozen plan. A planned unit with neither a reading nor a counted void or failure is **missing**, and that includes a non-void session with no score cell. The script refuses to start while anything is missing, with no label: the campaign is not finished. Void and failed units are counted, listed, and are absent rows under section 2.7's pair rule. They do not give `BYTE_FAIL`.
+**What the store must hold, replacing PR's "0 missing".** Expected rows are the planned units from the frozen plan. A planned unit with neither a reading nor a counted void or failure is **missing**, and that includes a non-void session with no score cell. The script refuses to start while anything is missing, with no label: the campaign is not finished. Void and failed units are counted and listed. Under section 2.7's pair rule a void, or a failure of any cause but "the submitted structure could not be fitted", is absent; that failure takes the floor. They do not give `BYTE_FAIL`.
 
 Fits on charged efficiency curves stay out, as PR 2.1, and the report says so.
 
@@ -75,9 +75,13 @@ PR 2.6's first and fourth points do not hold here, and are replaced.
 contrast_rows(plan, truths)                                    # tuple[RowKey, ...]; no score read
 reads = read_contrasts(table, controls, 20261110, 10_000)      # Mapping[str, ContrastRead]
 ContrastRead(point: float, low: float, high: float, reportable: bool, n: int, rows: tuple[RowKey, ...])
+floors = read_floors(table, controls, 20261110, 10_000)        # Mapping[str, FloorRead]; S6, under the same embargo as the reads
+same_read(a, b)                                                # every float compared by float.hex
 ```
 
-`table` is a table of rows after `analysis.derive`. `controls` gives control 4's pass state, a scripted run outside the table, and it is the same value in both calls. Control 6 gates only C6, which has no read. Inside `read_contrasts` the order is fixed: controls 1 to 3 and their drop rule read `table` as given, unfloored, so an ORACLE at `-inf` still fails control 1; then the pair rule floors a copy; then `derive` runs on the copy; then the reads. Only rows of `contrast_rows` enter. Read `i` of the sorted read names draws from `default_rng(SeedSequence([20261110, i]))`, so reads do not share a generator, and control 2's bootstrap from `SeedSequence([20261110, 1000])`. Two calls resample identically when `n` is equal. When a truth is dropped from one table the resample matrix is new, so an interval's end can move by about 0.00024 from that alone, on the reviewer's spread of 0.00017 per end, plus the real effect. Row keys must be unique over the plan, budget and arm included, and a test asserts it (the pilot's (truth, seed, system) has no budget, so sweep arms need the system name to carry it).
+`controls` is a `ScriptedControls`. The contrast module also gives each table's kept, dropped and unchecked truths and whether the controls pass, so nothing reruns the check outside it. `read_floors` computes every read again, so it may run only where `read_contrasts` may, at the terminal step.
+
+`table` is a table of rows after `analysis.derive`. `controls` gives control 4's pass state, a scripted run outside the table, and it is the same value in both calls. Control 6 gates only C6, which has no read. Inside `read_contrasts` the order is fixed: controls 1 to 3 and their drop rule read `table` as given, unfloored, so an ORACLE at `-inf` still fails control 1; then the pair rule floors a copy; then `derive` runs on the copy; then the reads. Only rows of the systems `contrast_rows` names enter. A table from `load_rows` holds planned units only, so these are its rows; the terminal step asserts that each table's rows of those systems are a subset of `contrast_rows`. Read `i` of the sorted read names draws from `default_rng(SeedSequence([20261110, i]))`, so reads do not share a generator, and control 2's bootstrap from `SeedSequence([20261110, 1000])`. Two calls resample identically when `n` is equal. When a truth is dropped from one table the resample matrix is new, so an interval's end can move by about 0.00024 from that alone, on the reviewer's spread of 0.00017 per end, plus the real effect. Row keys must be unique over the plan, budget and arm included, and a test asserts it (the pilot's (truth, seed, system) has no budget, so sweep arms need the system name to carry it).
 
 **Which control gates which read.** Controls 1, 2 and 3 gate every read. Control 4, the naming null, gates the C2 reads. Control 5 gates nothing here (extension 8). A read is `reportable` only if its gating controls pass on that table and `n` is at least 2. Otherwise `point`, `low` and `high` are `nan`.
 
@@ -90,9 +94,13 @@ ContrastRead(point: float, low: float, high: float, reportable: bool, n: int, ro
 
 **Secondary, S6.** For each read: how many rows were floored, and the read with those rows absent, on both tables. It cannot change the label. It is there because the rule can decide a sign.
 
-An exception from `read_contrasts` is an instrument fault and gives `BYTE_FAIL`.
+An exception from `read_contrasts` or `read_floors` is an instrument fault and gives `BYTE_FAIL`.
 
-**The reads.** One per fit-based statement of SPEC §6.2 as the owner's decisions stand: `C1`; `C2-AG-c-time`, `C2-AG-c-names`, `C2-AG-o-time`, `C2-AG-o-names` (Δ9: named against rescaled, rescaled against anon); `C3-free` (AG-o-S against AG-c-S at equal E); `C4` (about 20 truths, the out-of-dictionary half). C6 is exploratory and has no label, as accepted. C5 and C3's AG-S-boed half are P4b's under decision 12, and P4b would need its own amendment. A read with no rows is not reportable and is named.
+**Which truths a read may hold.** A truth is dropped if ORACLE does not beat B-lib. A truth with fewer than 2 seeds on which ORACLE and B-lib both have finite gaps cannot be checked and is not kept; on P4's two seeds one B-lib at `-inf` or one failed B-lib row does this. Both kinds leave every read, and both lists are printed beside the reads, on both tables. (Second sentence open with the control room, red team 2026-11-06 finding 1; settled before `F2`.)
+
+**What `rows` holds.** Both sides and the ORACLE on each matched (truth, seed), and for each floored row the row or rows that set its floor. N, T and S5 count `rows`. Rows that act only through the kept truths or a control are not in `rows`; a read can change through them, and the report then names them.
+
+**The reads.** One per fit-based statement of SPEC §6.2 as the owner's decisions stand: `C1`; `C2-AG-c-time`, `C2-AG-c-names`, `C2-AG-o-time`, `C2-AG-o-names` (Δ9: named against rescaled, rescaled against anon); `C3-free` (AG-o-S against AG-c-S, named condition, at equal E); `C4` (AG-c-S, named condition, against B-sparse, about 20 truths, the out-of-dictionary half). C6 is exploratory and has no label, as accepted. C5 and C3's AG-S-boed half are P4b's under decision 12, and P4b would need its own amendment. A read with no rows is not reportable and is named.
 
 **The substitution.**
 
@@ -124,7 +132,7 @@ The label line gives those counts per read, the control state per stratum as PR 
 
 As PR 2.8, on the P4 store. Changes follow, because on P4 this is the first unblinding, which the pilot's check was not.
 
-- **The reads file.** `stored`, `fixed` and the S2 read are written once, in one step, to `reads.json`, and the label to `decision.json` in that same step. This happens only on a `complete` end or an authorised `--end`. **On `bug` and on any `BYTE_FAIL` no read is written**, and `decision.json` carries the label or end alone, so a fault is fixed with the contrasts unread. Before that step `decision.json` holds no score, no read and no label, and `refuse()` writes the refusal alone. There is **no provisional label**, so PR 5's provisional paragraph and PR 9's "at once" for the equality check do not carry: `read_contrasts` is not called, by any path, before that step. 
+- **The reads file.** `stored`, `fixed`, the S2 read and S6's `read_floors` output on both tables are written once, in one step, to `reads.json`, and the label to `decision.json` in that same step. This happens only on a `complete` end or an authorised `--end`. **On `bug` and on any `BYTE_FAIL` no read is written**, and `decision.json` carries the label or end alone, so a fault is fixed with the contrasts unread. Before that step `decision.json` holds no score, no read and no label, and `refuse()` writes the refusal alone. There is **no provisional label**, so PR 5's provisional paragraph and PR 9's "at once" for the equality check do not carry: `read_contrasts` is not called, by any path, before that step. 
 - **A terminal end is a choice made once, and not the lane's.** `--finalise` on a run that could still resume refuses unless given `--end`, which needs the same authority as PR 9's `STOP`: the owner or the control room, with a note in the output directory saying who and why, copied to `decision.json`. It is also how a stuck unit is abandoned. Once `reads.json` exists, every resume is refused, so nobody reads the tables and then chooses whether to go on. `--out` is not an option: the path is a constant, so a fresh start elsewhere is not a way round this.
 - **P4's report refuses to run without `reads.json`,** prints its contrasts from that file's `stored`, and runs no bootstrap of its own, so it cannot show an interval that contradicts the label.
 - **A stronger reference after the reads.** The controls' result is written to `controls.json` when they end, holding no P4 row, so H1 is known before tier 1 without reading the journal, and an amendment for `CONTROL_FAIL` is best written then. One written after `reads.json` exists is written with the contrasts in hand, and the report says so. The first label stands, as section 2.10.
@@ -181,7 +189,7 @@ It is a positive allowlist, each part tested: `--split` must match the dev const
 
 **This section alone sets the label.** One label to `decision.json`, by the first rule that applies. Exit codes as PR 5.
 
-1. `BYTE_FAIL` (3): any byte check, the empty-`corrected` equality, an exception from `read_contrasts`, group B's bit check or the store manifest failed, in any stage. No read is written. A start-up guard, a split hash or a missing unit refuses the start and gives no label, in place of PR 9 point 1.
+1. `BYTE_FAIL` (3): any byte check, the empty-`corrected` equality, an exception from `read_contrasts` or `read_floors`, group B's bit check or the store manifest failed, in any stage. No read is written. A start-up guard, a split hash or a missing unit refuses the start and gives no label, in place of PR 9 point 1.
 2. `CONTRASTS_CHANGE` (2): any read changed, on whatever has been found. It does not depend on H1, and it outranks every shortfall. If tier 1 did not finish, `decision.json` adds `partial: true`.
 3. `INCOMPLETE` (5): no read changed and tier 1 fell short, as PR 5.
 4. `CONTROL_FAIL` (4): no read changed and H1 is falsified.
@@ -202,7 +210,7 @@ Under every label P4's stored contrasts remain what was computed, and what P4 ca
 
 ## 6. Exclusions and failure handling
 
-As PR 6, with these classes on P4's rows, and with section 2.7's pair rule in place of PR 6's "handled by `derive` and `verdict`", since `verdict` is not on this path. No row is excluded for its outcome. A row `read_contrasts` drops under §6.4's rule is still classified and checked, because `contrast_rows` takes every truth before any drop.
+As PR 6, with these classes on P4's rows, and with section 2.7's pair rule in place of PR 6's "handled by `derive` and `verdict`": `verdict` gives controls 1 to 3 and the drop on the unfloored table, and the pair rule gives the reads. No row is excluded for its outcome. A row `read_contrasts` drops under §6.4's rule is still classified and checked, because `contrast_rows` takes every truth before any drop.
 
 ## 7. Sample size
 

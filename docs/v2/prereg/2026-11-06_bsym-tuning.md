@@ -1,6 +1,6 @@
 # Pre-registration: tuning B-sym on dev before the §6.1 freeze
 
-**Status: DRAFT, not frozen.** Written in lane session 36 on the control room's instruction (INBOX 2026-11-06, "B-sym: tune, do not waive"): tune on dev only, CPU only, write the effort budget first, at least the effort the agent arms got, in the same units, and freeze the tuned settings in the §6.1 commit. SPEC §9's risk table and LOG 2026-10-02 required this in P3, and it was not done (LOG 2026-11-06).
+**Status: DRAFT, not frozen, NOT READY.** Red team on a71a182: not ready, 6 blocking (`docs/v2/redteam/2026-11-06_bsym-tuning.md`), not yet fixed, and the text below stands as reviewed. Nothing has run. Written in lane session 36 on the control room's instruction (INBOX 2026-11-06, "B-sym: tune, do not waive"): tune on dev only, CPU only, write the effort budget first, at least the effort the agent arms got, in the same units, and freeze the tuned settings in the §6.1 commit. SPEC §9's risk table and LOG 2026-10-02 required this in P3, and it was not done (LOG 2026-11-06).
 
 **What has been touched.** No candidate below has been run. P3's B-sym numbers on default settings are known (`docs/v2/PILOT.md`), and so are its seeds 1 to 3, so this uses other seeds. No test split exists.
 

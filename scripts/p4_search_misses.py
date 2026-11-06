@@ -25,6 +25,19 @@ or end is in ``decision.json``, or ``reads.json`` exists, nothing rewrites eithe
 reading, so ``decision.json`` keeps only its kind and the reason stays in the
 journal, which nobody reads before the run ends (PR 9, point 4).
 
+**The launch** runs in a clean detached worktree at ``T``, with the line
+:func:`launch_line` gives. ``--split`` is the dev split, for group B, and
+``--test-split`` the test split, outside the repository. The output is a constant.
+
+    uv run python scripts/p4_search_misses.py --print-hashes   # for the LOG at R2
+    uv run python scripts/p4_search_misses.py --split <abs> --test-split <abs> \
+        --store <abs> --finalise [--end]
+
+**The rehearsal** (``--rehearsal --rehearsal-plan <json>``) changes exactly section
+2.10's list, runs only on the allowlist of :func:`check_rehearsal` and
+:func:`rehearsal_records`, and prefixes its label. The plan is JSON with the keys
+:data:`REHEARSAL_PLAN_KEYS`, and only ``truths`` is required.
+
 **Processes and records** are as PR: a job is one fit in one process
 (:class:`Driver`), ``journal.jsonl`` is appended and fsynced by whichever process
 owns the job, ``units.jsonl`` is its job records sorted and without timing, and
@@ -87,6 +100,7 @@ from sciagent.campaign.plan import (
     B_NP,
     B_SPARSE,
     ORACLE,
+    P4_SONNET_ARMS,
     TELLING,
     CampaignConfig,
     CampaignEnvironment,
@@ -141,6 +155,7 @@ from sciagent.glm.simulate import (
     simulate,
 )
 from sciagent.glm.syntax import parse, render
+from sciagent.harness.live import MODELS
 from sciagent.scenarios.records import canonical_json
 from sciagent.scoring import gonogo
 from sciagent.scoring.heldout import held_out_dataset
@@ -210,6 +225,29 @@ FIT_VERSION_EXPECTED: Final = "sciagent.glm.fit/5"
 SPLIT_SHA256: Final = "31c18f10ca7c8a4ad6b599de5436bb15426bd02c67f3eb44fb0e93cb512ba577"
 DEV_RELATIVE: Final = "data/v2/truths/dev"
 TEST_RELATIVE: Final = "data/v2/truths/test"
+DEV_SPLIT: Final = "dev"
+
+#: The rehearsal (section 2.10). Output and store sit under ``DRAFTS``, relative
+#: to the repository, and a directory is named by the script and the plan, so a
+#: repeat after a fix is not a fresh start over another run's records.
+DRAFTS: Final = Path(".cache") / "drafts"
+REHEARSAL_DIR: Final = "p4-search-misses-rehearsal"
+REHEARSAL_NAMING_NULL: Final = Path("p4-naming-null-rehearsal") / "naming-null.json"
+REHEARSAL_HUNT_SIZE: Final = 5
+REHEARSAL_MIN_KEPT: Final = 6
+REHEARSAL_MIN_OUT_OF_DICTIONARY: Final = 2
+REHEARSAL_PLAN_KEYS: Final = (
+    "truths",
+    "seeds",
+    "control_seeds",
+    "fits",
+    "experiments",
+    "control_factor",
+    "gp_population",
+    "gp_offspring",
+)
+#: How far past zero the planted shift carries a read.
+PLANTED_MARGIN: Final = 0.0625
 
 
 @dataclass(frozen=True)
@@ -1280,6 +1318,12 @@ class Inputs:
     controls: ScriptedControls
     roots: Roots
     resamples: int = READS_RESAMPLES
+    #: Section 2.10: the planted shift, and the ``REHEARSAL`` prefix on the label.
+    rehearsal: bool = False
+
+    def __post_init__(self) -> None:
+        if self.rehearsal and self.roots != REHEARSAL_ROOTS:
+            raise GuardFailure("a rehearsal runs on the test roots and no other root")
 
 
 def corrected_table(
@@ -1336,6 +1380,34 @@ class Reads:
     hard_timeouts: Mapping[str, int]
     new: Table
     misses: tuple[tuple[RowKey, Record], ...]
+    rehearsal: bool = False
+    #: What a rehearsal planted: None if no read was reportable.
+    planted: Record | None = None
+
+
+def planted_shift(
+    stored: Mapping[str, ContrastRead],
+    table: Table,
+    corrected: Mapping[RowKey, float],
+) -> tuple[dict[RowKey, float], Record | None]:
+    """Section 2.10: a shift on one read's first side, to show a read flip. The
+    first reportable read, by name, moves past zero by more than its interval's
+    width. A rehearsal alone calls this, and the mode cannot force a gate: with no
+    reportable read nothing is planted."""
+    rows = {row_key(r): r for r in table.rows}
+    for spec in contrasts.READS:
+        read = stored[spec.name]
+        if not read.reportable:
+            continue
+        size = 2.0 * abs(read.point) + (read.high - read.low) + PLANTED_MARGIN
+        shift = -size if read.point >= 0.0 else size
+        planted: dict[RowKey, float] = {}
+        for key in read.rows:
+            value = corrected.get(key, rows[key].per_event)
+            if key[2] == spec.first and value is not None and math.isfinite(value):
+                planted[key] = value + shift
+        return planted, {"read": spec.name, "shift": shift, "rows": len(planted)}
+    return {}, None
 
 
 def same_reads(a: Mapping[str, ContrastRead], b: Mapping[str, ContrastRead]) -> bool:
@@ -1385,8 +1457,12 @@ def compute_reads(records: Sequence[Mapping[str, Json]], inputs: Inputs) -> Read
     rebuilt = corrected_table(table, {}, {})
     if not same_reads(contrasts.read_contrasts(rebuilt, *args), stored):
         raise EmptyCorrectedDiffers("the empty substitution does not equal stored")
-    new = corrected_table(table, corrected, underfit)
-    new2 = corrected_table(table, corrected | s2_extra, underfit)
+    shifted: dict[RowKey, float] = {}
+    planted: Record | None = None
+    if inputs.rehearsal:
+        shifted, planted = planted_shift(stored, table, corrected)
+    new = corrected_table(table, corrected | shifted, underfit)
+    new2 = corrected_table(table, corrected | s2_extra | shifted, underfit)
     fixed = contrasts.read_contrasts(new, *args)
     fixed2 = contrasts.read_contrasts(new2, *args)
     check_plan_rows(inputs.plan_rows, (table, new, new2), (stored, fixed, fixed2))
@@ -1405,6 +1481,8 @@ def compute_reads(records: Sequence[Mapping[str, Json]], inputs: Inputs) -> Read
         hard_timeouts(table),
         new,
         tuple(misses),
+        inputs.rehearsal,
+        planted,
     )
 
 
@@ -1468,7 +1546,9 @@ def matched_pairs(read: ContrastRead) -> int:
 def reads_body(reads: Reads) -> Record:
     """``reads.json``: every part section 2.8 lists."""
     tables = {"stored": reads.stored, "fixed": reads.fixed}
+    planted = {"planted_shift": reads.planted} if reads.rehearsal else {}
     return {
+        **planted,
         "stored": {k: read_json(v) for k, v in reads.stored.items()},
         "fixed": {k: read_json(v) for k, v in reads.fixed.items()},
         "fixed2": {k: read_json(v) for k, v in reads.fixed2.items()},
@@ -2093,7 +2173,7 @@ def decide(
     quadrature = [list(key) for key, row in misses if row.get("within_quadrature")]
     decision: Record = {
         **identity,
-        "label": label,
+        "label": shown_label(label, inputs),
         "exit_code": EXIT_CODES[label],
         "end": end,
         "partial": not tier1_complete,
@@ -2158,8 +2238,36 @@ def decide(
             - s2["done"],
         },
     }
+    if inputs.rehearsal:
+        decision["rehearsal"] = rehearsal_bar(reads, table, len(both))
     decision["label_line"] = label_line(decision)
     return decision
+
+
+def shown_label(label: str, inputs: Inputs) -> str:
+    """Section 2.10: a rehearsal's label is prefixed, so it cannot pass for P4's."""
+    return f"REHEARSAL {label}" if inputs.rehearsal else label
+
+
+def rehearsal_shown(kept: int, out_of_dictionary: int, reportable: int) -> bool:
+    """Section 2.10's bar. Control 2's exact test cannot pass on fewer than 5
+    truths, and the mode cannot force a gate."""
+    return (
+        kept >= REHEARSAL_MIN_KEPT
+        and out_of_dictionary >= REHEARSAL_MIN_OUT_OF_DICTIONARY
+        and reportable >= 1
+    )
+
+
+def rehearsal_bar(reads: Reads, table: Table, reportable: int) -> Record:
+    kept = reads.controls["stored"].kept
+    outside = sum(not table.truths[t].in_dictionary for t in kept)
+    return {
+        "kept": len(kept),
+        "kept_out_of_dictionary": outside,
+        "reportable_on_both": reportable,
+        "shown": rehearsal_shown(len(kept), outside, reportable),
+    }
 
 
 def label_line(d: Mapping[str, Json]) -> str:
@@ -2318,7 +2426,7 @@ def terminal_step(
             paths,
             {
                 **identity,
-                "label": label,
+                "label": shown_label(label, inputs),
                 "exit_code": EXIT_CODES[label],
                 "end": end,
                 "byte_failures": faults,
@@ -2733,6 +2841,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--print-hashes",
         action="store_true",
         help="print the script's and the test's sha256, for the LOG entry at R2",
+    )
+    p.add_argument(
+        "--rehearsal",
+        action="store_true",
+        help="section 2.10's rehearsal, on a dev store under .cache/drafts",
+    )
+    p.add_argument(
+        "--rehearsal-plan",
+        type=Path,
+        help="the rehearsal's truths and budget, as JSON: REHEARSAL_PLAN_KEYS",
     )
     return p
 
@@ -4314,6 +4432,123 @@ class Setup:
     group_b: FitJob
     store: Path
     resamples: int = READS_RESAMPLES
+    rehearsal: bool = False
+
+
+def head_commit(repo: Path) -> str:
+    head = _git_out(repo, "rev-parse", "HEAD")
+    if head is None:
+        raise GuardFailure(f"no HEAD at {repo}")
+    return head
+
+
+def rehearsal_paths(repo: Path) -> OutPaths:
+    """Where a refused rehearsal says so, before its plan names its directory."""
+    return OutPaths(repo / DRAFTS / REHEARSAL_DIR)
+
+
+def check_rehearsal(
+    repo: Path, *, split: Path, store: Path, test_split: Path | None
+) -> None:
+    """Section 2.10's positive allowlist, but for the truths, which need the plan
+    (:func:`rehearsal_records`). So the mode cannot run at ``T``, on a copy of the
+    P4 store, or on the test split."""
+    if (repo / FREEZE_PATH).exists():
+        raise GuardFailure(f"{FREEZE_PATH} exists: a rehearsal cannot run at T")
+    if test_split is not None:
+        raise GuardFailure("a rehearsal takes no test split")
+    for name, path in (("--split", split), ("--store", store)):
+        if not path.is_absolute():
+            raise GuardFailure(f"{name} must be an absolute path: {path}")
+    drafts = (repo / DRAFTS).resolve()
+    target = store.resolve()
+    if target == drafts or not target.is_relative_to(drafts):
+        raise GuardFailure(f"a rehearsal's store must be under {drafts}: {target}")
+    check_split(split, SPLIT_SHA256, DEV_RELATIVE)
+
+
+def rehearsal_records(
+    path: Path, records: Sequence[Any]
+) -> tuple[list[Any], Mapping[str, Json]]:
+    """The plan's truths, each a record of ``--split`` with ``split`` equal to
+    ``dev``, so a truth file cannot be brought in by the plan alone."""
+    try:
+        spec = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise GuardFailure(f"unreadable rehearsal plan {path}: {error}") from error
+    if not isinstance(spec, dict) or not spec.get("truths"):
+        raise GuardFailure(f"the rehearsal plan {path} names no truths")
+    unknown = sorted(set(spec) - set(REHEARSAL_PLAN_KEYS))
+    if unknown:
+        raise GuardFailure(f"the rehearsal plan has unknown keys {unknown}")
+    by_id = {r.id: r for r in records}
+    chosen: list[Any] = []
+    for truth in spec["truths"]:
+        if truth not in by_id:
+            raise GuardFailure(f"{truth} is no record of --split")
+        if by_id[truth].split != DEV_SPLIT:
+            raise GuardFailure(f"{truth} is of split {by_id[truth].split}, not dev")
+        chosen.append(by_id[truth])
+    return chosen, spec
+
+
+def rehearsal_configs(spec: Mapping[str, Json]) -> tuple[CampaignConfig, ...]:
+    """The plan as one Sonnet config at the stated budget: P4's contrast systems
+    and baselines, at reduced budget (section 2.10). A key left out keeps its
+    default, so the store's maker and this script build the same addresses."""
+    config = CampaignConfig(
+        llm_arms=P4_SONNET_ARMS,
+        llm_model=MODELS["sonnet"],
+        llm_letter="S",
+    )
+    plain = {k: spec[k] for k in ("fits", "experiments", "control_factor") if k in spec}
+    gp = {
+        name: spec[f"gp_{name}"]
+        for name in ("population", "offspring")
+        if f"gp_{name}" in spec
+    }
+    return (
+        replace(
+            config,
+            seeds=tuple(spec.get("seeds", config.seeds)),
+            control_seeds=tuple(spec.get("control_seeds", config.control_seeds)),
+            gp=replace(config.gp, **gp),
+            **plain,
+        ),
+    )
+
+
+def rehearsal_setup(args: argparse.Namespace, repo: Path) -> Setup:
+    """The mode changes exactly section 2.10's list. The commit-chain guards do not
+    run; the fit, tree and BLAS guards do. Control 4 has its own dev record, at
+    HEAD, since there is no ``T`` here."""
+    check_rehearsal(
+        repo, split=args.split, store=args.store, test_split=args.test_split
+    )
+    check_tree(repo, None)
+    check_fit(repo, BASE_COMMIT, FIT_DIFF_SHA256, REDUCTIONS_BLOB)
+    check_blas(initial_environment())
+    records = pilot.load_split(args.split)
+    chosen, spec = rehearsal_records(args.rehearsal_plan, records)
+    truth, dev_env = group_b_inputs(args.split)
+    head = head_commit(repo)
+    plan_sha = hashlib.sha256(args.rehearsal_plan.read_bytes()).hexdigest()
+    name = f"{REHEARSAL_DIR}-{script_sha256()[:12]}-{plan_sha[:12]}"
+    return Setup(
+        identity={"mode": "rehearsal", "HEAD": head, "prereg_sha256": PREREG_SHA256},
+        paths=OutPaths(repo / DRAFTS / name),
+        roots=REHEARSAL_ROOTS,
+        hunt_size=REHEARSAL_HUNT_SIZE,
+        env=pilot.pointproc_environment(records),
+        plan=rehearsal_configs(spec),
+        truths=pilot.truth_entries(tuple(chosen)),
+        controls=scripted_controls(
+            head, split=DEV_SPLIT, path=repo / DRAFTS / REHEARSAL_NAMING_NULL
+        ),
+        group_b=group_b_job(truth, dev_env, REHEARSAL_ROOTS.seed),
+        store=args.store,
+        rehearsal=True,
+    )
 
 
 def frozen_setup(args: argparse.Namespace) -> Setup:
@@ -4400,7 +4635,13 @@ def execute(setup: Setup, args: argparse.Namespace) -> int:
         census = build_census(table, cells, channels, frozenset(plan_rows))
         print_counts(census, table)
         inputs = Inputs(
-            census, table, plan_rows, setup.controls, setup.roots, setup.resamples
+            census,
+            table,
+            plan_rows,
+            setup.controls,
+            setup.roots,
+            setup.resamples,
+            setup.rehearsal,
         )
         with driver_lock(paths):
             if args.finalise:
@@ -4440,6 +4681,9 @@ def execute(setup: Setup, args: argparse.Namespace) -> int:
     except (GuardFailure, ResumeRefused, ByteFailure, CampaignError) as error:
         return refuse(paths, str(error))
     if decision is None:
+        if setup.rehearsal:
+            print("a rehearsal resumes by its own command line", flush=True)
+            return NO_LABEL_EXIT
         line = resume_line(
             paths.cpu, pilot.ROOT, args.split, args.test_split, setup.store
         )
@@ -4457,8 +4701,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             digest = hashlib.sha256((pilot.ROOT / path).read_bytes()).hexdigest()
             print(f"{digest}  {path}")
         return 0
-    if args.split is None or args.test_split is None or args.store is None:
-        parser.error("--split, --test-split and --store are required")
+    if args.rehearsal != (args.rehearsal_plan is not None):
+        parser.error("--rehearsal and --rehearsal-plan come together")
+    if args.split is None or args.store is None:
+        parser.error("--split and --store are required")
+    if args.rehearsal:
+        try:
+            setup = rehearsal_setup(args, pilot.ROOT)
+        except (GuardFailure, CampaignError) as error:
+            return refuse(rehearsal_paths(pilot.ROOT), str(error))
+        return execute(setup, args)
+    if args.test_split is None:
+        parser.error("--test-split is required")
     try:
         setup = frozen_setup(args)
     except (GuardFailure, CampaignError) as error:

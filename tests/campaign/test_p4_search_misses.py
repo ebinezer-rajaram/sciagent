@@ -3914,9 +3914,9 @@ def toy_run(paths: Any, monkeypatch: pytest.MonkeyPatch) -> Callable[[Any, Any],
     real_driver = p4m.Driver
     monkeypatch.setattr(p4m, "Driver", fork_driver)
 
-    def run(stages: Any, args: Any) -> Any:
+    def run(stages: Any, args: Any, **over: Any) -> Any:
         monkeypatch.setattr(p4m, "plan_stages", lambda *a, **k: stages)
-        return p4m.execute(toy_setup(paths), args)
+        return p4m.execute(toy_setup(paths, **over), args)
 
     return run
 
@@ -4293,3 +4293,394 @@ def test_t2_control_2_is_caught_by_r1_alone() -> None:
     assert p4m.control_caught(
         best, p4m.valued_of(done["fit5"]), p4m.valued_of(done["known"])
     )
+
+
+# --------------------------------------------------------------------------
+# --rehearsal: a positive allowlist, each part tested (section 2.10)
+# --------------------------------------------------------------------------
+
+DEV_SHA: Final = "9" * 64
+
+
+def dev_record(truth: str, split: str = "dev") -> Any:
+    return SimpleNamespace(id=truth, split=split)
+
+
+@dataclass(frozen=True)
+class Rehearsal:
+    repo: Path
+    split: Path
+    store: Path
+    plan: Path
+
+
+@pytest.fixture
+def rehearsal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Rehearsal:
+    """A checkout with no freeze file, a dev split and a store under ``drafts``."""
+    repo = tmp_path / "repo"
+    store = repo / ".cache" / "drafts" / "store"
+    store.mkdir(parents=True)
+    split = toy_split(tmp_path)
+    monkeypatch.setattr(p4m, "SPLIT_SHA256", p4m.split_digest(split, p4m.DEV_RELATIVE))
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps({"truths": ["dev-001", "dev-002"], "seeds": [1, 2]}))
+    return Rehearsal(repo, split, store, plan)
+
+
+def allow(r: Rehearsal, **over: Any) -> None:
+    options: dict[str, Any] = {
+        "split": r.split,
+        "store": r.store,
+        "test_split": None,
+        **over,
+    }
+    p4m.check_rehearsal(r.repo, **options)
+
+
+def test_a_rehearsal_on_the_allowlist_passes(rehearsal: Rehearsal) -> None:
+    allow(rehearsal)
+
+
+def test_a_rehearsal_refuses_a_split_that_is_not_the_dev_constant(
+    rehearsal: Rehearsal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(p4m, "SPLIT_SHA256", "0" * 64)
+    with pytest.raises(p4m.GuardFailure, match="split hash"):
+        allow(rehearsal)
+
+
+def test_a_rehearsal_refuses_a_store_outside_drafts(
+    rehearsal: Rehearsal, tmp_path: Path
+) -> None:
+    with pytest.raises(p4m.GuardFailure, match="drafts"):
+        allow(rehearsal, store=tmp_path / "elsewhere")
+    with pytest.raises(p4m.GuardFailure, match="drafts"):
+        allow(rehearsal, store=rehearsal.repo / ".cache" / "pilot-merged")
+
+
+def test_a_rehearsal_refuses_the_drafts_directory_itself(rehearsal: Rehearsal) -> None:
+    with pytest.raises(p4m.GuardFailure, match="drafts"):
+        allow(rehearsal, store=rehearsal.repo / ".cache" / "drafts")
+
+
+def test_a_link_under_drafts_to_a_store_elsewhere_is_refused(
+    rehearsal: Rehearsal, tmp_path: Path
+) -> None:
+    real = tmp_path / "real-store"
+    real.mkdir()
+    link = rehearsal.repo / ".cache" / "drafts" / "link"
+    link.symlink_to(real)
+    with pytest.raises(p4m.GuardFailure, match="drafts"):
+        allow(rehearsal, store=link)
+
+
+def test_a_relative_store_or_split_is_refused(rehearsal: Rehearsal) -> None:
+    with pytest.raises(p4m.GuardFailure, match="absolute"):
+        allow(rehearsal, store=Path(".cache/drafts/store"))
+    with pytest.raises(p4m.GuardFailure, match="absolute"):
+        allow(rehearsal, split=Path("data/v2/truths/dev"))
+
+
+def test_a_rehearsal_refuses_if_the_freeze_file_exists(rehearsal: Rehearsal) -> None:
+    """So it cannot run at ``T``."""
+    write(rehearsal.repo, p4m.FREEZE_PATH, "abc1234\n")
+    with pytest.raises(p4m.GuardFailure, match="FREEZE"):
+        allow(rehearsal)
+
+
+def test_a_rehearsal_refuses_the_test_split(rehearsal: Rehearsal) -> None:
+    with pytest.raises(p4m.GuardFailure, match="test split"):
+        allow(rehearsal, test_split=Path("/somewhere/test"))
+
+
+def plan_of(r: Rehearsal, records: Sequence[Any] | None = None) -> Any:
+    given = records or [dev_record("dev-001"), dev_record("dev-002")]
+    return p4m.rehearsal_records(r.plan, given)
+
+
+def test_the_plans_truths_are_records_of_the_split(rehearsal: Rehearsal) -> None:
+    chosen, spec = plan_of(rehearsal)
+    assert [r.id for r in chosen] == ["dev-001", "dev-002"]
+    assert spec["seeds"] == [1, 2]
+
+
+def test_a_truth_that_is_no_record_of_the_split_is_refused(
+    rehearsal: Rehearsal,
+) -> None:
+    with pytest.raises(p4m.GuardFailure, match="record"):
+        plan_of(rehearsal, [dev_record("dev-001")])
+
+
+@pytest.mark.parametrize("split", ["test", "calibration"])
+def test_a_truth_of_another_split_is_refused(rehearsal: Rehearsal, split: str) -> None:
+    records = [dev_record("dev-001"), dev_record("dev-002", split)]
+    with pytest.raises(p4m.GuardFailure, match="split"):
+        plan_of(rehearsal, records)
+
+
+def test_a_plan_with_an_unknown_key_is_refused(rehearsal: Rehearsal) -> None:
+    rehearsal.plan.write_text(json.dumps({"truths": ["dev-001"], "roots": [1]}))
+    with pytest.raises(p4m.GuardFailure, match="roots"):
+        plan_of(rehearsal)
+
+
+@pytest.mark.parametrize("text", ["{not json", "[]", "{}", '{"truths": []}'])
+def test_an_unreadable_or_empty_plan_is_refused(
+    rehearsal: Rehearsal, text: str
+) -> None:
+    rehearsal.plan.write_text(text)
+    with pytest.raises(p4m.GuardFailure, match="plan"):
+        plan_of(rehearsal)
+
+
+def test_a_missing_plan_file_is_refused(rehearsal: Rehearsal) -> None:
+    rehearsal.plan.unlink()
+    with pytest.raises(p4m.GuardFailure, match="plan"):
+        plan_of(rehearsal)
+
+
+def test_the_plans_config_is_the_sonnet_config_at_the_plans_budget() -> None:
+    spec = {
+        "truths": ["a"],
+        "seeds": [1, 2],
+        "fits": 5,
+        "experiments": 2,
+        "control_factor": 3,
+        "gp_population": 4,
+        "gp_offspring": 2,
+    }
+    (config,) = p4m.rehearsal_configs(spec)
+    assert config.seeds == (1, 2)
+    assert (config.fits, config.experiments, config.control_factor) == (5, 2, 3)
+    assert (config.gp.population, config.gp.offspring) == (4, 2)
+    assert config.llm_letter == "S"
+    assert {a.system("S") for a in config.llm_arms} >= set(ARMS)
+
+
+def test_rehearsal_and_its_plan_come_together() -> None:
+    with pytest.raises(SystemExit):
+        p4m.main(["--rehearsal", "--split", "/s", "--store", "/st"])
+    with pytest.raises(SystemExit):
+        p4m.main(["--rehearsal-plan", "/p", "--split", "/s", "--store", "/st"])
+
+
+def setup_of(
+    r: Rehearsal, monkeypatch: pytest.MonkeyPatch, calls: list[Any] | None = None
+) -> Any:
+    log = [] if calls is None else calls
+
+    def note(name: str, value: Any = None) -> Callable[..., Any]:
+        def called(*args: Any, **kwargs: Any) -> Any:
+            log.append((name, args, kwargs))
+            return value
+
+        return called
+
+    records = [dev_record("dev-001"), dev_record("dev-015"), dev_record("dev-002")]
+    truth = replace(entry("hawkes"), id="dev-015")
+    monkeypatch.setattr(p4m.pilot, "load_split", lambda p: records)
+    monkeypatch.setattr(p4m.pilot, "pointproc_environment", lambda x: environment())
+    monkeypatch.setattr(
+        p4m.pilot,
+        "truth_entries",
+        lambda chosen: tuple(replace(truth, id=x.id) for x in chosen),
+    )
+    monkeypatch.setattr(p4m, "check_tree", note("check_tree"))
+    monkeypatch.setattr(p4m, "check_fit", note("check_fit"))
+    monkeypatch.setattr(p4m, "check_blas", note("check_blas"))
+    monkeypatch.setattr(p4m, "initial_environment", lambda: dict(ONES))
+    monkeypatch.setattr(p4m, "head_commit", lambda repo: "h" * 40)
+    monkeypatch.setattr(p4m, "run_guards", note("run_guards"))
+    monkeypatch.setattr(p4m, "check_chain", note("check_chain"))
+    monkeypatch.setattr(p4m, "check_hashes", note("check_hashes"))
+    monkeypatch.setattr(p4m, "check_store_witness", note("check_store_witness"))
+    monkeypatch.setattr(p4m, "scripted_controls", note("controls", PASS))
+    args = SimpleNamespace(
+        split=r.split,
+        test_split=None,
+        store=r.store,
+        rehearsal_plan=r.plan,
+    )
+    return p4m.rehearsal_setup(args, r.repo)
+
+
+def test_the_mode_changes_exactly_the_texts_list(
+    rehearsal: Rehearsal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[Any] = []
+    setup = setup_of(rehearsal, monkeypatch, calls)
+    names = [c[0] for c in calls]
+    # The commit-chain guards do not run; the fit, tree and BLAS guards do.
+    assert {"check_tree", "check_fit", "check_blas"} <= set(names)
+    assert {"run_guards", "check_chain", "check_hashes"}.isdisjoint(names)
+    assert "check_store_witness" not in names
+    # The roots, the hunt, the output, the truths and the plan.
+    assert setup.roots == p4m.REHEARSAL_ROOTS
+    assert setup.group_b.root == TEST_ROOT
+    assert setup.hunt_size == 5
+    assert setup.rehearsal is True
+    drafts = rehearsal.repo / ".cache" / "drafts"
+    assert setup.paths.root.is_relative_to(drafts)
+    assert setup.paths.root != p4m.OUT_DIR
+    assert [t.id for t in setup.truths] == ["dev-001", "dev-002"]
+    assert len(setup.plan) == 1
+
+
+def test_control_4_in_a_rehearsal_is_a_dev_record_at_its_own_path(
+    rehearsal: Rehearsal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[Any] = []
+    setup_of(rehearsal, monkeypatch, calls)
+    (call,) = [c for c in calls if c[0] == "controls"]
+    assert call[1] == ("h" * 40,)
+    assert call[2]["split"] == "dev"
+    drafts = rehearsal.repo / ".cache" / "drafts"
+    assert call[2]["path"].is_relative_to(drafts)
+    assert call[2]["path"] != record_module.NAMING_NULL_RECORD
+
+
+def test_the_output_moves_with_the_script_and_the_plan(
+    rehearsal: Rehearsal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fix means rehearsing again, and a repeat is not a fresh start over
+    another run's records."""
+    first = setup_of(rehearsal, monkeypatch).paths.root
+    rehearsal.plan.write_text(json.dumps({"truths": ["dev-001"], "fits": 9}))
+    second = setup_of(rehearsal, monkeypatch).paths.root
+    assert first != second
+
+
+def test_no_option_sets_a_root_or_the_mode_beyond_its_plan() -> None:
+    parser = p4m.build_parser()
+    options = {o for a in parser._actions for o in a.option_strings}
+    assert options >= {"--rehearsal", "--rehearsal-plan"}
+    assert not {o for o in options if "root" in o or "seed" in o or "shift" in o}
+
+
+def rehearsal_inputs(table: Table | None = None, **over: Any) -> Any:
+    return inputs_of(table, rehearsal=True, **over)
+
+
+def nonzero_world() -> dict[Key, Row]:
+    """AG-c-S/named at -0.5, so reads against it start away from zero."""
+    rows = world()
+    for t in TRUTHS:
+        for s in SEEDS:
+            rows[(t, s, AGC)] = replace(rows[(t, s, AGC)], per_event=-0.5)
+    return rows
+
+
+def test_a_rehearsal_plants_a_shift_that_flips_a_read(paths: Any) -> None:
+    table = tabled(nonzero_world())
+    plant(paths, clean(table))
+    d = finalise(paths, rehearsal_inputs(table))
+    got = reads_of(paths)
+    planted = got["planted_shift"]
+    assert planted["read"] == "C1"
+    assert d["label"] == "REHEARSAL CONTRASTS_CHANGE"
+    assert d["exit_code"] == 2
+    assert as_float(got["stored"]["C1"], "point") > 0.0
+    assert as_float(got["fixed"]["C1"], "point") < 0.0
+    assert "C1" in d["H4"]["changed"]
+
+
+def test_the_shift_reaches_fixed2_too_and_only_in_a_rehearsal(tmp_path: Path) -> None:
+    table = tabled(nonzero_world())
+    real, _ = run_terminal(tmp_path, "a", table)
+    assert "planted_shift" not in reads_of(real)
+    out = p4m.OutPaths(tmp_path / "b")
+    plant(out, clean(table))
+    finalise(out, rehearsal_inputs(table))
+    got = reads_of(out)
+    assert got["fixed"]["C1"]["point"] == got["fixed2"]["C1"]["point"]
+
+
+def test_no_read_reportable_plants_nothing(paths: Any) -> None:
+    table = tabled(controls_fail(nonzero_world()))
+    plant(paths, clean(table))
+    d = finalise(paths, rehearsal_inputs(table))
+    assert reads_of(paths)["planted_shift"] is None
+    assert d["label"] == "REHEARSAL CONTROL_FAIL"
+
+
+def test_the_shift_is_refused_on_any_frozen_root(paths: Any) -> None:
+    """The mode cannot reach a launch: it holds only the test roots."""
+    table = tabled()
+    plant(paths, clean(table))
+    with pytest.raises(p4m.GuardFailure, match="root"):
+        finalise(paths, rehearsal_inputs(table, roots=p4m.FROZEN_ROOTS))
+    assert not paths.reads.exists()
+
+
+def test_every_label_of_a_rehearsal_is_prefixed(paths: Any) -> None:
+    table = tabled()
+    fault = {"type": "byte_fail", "job": "x", "reason": "x"}
+    plant(paths, [*clean(table), fault])
+    d = finalise(paths, rehearsal_inputs(table))
+    assert d["label"] == "REHEARSAL BYTE_FAIL"
+    assert d["exit_code"] == 3
+
+
+def test_the_bar_is_at_least_6_kept_2_out_of_dictionary_and_1_reportable(
+    tmp_path: Path,
+) -> None:
+    table = tabled(nonzero_world())
+    out = p4m.OutPaths(tmp_path / "a")
+    plant(out, clean(table))
+    d = finalise(out, rehearsal_inputs(table))
+    assert d["rehearsal"] == {
+        "kept": 6,
+        "kept_out_of_dictionary": 2,
+        "reportable_on_both": 7,
+        "shown": True,
+    }
+
+
+@pytest.mark.parametrize(
+    ("kept", "ood", "reportable"), [(5, 2, 1), (6, 1, 1), (6, 2, 0)]
+)
+def test_a_rehearsal_short_of_the_bar_has_shown_nothing(
+    kept: int, ood: int, reportable: int
+) -> None:
+    assert p4m.rehearsal_shown(kept, ood, reportable) is False
+
+
+def test_the_bar_is_met_exactly() -> None:
+    assert p4m.rehearsal_shown(6, 2, 1) is True
+
+
+def test_a_rehearsal_refused_at_a_guard_writes_nothing_to_the_real_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = tmp_path / "real"
+    repo = tmp_path / "repo"
+    write(repo, p4m.FREEZE_PATH, "abc1234\n")
+    monkeypatch.setattr(p4m, "OUT_DIR", real)
+    monkeypatch.setattr(p4m.pilot, "ROOT", repo)
+    code = p4m.main(
+        [
+            "--rehearsal",
+            "--rehearsal-plan",
+            str(tmp_path / "plan.json"),
+            "--split",
+            str(tmp_path / "split"),
+            "--store",
+            str(repo / ".cache" / "drafts" / "store"),
+        ]
+    )
+    assert code == p4m.NO_LABEL_EXIT
+    assert not real.exists()
+    base = p4m.rehearsal_paths(repo)
+    assert list(decision_of(base)) == ["refusal"]
+
+
+def test_a_rehearsal_on_a_toy_store_reads_only_at_its_terminal_step(
+    paths: Any, toy_run: Any, spy: Path
+) -> None:
+    """``execute`` in the mode, end to end on a toy table."""
+    table = tabled()
+    plant(paths, clean(table), end=None)
+    run = toy_run((stage(ToyJob("a")),), Args(), rehearsal=True)
+    assert run == 2
+    assert decision_of(paths)["label"].startswith("REHEARSAL ")
+    assert "read_contrasts" in spy.read_text()

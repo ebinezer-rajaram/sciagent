@@ -618,6 +618,20 @@ def test_a_truth_with_no_seed_in_common_leaves_the_read_and_is_counted() -> None
     assert floors["C3-free"].no_common_seed == 0
 
 
+def test_no_common_seed_counts_the_read_and_not_its_rows_left_out() -> None:
+    """Round 3, finding 9. Every seed of t3 floored: the read keeps t3 and S6's
+    rows-left-out read loses it, and the count is of the read."""
+    rows = world()
+    for seed in SEEDS:
+        score(rows, "t3", seed, AGC, -math.inf)
+    table = tabled(rows)
+    assert read(table)["C1"].n == 6
+    got = read_floors(table, PASS, ROOT, 200)["C1"]
+    assert got.floored == 3
+    assert got.without.n == 5
+    assert got.no_common_seed == 0
+
+
 def test_c4_counts_its_own_truths_as_no_common_seed_and_no_other() -> None:
     """C4 reads the out-of-dictionary truths, t1 and t2. An in-dictionary truth was
     never C4's to lose, so it does not count, whole or with its B-sparse rows gone.
@@ -642,6 +656,19 @@ def test_the_floor_reads_only_contrast_rows_and_keeps_rows_it_does_not_touch() -
     wide = tabled(rows)
     without = {k: v for k, v in rows.items() if _contrast(k)}
     assert all_same(read(wide), read(tabled(without)))
+
+
+def test_a_b_sym_at_10f_row_can_set_the_floor() -> None:
+    """Round 3, finding 9. The floor's domain is the contrast rows, and B-sym@10F is
+    one. Lowest on (t1, 1), it sets the floor and is in the read's rows."""
+    rows = world()
+    score(rows, "t1", 1, AGC, -math.inf)
+    score(rows, "t1", 1, B_SYM_10F, -0.875)
+    got = read(tabled(rows))["C1"]
+    assert got.reportable
+    # Floor -0.875: gap -3/8, mean (-3/8 - 1/8 - 1/8) / 3 = -5/24, d = -1/12.
+    assert got.point == pytest.approx(-1 / 72, abs=1e-12)
+    assert ("t1", 1, B_SYM_10F) in got.rows
 
 
 # --------------------------------------------------------------------------

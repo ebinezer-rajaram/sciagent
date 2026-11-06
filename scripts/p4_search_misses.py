@@ -33,15 +33,18 @@ floats are ``float.hex`` strings everywhere.
 
 from __future__ import annotations
 
+import argparse
 import fcntl
 import hashlib
 import json
 import math
 import multiprocessing
 import os
+import re
 import resource
 import signal
 import statistics
+import subprocess
 import threading
 import time
 from collections import deque
@@ -53,6 +56,8 @@ from types import FrameType
 from typing import Any, ClassVar, Final, Literal, Protocol
 
 import numpy as np
+import pilot
+from naming_null_record import NAMING_NULL_RECORD, TEST_SPLIT, read_naming_null
 
 from sciagent.campaign import analysis, contrasts, cpu
 from sciagent.campaign.analysis import Row, Table
@@ -62,8 +67,13 @@ from sciagent.campaign.contrasts import (
     FloorRead,
     ScriptedControls,
 )
-from sciagent.campaign.plan import B_SPARSE, ORACLE
-from sciagent.glm.fit import PSI_FULL_GRID_MAX
+from sciagent.campaign.fingerprint import (
+    FINGERPRINT_FILE,
+    CodeFingerprintError,
+    read_fingerprints,
+)
+from sciagent.campaign.plan import B_SPARSE, ORACLE, CampaignError
+from sciagent.glm.fit import FIT_VERSION, PSI_FULL_GRID_MAX
 from sciagent.glm.grammar import Link
 from sciagent.scenarios.records import canonical_json
 from sciagent.scoring import gonogo
@@ -83,6 +93,53 @@ PREREG_SHA256: Final = (
 #: The commit that freezes it.
 F2_COMMIT: Final = "903194309fc3c8a1c0b76c5c56890980c162fcf1"
 PREREG_PATH: Final = "docs/v2/prereg/2026-11-05_p4-search-misses.md"
+LOG_PATH: Final = "docs/v2/LOG.md"
+SCRIPT_PATH: Final = "scripts/p4_search_misses.py"
+TEST_PATH: Final = "tests/campaign/test_p4_search_misses.py"
+FREEZE_PATH: Final = "docs/v2/FREEZE-6.1.txt"
+TEST_SPLIT_HASH_PATH: Final = "docs/v2/freeze/test-split.sha256"
+#: origin/v2 as this checkout last saw it: a guard fetches nothing.
+ORIGIN_V2: Final = "refs/remotes/origin/v2"
+#: The output, outside the repository, and not an option (section 2.8).
+OUT_DIR: Final = Path("/home/ubuntu/research/records/sciagent/p4-search-misses-F2")
+#: Section 2.10's "launch copy", "beside the results". The text names no key:
+#: this is the parent of the check's own S3 path, for the launcher to match.
+LAUNCH_FINGERPRINT_URI: Final = (
+    "s3://delaymargin-results-482913/sciagent/p4/fingerprint.jsonl"
+)
+#: How S's LOG names R2. The text fixes no form: this is the LOG's own for F2.
+R2_NAMED: Final = re.compile(r"`R2` = ([0-9a-f]{7,40})\b")
+HEX_COMMIT: Final = re.compile(r"[0-9a-f]{7,40}")
+SHA256_HEX: Final = re.compile(r"[0-9a-f]{64}")
+FINGERPRINT_COMMIT: Final = re.compile(r"commit=([0-9a-f]{40})(?:,|$)")
+BLAS_VARIABLES: Final = (
+    "OPENBLAS_NUM_THREADS",
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+)
+
+#: The fit guard (section 2.10).
+BASE_COMMIT: Final = "900e66a"
+FIT_GUARD_PATHS: Final = (
+    "src/sciagent/glm/fit.py",
+    "src/sciagent/glm/fit_solve.py",
+    "src/sciagent/glm/fit_bounds.py",
+    "src/sciagent/glm/likelihood.py",
+    "src/sciagent/glm/features.py",
+    "src/sciagent/glm/grids.py",
+)
+#: The one changed line, the refusal text at ``features.py:417``.
+FIT_DIFF_SHA256: Final = (
+    "5ab0f61de1ccb4d722a1337b317428847c8ba17ec8ef05a1650e8b4ca2a08156"
+)
+REDUCTIONS_PATH: Final = "src/sciagent/core/reductions.py"
+REDUCTIONS_BLOB: Final = "466612a978068c74be2c30cde01c3574c1d9696b"
+FIT_VERSION_EXPECTED: Final = "sciagent.glm.fit/5"
+
+#: PR 2.10's dev split, for group B; the test split's hash is at ``S``.
+SPLIT_SHA256: Final = "31c18f10ca7c8a4ad6b599de5436bb15426bd02c67f3eb44fb0e93cb512ba577"
+DEV_RELATIVE: Final = "data/v2/truths/dev"
+TEST_RELATIVE: Final = "data/v2/truths/test"
 
 
 @dataclass(frozen=True)
@@ -2241,3 +2298,327 @@ def refuse(paths: OutPaths, reason: str) -> int:
         body = {"refusal": reason}
         replace_file(paths.decision, (dumps_record(body) + "\n").encode("utf-8"))
     return NO_LABEL_EXIT
+
+
+# --------------------------------------------------------------------------
+# Start-up guards (section 2.10)
+# --------------------------------------------------------------------------
+
+
+def initial_environment() -> dict[str, str]:
+    """The environment this process was started with. ``import pilot`` sets the
+    BLAS variables in ``os.environ``, so that cannot show they were set before
+    numpy loaded."""
+    data = Path("/proc/self/environ").read_bytes()
+    pairs = (item.partition(b"=") for item in data.split(b"\0") if item)
+    return {k.decode(): v.decode() for k, _, v in pairs}
+
+
+def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args], cwd=repo, capture_output=True, text=True, check=False
+    )
+
+
+def _git_out(repo: Path, *args: str) -> str | None:
+    """Stripped output, or None if git refused."""
+    done = _git(repo, *args)
+    return done.stdout.strip() if done.returncode == 0 else None
+
+
+def _blob_sha(repo: Path, commit: str, path: str) -> str | None:
+    """sha256 of a file at a commit, by its bytes; None if it is not there."""
+    done = subprocess.run(
+        ["git", "show", f"{commit}:{path}"], cwd=repo, capture_output=True, check=False
+    )
+    return hashlib.sha256(done.stdout).hexdigest() if done.returncode == 0 else None
+
+
+def check_f2(repo: Path, prereg_sha: str, f2_commit: str) -> None:
+    """``PREREG_SHA256`` and ``F2_COMMIT`` match, in the tree and at ``F2``."""
+    prereg = repo / PREREG_PATH
+    if not prereg.is_file():
+        raise GuardFailure(f"no prereg at {prereg}")
+    digest = hashlib.sha256(prereg.read_bytes()).hexdigest()
+    if digest != prereg_sha:
+        raise GuardFailure(f"prereg hash {digest} is not PREREG_SHA256 {prereg_sha}")
+    if _git(repo, "merge-base", "--is-ancestor", f2_commit, "HEAD").returncode != 0:
+        raise GuardFailure(f"HEAD does not descend from F2 {f2_commit}")
+    if _blob_sha(repo, f2_commit, PREREG_PATH) != prereg_sha:
+        raise GuardFailure(f"the frozen text is not the prereg at F2 {f2_commit}")
+
+
+def check_chain(repo: Path) -> tuple[str, str]:
+    """HEAD is ``T``, and ``S`` is the commit before it (section 2.10). Returns
+    ``(S, T)``."""
+    log = _git_out(repo, "log", "--format=%H", "--", FREEZE_PATH)
+    commits = (log or "").split()
+    if len(commits) != 1:
+        raise GuardFailure(
+            f"{FREEZE_PATH} must show exactly one commit, shows {len(commits)}"
+        )
+    t = commits[0]
+    head = _git_out(repo, "rev-parse", "HEAD")
+    if head != t:
+        raise GuardFailure(f"HEAD {head} is not T {t}")
+    parents = (_git_out(repo, "rev-list", "--parents", "-n", "1", t) or "").split()[1:]
+    if len(parents) != 1:
+        raise GuardFailure(f"T {t} must have one parent, has {len(parents)}")
+    s = parents[0]
+    text = _git_out(repo, "show", f"{t}:{FREEZE_PATH}") or ""
+    lines = text.splitlines()
+    if len(lines) != 1 or not HEX_COMMIT.fullmatch(lines[0].strip()):
+        raise GuardFailure(f"{FREEZE_PATH} must be one line naming S")
+    named = _git_out(
+        repo, "rev-parse", "--verify", "-q", f"{lines[0].strip()}^{{commit}}"
+    )
+    if named != s:
+        raise GuardFailure(f"{FREEZE_PATH} names {lines[0]}, T's parent is {s}")
+    changed = (_git_out(repo, "diff", "--name-only", s, t) or "").split()
+    if changed != [FREEZE_PATH]:
+        raise GuardFailure(f"T's diff must be {FREEZE_PATH} alone, lists {changed}")
+    chain = _git_out(repo, "rev-list", "--first-parent", ORIGIN_V2)
+    if chain is None or t not in chain.split():
+        raise GuardFailure(f"T {t} is not on origin/v2's first-parent chain")
+    return s, t
+
+
+def check_hashes(repo: Path, s: str, f2_commit: str) -> str:
+    """The script's and test's sha256 are in the LOG at ``S``, not the working
+    LOG, and that LOG names ``R2`` as ``` `R2` = <commit> ```. ``R2`` is a commit
+    between ``F2`` and ``S`` that holds these same bytes. Returns ``R2``."""
+    log = _git_out(repo, "show", f"{s}:{LOG_PATH}") or ""
+    digests: dict[str, str] = {}
+    for path in (SCRIPT_PATH, TEST_PATH):
+        digests[path] = hashlib.sha256((repo / path).read_bytes()).hexdigest()
+        if digests[path] not in log:
+            raise GuardFailure(f"{path} hash {digests[path]} is not in S's LOG")
+    named = sorted(set(R2_NAMED.findall(log)))
+    if len(named) != 1:
+        raise GuardFailure(f"S's LOG must name one R2, names {named}")
+    r2 = _git_out(repo, "rev-parse", "--verify", "-q", f"{named[0]}^{{commit}}")
+    if r2 is None:
+        raise GuardFailure(f"R2 {named[0]} is no commit here")
+    for ancestor, descendant in ((f2_commit, r2), (r2, s)):
+        if _git(repo, "merge-base", "--is-ancestor", ancestor, descendant).returncode:
+            raise GuardFailure(f"R2 {r2} does not lie between F2 and S")
+    for path, digest in digests.items():
+        if _blob_sha(repo, r2, path) != digest:
+            raise GuardFailure(f"R2 {r2} does not hold this {path}")
+    return r2
+
+
+def read_launch_copy() -> bytes:
+    """The copy of ``fingerprint.jsonl`` that went to S3 at the launch."""
+    try:
+        done = subprocess.run(
+            ["aws", "s3", "cp", LAUNCH_FINGERPRINT_URI, "-"],
+            capture_output=True,
+            check=False,
+        )
+    except OSError as error:
+        raise GuardFailure(f"no launch copy: {error}") from error
+    if done.returncode != 0:
+        raise GuardFailure(f"no launch copy at {LAUNCH_FINGERPRINT_URI}")
+    return done.stdout
+
+
+def check_store_witness(store: Path, t: str, launch_copy: Callable[[], bytes]) -> None:
+    """The store was begun at ``T`` and never reused, so ``S`` is tied to the
+    campaign: repointing the freeze file gives another commit and fails here."""
+    try:
+        entries = read_fingerprints(store)
+    except CodeFingerprintError as error:
+        raise GuardFailure(f"unreadable fingerprint sidecar: {error}") from error
+    if len(entries) != 1 or entries[0].event != "establish":
+        raise GuardFailure(
+            f"{FINGERPRINT_FILE} must be one establish line and no reuse line"
+        )
+    found = FINGERPRINT_COMMIT.match(entries[0].fingerprint)
+    if found is None or found.group(1) != t:
+        raise GuardFailure(f"the store witness {entries[0].fingerprint} is not T {t}")
+    if (store / FINGERPRINT_FILE).read_bytes() != launch_copy():
+        raise GuardFailure(f"{FINGERPRINT_FILE} is not the launch copy")
+
+
+def fit_diff_digest(repo: Path, base: str) -> str:
+    """sha256 of section 2.10's ``git diff --full-index``, by its bytes, with the
+    options that local git configuration could otherwise change."""
+    done = subprocess.run(
+        [
+            "git",
+            "diff",
+            "--full-index",
+            "--no-color",
+            "--no-ext-diff",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            base,
+            "HEAD",
+            "--",
+            *FIT_GUARD_PATHS,
+        ],
+        cwd=repo,
+        capture_output=True,
+        check=False,
+    )
+    if done.returncode != 0:
+        raise GuardFailure(f"the fit guard's git diff failed: {done.stderr!r}")
+    return hashlib.sha256(done.stdout).hexdigest()
+
+
+def check_fit(
+    repo: Path, base_commit: str, fit_diff_sha: str, reductions_blob: str
+) -> None:
+    """Section 2.10's fit guard: the one-line diff and nothing else, ``fit/5``, and
+    ``reductions.py`` by its blob."""
+    if FIT_VERSION != FIT_VERSION_EXPECTED:
+        raise GuardFailure(f"FIT_VERSION is {FIT_VERSION}, not fit/5")
+    digest = fit_diff_digest(repo, base_commit)
+    if digest != fit_diff_sha:
+        raise GuardFailure(f"the fit code's diff {digest} is not {fit_diff_sha}")
+    blob = _git_out(repo, "rev-parse", f"HEAD:{REDUCTIONS_PATH}")
+    if blob != reductions_blob:
+        raise GuardFailure(f"reductions.py blob {blob} is not {reductions_blob}")
+
+
+def check_tree(repo: Path, packages: Sequence[Path] | None) -> None:
+    try:
+        pilot.code_fingerprint(repo, packages)
+    except CampaignError as error:
+        raise GuardFailure(str(error)) from error
+
+
+def check_blas(environ: Mapping[str, str]) -> None:
+    for name in BLAS_VARIABLES:
+        if environ.get(name) != "1":
+            raise GuardFailure(f"{name} must be 1 at start, is {environ.get(name)!r}")
+
+
+def run_guards(
+    repo: Path,
+    *,
+    prereg_sha: str,
+    f2_commit: str,
+    base_commit: str,
+    fit_diff_sha: str,
+    reductions_blob: str,
+    environ: Mapping[str, str],
+    store: Path,
+    launch_copy: Callable[[], bytes],
+    packages: Sequence[Path] | None = None,
+) -> dict[str, str]:
+    """Every start-up guard of section 2.10; raises :class:`GuardFailure`. Returns
+    what ``decision.json`` records."""
+    check_f2(repo, prereg_sha, f2_commit)
+    check_tree(repo, packages)
+    s, t = check_chain(repo)
+    r2 = check_hashes(repo, s, f2_commit)
+    check_store_witness(store, t, launch_copy)
+    check_fit(repo, base_commit, fit_diff_sha, reductions_blob)
+    check_blas(environ)
+    return {"F2": f2_commit, "R2": r2, "S": s, "T": t, "prereg_sha256": prereg_sha}
+
+
+def check_paths(
+    *, split: Path, test_split: Path, store: Path, out: Path, repo: Path
+) -> None:
+    named = (("--split", split), ("--test-split", test_split), ("--store", store))
+    for name, path in named:
+        if not path.is_absolute():
+            raise GuardFailure(f"{name} must be an absolute path: {path}")
+    if test_split.resolve().is_relative_to(repo.resolve()):
+        raise GuardFailure(f"--test-split {test_split} must be outside {repo}")
+    for parent in (repo, store):
+        if out.resolve().is_relative_to(parent.resolve()):
+            raise GuardFailure(f"the output {out} must be outside {parent}")
+
+
+def split_digest(split: Path, relative: str) -> str:
+    """``find <relative> -type f -print0 | sort -z | xargs -0 sha256sum |
+    sha256sum``, from the root of whichever checkout holds the split."""
+    named: list[tuple[bytes, Path]] = []
+    for path in split.rglob("*"):
+        if path.is_symlink() or not path.is_file():
+            continue
+        text = f"{relative}/{path.relative_to(split).as_posix()}"
+        if "\\" in text or "\n" in text:
+            raise GuardFailure(f"sha256sum would escape the name {text!r}")
+        named.append((text.encode("utf-8"), path))
+    lines = b"".join(
+        hashlib.sha256(path.read_bytes()).hexdigest().encode() + b"  " + name + b"\n"
+        for name, path in sorted(named)
+    )
+    return hashlib.sha256(lines).hexdigest()
+
+
+def check_split(split: Path, expected: str, relative: str) -> None:
+    digest = split_digest(split, relative)
+    if digest != expected:
+        raise GuardFailure(f"split hash {digest} is not {expected}")
+
+
+def test_split_expected(repo: Path, s: str) -> str:
+    """The test split's hash, as ``S`` holds it."""
+    text = _git_out(repo, "show", f"{s}:{TEST_SPLIT_HASH_PATH}") or ""
+    fields = text.split()
+    if not fields or not SHA256_HEX.fullmatch(fields[0]):
+        raise GuardFailure(f"no test split hash at {s}:{TEST_SPLIT_HASH_PATH}")
+    return fields[0]
+
+
+def store_manifest(root: Path) -> dict[str, str]:
+    """sha256 of every file under the store, by relative path."""
+    return {
+        path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
+def manifest_diff(before: Mapping[str, str], after: Mapping[str, str]) -> list[str]:
+    out = [f"added {p}" for p in sorted(set(after) - set(before))]
+    out += [
+        f"changed {p}"
+        for p in sorted(set(before) & set(after))
+        if before[p] != after[p]
+    ]
+    out += [f"removed {p}" for p in sorted(set(before) - set(after))]
+    return out
+
+
+def scripted_controls(
+    t_commit: str, *, split: str = TEST_SPLIT, path: Path = NAMING_NULL_RECORD
+) -> ScriptedControls:
+    """Control 4's pass state, from its record alone (section 2.7). ``t_commit`` is
+    ``T`` and not HEAD, because a ``T2`` run differs from it. No option reaches
+    this: only ``main`` calls it, with constants."""
+    return ScriptedControls(read_naming_null(t_commit, split=split, path=path))
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """No option sets a number the evaluation reads, a root, or the output."""
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--split", type=Path, help="the dev split, absolute, for group B")
+    p.add_argument(
+        "--test-split", type=Path, help="the test split, absolute, outside the repo"
+    )
+    p.add_argument("--store", type=Path, help="absolute path")
+    p.add_argument("--workers", type=int, choices=(1, 2), default=2)
+    p.add_argument(
+        "--finalise",
+        action="store_true",
+        help="the terminal step, from the records, after any end",
+    )
+    p.add_argument(
+        "--end",
+        action="store_true",
+        help="with --finalise: end a run that could still resume. Needs a note in "
+        "END saying who and why: the owner's or the control room's authority",
+    )
+    p.add_argument(
+        "--print-hashes",
+        action="store_true",
+        help="print the script's and the test's sha256, for the LOG entry at R2",
+    )
+    return p

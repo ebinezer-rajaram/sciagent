@@ -20,12 +20,15 @@ pass and every read starts at 0.
 from __future__ import annotations
 
 import ast
+import hashlib
 import importlib
+import inspect
 import json
 import math
 import multiprocessing
 import os
 import signal
+import subprocess
 import sys
 import time
 from collections.abc import Callable, Iterator, Sequence
@@ -45,6 +48,7 @@ from sciagent.campaign.voids import VoidStatus
 REPO: Final = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "scripts"))
 p4m: Any = importlib.import_module("p4_search_misses")
+record_module: Any = importlib.import_module("naming_null_record")
 
 #: Every R1, hunt log and read in this file runs under these. Not the launch's.
 TEST_ROOT: Final = 20261107
@@ -1985,3 +1989,619 @@ def test_group_e_goes_on_the_label_line_with_its_denominator(paths: Any) -> None
     assert d["group_e"] == {"caught": 1, "of": 2}
     assert "group E 1 of 2" in d["label_line"]
     assert d["H1"]["falsified"] is False
+
+
+# --------------------------------------------------------------------------
+# The guards (section 2.10): a real chain of commits, in a toy repository
+# --------------------------------------------------------------------------
+
+GIT: Final = (
+    "git",
+    "-c",
+    "user.name=t",
+    "-c",
+    "user.email=t@example.org",
+    "-c",
+    "commit.gpgsign=false",
+)
+ONES: Final = {
+    "OPENBLAS_NUM_THREADS": "1",
+    "OMP_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+}
+TOY_TEST_SPLIT_SHA: Final = "e" * 64
+
+
+def git(repo: Path, *args: str) -> str:
+    done = subprocess.run(
+        [*GIT, *args], cwd=repo, capture_output=True, text=True, check=True
+    )
+    return done.stdout.strip()
+
+
+def write(repo: Path, relative: str, text: str = "x\n") -> None:
+    path = repo / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def commit(repo: Path, message: str) -> str:
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", message)
+    return git(repo, "rev-parse", "HEAD")
+
+
+def sha_of(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+@dataclass(frozen=True)
+class Chain:
+    repo: Path
+    base: str
+    f2: str
+    r2: str
+    s: str
+    t: str
+    store: Path
+
+    @property
+    def sidecar(self) -> Path:
+        return self.store / "fingerprint.jsonl"
+
+
+def build_chain(
+    root: Path,
+    *,
+    log: str | None = None,
+    freeze: str | None = None,
+    in_t: Sequence[str] = (),
+    pushed: bool = True,
+) -> Chain:
+    """base, F2, R2, a LOG line naming R2, S, T. ``log`` replaces S's LOG (``{r2}``
+    filled in), ``freeze`` the file's line, ``in_t`` adds paths to T's commit."""
+    repo = root / "repo"
+    repo.mkdir()
+    git(repo, "init", "-q", "-b", "v2")
+    for path in (*p4m.FIT_GUARD_PATHS, p4m.REDUCTIONS_PATH, "uv.lock"):
+        write(repo, path, "old\n")
+    base = commit(repo, "base")
+    write(repo, p4m.FIT_GUARD_PATHS[0], "one changed line\n")
+    write(repo, p4m.REDUCTIONS_PATH, "new\n")
+    commit(repo, "the one-line diff")
+    write(repo, p4m.PREREG_PATH, "the rule\n")
+    f2 = commit(repo, "F2")
+    write(repo, p4m.SCRIPT_PATH, "script\n")
+    write(repo, p4m.TEST_PATH, "test\n")
+    hashes = f"sha256: {sha_of('script\n')}\nsha256: {sha_of('test\n')}\n"
+    write(repo, p4m.LOG_PATH, hashes)
+    r2 = commit(repo, "R2")
+    text = f"{hashes}`R2` = {r2}\n" if log is None else log.format(r2=r2, f2=f2)
+    write(repo, p4m.LOG_PATH, text)
+    write(repo, p4m.TEST_SPLIT_HASH_PATH, f"{TOY_TEST_SPLIT_SHA}\n")
+    s = commit(repo, "S")
+    write(repo, p4m.FREEZE_PATH, f"{freeze or s}\n")
+    for path in in_t:
+        write(repo, path)
+    t = commit(repo, "T")
+    if pushed:
+        git(repo, "update-ref", "refs/remotes/origin/v2", t)
+    store = root / "store"
+    store.mkdir()
+    line = json.dumps({"event": "establish", "fingerprint": f"commit={t},tree=clean"})
+    (store / "fingerprint.jsonl").write_text(f"{line}\n", encoding="utf-8")
+    return Chain(repo, base, f2, r2, s, t, store)
+
+
+def guards(chain: Chain, **over: Any) -> Any:
+    options: dict[str, Any] = {
+        "prereg_sha": sha_of("the rule\n"),
+        "f2_commit": chain.f2,
+        "base_commit": chain.base,
+        "fit_diff_sha": p4m.fit_diff_digest(chain.repo, chain.base),
+        "reductions_blob": git(chain.repo, "rev-parse", f"HEAD:{p4m.REDUCTIONS_PATH}"),
+        "environ": ONES,
+        "store": chain.store,
+        "launch_copy": chain.sidecar.read_bytes,
+        "packages": (),
+        **over,
+    }
+    return p4m.run_guards(chain.repo, **options)
+
+
+@pytest.fixture
+def chain(tmp_path: Path) -> Chain:
+    return build_chain(tmp_path)
+
+
+def test_the_guards_pass_at_t_and_name_every_commit(chain: Chain) -> None:
+    assert guards(chain) == {
+        "F2": chain.f2,
+        "R2": chain.r2,
+        "S": chain.s,
+        "T": chain.t,
+        "prereg_sha256": sha_of("the rule\n"),
+    }
+
+
+def test_a_commit_after_t_is_refused(chain: Chain) -> None:
+    write(chain.repo, "docs/v2/LOG2.md")
+    commit(chain.repo, "after T")
+    with pytest.raises(p4m.GuardFailure, match="HEAD"):
+        guards(chain)
+
+
+def test_a_repointed_freeze_file_is_refused(chain: Chain) -> None:
+    """A second commit on the file: repointing it after the fact."""
+    write(chain.repo, p4m.FREEZE_PATH, f"{chain.r2}\n")
+    head = commit(chain.repo, "repoint")
+    git(chain.repo, "update-ref", "refs/remotes/origin/v2", head)
+    with pytest.raises(p4m.GuardFailure, match="exactly one commit"):
+        guards(chain)
+
+
+def test_a_freeze_file_naming_another_commit_than_its_parent_is_refused(
+    tmp_path: Path,
+) -> None:
+    other = build_chain(tmp_path, freeze="0" * 40)
+    with pytest.raises(p4m.GuardFailure, match="names"):
+        guards(other)
+
+
+def test_a_freeze_file_of_two_lines_is_refused(tmp_path: Path) -> None:
+    other = build_chain(tmp_path, freeze="abc1234\nabc1234")
+    with pytest.raises(p4m.GuardFailure, match="one line"):
+        guards(other)
+
+
+def test_no_freeze_file_is_refused(tmp_path: Path) -> None:
+    chain = build_chain(tmp_path)
+    git(chain.repo, "checkout", "-q", chain.s)
+    with pytest.raises(p4m.GuardFailure, match="exactly one commit"):
+        guards(chain)
+
+
+def test_ts_diff_must_be_that_file_alone(tmp_path: Path) -> None:
+    other = build_chain(tmp_path, in_t=("docs/v2/other.md",))
+    with pytest.raises(p4m.GuardFailure, match="alone"):
+        guards(other)
+
+
+def test_t_must_lie_on_origin_v2s_first_parent_chain(tmp_path: Path) -> None:
+    other = build_chain(tmp_path, pushed=False)
+    git(other.repo, "update-ref", "refs/remotes/origin/v2", other.s)
+    with pytest.raises(p4m.GuardFailure, match="origin/v2"):
+        guards(other)
+
+
+def test_t_on_a_merged_side_branch_is_not_on_the_first_parent_chain(
+    tmp_path: Path,
+) -> None:
+    other = build_chain(tmp_path, pushed=False)
+    git(other.repo, "checkout", "-q", "-b", "main-line", other.s)
+    write(other.repo, "docs/x.md")
+    commit(other.repo, "main line")
+    git(other.repo, "merge", "-q", "--no-ff", "-m", "m", "v2")
+    git(other.repo, "update-ref", "refs/remotes/origin/v2", "HEAD")
+    git(other.repo, "checkout", "-q", other.t)
+    with pytest.raises(p4m.GuardFailure, match="origin/v2"):
+        guards(other)
+
+
+def test_no_origin_v2_is_refused(tmp_path: Path) -> None:
+    other = build_chain(tmp_path, pushed=False)
+    with pytest.raises(p4m.GuardFailure, match="origin/v2"):
+        guards(other)
+
+
+def test_a_wrong_prereg_hash_is_refused(chain: Chain) -> None:
+    with pytest.raises(p4m.GuardFailure, match="prereg"):
+        guards(chain, prereg_sha="0" * 64)
+
+
+def test_f2_must_be_an_ancestor_of_head(chain: Chain) -> None:
+    with pytest.raises(p4m.GuardFailure, match="F2"):
+        guards(chain, f2_commit="1" * 40)
+
+
+def test_the_prereg_at_f2_must_be_the_frozen_text(tmp_path: Path) -> None:
+    """A tree that matches and an F2 that does not: the file changed after F2."""
+    chain = build_chain(tmp_path)
+    with pytest.raises(p4m.GuardFailure, match="F2"):
+        guards(chain, f2_commit=chain.base)
+
+
+@pytest.mark.parametrize(
+    "log",
+    [
+        "`R2` = {r2}\n",
+        f"sha256: {sha_of('script\n')}\n`R2` = {{r2}}\n",
+        f"sha256: {sha_of('test\n')}\n`R2` = {{r2}}\n",
+    ],
+    ids=["neither", "no test", "no script"],
+)
+def test_the_hashes_must_be_in_ss_log(tmp_path: Path, log: str) -> None:
+    other = build_chain(tmp_path, log=log)
+    with pytest.raises(p4m.GuardFailure, match="LOG"):
+        guards(other)
+
+
+def test_the_working_log_does_not_count(tmp_path: Path) -> None:
+    """Hashes added to the LOG after S are in the tree and not in S's LOG."""
+    other = build_chain(tmp_path, log="`R2` = {r2}\n")
+    assert sha_of("script\n") in git(other.repo, "show", f"{other.r2}:{p4m.LOG_PATH}")
+    write(other.repo, p4m.LOG_PATH, f"sha256: {sha_of('script\n')}\n")
+    with pytest.raises(p4m.GuardFailure):
+        guards(other)
+
+
+def test_a_script_changed_after_r2_is_refused(tmp_path: Path) -> None:
+    other = build_chain(tmp_path, in_t=(p4m.SCRIPT_PATH,))
+    with pytest.raises(p4m.GuardFailure):
+        guards(other)
+
+
+def test_r2_must_be_named_by_ss_log(tmp_path: Path) -> None:
+    hashes = f"sha256: {sha_of('script\n')}\nsha256: {sha_of('test\n')}\n"
+    other = build_chain(tmp_path, log=hashes)
+    with pytest.raises(p4m.GuardFailure, match="R2"):
+        guards(other)
+
+
+def test_two_different_r2s_in_the_log_are_refused(tmp_path: Path) -> None:
+    hashes = f"sha256: {sha_of('script\n')}\nsha256: {sha_of('test\n')}\n"
+    other = build_chain(tmp_path, log=hashes + "`R2` = {r2}\n`R2` = abcdef1\n")
+    with pytest.raises(p4m.GuardFailure, match="R2"):
+        guards(other)
+
+
+def test_r2_must_hold_the_two_files_it_is_named_for(tmp_path: Path) -> None:
+    hashes = f"sha256: {sha_of('script\n')}\nsha256: {sha_of('test\n')}\n"
+    chain = build_chain(tmp_path, log=hashes + "`R2` = {f2}\n")
+    with pytest.raises(p4m.GuardFailure, match="R2"):
+        guards(chain)
+
+
+def test_an_r2_that_is_no_commit_here_is_refused(tmp_path: Path) -> None:
+    hashes = f"sha256: {sha_of('script\n')}\nsha256: {sha_of('test\n')}\n"
+    chain = build_chain(tmp_path, log=hashes + f"`R2` = {'a' * 40}\n")
+    with pytest.raises(p4m.GuardFailure, match="R2"):
+        guards(chain)
+
+
+def test_a_store_with_no_sidecar_is_refused(chain: Chain) -> None:
+    copy = chain.sidecar.read_bytes()
+    chain.sidecar.unlink()
+    with pytest.raises(p4m.GuardFailure, match="establish"):
+        guards(chain, launch_copy=lambda: copy)
+
+
+def test_a_reuse_line_is_refused_for_good(chain: Chain) -> None:
+    line = json.dumps(
+        {
+            "event": "reuse",
+            "fingerprint": f"commit={chain.s},tree=clean",
+            "from": f"commit={chain.t},tree=clean",
+        }
+    )
+    with chain.sidecar.open("a") as f:
+        f.write(f"{line}\n")
+    with pytest.raises(p4m.GuardFailure, match="establish"):
+        guards(chain)
+
+
+def test_a_store_begun_at_another_commit_is_refused(chain: Chain) -> None:
+    line = json.dumps(
+        {"event": "establish", "fingerprint": f"commit={chain.s},tree=clean"}
+    )
+    chain.sidecar.write_text(f"{line}\n")
+    with pytest.raises(p4m.GuardFailure, match="witness"):
+        guards(chain)
+
+
+def test_an_unreadable_sidecar_is_refused(chain: Chain) -> None:
+    chain.sidecar.write_text("not json\n")
+    with pytest.raises(p4m.GuardFailure, match="fingerprint"):
+        guards(chain)
+
+
+def test_a_sidecar_unlike_the_launch_copy_is_refused(chain: Chain) -> None:
+    with pytest.raises(p4m.GuardFailure, match="launch copy"):
+        guards(chain, launch_copy=lambda: b"other\n")
+
+
+def test_a_launch_copy_that_cannot_be_fetched_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fails(*args: Any, **kwargs: Any) -> Any:
+        return subprocess.CompletedProcess(args, 1, b"", b"no such key")
+
+    monkeypatch.setattr(p4m.subprocess, "run", fails)
+    with pytest.raises(p4m.GuardFailure, match="launch copy"):
+        p4m.read_launch_copy()
+
+
+def test_the_launch_copy_is_read_from_beside_the_results() -> None:
+    assert p4m.LAUNCH_FINGERPRINT_URI == (
+        "s3://delaymargin-results-482913/sciagent/p4/fingerprint.jsonl"
+    )
+
+
+def test_a_fit_diff_other_than_the_constant_is_refused(chain: Chain) -> None:
+    with pytest.raises(p4m.GuardFailure, match="fit"):
+        guards(chain, fit_diff_sha="0" * 64)
+
+
+def test_another_reductions_blob_is_refused(chain: Chain) -> None:
+    with pytest.raises(p4m.GuardFailure, match="reductions"):
+        guards(chain, reductions_blob="0" * 40)
+
+
+def test_another_fit_version_is_refused(
+    chain: Chain, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(p4m, "FIT_VERSION", "sciagent.glm.fit/6")
+    with pytest.raises(p4m.GuardFailure, match="fit/5"):
+        guards(chain)
+
+
+def test_the_fit_constants_are_this_repositorys() -> None:
+    """Git only: the one-line diff and the blob, read at this head."""
+    assert p4m.fit_diff_digest(REPO, p4m.BASE_COMMIT) == p4m.FIT_DIFF_SHA256
+    assert p4m.FIT_DIFF_SHA256.startswith("5ab0f61d")
+    blob = subprocess.run(
+        ["git", "rev-parse", f"HEAD:{p4m.REDUCTIONS_PATH}"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert blob == p4m.REDUCTIONS_BLOB
+    assert p4m.FIT_VERSION_EXPECTED == "sciagent.glm.fit/5"
+    assert p4m.FIT_VERSION == p4m.FIT_VERSION_EXPECTED
+
+
+def test_a_modified_tracked_file_is_refused(chain: Chain) -> None:
+    write(chain.repo, "uv.lock", "edited\n")
+    with pytest.raises(p4m.GuardFailure, match="clean"):
+        guards(chain)
+
+
+def test_an_untracked_file_is_refused(chain: Chain) -> None:
+    write(chain.repo, "stray.txt")
+    with pytest.raises(p4m.GuardFailure, match="clean"):
+        guards(chain)
+
+
+@pytest.mark.parametrize("name", sorted(ONES))
+@pytest.mark.parametrize("value", [None, "2"])
+def test_blas_threads_must_be_one(chain: Chain, name: str, value: str | None) -> None:
+    environ = {k: v for k, v in ONES.items() if k != name}
+    if value is not None:
+        environ[name] = value
+    with pytest.raises(p4m.GuardFailure, match=name):
+        guards(chain, environ=environ)
+
+
+def test_the_blas_guard_reads_the_environment_the_process_started_with() -> None:
+    assert p4m.initial_environment().get("PATH") == os.environ.get("PATH")
+
+
+def test_the_output_is_a_constant_and_the_reports_reads_path_is_inside_it() -> None:
+    report = importlib.import_module("pilot_report")
+    assert Path("/home/ubuntu/research/records/sciagent/p4-search-misses-F2") == (
+        p4m.OUT_DIR
+    )
+    assert p4m.OutPaths(p4m.OUT_DIR).reads == report.P4_READS
+
+
+def test_the_options_are_the_texts_and_none_sets_a_number() -> None:
+    parser = p4m.build_parser()
+    options = {o for a in parser._actions for o in a.option_strings}
+    assert {"--out", "--naming-null", "--controls", "--root"}.isdisjoint(options)
+    assert options >= {
+        "--split",
+        "--test-split",
+        "--store",
+        "--workers",
+        "--finalise",
+        "--end",
+        "--print-hashes",
+    }
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--out", "/tmp/x"])
+
+
+def test_more_than_two_workers_is_refused() -> None:
+    with pytest.raises(SystemExit):
+        p4m.build_parser().parse_args(["--workers", "3"])
+
+
+# --------------------------------------------------------------------------
+# Paths and the two splits (section 2.10)
+# --------------------------------------------------------------------------
+
+
+def toy_split(root: Path, kind: str = "dev") -> Path:
+    split = root / "data" / "v2" / "truths" / kind
+    for name, text in (
+        ("manifest.json", "{}"),
+        ("dev-001.json", "a"),
+        ("sub/dev-002.json", "d"),
+        ("Z.json", "c"),
+    ):
+        path = split / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    return split
+
+
+@pytest.mark.parametrize("kind", ["dev", "test"])
+def test_the_split_hash_is_the_texts_shell_pipeline(tmp_path: Path, kind: str) -> None:
+    toy_split(tmp_path, kind)
+    relative = f"data/v2/truths/{kind}"
+    line = f"find {relative} -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum"
+    done = subprocess.run(
+        ["bash", "-c", line],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+        env={**os.environ, "LC_ALL": "C"},
+    )
+    got = p4m.split_digest(tmp_path / relative, relative)
+    assert got == done.stdout.split()[0]
+
+
+def test_the_two_splits_hash_under_their_own_names(tmp_path: Path) -> None:
+    dev = toy_split(tmp_path, "dev")
+    assert p4m.split_digest(dev, p4m.DEV_RELATIVE) != p4m.split_digest(
+        dev, p4m.TEST_RELATIVE
+    )
+    assert p4m.DEV_RELATIVE == "data/v2/truths/dev"
+    assert p4m.TEST_RELATIVE == "data/v2/truths/test"
+
+
+def test_the_dev_constant_is_the_pilot_rules() -> None:
+    assert p4m.SPLIT_SHA256 == (
+        "31c18f10ca7c8a4ad6b599de5436bb15426bd02c67f3eb44fb0e93cb512ba577"
+    )
+
+
+def test_a_split_hash_mismatch_stops(tmp_path: Path) -> None:
+    split = toy_split(tmp_path)
+    with pytest.raises(p4m.GuardFailure, match="split hash"):
+        p4m.check_split(split, "0" * 64, p4m.DEV_RELATIVE)
+    good = p4m.split_digest(split, p4m.DEV_RELATIVE)
+    p4m.check_split(split, good, p4m.DEV_RELATIVE)
+
+
+def test_the_test_splits_hash_comes_from_s(chain: Chain) -> None:
+    assert p4m.test_split_expected(chain.repo, chain.s) == TOY_TEST_SPLIT_SHA
+
+
+def test_no_hash_at_s_or_a_malformed_one_is_refused(tmp_path: Path) -> None:
+    chain = build_chain(tmp_path)
+    with pytest.raises(p4m.GuardFailure, match="test split"):
+        p4m.test_split_expected(chain.repo, chain.f2)
+    write(chain.repo, p4m.TEST_SPLIT_HASH_PATH, "not a hash\n")
+    with pytest.raises(p4m.GuardFailure, match="test split"):
+        p4m.test_split_expected(chain.repo, commit(chain.repo, "bad"))
+
+
+def test_every_path_must_be_absolute(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    options = {
+        "split": tmp_path / "s",
+        "test_split": tmp_path / "t",
+        "store": tmp_path / "st",
+        "out": tmp_path / "o",
+        "repo": repo,
+    }
+    p4m.check_paths(**options)
+    for name in ("split", "test_split", "store"):
+        with pytest.raises(p4m.GuardFailure, match="absolute"):
+            p4m.check_paths(**{**options, name: Path("relative")})
+
+
+def test_the_test_split_must_be_outside_the_repository(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    with pytest.raises(p4m.GuardFailure, match="outside"):
+        p4m.check_paths(
+            split=tmp_path / "s",
+            test_split=repo / "data" / "test",
+            store=tmp_path / "st",
+            out=tmp_path / "o",
+            repo=repo,
+        )
+
+
+@pytest.mark.parametrize("inside", ["repo", "store"])
+def test_the_output_must_be_outside_the_repository_and_the_store(
+    tmp_path: Path, inside: str
+) -> None:
+    repo, store = tmp_path / "repo", tmp_path / "store"
+    with pytest.raises(p4m.GuardFailure, match="outside"):
+        p4m.check_paths(
+            split=tmp_path / "s",
+            test_split=tmp_path / "t",
+            store=store,
+            out=(repo if inside == "repo" else store) / "o",
+            repo=repo,
+        )
+
+
+def test_the_manifest_sees_a_changed_an_added_and_a_removed_file(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "store"
+    root.mkdir()
+    (root / "a").write_text("1")
+    (root / "b").write_text("2")
+    before = p4m.store_manifest(root)
+    (root / "a").write_text("3")
+    (root / "b").unlink()
+    (root / "c").write_text("4")
+    assert p4m.manifest_diff(before, p4m.store_manifest(root)) == [
+        "added c",
+        "changed a",
+        "removed b",
+    ]
+
+
+# --------------------------------------------------------------------------
+# Control 4's source (section 2.7)
+# --------------------------------------------------------------------------
+
+
+def naming_record(**over: Any) -> Rec:
+    return {
+        "schema": record_module.SCHEMA,
+        "commit": "t" * 40,
+        "split": "test",
+        "seed": 1,
+        "verdicts": [
+            {"truth": "a", "half": "in", "passed": True},
+            {"truth": "b", "half": "out", "passed": True},
+        ],
+        **over,
+    }
+
+
+def test_a_pass_on_both_truths_at_t_is_true(tmp_path: Path) -> None:
+    path = tmp_path / "naming-null.json"
+    record_module.write_record(path, naming_record())
+    assert p4m.scripted_controls("t" * 40, path=path) == ScriptedControls(True)
+
+
+def test_a_missing_record_gives_false(tmp_path: Path) -> None:
+    got = p4m.scripted_controls("t" * 40, path=tmp_path / "none.json")
+    assert got == ScriptedControls(False)
+
+
+def test_an_unreadable_record_gives_false(tmp_path: Path) -> None:
+    path = tmp_path / "naming-null.json"
+    path.write_text("{not json")
+    assert p4m.scripted_controls("t" * 40, path=path) == ScriptedControls(False)
+
+
+def test_a_record_of_another_commit_gives_false(tmp_path: Path) -> None:
+    path = tmp_path / "naming-null.json"
+    record_module.write_record(path, naming_record(commit="u" * 40))
+    assert p4m.scripted_controls("t" * 40, path=path) == ScriptedControls(False)
+
+
+def test_anything_but_a_pass_on_both_gives_false(tmp_path: Path) -> None:
+    path = tmp_path / "naming-null.json"
+    failed = [
+        {"truth": "a", "half": "in", "passed": True},
+        {"truth": "b", "half": "out", "passed": False},
+    ]
+    record_module.write_record(path, naming_record(verdicts=failed))
+    assert p4m.scripted_controls("t" * 40, path=path) == ScriptedControls(False)
+
+
+def test_the_default_path_is_the_records_constant() -> None:
+    signature = inspect.signature(p4m.scripted_controls)
+    assert signature.parameters["path"].default == record_module.NAMING_NULL_RECORD
+    assert signature.parameters["split"].default == "test"

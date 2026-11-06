@@ -190,3 +190,14 @@ entry, and marks it handled with the date and what was done. Newest last.
   a worktree, use the Edit tool from the start. The rule for helpers stands: a block means stop and
   report, whatever tool could make the write.
   Handled 2026-11-06 (lane session 35): LOG corrected, guard left alone, helpers briefed to use Edit in worktrees and to stop on a block. A second block, on the lead's own doc write at 07:21:41Z, was ruled on by the control room the same morning (LOG 2026-11-06).
+
+## 2026-11-06, control room (B-sym tuning and the P4 SPEC text)
+
+- [ ] **B-sym: tune, do not waive.** Before the section 6.1 freeze, tune B-sym on dev only, CPU only.
+  Write the effort budget first: at least the effort the agent arms get, in the same units. Freeze the
+  tuned settings in the 6.1 commit. Record P3's untuned run as a deviation from SPEC section 9, and
+  say in P3's write-up that its B-sym was untuned.
+- [ ] **SPEC-TEXT-P4.md: accept as drafted**, provided it has had one red-team round. If it has not, run
+  one first and fix any blocking findings. Any wording that changes what the paper claims comes back
+  here.
+  Both decided by the control room under the owner's standing delegation.

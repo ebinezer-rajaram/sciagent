@@ -45,12 +45,15 @@ import resource
 import signal
 import statistics
 import subprocess
+import sys
 import threading
 import time
 from collections import deque
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from functools import partial
+from itertools import batched, product
 from pathlib import Path
 from types import FrameType
 from typing import Any, ClassVar, Final, Literal, Protocol
@@ -66,17 +69,84 @@ from sciagent.campaign.contrasts import (
     ControlsRead,
     FloorRead,
     ScriptedControls,
+    contrast_rows,
+)
+from sciagent.campaign.execute import (
+    UNIT_FAILURES,
+    observational_data,
+    score_submission,
 )
 from sciagent.campaign.fingerprint import (
     FINGERPRINT_FILE,
     CodeFingerprintError,
     read_fingerprints,
 )
-from sciagent.campaign.plan import B_SPARSE, ORACLE, CampaignError
-from sciagent.glm.fit import FIT_VERSION, PSI_FULL_GRID_MAX
-from sciagent.glm.grammar import Link
+from sciagent.campaign.p4plan import p4_plan
+from sciagent.campaign.plan import (
+    B_LIB,
+    B_NP,
+    B_SPARSE,
+    ORACLE,
+    TELLING,
+    CampaignConfig,
+    CampaignEnvironment,
+    CampaignError,
+    TruthEntry,
+    baseline_key,
+    baseline_units,
+    llm_units,
+    score_key,
+)
+from sciagent.campaign.rescore import stored_sessions
+from sciagent.campaign.store import ResultStore
+from sciagent.glm.canonical import canonicalise
+from sciagent.glm.data import Dataset, EventLog
+from sciagent.glm.fit import (
+    FIT_VERSION,
+    PSI_FULL_GRID_MAX,
+    FitConfig,
+    FitError,
+    FitResult,
+    _ascend,
+    _Budget,
+    _Point,
+    _Profile,
+    _search_blocks,
+    _Slots,
+    evaluate_log_likelihood,
+    fit,
+)
+from sciagent.glm.grammar import (
+    ALL,
+    ChannelKind,
+    ChannelSpec,
+    Excite,
+    Feature,
+    Gate,
+    KernelKind,
+    Link,
+    Mark,
+    One,
+    Periodic,
+    PhaseWindow,
+    Structure,
+    n_columns,
+    psi_slots,
+)
+from sciagent.glm.grids import grid
+from sciagent.glm.simulate import (
+    Coefficients,
+    PsiAssignment,
+    SimulationError,
+    simulate,
+)
+from sciagent.glm.syntax import parse, render
 from sciagent.scenarios.records import canonical_json
 from sciagent.scoring import gonogo
+from sciagent.scoring.heldout import held_out_dataset
+from sciagent.systems.v2.models import GLMModel
+from sciagent.systems.v2.sparse import SparseConfig, split_dataset
+from sciagent.systems.v2.systems import InvestigationData, Oracle, oracle_underfit
 
 type Json = Any
 type RowKey = tuple[str, int, str]
@@ -200,6 +270,33 @@ T2_CASES: Final = (
     (0, "softplus", 2006407976),
 )
 GROUP_B: Final = ("dev-015", 3)
+#: From the pilot check's ``units.jsonl``: section 2.9's three hex constants.
+GROUP_B_PER_EVENT: Final = "-0x1.4051a13cc7023p-1"
+GROUP_B_SEARCH_LL: Final = "-0x1.86fd12dec695ap+9"
+GROUP_B_KEPT_LL: Final = "-0x1.84b974f87ed40p+9"
+GROUP_B_TEXT: Final = (
+    "link=exp; Excite(ExpK, One, sign=-) + Product(Excite(ExpK, Pow(size), all), "
+    "Product(Excite(ExpK, Mark(size), all), Excite(ExpK, Pow(size), all)))"
+)
+
+K_STARTS: Final = 48
+S2_STARTS: Final = 16
+#: R1's new inner solves per fit, by link (section 2.2: as PR 2.2).
+R1_POINT_CAP: Final = 8_000
+R1_POINT_CAP_IDENTITY: Final = 3_000
+#: S2's reference: new solves per link.
+S2_POINT_CAP: Final = 2_000
+R2_GRID_MAX: Final = 14_400
+#: Points per ``evaluate`` call in R2 (a memory bound; no number depends on it).
+R2_CHUNK: Final = 2000
+
+#: Cases per sub-stratum.
+HUNT_SIZE: Final = 150
+#: R1 runs on this many found losses per sub-stratum, in index order.
+HUNT_R1_PER_STRATUM: Final = 25
+#: CPU hours of the whole of group C, R1 included.
+HUNT_CPU_HOURS: Final = 6.0
+HUNT_HORIZON: Final = 300.0
 
 EXIT_CODES: Final = {
     "BYTE_FAIL": 3,
@@ -1437,6 +1534,17 @@ class H1Status:
         return self.a_caught >= 5 and self.b_caught and self.d_caught
 
 
+def h1_json(h1: H1Status) -> Record:
+    return {
+        "falsified": not h1.stands,
+        "group_a_caught": h1.a_caught,
+        "group_a_of": h1.a_total,
+        "group_b_caught": h1.b_caught,
+        "group_d_caught": h1.d_caught,
+        "cases": list(h1.cases),
+    }
+
+
 def _control_of(record: Mapping[str, Json]) -> Mapping[str, Json] | None:
     if record.get("kind") == "control":
         return record
@@ -1897,7 +2005,13 @@ def fit_views(records: Sequence[Mapping[str, Json]]) -> list[Mapping[str, Json]]
     for r in records:
         if r["type"] == "r1" and "result" in r and r["job"] not in views:
             views[r["job"]] = {**r["result"], "job": r["job"]}
-    return [views[job] for job in sorted(views)]
+    return [views[job] for job in sorted(views) if not _is_group_b(views[job])]
+
+
+def _is_group_b(view: Mapping[str, Json]) -> bool:
+    """Group B is a dev unit, so its fit is in no count of P4's rows."""
+    control = view.get("control")
+    return control is not None and control["group"] == "B"
 
 
 def _clock_stops(
@@ -1999,14 +2113,7 @@ def decide(
         },
         "stop_note": stop_note,
         "end_note": end_note,
-        "H1": {
-            "falsified": not h1.stands,
-            "group_a_caught": h1.a_caught,
-            "group_a_of": h1.a_total,
-            "group_b_caught": h1.b_caught,
-            "group_d_caught": h1.d_caught,
-            "cases": list(h1.cases),
-        },
+        "H1": h1_json(h1),
         "H2": {
             "falsified": len(misses) >= 1,
             "rests_on_within_quadrature": bool(quadrature)
@@ -2023,6 +2130,12 @@ def decide(
         "M_by_system": _count(key[2] for key, _ in misses),
         "miss_rows": _miss_rows(misses, census, done_fits),
         "classes": _count(r.klass for r in census.rows),
+        "failed_units": [
+            [r.truth, r.seed, r.system] for r in census.rows if r.klass == "failed"
+        ],
+        "void_units": sorted(
+            [x.truth, x.seed, x.system] for x in table.sessions if x.void.void
+        ),
         "within_quadrature_rows": quadrature,
         "clock_stops": _clock_stops(records, fit_records, end),
         "max_abs_delta": _max_delta(misses),
@@ -2622,3 +2735,1736 @@ def build_parser() -> argparse.ArgumentParser:
         help="print the script's and the test's sha256, for the LOG entry at R2",
     )
     return p
+
+
+# --------------------------------------------------------------------------
+# R1 and R2 (PR 2.2), as the pilot's
+# --------------------------------------------------------------------------
+
+
+class ContaminatedProfile(RuntimeError):
+    """R1 was handed a profile that already held points (PR 2.2)."""
+
+
+def t2_case(which: int, link: str, seed: int) -> str:
+    return f"t2|{which}|{link}|{seed}"
+
+
+def hunt_case(stratum: str, i: int) -> str:
+    return f"hunt|{stratum}|{i}"
+
+
+def r1_cap(link: str) -> int:
+    return R1_POINT_CAP_IDENTITY if link == Link.IDENTITY.value else R1_POINT_CAP
+
+
+@dataclass(frozen=True)
+class PointValue:
+    """One ψ point as a search saw it: ``score`` is ``-primal``."""
+
+    point: _Point
+    score: float
+    gap: float
+    certified: bool
+
+
+def choose_point(r0: PointValue, reference: PointValue | None) -> PointValue | None:
+    """The highest-scoring certified point of R0 to R2, ties to the lowest index
+    tuple. ``reference`` is the certified best of R1 and R2."""
+    candidates = [v for v in (r0, reference) if v is not None and v.certified]
+    if not candidates:
+        return None
+    return min(candidates, key=lambda v: (-v.score, v.point))
+
+
+def count_uncertified_better(
+    values: Iterable[PointValue], chosen: PointValue | None
+) -> int:
+    """Uncertified points above the chosen one: seen, counted, never used."""
+    floor = -math.inf if chosen is None else chosen.score
+    return sum(not v.certified and v.score > floor for v in values)
+
+
+def within_quadrature(gain: float, stored_error: float, chosen_error: float) -> bool:
+    """PR 2.3: L is exact only up to ``quadrature_error``, which differs by ψ.
+    Such a miss stays in M and is listed."""
+    return gain <= abs(stored_error) + abs(chosen_error)
+
+
+def found_loss(base: Valued, generating: Valued) -> bool:
+    """PR 2.9: the fixed-ψ fit is certified and beats fit/5's L by more than the
+    tolerance. fit/5's own flag is no condition: it is false when any visited
+    point was uncertified."""
+    return generating.certified and call_miss(generating, base).kind == "miss"
+
+
+@dataclass(frozen=True)
+class R1Outcome:
+    starts: tuple[_Point, ...]
+    n_ascents: int
+    capped: bool
+    n_points: int
+    best: PointValue | None
+    #: The uncertified points R1 reached, for ``uncertified_better``.
+    uncertified: tuple[PointValue, ...] = ()
+    n_infeasible: int = 0
+    cpu_cut: bool = False
+
+
+@dataclass(frozen=True)
+class ReferenceOutcome:
+    r1: R1Outcome
+    r2_complete: bool
+    #: Certified best of everything the profile holds.
+    best: PointValue | None
+    profile: _Profile
+    cpu_cut: bool = False
+
+    @property
+    def uncertified(self) -> tuple[PointValue, ...]:
+        return tuple(v for v in point_values(self.profile) if not v.certified)
+
+
+def fresh_profile(
+    structure: Structure,
+    datasets: Sequence[Dataset],
+    channels: tuple[ChannelSpec, ...],
+) -> _Profile:
+    return _Profile(structure, tuple(datasets), channels, FitConfig(), None)
+
+
+def draw_starts(slots: _Slots, rng: np.random.Generator, k: int) -> list[_Point]:
+    return [tuple(int(rng.integers(len(g))) for g in slots.grids) for _ in range(k)]
+
+
+def point_values(profile: _Profile) -> list[PointValue]:
+    """Every solved point of the profile, in index order."""
+    out: list[PointValue] = []
+    for point in sorted(profile.solutions):
+        solution = profile.solutions[point]
+        if solution is None:
+            continue
+        out.append(
+            PointValue(point, profile.score(point), solution.gap, solution.certified)
+        )
+    return out
+
+
+def best_certified(profile: _Profile) -> PointValue | None:
+    usable = [
+        v for v in point_values(profile) if v.certified and math.isfinite(v.score)
+    ]
+    return min(usable, key=lambda v: (-v.score, v.point)) if usable else None
+
+
+def run_r1(
+    profile: _Profile,
+    rng: np.random.Generator,
+    *,
+    k: int,
+    cap: int,
+    should_stop: Callable[[], bool] | None = None,
+) -> R1Outcome:
+    """K seeded ascents with fit/5's own ``_ascend`` and blocks. The cap is a
+    solve count, so where it stops is deterministic; ``should_stop`` reads a
+    clock, between starts, and is flagged ``cpu_cut`` when it fires."""
+    if profile.solutions or profile.solves[0]:
+        raise ContaminatedProfile(
+            f"R1 needs an empty profile; this one holds {len(profile.solutions)} points"
+        )
+    starts = draw_starts(profile.slots, rng, k)
+    blocks = _search_blocks(profile.slots, profile.config.psi_block_max)
+    finished, capped, cut = 0, False, False
+    try:
+        for start in starts:
+            if should_stop is not None and should_stop():
+                cut = True
+                break
+            _ascend(profile, start, blocks, cap)
+            finished += 1
+    except _Budget:
+        capped = True
+    values = point_values(profile)
+    return R1Outcome(
+        tuple(starts),
+        finished,
+        capped,
+        len(profile.solutions),
+        best_certified(profile),
+        tuple(v for v in values if not v.certified),
+        len(profile.solutions) - len(values),
+        cut,
+    )
+
+
+def run_r2(profile: _Profile, should_stop: Callable[[], bool] | None = None) -> bool:
+    """Every remaining point of the product grid, on the same profile. False if
+    ``should_stop`` ended it between chunks."""
+    ranges = (range(len(g)) for g in profile.slots.grids)
+    for chunk in batched(product(*ranges), R2_CHUNK):
+        if should_stop is not None and should_stop():
+            return False
+        profile.evaluate(list(chunk))
+    return True
+
+
+def reference_search(
+    structure: Structure,
+    datasets: Sequence[Dataset],
+    channels: tuple[ChannelSpec, ...],
+    rng: np.random.Generator,
+    *,
+    k: int,
+    cap: int,
+    r2_max: int,
+    on_r1: Callable[[R1Outcome], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
+) -> ReferenceOutcome:
+    """R1, then R2 where the grid allows. Blind by construction: the arguments are
+    the structure, its data and a stream, and the profile is its own. ``on_r1``
+    runs before R2 starts, so R1's result is on record first."""
+    profile = fresh_profile(structure, datasets, channels)
+    r1 = run_r1(profile, rng, k=k, cap=cap, should_stop=should_stop)
+    if on_r1 is not None:
+        on_r1(r1)
+    complete, cut = False, r1.cpu_cut
+    if profile.slots.size <= r2_max and not cut:
+        complete = run_r2(profile, should_stop)
+        cut = not complete
+    return ReferenceOutcome(r1, complete, best_certified(profile), profile, cut)
+
+
+def past_job_cut() -> bool:
+    """This process's CPU against :data:`JOB_CUT_HOURS`: a clock, so a fit it fires
+    on is ``cpu_cut`` and the record says so."""
+    return time.process_time() >= JOB_CUT_HOURS * 3600.0
+
+
+def refit_at(
+    structure: Structure,
+    datasets: Sequence[Dataset],
+    channels: tuple[ChannelSpec, ...],
+    value: PointValue,
+) -> FitResult:
+    """The public refit of a searched point; it must be that point's solve."""
+    psi = _Slots.of(structure).assignment(value.point)
+    result = fit(structure, datasets, channels, config=FitConfig(), psi=psi)
+    if -result.primal_objective != value.score:
+        raise ByteFailure(
+            f"refit at {value.point} gives {(-result.primal_objective).hex()}, the "
+            f"search gave {value.score.hex()}"
+        )
+    return result
+
+
+def valued_fit(result: FitResult) -> Valued:
+    return Valued(result.log_likelihood, result.duality_gap, result.certified)
+
+
+def known_value(
+    structure: Structure,
+    datasets: Sequence[Dataset],
+    channels: tuple[ChannelSpec, ...],
+    psi: PsiAssignment,
+) -> Valued:
+    """A control's known better value, on the public fit's own profile. Only a
+    job's control half calls this, after the reference result is recorded."""
+    return valued_fit(fit(structure, datasets, channels, config=FitConfig(), psi=psi))
+
+
+def valued_json(value: Valued) -> Record:
+    return {"ll": value.ll, "gap": value.gap, "certified": value.certified}
+
+
+# --------------------------------------------------------------------------
+# T2's cases, as tests/glm/test_fit_search.py draws them
+# --------------------------------------------------------------------------
+
+T2_CHANNELS: Final = (
+    ChannelSpec("size", ChannelKind.POSITIVE, location=1.0, scale=1.0),
+)
+T2_HORIZON: Final = 300.0
+_EXP_K: Final = Excite(KernelKind.EXP, One(), ALL)
+_SIZE_K: Final = Excite(KernelKind.EXP, Mark("size"), ALL)
+_POWER_K: Final = Excite(KernelKind.POWER, One(), ALL)
+_WINDOW: Final = Gate(Periodic(), PhaseWindow())
+T2_BIG: Final[tuple[tuple[Feature, ...], ...]] = (
+    (Gate(_EXP_K, PhaseWindow()), Gate(_SIZE_K, PhaseWindow())),
+    (_EXP_K, _SIZE_K, _WINDOW),
+    (Gate(_POWER_K, PhaseWindow()), _WINDOW),
+    (_POWER_K, _WINDOW),
+)
+#: Above every T2 grid (spike, session 28): three gated kernels.
+_LARGE: Final[tuple[Feature, ...]] = (
+    Gate(_EXP_K, PhaseWindow()),
+    Gate(_SIZE_K, PhaseWindow()),
+    Gate(_POWER_K, PhaseWindow()),
+)
+
+
+def t2_marks(rng: np.random.Generator) -> Mapping[str, float]:
+    return {"size": float(rng.exponential(1.0))}
+
+
+def t2_random_point(structure: Structure, rng: np.random.Generator) -> PsiAssignment:
+    return tuple(
+        {s: grid(s.name)[int(rng.integers(len(grid(s.name))))] for s in psi_slots(f)}
+        for f in structure.features
+    )
+
+
+def t2_random_coefficients(
+    structure: Structure, rng: np.random.Generator
+) -> Coefficients:
+    return Coefficients(
+        0.3,
+        tuple(
+            tuple(float(rng.uniform(-1.5, -0.5)) for _ in range(n_columns(f)))
+            if not isinstance(f, Gate) or not isinstance(f.feature, Periodic)
+            else (0.4, -0.3)
+            for f in structure.features
+        ),
+    )
+
+
+def _bare_periodic(feature: Feature) -> bool:
+    while isinstance(feature, Gate):
+        feature = feature.feature
+    return isinstance(feature, Periodic)
+
+
+def identity_coefficients(
+    structure: Structure, rng: np.random.Generator
+) -> Coefficients:
+    """Non-negative excitation, so an identity-link truth stays above zero."""
+    return Coefficients(
+        0.5,
+        tuple(
+            (0.2, -0.15)
+            if _bare_periodic(f)
+            else tuple(float(rng.uniform(0.1, 0.4)) for _ in range(n_columns(f)))
+            for f in structure.features
+        ),
+    )
+
+
+@dataclass(frozen=True)
+class SyntheticCase:
+    structure: Structure
+    generating: PsiAssignment
+    coefficients: Coefficients
+    log: EventLog
+
+
+def t2_log(which: int, link: str, seed: int) -> SyntheticCase:
+    structure = Structure(T2_BIG[which], Link(link))
+    rng = np.random.default_rng(seed)
+    generating = t2_random_point(structure, rng)
+    coefficients = t2_random_coefficients(structure, rng)
+    log = simulate(
+        structure, generating, coefficients, T2_CHANNELS, t2_marks, T2_HORIZON, rng
+    )
+    return SyntheticCase(structure, generating, coefficients, log)
+
+
+@dataclass(frozen=True)
+class HuntStratum:
+    """One sub-stratum of PR 2.9's table. Its position ``s`` in
+    :data:`HUNT_STRATA` is part of the seed."""
+
+    name: str
+    features: tuple[Feature, ...]
+    link: Link
+    coefficients: Callable[[Structure, np.random.Generator], Coefficients]
+
+
+HUNT_STRATA: Final = (
+    HuntStratum("id-24000", T2_BIG[2], Link.IDENTITY, identity_coefficients),
+    HuntStratum("id-large", _LARGE, Link.IDENTITY, identity_coefficients),
+    HuntStratum("large-exp", _LARGE, Link.EXP, t2_random_coefficients),
+    HuntStratum("large-softplus", _LARGE, Link.SOFTPLUS, t2_random_coefficients),
+)
+
+
+def hunt_log(
+    stratum: str, j: int, log_root: int, *, horizon: float = HUNT_HORIZON
+) -> SyntheticCase:
+    """Case ``j`` of a sub-stratum, drawn as PR 2.9 fixes it: the point, the
+    coefficients, then the log, from one stream."""
+    s, spec = next((s, x) for s, x in enumerate(HUNT_STRATA) if x.name == stratum)
+    structure = Structure(spec.features, spec.link)
+    seq = np.random.SeedSequence([log_root, 1000 * s + j])
+    rng = np.random.default_rng(seq)
+    generating = t2_random_point(structure, rng)
+    coefficients = spec.coefficients(structure, rng)
+    log = simulate(
+        structure, generating, coefficients, T2_CHANNELS, t2_marks, horizon, rng
+    )
+    return SyntheticCase(structure, generating, coefficients, log)
+
+
+# --------------------------------------------------------------------------
+# Jobs
+# --------------------------------------------------------------------------
+
+
+def best_json(
+    structure: Structure,
+    datasets: Sequence[Dataset],
+    channels: tuple[ChannelSpec, ...],
+    value: PointValue | None,
+) -> Record | None:
+    """A search's best with the public L, the value every comparison uses."""
+    if value is None:
+        return None
+    result = refit_at(structure, datasets, channels, value)
+    return {
+        "point": list(value.point),
+        "score": value.score,
+        "gap": value.gap,
+        "ll": result.log_likelihood,
+    }
+
+
+def r1_payload(
+    structure: Structure,
+    datasets: Sequence[Dataset],
+    channels: tuple[ChannelSpec, ...],
+    r1: R1Outcome,
+) -> Record:
+    return {
+        "n_starts": len(r1.starts),
+        "starts_completed": r1.n_ascents,
+        "capped": r1.capped,
+        "n_points": r1.n_points,
+        "best": best_json(structure, datasets, channels, r1.best),
+    }
+
+
+def _sweep(slots: _Slots) -> int:
+    blocks = _search_blocks(slots, FitConfig().psi_block_max)
+    return sum(math.prod(len(slots.grids[i]) for i in b) for b in blocks)
+
+
+def _search_counts(outcome: ReferenceOutcome) -> Record:
+    values = point_values(outcome.profile)
+    return {
+        "n_points": len(outcome.profile.solutions),
+        "n_uncertified": sum(not v.certified for v in values),
+        "n_infeasible": len(outcome.profile.solutions) - len(values),
+    }
+
+
+def _hex_or_none(value: Json) -> str | None:
+    return None if value is None else float(value).hex()
+
+
+def byte_check(
+    row: RowExpect, per_event: str, details: Mapping[str, Json] | None
+) -> list[str]:
+    """PR 2.4: what differs between a cell and R0 (empty: it matches)."""
+    out: list[str] = []
+    if per_event != row.per_event:
+        out.append(f"{row.system} per_event {per_event} != {row.per_event}")
+    if row.oracle is None:
+        return out
+    got = details or {}
+    pairs = (
+        ("oracle_search_ll", row.oracle.search_ll, _hex_or_none),
+        ("oracle_truth_psi_ll", row.oracle.truth_psi_ll, _hex_or_none),
+        ("oracle_psi_source", row.oracle.psi_source, lambda x: x),
+        ("oracle_underfit", row.oracle.underfit, lambda x: x),
+    )
+    for name, want, read in pairs:
+        value = read(got.get(name))
+        if value != want:
+            out.append(f"{row.system} {name} {value!r} != {want!r}")
+    return out
+
+
+@dataclass(frozen=True)
+class StoredFits:
+    """R0. ``kept`` is the fit an ORACLE row reads, ``search`` every other's."""
+
+    search: FitResult
+    kept: FitResult
+    details: Mapping[str, Json] | None
+
+
+def bit_check_failures(expected: tuple[str, str], stored: StoredFits) -> list[str]:
+    """Group B's ``r0.search.ll`` and ``r0.kept.ll``, bit for bit (section 2.9)."""
+    search, kept = expected
+    out: list[str] = []
+    if stored.search.log_likelihood.hex() != search:
+        out.append(f"r0.search.ll {stored.search.log_likelihood.hex()} != {search}")
+    if stored.kept.log_likelihood.hex() != kept:
+        out.append(f"r0.kept.ll {stored.kept.log_likelihood.hex()} != {kept}")
+    return out
+
+
+def stored_fits(
+    job: FitJob, structure: Structure, data: InvestigationData
+) -> StoredFits:
+    obs, channels = data.observational, data.channels
+    if not any(r.system == ORACLE for r in job.rows):
+        result = fit(structure, obs, channels, config=FitConfig())
+        return StoredFits(result, result, None)
+    ran = Oracle(
+        job.truth.structure,
+        fit_config=FitConfig(),
+        truth_psi=job.truth.spec.psi,
+        truth_coefficients=job.truth.spec.coef,
+    ).run(data)
+    model = ran.model
+    if not isinstance(model, GLMModel):
+        raise ByteFailure(f"ORACLE returned a {type(model).__name__}")
+    kept = model.fit
+    if ran.details.get("oracle_psi_source") == "search":
+        return StoredFits(kept, kept, ran.details)
+    search = fit(structure, obs, channels, config=FitConfig())
+    return StoredFits(search, kept, ran.details)
+
+
+def r0_value(
+    structure: Structure,
+    datasets: Sequence[Dataset],
+    channels: tuple[ChannelSpec, ...],
+    result: FitResult,
+) -> PointValue:
+    """R0's point. ``FitResult.certified`` covers every evaluated point, so a
+    search fit that is flagged needs its own point's solve looked at."""
+    certified = result.certified
+    if not certified:
+        at = fit(structure, datasets, channels, config=FitConfig(), psi=result.psi)
+        certified = at.certified
+    primal = result.primal_objective
+    return PointValue(
+        _Slots.of(structure).point(result.psi),
+        -primal if math.isfinite(primal) else -math.inf,
+        result.duality_gap,
+        certified,
+    )
+
+
+@dataclass(frozen=True)
+class FitJob:
+    """One fit: R0, R1, R2 where due, in one process (PR 6). ``group`` is ``B`` or
+    ``E`` on a control's fit; ``bit_check`` is group B's two committed values."""
+
+    truth: TruthEntry
+    seed: int
+    text: str
+    rows: tuple[RowExpect, ...]
+    env: CampaignEnvironment
+    root: int
+    k: int
+    cap: int
+    r2_max: int
+    group: str | None = None
+    bit_check: tuple[str, str] | None = None
+
+    @property
+    def id(self) -> str:
+        return fit_job_id(self.truth.id, self.seed, self.text)
+
+    def run(self, sink: RecordSink) -> None:
+        run_fit_job(self, sink)
+
+
+def _r0_payload(
+    structure: Structure, data: InvestigationData, stored: StoredFits
+) -> Record:
+    def one(result: FitResult) -> Record:
+        value = r0_value(structure, data.observational, data.channels, result)
+        return {
+            "point": list(value.point),
+            "score": value.score,
+            "point_certified": value.certified,
+            **valued_json(valued_fit(result)),
+        }
+
+    return {"search": one(stored.search), "kept": one(stored.kept)}
+
+
+def _compare_row(
+    job: FitJob,
+    row: RowExpect,
+    structure: Structure,
+    data: InvestigationData,
+    held: Dataset,
+    stored: StoredFits,
+    best: PointValue | None,
+    uncertified: Sequence[PointValue],
+) -> Record:
+    """One row against its own stored fit (PR 2.3). The reference is shared; the
+    row's R0 is not, so ORACLE's kept fit never reaches a sibling."""
+    env = job.env
+    fitted = stored.kept if row.system == ORACLE else stored.search
+    r0 = r0_value(structure, data.observational, data.channels, fitted)
+    chosen = choose_point(r0, best)
+    outside = [] if r0.point in {v.point for v in uncertified} else [r0]
+    stored_value = valued_fit(fitted)
+    base: Record = {
+        "system": row.system,
+        "llm": row.llm,
+        "stored_ll": stored_value.ll,
+        "stored_gap": stored_value.gap,
+        "stored_certified": stored_value.certified,
+        "stored_per_event": need_float(row.per_event),
+        "stored_uncertified": _gap_dropped(stored_value),
+        "uncertified_better": count_uncertified_better(
+            [*uncertified, *outside], chosen
+        ),
+        "corrected_per_event": None,
+        "corrected_similarity": None,
+        "corrected_underfit": None,
+        "delta": None,
+        "delta_kind": None,
+        "stored_quadrature_error": None,
+        "chosen_quadrature_error": None,
+        "within_quadrature": False,
+        "oracle": None,
+    }
+    if chosen is None:
+        return {**base, "call": "none", "gain": 0.0, "tol": TOL_FLOOR}
+    if chosen.point == r0.point:
+        chosen_fit = fitted
+    else:
+        chosen_fit = refit_at(structure, data.observational, data.channels, chosen)
+    chosen_value = Valued(chosen_fit.log_likelihood, chosen_fit.duality_gap, True)
+    call = call_miss(chosen_value, stored_value)
+    out: Record = {
+        **base,
+        "call": call.kind,
+        "gain": call.gain,
+        "gain_per_event": call.gain / max(chosen_fit.n_events, 1),
+        "tol": call.tol,
+        "chosen_ll": chosen_value.ll,
+        "chosen_gap": chosen_value.gap,
+        "chosen_point": list(chosen.point),
+    }
+    details = stored.details or {}
+    if row.system == ORACLE:
+        truth_psi = details.get("oracle_truth_psi_ll")
+        search = call_miss(chosen_value, valued_fit(stored.search))
+        out["oracle"] = {
+            "search_call": search.kind,
+            "search_gain": search.gain,
+            "search_below_truth_psi": truth_psi is not None
+            and stored.search.log_likelihood < truth_psi,
+        }
+    if call.kind != "miss":
+        return out
+    model = GLMModel(row.system, chosen_fit, env.channels, env.marks)
+    reading, _ = score_submission(job.truth, job.seed, structure, model, held, env)
+    corrected = reading["per_event"]
+    if math.isnan(corrected):
+        raise ArithmeticError("nan_reading")
+    delta, kind = held_out_delta(need_float(row.per_event), corrected)
+    out |= {
+        "corrected_per_event": corrected,
+        "corrected_similarity": reading["similarity"],
+        "delta": delta,
+        "delta_kind": kind,
+        "stored_quadrature_error": fitted.quadrature_error,
+        "chosen_quadrature_error": chosen_fit.quadrature_error,
+        "within_quadrature": within_quadrature(
+            call.gain, fitted.quadrature_error, chosen_fit.quadrature_error
+        ),
+    }
+    if row.system == ORACLE:
+        flagged = bool(details.get("oracle_truth_psi_on_grid")) and oracle_underfit(
+            chosen_value.ll, details["oracle_true_params_ll"]
+        )
+        if flagged and details.get("oracle_underfit") is False:
+            raise ByteFailure(f"an underfit flag appeared on {job.truth.id}")
+        out["corrected_underfit"] = flagged
+    return out
+
+
+def run_fit_job(job: FitJob, sink: RecordSink) -> None:
+    """PR 6's job. An R0 that does not reproduce its cell ends the job before any
+    search; a unit failure in R1 or R2 is ``reference_failed``; anything else
+    propagates, which is a bug and stops the run."""
+    channels = job.env.channels
+    data = observational_data(job.truth, job.seed, job.env)
+    held = held_out_dataset(job.truth.spec, job.truth.id, job.seed)
+    structure = parse(job.text, channels)
+    failures: list[str] = []
+    if canonicalise(structure) != structure:
+        failures.append(f"stored text is not canonical: {job.text}")
+    try:
+        stored = stored_fits(job, structure, data)
+        for row in job.rows:
+            fitted = stored.kept if row.system == ORACLE else stored.search
+            model = GLMModel(row.system, fitted, channels, job.env.marks)
+            failures += byte_check(
+                row, model.held_out_per_event([held]).hex(), stored.details
+            )
+        if job.bit_check is not None:
+            failures += bit_check_failures(job.bit_check, stored)
+        r0 = _r0_payload(structure, data, stored)
+    except UNIT_FAILURES as error:
+        # The cell holds a fit, so an R0 that cannot make one is not the stored
+        # fit: PR 6 covers R1 and R2 only.
+        failures.append(f"R0 failed: {type(error).__name__}: {error}")
+    if failures:
+        sink.record("byte_fail", {"reason": "; ".join(failures)})
+        return
+    sink.record("r0", r0)
+    obs = data.observational
+    r1_rows: list[list[Record]] = []
+
+    def compare(
+        best: PointValue | None, uncertified: Sequence[PointValue]
+    ) -> list[Record]:
+        return [
+            _compare_row(job, row, structure, data, held, stored, best, uncertified)
+            for row in job.rows
+        ]
+
+    def write_r1(r1: R1Outcome) -> None:
+        rows = compare(r1.best, r1.uncertified)
+        r1_rows.append(rows)
+        counts = {
+            "n_points": r1.n_points,
+            "n_uncertified": len(r1.uncertified),
+            "n_infeasible": r1.n_infeasible,
+        }
+        result = _fit_payload(
+            job, structure, stored, rows, False, r1, r1.cpu_cut, counts
+        )
+        sink.record(
+            "r1", {**r1_payload(structure, obs, channels, r1), "result": result}
+        )
+
+    rng = reference_rng(fit_case(job.truth.id, job.seed, job.text), job.root)
+    try:
+        outcome = reference_search(
+            structure,
+            obs,
+            channels,
+            rng,
+            k=job.k,
+            cap=job.cap,
+            r2_max=job.r2_max,
+            on_r1=write_r1,
+            should_stop=past_job_cut,
+        )
+        grew = len(outcome.profile.solutions) != outcome.r1.n_points
+        rows = compare(outcome.best, outcome.uncertified) if grew else r1_rows[0]
+    except ByteFailure as error:
+        sink.record("byte_fail", {"reason": str(error)})
+        return
+    except UNIT_FAILURES as error:
+        reason = str(error) if str(error) == "nan_reading" else type(error).__name__
+        kind = "r2_lost" if r1_rows else "reference_failed"
+        sink.record(kind, {"reason": reason, "message": str(error)[:500]})
+        return
+    sink.record(
+        "done",
+        _fit_payload(
+            job,
+            structure,
+            stored,
+            rows,
+            outcome.r2_complete,
+            outcome.r1,
+            outcome.cpu_cut,
+            _search_counts(outcome),
+        ),
+    )
+
+
+def _fit_payload(
+    job: FitJob,
+    structure: Structure,
+    stored: StoredFits,
+    rows: list[Record],
+    r2_complete: bool,
+    r1: R1Outcome,
+    cpu_cut: bool,
+    counts: Mapping[str, int],
+) -> Record:
+    """A fit's result, the same whether R1 or R2 is the last stage it reached."""
+    slots = _Slots.of(structure)
+    payload: Record = {
+        "kind": "fit",
+        "truth": job.truth.id,
+        "seed": job.seed,
+        "text": job.text,
+        "grid_size": slots.size,
+        "sweep": _sweep(slots),
+        "link": structure.link.value,
+        "n_features": len(structure.features),
+        "n_events": stored.search.n_events,
+        "evidence": "exact" if r2_complete else "searched",
+        "capped": r1.capped,
+        "starts_completed": r1.n_ascents,
+        "cpu_cut": cpu_cut,
+        "r2_complete": r2_complete,
+        "rows": rows,
+        **counts,
+    }
+    if job.group is not None:
+        details = stored.details or {}
+        known = details.get("oracle_truth_psi_ll")
+        payload["control"] = {
+            "group": job.group,
+            "case": [job.truth.id, job.seed],
+            "fit5": valued_json(valued_fit(stored.search)),
+            "known": None
+            if known is None
+            else valued_json(
+                Valued(known, stored.kept.duality_gap, stored.kept.certified)
+            ),
+        }
+    return payload
+
+
+def group_b_job(truth: TruthEntry, env: CampaignEnvironment, root: int) -> FitJob:
+    """Group B, fresh on the dev split (section 2.9). The three values are the
+    pilot check's; ``oracle_psi_source`` and ``oracle_underfit`` are asserted."""
+    oracle = OracleExpect(GROUP_B_SEARCH_LL, GROUP_B_KEPT_LL, "truth", False)
+    row = RowExpect(ORACLE, False, GROUP_B_PER_EVENT, oracle)
+    return FitJob(
+        truth=truth,
+        seed=GROUP_B[1],
+        text=GROUP_B_TEXT,
+        rows=(row,),
+        env=env,
+        root=root,
+        k=K_STARTS,
+        cap=r1_cap(Link.EXP.value),
+        r2_max=R2_GRID_MAX,
+        group="B",
+        bit_check=(GROUP_B_SEARCH_LL, GROUP_B_KEPT_LL),
+    )
+
+
+@dataclass(frozen=True)
+class T2Job:
+    """A group A or D control. Group D is R2 alone on an empty profile: K = 0, no
+    R1, and the one control that does not test R1."""
+
+    which: int
+    link: str
+    seed: int
+    group: str
+    with_r2: bool
+    root: int
+    k: int
+    cap: int
+
+    @property
+    def id(self) -> str:
+        return _sha(f"{self.group}|{t2_case(self.which, self.link, self.seed)}")
+
+    def run(self, sink: RecordSink) -> None:
+        run_t2_job(self, sink)
+
+
+def run_t2_job(job: T2Job, sink: RecordSink) -> None:
+    case = t2_log(job.which, job.link, job.seed)
+    structure = case.structure
+    data = (Dataset.observational(case.log),)
+    base = fit(structure, data, T2_CHANNELS, config=FitConfig())
+    sink.record("r0", {"search": valued_json(valued_fit(base))})
+
+    def write_r1(r1: R1Outcome) -> None:
+        sink.record("r1", r1_payload(structure, data, T2_CHANNELS, r1))
+
+    rng = reference_rng(t2_case(job.which, job.link, job.seed), job.root)
+    try:
+        outcome = reference_search(
+            structure,
+            data,
+            T2_CHANNELS,
+            rng,
+            k=job.k,
+            cap=job.cap,
+            r2_max=R2_GRID_MAX if job.with_r2 else 0,
+            on_r1=write_r1 if job.k else None,
+            should_stop=past_job_cut,
+        )
+        best = best_json(structure, data, T2_CHANNELS, outcome.best)
+        if job.with_r2:
+            sink.record("r2", {"best": best, "complete": outcome.r2_complete})
+        known = known_value(structure, data, T2_CHANNELS, case.generating)
+    except ByteFailure as error:
+        sink.record("byte_fail", {"reason": str(error)})
+        return
+    except UNIT_FAILURES as error:
+        sink.record("reference_failed", {"reason": type(error).__name__})
+        return
+    payload: Record = {
+        "kind": "control",
+        "group": job.group,
+        "case": [job.which, job.link, job.seed],
+        "fit5": valued_json(valued_fit(base)),
+        "known": valued_json(known),
+        "grid_size": outcome.profile.slots.size,
+        "capped": outcome.r1.capped,
+        "starts_completed": outcome.r1.n_ascents,
+        "cpu_cut": outcome.cpu_cut,
+        "r2_complete": outcome.r2_complete,
+        **_search_counts(outcome),
+    }
+    if job.with_r2:
+        payload["r2_best"] = best
+    sink.record("done", payload)
+
+
+def hunt_index(stratum: str, j: int) -> int:
+    """``i`` of the seeding rule: ``1000 * s + j`` (PR 2.9)."""
+    return 1000 * [x.name for x in HUNT_STRATA].index(stratum) + j
+
+
+def hunt_job_id(stratum: str, j: int) -> str:
+    return _sha(hunt_case(stratum, hunt_index(stratum, j)))
+
+
+def hunt_r1_job_id(stratum: str, j: int) -> str:
+    return _sha(f"r1|{hunt_case(stratum, hunt_index(stratum, j))}")
+
+
+@dataclass(frozen=True)
+class HuntJob:
+    """One hunt case: fit/5, then the fit at the generating point."""
+
+    stratum: str
+    j: int
+    log_root: int
+
+    @property
+    def id(self) -> str:
+        return hunt_job_id(self.stratum, self.j)
+
+    def run(self, sink: RecordSink) -> None:
+        run_hunt_job(self, sink)
+
+
+def run_hunt_job(job: HuntJob, sink: RecordSink) -> None:
+    try:
+        case = hunt_log(job.stratum, job.j, job.log_root)
+    except SimulationError:
+        sink.record(
+            "done",
+            {
+                "kind": "hunt",
+                "stratum": job.stratum,
+                "j": job.j,
+                "sim_failed": True,
+                "found_loss": False,
+                "uncertified_loss": False,
+            },
+        )
+        return
+    structure = case.structure
+    data = (Dataset.observational(case.log),)
+    try:
+        base = valued_fit(fit(structure, data, T2_CHANNELS, config=FitConfig()))
+        known = known_value(structure, data, T2_CHANNELS, case.generating)
+    except UNIT_FAILURES as error:
+        sink.record("reference_failed", {"reason": type(error).__name__})
+        return
+    sink.record(
+        "done",
+        {
+            "kind": "hunt",
+            "stratum": job.stratum,
+            "j": job.j,
+            "sim_failed": False,
+            "link": structure.link.value,
+            "grid_size": _Slots.of(structure).size,
+            "n_events": case.log.n,
+            "fit5": valued_json(base),
+            "known": valued_json(known),
+            "found_loss": found_loss(base, known),
+            "uncertified_loss": not known.certified
+            and call_miss(known, base).kind == "miss",
+        },
+    )
+
+
+@dataclass(frozen=True)
+class HuntR1Job:
+    """R1 on a found loss. It holds no known value: whether R1 caught the loss is
+    read later, from this job's record and the case's."""
+
+    stratum: str
+    j: int
+    root: int
+    log_root: int
+    k: int
+    cap: int
+
+    @property
+    def id(self) -> str:
+        return hunt_r1_job_id(self.stratum, self.j)
+
+    def run(self, sink: RecordSink) -> None:
+        run_hunt_r1_job(self, sink)
+
+
+def run_hunt_r1_job(job: HuntR1Job, sink: RecordSink) -> None:
+    case = hunt_log(job.stratum, job.j, job.log_root)
+    structure = case.structure
+    data = (Dataset.observational(case.log),)
+
+    def write_r1(r1: R1Outcome) -> None:
+        sink.record("r1", r1_payload(structure, data, T2_CHANNELS, r1))
+
+    i = hunt_index(job.stratum, job.j)
+    rng = reference_rng(hunt_case(job.stratum, i), job.root)
+    try:
+        outcome = reference_search(
+            structure,
+            data,
+            T2_CHANNELS,
+            rng,
+            k=job.k,
+            cap=job.cap,
+            r2_max=0,
+            on_r1=write_r1,
+            should_stop=past_job_cut,
+        )
+    except ByteFailure as error:
+        sink.record("byte_fail", {"reason": str(error)})
+        return
+    except UNIT_FAILURES as error:
+        sink.record("reference_failed", {"reason": type(error).__name__})
+        return
+    sink.record(
+        "done",
+        {
+            "kind": "hunt_r1",
+            "stratum": job.stratum,
+            "j": job.j,
+            "capped": outcome.r1.capped,
+            "starts_completed": outcome.r1.n_ascents,
+            "cpu_cut": outcome.cpu_cut,
+            **_search_counts(outcome),
+        },
+    )
+
+
+def hunt_r1_jobs(
+    records: Sequence[Mapping[str, Json]],
+    *,
+    root: int,
+    log_root: int,
+    size: int = HUNT_SIZE,
+) -> list[HuntR1Job]:
+    """The R1 jobs due: the first found losses of each sub-stratum in index order,
+    counted only as far as every earlier case has finished. So the set is a
+    function of the cases' results, never of which worker finished first. They run
+    after the fit/5 jobs, inside the same cap."""
+    done = {r["job"]: r for r in records if r["type"] == "done"}
+    failed = {r["job"] for r in records if r["type"] == "reference_failed"}
+    out: list[HuntR1Job] = []
+    for spec in HUNT_STRATA:
+        picked = 0
+        for j in range(size):
+            job_id = hunt_job_id(spec.name, j)
+            if job_id in failed:
+                continue
+            record = done.get(job_id)
+            if record is None or picked == HUNT_R1_PER_STRATUM:
+                break
+            if record["found_loss"]:
+                picked += 1
+                cap = r1_cap(spec.link.value)
+                out.append(HuntR1Job(spec.name, j, root, log_root, K_STARTS, cap))
+    position = {spec.name: s for s, spec in enumerate(HUNT_STRATA)}
+    return sorted(out, key=lambda x: (x.j, position[x.stratum]))
+
+
+def link_choice(
+    features: tuple[Feature, ...],
+    train: tuple[Dataset, ...],
+    validation: tuple[Dataset, ...],
+    channels: tuple[ChannelSpec, ...],
+    links: Sequence[Link],
+    fitter: Callable[[Structure], FitResult],
+    *,
+    blocked: frozenset[Link] = frozenset(),
+) -> tuple[Link, list[tuple[str, float, bool]]]:
+    """``sparse._choose_link``'s rule with its fit made a parameter, so S2 can rerun
+    it with R0 and with the reference. A ``blocked`` link stays ``-inf``: the rule
+    reads the fit-level flag, which a single-point refit passes more easily, so no
+    link may win for that reason alone."""
+    scores: list[tuple[Link, float, bool]] = []
+    for link in links:
+        if link in blocked:
+            scores.append((link, -math.inf, False))
+            continue
+        structure = canonicalise(Structure(features, link))
+        try:
+            result = fitter(structure)
+        except FitError:
+            scores.append((link, -math.inf, False))
+            continue
+        if not result.certified:
+            scores.append((link, -math.inf, False))
+            continue
+        ll = math.fsum(
+            evaluate_log_likelihood(
+                result, validation, channels, quadrature=FitConfig().quadrature
+            )
+        )
+        scores.append((link, ll, True))
+    best = 0
+    for i, score in enumerate(scores):
+        if score[1] > scores[best][1]:
+            best = i
+    return scores[best][0], [(s[0].value, s[1], s[2]) for s in scores]
+
+
+def reference_link_fit(
+    structure: Structure,
+    train: tuple[Dataset, ...],
+    channels: tuple[ChannelSpec, ...],
+    *,
+    k: int,
+    case: str,
+    root: int,
+) -> FitResult:
+    """R0 and R1 on the training window (PR 4, S2). An exhaustive grid is settled
+    by R0."""
+    base = fit(structure, train, channels, config=FitConfig())
+    if is_exhaustive(_Slots.of(structure).size):
+        return base
+    outcome = reference_search(
+        structure,
+        train,
+        channels,
+        reference_rng(case, root),
+        k=k,
+        cap=S2_POINT_CAP,
+        r2_max=0,
+        should_stop=past_job_cut,
+    )
+    chosen = choose_point(r0_value(structure, train, channels, base), outcome.r1.best)
+    if chosen is None:
+        return base
+    return refit_at(structure, train, channels, chosen)
+
+
+@dataclass(frozen=True)
+class S2Job:
+    """B-sparse's link choice on one row (PR 4, S2)."""
+
+    truth: TruthEntry
+    seed: int
+    text: str
+    stored_link: str
+    env: CampaignEnvironment
+    root: int
+
+    @property
+    def id(self) -> str:
+        return _sha(f"s2|{fit_case(self.truth.id, self.seed, self.text)}")
+
+    def run(self, sink: RecordSink) -> None:
+        run_s2_job(self, sink)
+
+
+def run_s2_job(job: S2Job, sink: RecordSink) -> None:
+    channels, sparse = job.env.channels, SparseConfig()
+    data = observational_data(job.truth, job.seed, job.env)
+    (obs,) = data.observational
+    train_set, validation_set = split_dataset(obs, sparse.train_fraction)
+    train, validation = (train_set,), (validation_set,)
+    features = parse(job.text, channels).features
+    payload: Record = {
+        "kind": "s2",
+        "truth": job.truth.id,
+        "seed": job.seed,
+        "text": job.text,
+        "stored_link": job.stored_link,
+        "corrected_per_event": None,
+    }
+    try:
+        r0_link, r0_scores = link_choice(
+            features,
+            train,
+            validation,
+            channels,
+            sparse.links,
+            lambda s: fit(s, train, channels, config=FitConfig()),
+        )
+        payload |= {"r0_link": r0_link.value, "r0_scores": r0_scores}
+        if r0_link.value != job.stored_link:
+            sink.record("done", {**payload, "status": "link_mismatch"})
+            return
+        ref_link, ref_scores = link_choice(
+            features,
+            train,
+            validation,
+            channels,
+            sparse.links,
+            lambda s: reference_link_fit(
+                s,
+                train,
+                channels,
+                k=S2_STARTS,
+                case=f"s2|{job.truth.id}|{job.seed}|{render(s)}",
+                root=job.root,
+            ),
+            blocked=frozenset(Link(x[0]) for x in r0_scores if x[1] == -math.inf),
+        )
+        payload |= {"reference_link": ref_link.value, "reference_scores": ref_scores}
+        if ref_link is r0_link:
+            sink.record("done", {**payload, "status": "same"})
+            return
+        structure = canonicalise(Structure(features, ref_link))
+        text = render(structure)
+        outcome = reference_search(
+            structure,
+            data.observational,
+            channels,
+            reference_rng(fit_case(job.truth.id, job.seed, text), job.root),
+            k=K_STARTS,
+            cap=r1_cap(ref_link.value),
+            r2_max=R2_GRID_MAX,
+            should_stop=past_job_cut,
+        )
+        base = fit(structure, data.observational, channels, config=FitConfig())
+        chosen = choose_point(
+            r0_value(structure, data.observational, channels, base), outcome.best
+        )
+        result = (
+            base
+            if chosen is None
+            else refit_at(structure, data.observational, channels, chosen)
+        )
+        held = held_out_dataset(job.truth.spec, job.truth.id, job.seed)
+        model = GLMModel(B_SPARSE, result, channels, job.env.marks)
+        per_event = model.held_out_per_event([held])
+    except ByteFailure as error:
+        sink.record("byte_fail", {"reason": str(error)})
+        return
+    except UNIT_FAILURES as error:
+        sink.record("reference_failed", {"reason": type(error).__name__})
+        return
+    sink.record(
+        "done",
+        {
+            **payload,
+            "status": "differs",
+            "reference_text": text,
+            "corrected_per_event": per_event,
+        },
+    )
+
+
+# --------------------------------------------------------------------------
+# The population: one place opens the store, read only (sections 2.1, 2.8)
+# --------------------------------------------------------------------------
+
+
+def p4_inputs(
+    test_split: Path,
+) -> tuple[CampaignEnvironment, tuple[CampaignConfig, ...], tuple[TruthEntry, ...]]:
+    """The test split's environment, the frozen plan and the truths. The plan is a
+    pure function of the truths, not an operator's input (section 2.7's list)."""
+    records = pilot.load_split(test_split)
+    truths = pilot.truth_entries(records)
+    return pilot.pointproc_environment(records), p4_plan(truths), truths
+
+
+def group_b_inputs(split: Path) -> tuple[TruthEntry, CampaignEnvironment]:
+    """Group B's truth and environment, from the dev split alone."""
+    records = pilot.load_split(split)
+    by_id = {t.id: t for t in pilot.truth_entries(records)}
+    if GROUP_B[0] not in by_id:
+        raise GuardFailure(f"group B's {GROUP_B[0]} is not in {split}")
+    return by_id[GROUP_B[0]], pilot.pointproc_environment(records)
+
+
+def stored_cells(
+    store: ResultStore,
+    env: CampaignEnvironment,
+    config: CampaignConfig,
+    truths: Sequence[TruthEntry],
+) -> dict[RowKey, Mapping[str, Json]]:
+    """Each row's raw cell, by the addresses ``load_rows`` reads: a :class:`Row`
+    keeps neither ``certified`` nor the reading's hex."""
+    by_id = {t.id: t for t in truths}
+    order = [t.id for t in truths]
+    found = stored_sessions(store, env, config, truths)
+    out: dict[RowKey, Mapping[str, Json]] = {}
+    for u in baseline_units(order, config):
+        key = baseline_key(u, by_id[u.truth_id], env, config)
+        if store.done(key):
+            out[(u.truth_id, u.seed, u.system)] = store.cell(key.digest)
+    for u in llm_units(order, config):
+        hit = found.get(u)
+        if hit is None:
+            continue
+        ckey = score_key(u, hit[0], env, config)
+        if store.done(ckey):
+            out[(u.truth_id, u.seed, u.system)] = store.cell(ckey.digest)
+    return out
+
+
+def _summed(tables: Sequence[Mapping[str, int]]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for table in tables:
+        for name, count in table.items():
+            out[name] = out.get(name, 0) + count
+    return out
+
+
+def merged_table(tables: Sequence[Table]) -> Table:
+    """One table over the plan's configs, so that one ``derive`` covers every row
+    and ``read_contrasts`` refuses a key two configs share."""
+    rows = [r for t in tables for r in t.rows]
+    telling = {key: cell for t in tables for key, cell in t.telling.items()}
+    return Table(
+        tables[0].truths,
+        tuple(analysis.derive(rows)),
+        tuple(x for t in tables for x in t.sessions),
+        _summed([t.planned for t in tables]),
+        _summed([t.missing for t in tables]),
+        telling,
+    )
+
+
+def load_store(
+    root: Path,
+    env: CampaignEnvironment,
+    plan: Sequence[CampaignConfig],
+    truths: Sequence[TruthEntry],
+) -> tuple[Table, dict[RowKey, Mapping[str, Json]]]:
+    tables: list[Table] = []
+    cells: dict[RowKey, Mapping[str, Json]] = {}
+    with ResultStore(root, read_only=True) as store:
+        for config in plan:
+            tables.append(
+                analysis.load_rows(store, env, config, truths, sessions="stored")
+            )
+            cells |= stored_cells(store, env, config, truths)
+    return merged_table(tables), cells
+
+
+def check_table(table: Table, cells: Mapping[RowKey, Mapping[str, Json]]) -> None:
+    """Section 2.1: nothing is missing, or the campaign is not finished. A planned
+    unit with neither a reading nor a counted void or failure is missing, and that
+    includes a non-void session with no score cell."""
+    missing = {k: v for k, v in sorted(table.missing.items()) if v}
+    if missing:
+        raise GuardFailure(f"missing units: {missing}")
+    keys = {row_key(r) for r in table.rows}
+    voids = sum(x.void.void for x in table.sessions)
+    silent = [
+        x
+        for x in table.sessions
+        if not x.void.void and (x.truth, x.seed, x.system) not in keys
+    ]
+    if silent:
+        raise GuardFailure(f"{len(silent)} non-void sessions have no score cell")
+    planned = sum(v for k, v in table.planned.items() if k != TELLING)
+    if len(table.rows) + voids != planned:
+        raise GuardFailure(
+            f"{len(table.rows)} rows and {voids} voids, {planned} units planned"
+        )
+    for row in table.rows:
+        cell = cells.get(row_key(row))
+        if cell is None:
+            raise GuardFailure(f"missing cell for {row_key(row)}")
+        fields = cell["key"]["config"]["fit_config"].split("|")
+        if "full=512" not in fields or "sweeps=0" not in fields:
+            raise GuardFailure(f"{row_key(row)}: not full=512 and sweeps=0")
+
+
+def classify_row(row: Row, *, grid_size: int | None, certified: bool | None) -> str:
+    """PR 2.1's table: exactly one class per row."""
+    if not row.ok:
+        return "failed"
+    if not row.submitted:
+        return "no_submission"
+    if row.system == B_NP:
+        return "no_search_np"
+    if grid_size is None:
+        return "no_search_lib" if row.system == B_LIB else "failed"
+    if not is_exhaustive(grid_size):
+        return "coordinate"
+    return "exhaustive" if certified else "exhaustive_uncertified"
+
+
+def _oracle_expect(detail: Mapping[str, Json]) -> OracleExpect:
+    return OracleExpect(
+        _hex_or_none(detail.get("oracle_search_ll")),
+        _hex_or_none(detail.get("oracle_truth_psi_ll")),
+        detail.get("oracle_psi_source"),
+        detail.get("oracle_underfit"),
+    )
+
+
+def build_census(
+    table: Table,
+    cells: Mapping[RowKey, Mapping[str, Json]],
+    channels: tuple[ChannelSpec, ...],
+    tier1: frozenset[RowKey],
+) -> Census:
+    """Section 2.1's classes, and section 2.9's group E: an ORACLE unit with stored
+    ``oracle_psi_source == "truth"``. It reads a P4 row, in memory only: nothing
+    here is printed."""
+    out: list[RowInfo] = []
+    for r in table.rows:
+        cell = cells[row_key(r)]
+        reading = cell["reading"]
+        detail = cell["detail"]["result"]
+        size: int | None = None
+        link: str | None = None
+        if r.structure is not None:
+            structure = parse(r.structure, channels)
+            size, link = _Slots.of(structure).size, structure.link.value
+        raw = unhex(reading.get("certified"))
+        certified = None if raw is None or math.isnan(raw) else raw == 1.0
+        klass = classify_row(r, grid_size=size, certified=certified)
+        group_e = r.system == ORACLE and r.oracle_psi_source == "truth"
+        expect = None
+        if klass == "coordinate" or group_e:
+            oracle = _oracle_expect(detail) if r.system == ORACLE else None
+            expect = RowExpect(r.system, r.llm, reading["per_event"], oracle)
+        sparse = detail.get("sparse")
+        out.append(
+            RowInfo(
+                truth=r.truth,
+                seed=r.seed,
+                system=r.system,
+                llm=r.llm,
+                klass=klass,
+                text=r.structure,
+                grid_size=size,
+                link=link,
+                certified=certified,
+                expect=expect,
+                sparse_link=None if sparse is None else sparse["link"],
+                group_e=group_e,
+            )
+        )
+    return Census(tuple(out), tier1)
+
+
+def print_counts(census: Census, table: Table) -> None:
+    """Section 2.1: counts only. No score, ``oracle_*`` or ``certified`` value, and
+    nothing of group E, whose selection reads a P4 row."""
+    print(f"classes: {_count(r.klass for r in census.rows)}", flush=True)
+    print(f"void sessions: {analysis.void_counts(table)}", flush=True)
+
+
+def hunt_jobs(*, log_root: int, size: int = HUNT_SIZE) -> tuple[HuntJob, ...]:
+    """Round-robin, ``j`` outer and ``s`` inner, so a cap cuts the sub-strata
+    evenly."""
+    return tuple(HuntJob(s.name, j, log_root) for j in range(size) for s in HUNT_STRATA)
+
+
+def plan_stages(
+    census: Census,
+    truths: Mapping[str, TruthEntry],
+    env: CampaignEnvironment,
+    group_b: FitJob,
+    *,
+    roots: Roots,
+    hunt_size: int = HUNT_SIZE,
+) -> tuple[Stage, ...]:
+    """Section 8's order: controls A, D, C, B; tier 1 with group E; S2; tier 2.
+    Inside a stage by ``sha256`` of the case. Group B reads no P4 row, so the
+    first P4 unit read is tier 1's."""
+    fits = census.fits()
+
+    def t2(case: tuple[int, str, int], group: str, with_r2: bool, k: int) -> T2Job:
+        return T2Job(*case, group, with_r2, roots.seed, k, r1_cap(case[1]))
+
+    def fit_job(f: FitGroup) -> FitJob:
+        return FitJob(
+            truth=truths[f.truth],
+            seed=f.seed,
+            text=f.text,
+            rows=f.rows,
+            env=env,
+            root=roots.seed,
+            k=K_STARTS,
+            cap=r1_cap(f.link),
+            r2_max=R2_GRID_MAX,
+            group="E" if f.group_e else None,
+        )
+
+    # Group E's unit on an exhaustive grid has no coordinate fit of its own.
+    exhaustive_e = [
+        FitGroup(
+            r.truth,
+            r.seed,
+            r.text,
+            (r.expect,),
+            1,
+            r.grid_size or 0,
+            r.link or "",
+            True,
+        )
+        for r in census.rows
+        if r.group_e
+        and r.klass != "coordinate"
+        and r.text is not None
+        and r.expect is not None
+    ]
+    sparse = sorted(
+        (r for r in census.rows if r.system == B_SPARSE and r.klass == "coordinate"),
+        key=lambda r: (
+            truths[r.truth].in_dictionary,
+            fit_job_id(r.truth, r.seed, r.text or ""),
+        ),
+    )
+    tier1 = sorted(
+        (fit_job(f) for f in (*fits, *exhaustive_e) if f.tier == 1),
+        key=lambda j: j.id,
+    )
+    return (
+        Stage("group_a", tuple(t2(c, "A", False, K_STARTS) for c in T2_CASES)),
+        Stage("group_d", (t2(T2_CASES[0], "D", True, 0),)),
+        Stage(
+            "hunt",
+            hunt_jobs(log_root=roots.log, size=hunt_size),
+            cpu_cap_s=HUNT_CPU_HOURS * 3600.0,
+            follow_up=partial(
+                hunt_r1_jobs, root=roots.seed, log_root=roots.log, size=hunt_size
+            ),
+        ),
+        Stage("group_b", (group_b,)),
+        Stage("tier1", tuple(tier1)),
+        Stage(
+            "s2",
+            tuple(
+                S2Job(
+                    truths[r.truth],
+                    r.seed,
+                    r.text or "",
+                    r.sparse_link or "",
+                    env,
+                    roots.seed,
+                )
+                for r in sparse
+            ),
+        ),
+        Stage("tier2", tuple(fit_job(f) for f in fits if f.tier == 2)),
+    )
+
+
+def write_controls(paths: OutPaths, stage: str) -> None:
+    """``controls.json``, when the controls end (section 2.8): H1 is known before
+    tier 1 without reading the journal. Group B is a dev unit, so it holds no P4
+    row."""
+    if stage != "group_b":
+        return
+    records = read_records(paths.journal)
+    hunt = hunt_summary(records)
+    body = {
+        "H1": h1_json(h1_status(records)),
+        "hunt": hunt,
+        "control_state": _control_state(hunt),
+    }
+    replace_file(paths.controls, (dumps_record(body) + "\n").encode("utf-8"))
+
+
+# --------------------------------------------------------------------------
+# Entry point
+# --------------------------------------------------------------------------
+
+
+def launch_line(
+    used_wall_s: float, worktree: Path, split: Path, test_split: Path, store: Path
+) -> str:
+    """The unit's launch line, with the wall time left out of 120 hours."""
+    remaining = max(int(WALL_HOURS * 3600.0 - used_wall_s), 0)
+    env = " ".join(f"-E {name}=1" for name in BLAS_VARIABLES)
+    return (
+        "systemd-run --user --unit=sci-p4-search-misses --nice=10 -p CPUQuota=200% "
+        f"-p RuntimeMaxSec={remaining} -p MemoryMax=5G -p OOMPolicy=continue {env} "
+        f"--working-directory={worktree} uv run python {SCRIPT_PATH} --workers 2 "
+        f"--split {split} --test-split {test_split} --store {store}"
+    )
+
+
+def resume_line(
+    cpu_json: Path, worktree: Path, split: Path, test_split: Path, store: Path
+) -> str | None:
+    """The line a resume is launched with; None if it would be refused."""
+    used, wall = ledger_totals(cpu_json)
+    if used >= CPU_STOP_HOURS * 3600 * 10**6 or wall >= WALL_HOURS * 3600.0:
+        return None
+    return launch_line(wall, worktree, split, test_split, store)
+
+
+@dataclass(frozen=True)
+class Setup:
+    """What ``main`` found once every guard passed."""
+
+    identity: Mapping[str, str]
+    paths: OutPaths
+    roots: Roots
+    hunt_size: int
+    env: CampaignEnvironment
+    plan: Sequence[CampaignConfig]
+    truths: Sequence[TruthEntry]
+    controls: ScriptedControls
+    group_b: FitJob
+    store: Path
+    resamples: int = READS_RESAMPLES
+
+
+def frozen_setup(args: argparse.Namespace) -> Setup:
+    """The guards of section 2.10, then the launch's inputs. Control 4 is read at
+    ``T``, which the guards name."""
+    identity = run_guards(
+        pilot.ROOT,
+        prereg_sha=PREREG_SHA256,
+        f2_commit=F2_COMMIT,
+        base_commit=BASE_COMMIT,
+        fit_diff_sha=FIT_DIFF_SHA256,
+        reductions_blob=REDUCTIONS_BLOB,
+        environ=initial_environment(),
+        store=args.store,
+        launch_copy=read_launch_copy,
+    )
+    check_paths(
+        split=args.split,
+        test_split=args.test_split,
+        store=args.store,
+        out=OUT_DIR,
+        repo=pilot.ROOT,
+    )
+    check_split(args.split, SPLIT_SHA256, DEV_RELATIVE)
+    expected = test_split_expected(pilot.ROOT, identity["S"])
+    check_split(args.test_split, expected, TEST_RELATIVE)
+    env, plan, truths = p4_inputs(args.test_split)
+    truth, dev_env = group_b_inputs(args.split)
+    return Setup(
+        identity=identity,
+        paths=OutPaths(OUT_DIR),
+        roots=FROZEN_ROOTS,
+        hunt_size=HUNT_SIZE,
+        env=env,
+        plan=plan,
+        truths=truths,
+        controls=scripted_controls(identity["T"]),
+        group_b=group_b_job(truth, dev_env, FROZEN_ROOTS.seed),
+        store=args.store,
+    )
+
+
+def _manifest_failures(paths: OutPaths, store: Path) -> list[str]:
+    if not paths.manifest.exists():
+        return ["no manifest was taken before the run"]
+    before = json.loads(paths.manifest.read_text(encoding="utf-8"))
+    return manifest_diff(before, store_manifest(store))
+
+
+def report(decision: Mapping[str, Json]) -> int:
+    """The line and the exit code. ``bug`` has no label and so no label's code."""
+    if "label_line" in decision:
+        print(decision["label_line"], flush=True)
+    elif "label" in decision:
+        print(f"{decision['label']}: {decision['byte_failures']}", flush=True)
+    else:
+        print(f"no label: the run ended {decision['end']!r}", flush=True)
+    return int(decision.get("exit_code", NO_LABEL_EXIT))
+
+
+def execute(setup: Setup, args: argparse.Namespace) -> int:
+    """A run or ``--finalise``, once the guards have passed. A refused resume stops
+    before the store is opened."""
+    paths = setup.paths
+    paths.root.mkdir(parents=True, exist_ok=True)
+    print(f"script sha256 {script_sha256()}", flush=True)
+    decision: Record | None
+    try:
+        check_script(paths.cpu)
+        if args.finalise:
+            finished = finished_decision(paths)
+            if finished is not None:
+                return report(finished)
+        else:
+            check_start(paths)
+            CpuLedger.load(paths.cpu)
+            if not paths.manifest.exists():
+                body = canonical_json(store_manifest(setup.store))
+                replace_file(paths.manifest, (body + "\n").encode("utf-8"))
+        table, cells = load_store(setup.store, setup.env, setup.plan, setup.truths)
+        check_table(table, cells)
+        plan_rows = contrast_rows(setup.plan, setup.truths)
+        channels = setup.env.channels
+        census = build_census(table, cells, channels, frozenset(plan_rows))
+        print_counts(census, table)
+        inputs = Inputs(
+            census, table, plan_rows, setup.controls, setup.roots, setup.resamples
+        )
+        with driver_lock(paths):
+            if args.finalise:
+                decision = finalise(
+                    paths,
+                    inputs,
+                    identity=setup.identity,
+                    manifest_failures=_manifest_failures(paths, setup.store),
+                    end_flag=args.end,
+                )
+            else:
+                stages = plan_stages(
+                    census,
+                    {t.id: t for t in setup.truths},
+                    setup.env,
+                    setup.group_b,
+                    roots=setup.roots,
+                    hunt_size=setup.hunt_size,
+                )
+                run = Driver(
+                    paths,
+                    stages,
+                    workers=args.workers,
+                    after_stage=partial(write_controls, paths),
+                )
+                reason = run.run()
+                print(f"run ended: {reason}", flush=True)
+                decision = None
+                if reason not in RESUMABLE_ENDS:
+                    decision = conclude(
+                        paths,
+                        inputs,
+                        reason,
+                        identity=setup.identity,
+                        manifest_failures=_manifest_failures(paths, setup.store),
+                    )
+    except (GuardFailure, ResumeRefused, ByteFailure, CampaignError) as error:
+        return refuse(paths, str(error))
+    if decision is None:
+        line = resume_line(
+            paths.cpu, pilot.ROOT, args.split, args.test_split, setup.store
+        )
+        print(line or "no resume: the CPU stop or the wall limit is reached")
+        return NO_LABEL_EXIT
+    return report(decision)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    pilot.reconfigure_stdout()
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.print_hashes:
+        for path in (SCRIPT_PATH, TEST_PATH):
+            digest = hashlib.sha256((pilot.ROOT / path).read_bytes()).hexdigest()
+            print(f"{digest}  {path}")
+        return 0
+    if args.split is None or args.test_split is None or args.store is None:
+        parser.error("--split, --test-split and --store are required")
+    try:
+        setup = frozen_setup(args)
+    except (GuardFailure, CampaignError) as error:
+        return refuse(OutPaths(OUT_DIR), str(error))
+    return execute(setup, args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

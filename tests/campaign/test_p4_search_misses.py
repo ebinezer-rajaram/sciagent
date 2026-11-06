@@ -20,6 +20,7 @@ pass and every read starts at 0.
 from __future__ import annotations
 
 import ast
+import contextlib
 import hashlib
 import importlib
 import inspect
@@ -33,17 +34,43 @@ import sys
 import time
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, replace
+from functools import cache
+from itertools import product
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Final
 
 import numpy as np
 import pytest
-from campaign_support import entry
+from campaign_support import entry, environment, tiny_config
 
 from sciagent.campaign import analysis, contrasts
 from sciagent.campaign.analysis import Row, Table, derive
 from sciagent.campaign.contrasts import ContrastRead, ScriptedControls
+from sciagent.campaign.plan import baseline_key, baseline_units
+from sciagent.campaign.store import ResultStore
 from sciagent.campaign.voids import VoidStatus
+from sciagent.glm.canonical import canonicalise
+from sciagent.glm.data import Dataset
+from sciagent.glm.fit import FitConfig, _ascend, _Profile, _search_blocks, _Slots, fit
+from sciagent.glm.grammar import (
+    ALL,
+    Excite,
+    Feature,
+    Gate,
+    KernelKind,
+    Link,
+    One,
+    Periodic,
+    PhaseWindow,
+    Structure,
+    psi_slots,
+)
+from sciagent.glm.grids import grid
+from sciagent.glm.simulate import Coefficients, simulate
+from sciagent.glm.syntax import parse, render
+from sciagent.systems.v2.models import GLMModel
+from sciagent.systems.v2.sparse import SparseConfig, _choose_link, split_dataset
 
 REPO: Final = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "scripts"))
@@ -2605,3 +2632,1664 @@ def test_the_default_path_is_the_records_constant() -> None:
     signature = inspect.signature(p4m.scripted_controls)
     assert signature.parameters["path"].default == record_module.NAMING_NULL_RECORD
     assert signature.parameters["split"].default == "test"
+
+
+# --------------------------------------------------------------------------
+# The reference search, copied from the pilot (PR 2.2, 2.3, 2.4; tests as PR 2.10)
+# --------------------------------------------------------------------------
+
+EXP_K: Final = Excite(KernelKind.EXP, One(), ALL)
+SMALL: Final = (EXP_K, Periodic())  # 6 · 5 = 30 points, sweep 11
+MIDDLE: Final = (EXP_K, Gate(Periodic(), PhaseWindow()))  # 600 points, sweep 106
+
+
+def structure_of(
+    features: tuple[Feature, ...] = SMALL, link: Link = Link.SOFTPLUS
+) -> Structure:
+    return Structure(features, link)
+
+
+@cache
+def toy_data(
+    features: tuple[Feature, ...] = SMALL, link: Link = Link.SOFTPLUS, seed: int = 3
+) -> tuple[Dataset, ...]:
+    structure = structure_of(features, link)
+    rng = np.random.default_rng(seed)
+    psi = tuple(
+        {s: grid(s.name)[int(rng.integers(len(grid(s.name))))] for s in psi_slots(f)}
+        for f in structure.features
+    )
+    coef = Coefficients(0.3, ((-1.0,), (0.4, -0.3)))
+    log = simulate(structure, psi, coef, p4m.T2_CHANNELS, p4m.t2_marks, 60.0, rng)
+    return (Dataset.observational(log),)
+
+
+def toy_search(*, k: int = 2, cap: int = 10**6, r2_max: int = 0, **kw: Any) -> Any:
+    return p4m.reference_search(
+        structure_of(),
+        toy_data(),
+        p4m.T2_CHANNELS,
+        p4m.reference_rng("toy", TEST_ROOT),
+        k=k,
+        cap=cap,
+        r2_max=r2_max,
+        **kw,
+    )
+
+
+def valued(ll: float, gap: float = 0.0, certified: bool = True) -> Any:
+    return p4m.Valued(ll, gap, certified)
+
+
+def pv(point: tuple[int, ...], score: float, certified: bool = True) -> Any:
+    return p4m.PointValue(point, score, 0.0, certified)
+
+
+def test_the_search_constants_are_the_texts() -> None:
+    """Section 2.2's caps stay as PR 2.2."""
+    assert p4m.K_STARTS == 48
+    assert p4m.S2_STARTS == 16
+    assert p4m.R1_POINT_CAP == 8_000
+    assert p4m.R1_POINT_CAP_IDENTITY == 3_000
+    assert p4m.S2_POINT_CAP == 2_000
+    assert p4m.R2_GRID_MAX == 14_400
+    assert p4m.TOL_FLOOR == 3e-7
+    assert p4m.H3_LIMIT == 0.01
+    assert p4m.HUNT_SIZE == 150
+    assert p4m.HUNT_R1_PER_STRATUM == 25
+    assert p4m.HUNT_CPU_HOURS == 6.0
+
+
+def test_the_case_strings_are_the_texts() -> None:
+    assert p4m.fit_case("t", 1, "x") == "t|1|x"
+    assert p4m.t2_case(0, "exp", 7) == "t2|0|exp|7"
+    assert p4m.hunt_case("id-large", 1003) == "hunt|id-large|1003"
+
+
+@pytest.mark.parametrize("c", ["t|1|x", "t2|0|exp|7", "hunt|id-large|1003"])
+def test_the_stream_is_the_first_16_hex_digits_of_sha256(c: str) -> None:
+    h = int(hashlib.sha256(c.encode()).hexdigest()[:16], 16)
+    want = np.random.default_rng(np.random.SeedSequence([TEST_ROOT, h]))
+    got = p4m.reference_rng(c, TEST_ROOT)
+    assert got.integers(1 << 40) == want.integers(1 << 40)
+
+
+def test_the_root_is_always_stated_so_no_call_can_fall_into_a_frozen_one() -> None:
+    for function in (p4m.reference_rng, p4m.hunt_log):
+        for parameter in inspect.signature(function).parameters.values():
+            if "root" in parameter.name:
+                assert parameter.default is inspect.Parameter.empty
+
+
+@pytest.mark.parametrize(
+    ("chosen", "stored", "kind"),
+    [
+        ((-10.0, 0.0), (-10.0 - 1e-7, 0.0), "near_tie"),
+        ((-10.0, 0.0), (-11.0, 0.0), "miss"),
+        ((-10.0, 2e-3), (-10.0 - 1e-3, 2e-3), "near_tie"),
+        ((-10.0, 0.0), (-10.0, 0.0), "none"),
+        ((-11.0, 0.0), (-10.0, 0.0), "none"),
+    ],
+    ids=["inside the floor", "beyond it", "gaps widen it", "equal", "worse"],
+)
+def test_the_miss_rule(
+    chosen: tuple[float, float], stored: tuple[float, float], kind: str
+) -> None:
+    assert p4m.call_miss(valued(*chosen), valued(*stored)).kind == kind
+
+
+@pytest.mark.parametrize("gap", [math.inf, math.nan])
+def test_a_non_finite_stored_gap_is_dropped_so_the_row_can_still_miss(
+    gap: float,
+) -> None:
+    call = p4m.call_miss(valued(-10.0, 1e-9), valued(-11.0, gap))
+    assert call.kind == "miss"
+    assert call.stored_uncertified is True
+    assert call.tol == 3e-7
+
+
+def test_an_uncertified_stored_fit_loses_its_gap_from_the_tolerance() -> None:
+    call = p4m.call_miss(valued(-10.0), valued(-10.1, 5.0, certified=False))
+    assert call.kind == "miss"
+
+
+def test_a_stored_fit_at_minus_infinity_is_a_miss_not_nan() -> None:
+    assert p4m.call_miss(valued(-10.0), valued(-math.inf)).kind == "miss"
+
+
+def test_a_gain_at_or_below_both_quadrature_errors_is_listed() -> None:
+    assert p4m.within_quadrature(1e-6, 5e-7, 5e-7)
+    assert not p4m.within_quadrature(2e-6, 5e-7, 5e-7)
+
+
+def test_the_highest_certified_point_is_chosen() -> None:
+    assert p4m.choose_point(pv((0,), -10.0), pv((1,), -9.0)).point == (1,)
+
+
+def test_a_higher_uncertified_r0_is_not_chosen() -> None:
+    got = p4m.choose_point(pv((0,), -9.0, False), pv((1,), -10.0))
+    assert got.point == (1,)
+
+
+def test_ties_go_to_the_lowest_index_tuple() -> None:
+    assert p4m.choose_point(pv((3,), -9.0), pv((1,), -9.0)).point == (1,)
+
+
+def test_nothing_is_chosen_when_nothing_is_certified() -> None:
+    assert p4m.choose_point(pv((0,), -9.0, False), None) is None
+
+
+def test_higher_uncertified_points_are_counted() -> None:
+    values = [pv((1,), -8.0, False), pv((2,), -11.0, False), pv((3,), -8.0)]
+    assert p4m.count_uncertified_better(values, pv((0,), -9.0)) == 1
+
+
+def replayed_points(k: int, c: str = "toy") -> set[tuple[int, ...]]:
+    profile = p4m.fresh_profile(structure_of(), toy_data(), p4m.T2_CHANNELS)
+    rng = p4m.reference_rng(c, TEST_ROOT)
+    blocks = _search_blocks(profile.slots, profile.config.psi_block_max)
+    for start in p4m.draw_starts(profile.slots, rng, k):
+        _ascend(profile, start, blocks, 10**6)
+    return set(profile.solutions)
+
+
+@pytest.mark.parametrize("k", [2, 5])
+def test_every_point_in_the_profile_was_reached_by_the_runs_own_starts(k: int) -> None:
+    assert set(toy_search(k=k).profile.solutions) == replayed_points(k)
+
+
+def test_r1_refuses_a_profile_that_is_not_empty() -> None:
+    profile = p4m.fresh_profile(structure_of(), toy_data(), p4m.T2_CHANNELS)
+    profile.evaluate([(0, 0, 0)][:1] if len(profile.slots.grids) == 3 else [(0, 0)])
+    with pytest.raises(p4m.ContaminatedProfile):
+        p4m.run_r1(profile, p4m.reference_rng("toy", TEST_ROOT), k=1, cap=10)
+
+
+def test_the_reference_takes_no_psi_and_no_coefficients() -> None:
+    names = set(inspect.signature(p4m.reference_search).parameters)
+    assert names.isdisjoint({"psi", "truth", "coefficients", "known", "start"})
+
+
+def test_r2_finishes_the_grid_on_the_same_profile() -> None:
+    out = toy_search(k=1, r2_max=14_400)
+    assert out.r2_complete
+    assert len(out.profile.solutions) == out.profile.slots.size
+
+
+def test_r2_does_not_run_above_its_limit() -> None:
+    out = toy_search(k=1, r2_max=1)
+    assert not out.r2_complete
+    assert len(out.profile.solutions) == out.r1.n_points
+
+
+def test_r1s_result_is_handed_over_before_r2_starts() -> None:
+    seen: list[int] = []
+    out = toy_search(k=1, r2_max=14_400, on_r1=lambda r1: seen.append(r1.n_points))
+    assert seen == [out.r1.n_points]
+    assert seen[0] < out.profile.slots.size
+
+
+def test_r1s_own_best_does_not_see_r2() -> None:
+    alone = toy_search(k=1)
+    both = toy_search(k=1, r2_max=14_400)
+    assert both.r1.best == alone.best
+
+
+def test_r1_is_deterministic() -> None:
+    a, b = toy_search(k=3), toy_search(k=3)
+    assert a.r1.starts == b.r1.starts
+    assert a.best == b.best
+
+
+def test_the_cap_stops_r1_deterministically_and_flags_it() -> None:
+    a, b = toy_search(k=8, cap=5), toy_search(k=8, cap=5)
+    assert a.r1.capped and b.r1.capped
+    assert a.r1.n_ascents == b.r1.n_ascents < 8
+    assert a.r1.n_points == b.r1.n_points
+
+
+def test_a_capped_fit_still_goes_on_to_r2() -> None:
+    out = toy_search(k=8, cap=5, r2_max=14_400)
+    assert out.r1.capped and out.r2_complete
+
+
+def test_the_job_cut_stops_between_starts_and_leaves_r2_unstarted() -> None:
+    out = toy_search(k=8, r2_max=14_400, should_stop=lambda: True)
+    assert out.r1.n_ascents == 0
+    assert out.r1.cpu_cut and out.cpu_cut and not out.r2_complete
+
+
+def test_the_job_cut_reads_this_processs_cpu(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(p4m.time, "process_time", lambda: 2.5 * 3600.0)
+    assert p4m.past_job_cut()
+    monkeypatch.setattr(p4m.time, "process_time", lambda: 2.5 * 3600.0 - 1.0)
+    assert not p4m.past_job_cut()
+
+
+def test_the_grid_class_boundary_is_512_513() -> None:
+    assert p4m.is_exhaustive(512)
+    assert not p4m.is_exhaustive(513)
+
+
+def test_the_exhaustive_fit_is_the_brute_force_maximum() -> None:
+    structure = structure_of()
+    stored = fit(structure, toy_data(), p4m.T2_CHANNELS, config=FitConfig())
+    slots = _Slots.of(structure)
+    best = max(
+        fit(
+            structure,
+            toy_data(),
+            p4m.T2_CHANNELS,
+            config=FitConfig(),
+            psi=slots.assignment(point),
+        ).log_likelihood
+        for point in product(*(range(len(g)) for g in slots.grids))
+    )
+    assert stored.log_likelihood == best
+
+
+def oracle_expect(**over: Any) -> Any:
+    fields = {
+        "search_ll": (-100.5).hex(),
+        "truth_psi_ll": (-100.0).hex(),
+        "psi_source": "truth",
+        "underfit": False,
+        **over,
+    }
+    return p4m.OracleExpect(**fields)
+
+
+def expect(system: str = B_SYM, oracle: Any = None, value: float = -0.75) -> Any:
+    return p4m.RowExpect(system, False, value.hex(), oracle)
+
+
+def test_an_equal_reading_passes() -> None:
+    assert p4m.byte_check(expect(), (-0.75).hex(), None) == []
+
+
+def test_one_ulp_off_fails() -> None:
+    off = math.nextafter(-0.75, 0.0).hex()
+    assert p4m.byte_check(expect(), off, None)
+
+
+def test_minus_infinity_compares_as_text() -> None:
+    assert p4m.byte_check(expect(value=-math.inf), (-math.inf).hex(), None) == []
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "oracle_search_ll",
+        "oracle_truth_psi_ll",
+        "oracle_psi_source",
+        "oracle_underfit",
+    ],
+)
+def test_the_oracle_fields_must_match_too(name: str) -> None:
+    good = {
+        "oracle_search_ll": -100.5,
+        "oracle_truth_psi_ll": -100.0,
+        "oracle_psi_source": "truth",
+        "oracle_underfit": False,
+    }
+    row = expect(ORACLE, oracle_expect())
+    assert p4m.byte_check(row, (-0.75).hex(), good) == []
+    wrong = {
+        **good,
+        name: {"oracle_psi_source": "search", "oracle_underfit": True}.get(name, -9.0),
+    }
+    assert p4m.byte_check(row, (-0.75).hex(), wrong)
+
+
+def test_delta_is_signed_and_minus_infinity_has_its_rules() -> None:
+    assert p4m.held_out_delta(-0.5, -0.25) == (0.25, "finite")
+    assert p4m.held_out_delta(-0.25, -0.5) == (-0.25, "finite")
+    assert p4m.held_out_delta(-math.inf, -math.inf) == (0.0, "finite")
+    assert p4m.held_out_delta(-math.inf, -0.5) == (None, "infinite_move")
+    assert p4m.held_out_delta(-0.5, -math.inf) == (None, "infinite_move")
+
+
+def test_h3_counts_an_infinite_move_as_above_the_limit() -> None:
+    assert p4m.h3_falsified([(None, "infinite_move")])
+    assert p4m.h3_falsified([(0.02, "finite")])
+    assert not p4m.h3_falsified([(0.01, "finite"), (-0.01, "finite")])
+
+
+# --------------------------------------------------------------------------
+# Records (as PR 2.10)
+# --------------------------------------------------------------------------
+
+
+def test_floats_are_written_as_hex() -> None:
+    assert json.loads(p4m.dumps_record({"x": [0.5]})) == {"x": ["0x1.0000000000000p-1"]}
+
+
+def test_a_torn_last_line_is_not_a_record(tmp_path: Path) -> None:
+    path = tmp_path / "j"
+    path.write_bytes(b'{"type":"a"}\n{"type":"b')
+    assert p4m.read_records(path) == [{"type": "a"}]
+
+
+def test_a_torn_line_in_the_middle_is_an_error(tmp_path: Path) -> None:
+    path = tmp_path / "j"
+    path.write_bytes(b'{"type":"a\n{"type":"b"}\n')
+    with pytest.raises(p4m.ByteFailure):
+        p4m.read_records(path)
+
+
+def test_opening_for_a_resume_removes_only_the_torn_fragment(tmp_path: Path) -> None:
+    path = tmp_path / "j"
+    path.write_bytes(b'{"type":"a"}\n{"type":"b')
+    p4m.repair_tail(path)
+    assert path.read_bytes() == b'{"type":"a"}\n'
+
+
+def test_units_are_sorted_and_keep_no_duplicates() -> None:
+    a = {"type": "done", "job": "b"}
+    b = {"type": "r1", "job": "a"}
+    other = {"type": "run_start"}
+    lines = p4m.units_bytes([a, b, a, other]).decode().splitlines()
+    assert [json.loads(x)["job"] for x in lines] == ["a", "b"]
+
+
+# --------------------------------------------------------------------------
+# The driver, as PR 2.10 lists it
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FateJob:
+    """A job whose process ends the way ``mode`` says, for the driver's tests."""
+
+    name: str
+    mode: str = "ok"
+    marker: str = ""
+
+    @property
+    def id(self) -> str:
+        return self.name
+
+    def run(self, sink: Any) -> None:
+        if self.marker:
+            with Path(self.marker).open("a") as f:
+                f.write(f"{self.name} {os.getpid()}\n")
+        match self.mode:
+            case "burn":
+                while True:
+                    pass
+            case "kill":
+                os.kill(os.getpid(), signal.SIGKILL)
+            case "kill_once":
+                if len(Path(self.marker).read_text().splitlines()) == 1:
+                    os.kill(os.getpid(), signal.SIGKILL)
+            case "exit_clean":
+                return
+            case "r1_then_kill" | "r1_then_burn":
+                sink.record("r1", {"best": None, "result": {"kind": "fit"}})
+                if self.mode == "r1_then_kill":
+                    os.kill(os.getpid(), signal.SIGKILL)
+                while True:
+                    pass
+        sink.record("done", {"kind": "toy"})
+
+
+def types_of(path: Path, job: str) -> list[str]:
+    return [r["type"] for r in p4m.read_records(path) if r.get("job") == job]
+
+
+def test_every_job_runs_in_its_own_process(paths: Any) -> None:
+    marker = paths.root / "pids"
+    jobs = [FateJob(n, marker=str(marker)) for n in "abc"]
+    assert driver(paths.root, [stage(*jobs)]).run() == "complete"
+    pids = [line.split()[1] for line in marker.read_text().splitlines()]
+    assert len(set(pids)) == 3
+    assert str(os.getpid()) not in pids
+
+
+def test_the_driver_uses_no_shared_pool() -> None:
+    source = (REPO / "scripts/p4_search_misses.py").read_text("utf-8")
+    assert "ProcessPool" not in source
+    assert ".Pool(" not in source
+
+
+def test_a_killed_job_does_not_touch_its_sibling(paths: Any) -> None:
+    run = driver(paths.root, [stage(FateJob("a", "kill"), FateJob("b"))])
+    assert run.run() == "complete"
+    assert types_of(paths.journal, "b") == ["done"]
+
+
+def test_a_lost_worker_is_retried_once_after_the_stage(paths: Any) -> None:
+    marker = paths.root / "m"
+    jobs = [FateJob("a", "kill_once", str(marker)), FateJob("b", marker=str(marker))]
+    assert driver(paths.root, [stage(*jobs)], workers=1).run() == "complete"
+    assert types_of(paths.journal, "a") == ["job_lost", "done"]
+    assert [x.split()[0] for x in marker.read_text().splitlines()] == ["a", "b", "a"]
+
+
+def test_a_second_loss_is_reference_failed_worker_lost(paths: Any) -> None:
+    assert driver(paths.root, [stage(FateJob("a", "kill"))]).run() == "complete"
+    records = [r for r in p4m.read_records(paths.journal) if r.get("job") == "a"]
+    assert [r["type"] for r in records] == ["job_lost", "reference_failed"]
+    assert records[-1]["reason"] == "worker_lost"
+
+
+def test_an_exit_without_a_result_counts_as_lost(paths: Any) -> None:
+    assert driver(paths.root, [stage(FateJob("a", "exit_clean"))]).run() == "complete"
+    assert types_of(paths.journal, "a")[0] == "job_lost"
+
+
+def test_the_cpu_limit_is_per_job_and_not_retried(paths: Any) -> None:
+    run = driver(paths.root, [stage(FateJob("a", "burn"))], cpu_limit_s=1)
+    assert run.run() == "complete"
+    records = [r for r in p4m.read_records(paths.journal) if r.get("job") == "a"]
+    assert [(r["type"], r["reason"]) for r in records] == [
+        ("reference_failed", "cpu_limit")
+    ]
+
+
+def test_a_job_lost_after_r1_is_r2_lost_not_reference_failed(paths: Any) -> None:
+    assert driver(paths.root, [stage(FateJob("a", "r1_then_kill"))]).run() == "complete"
+    assert types_of(paths.journal, "a")[-1] == "r2_lost"
+
+
+def test_the_cpu_limit_after_r1_is_r2_lost_and_not_retried(paths: Any) -> None:
+    run = driver(paths.root, [stage(FateJob("a", "r1_then_burn"))], cpu_limit_s=1)
+    assert run.run() == "complete"
+    assert types_of(paths.journal, "a") == ["r1", "r2_lost"]
+
+
+def test_exit_codes_are_read_as_the_text_says() -> None:
+    assert p4m.exit_kind(0) == "ok"
+    assert p4m.exit_kind(-signal.SIGXCPU) == "cpu_limit"
+    assert p4m.exit_kind(-signal.SIGTERM) == "terminated"
+    assert p4m.exit_kind(-signal.SIGKILL) == "lost"
+    assert p4m.exit_kind(1) == "bug"
+
+
+def test_stages_run_in_order_with_a_barrier(paths: Any) -> None:
+    marker = paths.root / "m"
+    stages = [
+        stage(FateJob("a", marker=str(marker)), name="one"),
+        stage(FateJob("b", marker=str(marker)), name="two"),
+    ]
+    assert driver(paths.root, stages).run() == "complete"
+    assert [x.split()[0] for x in marker.read_text().splitlines()] == ["a", "b"]
+
+
+def test_memory_pauses_dispatch_and_stops_nothing(paths: Any) -> None:
+    readings = iter([1.0, 1.0, 16.0])
+    run = driver(
+        paths.root,
+        [stage(FateJob("a"))],
+        read_mem_gib=lambda: next(readings, 16.0),
+    )
+    assert run.run() == "complete"
+    assert types_of(paths.journal, "a") == ["done"]
+
+
+def test_the_memory_gate_is_8_gib() -> None:
+    assert p4m.may_start(running=0, workers=2, mem_gib=8.0)
+    assert not p4m.may_start(running=0, workers=2, mem_gib=7.9)
+    assert not p4m.may_start(running=2, workers=2, mem_gib=16.0)
+
+
+def test_a_resume_appends_and_skips_what_is_done(paths: Any) -> None:
+    marker = paths.root / "m"
+    plant(paths, [{"type": "done", "job": "a"}], end=None)
+    jobs = [FateJob("a", marker=str(marker)), FateJob("b", marker=str(marker))]
+    before = paths.journal.read_bytes()
+    assert driver(paths.root, [stage(*jobs)]).run() == "complete"
+    assert paths.journal.read_bytes().startswith(before)
+    assert [x.split()[0] for x in marker.read_text().splitlines()] == ["b"]
+
+
+def test_a_stage_cap_stops_dispatch_and_is_named(paths: Any) -> None:
+    with paths.timing.open("w") as f:
+        f.write(json.dumps({"stage": "hunt", "cpu_s": 7.0}) + "\n")
+    jobs = stage(FateJob("a"), name="hunt", cpu_cap_s=6.0)
+    assert driver(paths.root, [jobs]).run() == "complete"
+    records = p4m.read_records(paths.journal)
+    assert types_of(paths.journal, "a") == []
+    assert [r for r in records if r["type"] == "stage_cap"]
+
+
+def test_follow_up_jobs_run_after_the_stages_jobs(paths: Any) -> None:
+    marker = paths.root / "m"
+
+    def due(records: Sequence[Any]) -> list[Any]:
+        return [FateJob("later", marker=str(marker))]
+
+    jobs = stage(FateJob("a", marker=str(marker)), follow_up=due)
+    assert driver(paths.root, [jobs]).run() == "complete"
+    assert [x.split()[0] for x in marker.read_text().splitlines()] == ["a", "later"]
+
+
+def test_the_ledger_adds_the_earlier_units(tmp_path: Path) -> None:
+    path = tmp_path / "cpu.json"
+    p4m.CpuLedger.begin(path).update(usage_usec=10, wall_s=2.0)
+    second = p4m.CpuLedger.begin(path)
+    second.update(usage_usec=5, wall_s=1.0)
+    assert second.total_usec == 15
+    assert second.wall_s == 3.0
+
+
+def test_a_resume_at_the_stop_is_refused_and_just_below_is_allowed(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "cpu.json"
+    ledger = p4m.CpuLedger.begin(path)
+    ledger.update(usage_usec=172 * 3600 * 10**6 - 1, wall_s=0.0)
+    p4m.CpuLedger.load(path)
+    ledger.update(usage_usec=172 * 3600 * 10**6, wall_s=0.0)
+    with pytest.raises(p4m.ResumeRefused, match="172"):
+        p4m.CpuLedger.load(path)
+
+
+def test_a_resume_with_no_wall_time_left_is_refused(tmp_path: Path) -> None:
+    path = tmp_path / "cpu.json"
+    p4m.CpuLedger.begin(path).update(usage_usec=1, wall_s=120 * 3600.0)
+    with pytest.raises(p4m.ResumeRefused, match="120"):
+        p4m.CpuLedger.load(path)
+
+
+def test_a_start_under_another_script_hash_is_refused(tmp_path: Path) -> None:
+    path = tmp_path / "cpu.json"
+    p4m.CpuLedger.begin(path, "a" * 64)
+    with pytest.raises(p4m.ResumeRefused, match="script hash"):
+        p4m.check_script(path, "b" * 64)
+
+
+def test_the_driver_reads_the_cgroup_usage(tmp_path: Path) -> None:
+    proc = tmp_path / "cgroup"
+    proc.write_text("0::/unit\n")
+    stat = tmp_path / "unit" / "cpu.stat"
+    stat.parent.mkdir()
+    stat.write_text("usage_usec 42\nuser_usec 1\n")
+    assert p4m.read_usage_usec(proc, tmp_path) == 42
+
+
+def test_a_missing_cgroup_fails_closed(tmp_path: Path) -> None:
+    with pytest.raises(p4m.CpuAccountingError):
+        p4m.read_usage_usec(tmp_path / "no", tmp_path)
+
+
+def test_the_launch_line_gives_the_remaining_wall_time() -> None:
+    line = p4m.launch_line(
+        3600.0, Path("/w"), Path("/split"), Path("/test"), Path("/store")
+    )
+    assert f"-p RuntimeMaxSec={120 * 3600 - 3600} " in line
+    assert "--nice=10" in line
+    assert "--split /split --test-split /test --store /store" in line
+    assert "--out" not in line
+
+
+def test_no_launch_line_is_offered_when_a_resume_would_be_refused(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "cpu.json"
+    p4m.CpuLedger.begin(path).update(usage_usec=172 * 3600 * 10**6, wall_s=0.0)
+    got = p4m.resume_line(path, Path("/w"), Path("/s"), Path("/t"), Path("/st"))
+    assert got is None
+
+
+def test_finalise_works_from_records_left_by_a_real_kill(paths: Any) -> None:
+    """``--end`` is needed: a run killed with limits unspent could still resume."""
+    table = tabled()
+    plant(paths, clean(table), end=None)
+    context = multiprocessing.get_context("fork")
+    jobs = [stage(ToyJob("first"), ToyJob("second", "hang"))]
+    process = context.Process(target=_killable, args=(paths.root, jobs))
+    process.start()
+    wait_for(lambda: '"first"' in paths.journal.read_text())
+    assert process.pid is not None
+    os.killpg(process.pid, signal.SIGKILL)
+    process.join(20)
+    with paths.journal.open("ab") as f:
+        f.write(b'{"type":"done","job":"sec')  # a torn write, as a crash leaves
+    assert p4m.end_state(p4m.read_records(paths.journal), paths) == "killed"
+    with pytest.raises(p4m.ResumeRefused, match="--end"):
+        finalise(paths, inputs_of(table))
+    paths.end_note.write_text("control room: killed, not resumed\n")
+    p4m.repair_tail(paths.journal)
+    d = finalise(paths, inputs_of(table), end_flag=True)
+    assert d["end"] == p4m.AUTHORISED_END
+    assert paths.units.exists() and paths.reads.exists()
+
+
+def _killable(root: Path, stages: Sequence[Any]) -> None:
+    os.setsid()
+    driver(root, stages).run()
+
+
+def test_a_second_driver_on_one_output_is_refused(paths: Any) -> None:
+    with p4m.driver_lock(paths), pytest.raises(p4m.ResumeRefused):
+        p4m.driver_lock(paths).__enter__()
+
+
+# --------------------------------------------------------------------------
+# The population (sections 2.1, 2.2): toy stores, read only
+# --------------------------------------------------------------------------
+
+GOOD_FIT_CONFIG: Final = "x|full=512|sweeps=0"
+
+
+def good_cell(**over: Any) -> Rec:
+    return {
+        "key": {"config": {"fit_config": GOOD_FIT_CONFIG}},
+        "reading": {"per_event": (-0.75).hex(), "certified": (1.0).hex()},
+        "detail": {"result": {}},
+        **over,
+    }
+
+
+def small_table(**over: Any) -> tuple[Table, dict[Key, Rec]]:
+    rows = (row("t1", 1, B_SYM, -0.75), row("t2", 1, B_SYM, -0.75))
+    table = Table(
+        {t: entry("hawkes") for t in ("t1", "t2")},
+        rows,
+        (),
+        {B_SYM: 2},
+    )
+    cells = {p4m.row_key(r): good_cell() for r in rows}
+    return replace(table, **over), cells
+
+
+def session(truth: str, system: str, void: bool, outcome: str = "submitted") -> Any:
+    return analysis.Session(
+        truth,
+        1,
+        system,
+        {},
+        {"outcome": outcome},
+        VoidStatus(void, (), 0, void),
+        "env",
+        "digest",
+    )
+
+
+def test_a_complete_table_passes() -> None:
+    p4m.check_table(*small_table())
+
+
+def test_a_unit_with_no_cell_refuses_with_no_label() -> None:
+    table, cells = small_table(missing={B_SYM: 1})
+    with pytest.raises(p4m.GuardFailure, match="missing"):
+        p4m.check_table(table, cells)
+
+
+def test_a_non_void_session_with_no_score_cell_is_missing() -> None:
+    table, cells = small_table(
+        sessions=(session("t1", AGC, False),), planned={B_SYM: 2, AGC: 1}
+    )
+    with pytest.raises(p4m.GuardFailure, match="no score cell"):
+        p4m.check_table(table, cells)
+
+
+def test_a_void_session_is_counted_and_is_not_missing() -> None:
+    table, cells = small_table(
+        sessions=(session("t1", AGC, True),), planned={B_SYM: 2, AGC: 1}
+    )
+    p4m.check_table(table, cells)
+
+
+def test_a_failed_unit_is_counted_and_is_not_missing() -> None:
+    table, cells = small_table()
+    rows = (replace(table.rows[0], ok=False, submitted=False), table.rows[1])
+    p4m.check_table(replace(table, rows=rows), cells)
+
+
+def test_a_planned_unit_unaccounted_for_refuses() -> None:
+    table, cells = small_table(planned={B_SYM: 3})
+    with pytest.raises(p4m.GuardFailure, match="planned"):
+        p4m.check_table(table, cells)
+
+
+def test_the_telling_units_have_no_row_and_are_not_expected_to() -> None:
+    table, cells = small_table(planned={B_SYM: 2, "telling": 4})
+    p4m.check_table(table, cells)
+
+
+def test_a_cell_with_another_grid_cap_refuses() -> None:
+    table, cells = small_table()
+    cells[("t1", 1, B_SYM)] = good_cell(
+        key={"config": {"fit_config": "x|full=64|sweeps=0"}}
+    )
+    with pytest.raises(p4m.GuardFailure, match="full=512"):
+        p4m.check_table(table, cells)
+
+
+def toy_store(root: Path, config: Any = None) -> tuple[Any, Any, Any]:
+    env = environment()
+    config = config or tiny_config(llm_arms=(), seeds=(1,), baselines=("B-rand",))
+    truths = (entry("hawkes"),)
+    with ResultStore(root) as store:
+        for unit in baseline_units(["hawkes"], config):
+            store.put(
+                baseline_key(unit, truths[0], env, config),
+                {"status": 1.0, "per_event": -0.75, "certified": 1.0},
+                {"result": {"structure": "x"}},
+            )
+    return env, config, truths
+
+
+def test_every_config_of_the_plan_is_read_into_one_table(tmp_path: Path) -> None:
+    root = tmp_path / "store"
+    one = tiny_config(llm_arms=(), seeds=(1,), baselines=("B-rand",))
+    two = tiny_config(llm_arms=(), seeds=(1,), baselines=("B-sym",))
+    env, _, truths = toy_store(root, one)
+    toy_store(root, two)
+    table, cells = p4m.load_store(root, env, (one, two), truths)
+    assert {r.system for r in table.rows} == {"B-rand", "B-sym"}
+    assert set(cells) == {p4m.row_key(r) for r in table.rows}
+    assert table.planned == {"B-rand": 1, "B-sym": 1}
+
+
+def test_a_missing_unit_of_any_config_shows_in_the_merged_table(tmp_path: Path) -> None:
+    root = tmp_path / "store"
+    one = tiny_config(llm_arms=(), seeds=(1,), baselines=("B-rand",))
+    two = tiny_config(llm_arms=(), seeds=(1,), baselines=("B-sym",))
+    env, _, truths = toy_store(root, one)
+    table, cells = p4m.load_store(root, env, (one, two), truths)
+    assert table.missing == {"B-sym": 1}
+    with pytest.raises(p4m.GuardFailure, match="missing"):
+        p4m.check_table(table, cells)
+
+
+def test_opening_the_store_read_only_leaves_the_manifest_unchanged(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "store"
+    env, config, truths = toy_store(root)
+    before = p4m.store_manifest(root)
+    p4m.load_store(root, env, (config,), truths)
+    assert p4m.store_manifest(root) == before
+
+
+def test_the_store_is_only_ever_opened_read_only() -> None:
+    tree = ast.parse((REPO / "scripts/p4_search_misses.py").read_text("utf-8"))
+    calls = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == "ResultStore"
+    ]
+    assert calls
+    for call in calls:
+        flags = {k.arg: k.value for k in call.keywords}
+        value = flags["read_only"]
+        assert isinstance(value, ast.Constant)
+        assert value.value is True
+
+
+def text_of(features: tuple[Feature, ...], link: Link = Link.EXP) -> str:
+    return render(canonicalise(Structure(features, link)))
+
+
+def census_row(
+    truth: str,
+    system: str,
+    text: str | None,
+    *,
+    seed: int = 1,
+    **over: Any,
+) -> Row:
+    base = row(truth, seed, system, -0.75)
+    return replace(base, structure=text, **over)
+
+
+def census_of(rows: Sequence[Row], tier1: Sequence[Key], **details: Any) -> Any:
+    cells = {p4m.row_key(r): good_cell(detail={"result": dict(details)}) for r in rows}
+    table = Table({}, tuple(rows), (), {})
+    return p4m.build_census(table, cells, environment().channels, frozenset(tier1))
+
+
+def test_every_row_lands_in_exactly_one_class() -> None:
+    assert p4m.classify_row(
+        row("a", 1, B_NP, -1.0), grid_size=None, certified=None
+    ) == ("no_search_np")
+    assert p4m.classify_row(
+        row("a", 1, B_LIB, -1.0), grid_size=None, certified=None
+    ) == ("no_search_lib")
+    assert p4m.classify_row(
+        row("a", 1, B_SYM, -1.0), grid_size=513, certified=True
+    ) == ("coordinate")
+    assert p4m.classify_row(
+        row("a", 1, B_SYM, -1.0), grid_size=512, certified=True
+    ) == ("exhaustive")
+    assert p4m.classify_row(
+        row("a", 1, B_SYM, -1.0), grid_size=512, certified=False
+    ) == ("exhaustive_uncertified")
+    no_submission = replace(row("a", 1, AGO, -1.0), submitted=False)
+    assert p4m.classify_row(no_submission, grid_size=None, certified=None) == (
+        "no_submission"
+    )
+    failed = replace(row("a", 1, AGO, -1.0), ok=False, submitted=False)
+    assert p4m.classify_row(failed, grid_size=None, certified=None) == "failed"
+
+
+def test_a_contrast_row_is_tier_1_and_llm_rows_are_not_tier_2_for_being_llm() -> None:
+    text = text_of(MIDDLE)
+    rows = [census_row("a", AGC, text), census_row("b", HAIKU, text)]
+    census = census_of(rows, [("a", 1, AGC)])
+    assert {f.truth: f.tier for f in census.fits()} == {"a": 1, "b": 2}
+
+
+def test_a_fit_shared_with_a_contrast_row_is_tier_1() -> None:
+    text = text_of(MIDDLE)
+    rows = [census_row("a", HAIKU, text), census_row("a", B_SYM, text)]
+    (fit_group,) = census_of(rows, [("a", 1, B_SYM)]).fits()
+    assert fit_group.tier == 1
+    assert len(fit_group.rows) == 2
+
+
+def test_rows_with_the_same_text_on_the_same_data_share_one_fit() -> None:
+    text = text_of(MIDDLE)
+    rows = [
+        census_row("a", B_SYM, text),
+        census_row("a", B_RAND, text),
+        census_row("a", B_SPARSE, text_of(MIDDLE, Link.SOFTPLUS)),
+    ]
+    assert len(census_of(rows, []).fits()) == 2
+
+
+def test_the_oracle_cell_fields_reach_the_expectation() -> None:
+    rows = [census_row("a", ORACLE, text_of(MIDDLE))]
+    census = census_of(
+        rows,
+        [],
+        oracle_search_ll=-100.5,
+        oracle_truth_psi_ll=-100.0,
+        oracle_psi_source="truth",
+        oracle_underfit=False,
+    )
+    got = census.rows[0].expect.oracle
+    assert got == oracle_expect()
+
+
+def test_group_e_is_every_oracle_unit_whose_search_lost_to_truth_psi() -> None:
+    text = text_of(MIDDLE)
+    rows = [
+        census_row("a", ORACLE, text, oracle_psi_source="truth"),
+        census_row("b", ORACLE, text, oracle_psi_source="search"),
+        census_row("c", ORACLE, text_of(SMALL), oracle_psi_source="truth"),
+        census_row("d", B_SYM, text),
+    ]
+    census = census_of(rows, [])
+    assert [r.truth for r in census.rows if r.group_e] == ["a", "c"]
+    assert census.rows[2].klass == "exhaustive"
+    assert census.rows[2].expect is not None
+
+
+def test_the_census_prints_counts_and_no_score(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    table = tabled()
+    p4m.print_counts(planted_census(table), table)
+    out = capsys.readouterr().out
+    assert "coordinate" in out
+    assert "0x" not in out and "-0." not in out
+    assert "group E" not in out
+
+
+def stage_setup(monkeypatch: pytest.MonkeyPatch) -> Any:
+    texts = [text_of(MIDDLE, link) for link in (Link.EXP, Link.SOFTPLUS)]
+    rows = [
+        census_row("a", ORACLE, texts[0], oracle_psi_source="truth"),
+        census_row("b", B_SYM, texts[0]),
+        census_row("c", B_SYM, texts[1]),
+        census_row("d", B_SPARSE, texts[0]),
+        census_row("e", B_SPARSE, texts[0]),
+        census_row("f", AGC, texts[1]),
+        census_row("g", HAIKU, texts[1]),
+        census_row("h", ORACLE, text_of(SMALL), oracle_psi_source="truth"),
+    ]
+    tier1 = [p4m.row_key(r) for r in rows if r.system != HAIKU]
+    census = census_of(
+        rows,
+        tier1,
+        sparse={"link": "exp"},
+        oracle_search_ll=-1.0,
+        oracle_psi_source="truth",
+        oracle_underfit=False,
+    )
+    truths = {
+        t: replace(entry("hawkes"), id=t, in_dictionary=t != "e") for t in "abcdefgh"
+    }
+    env = environment()
+    group_b = p4m.group_b_job(entry("hawkes"), env, TEST_ROOT)
+    return p4m.plan_stages(census, truths, env, group_b, roots=ROOTS, hunt_size=2)
+
+
+def test_stages_are_in_the_texts_order_and_sorted_by_sha(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stages = stage_setup(monkeypatch)
+    assert [s.name for s in stages] == [
+        "group_a",
+        "group_d",
+        "hunt",
+        "group_b",
+        "tier1",
+        "s2",
+        "tier2",
+    ]
+    group_a, group_d, hunt, group_b, tier1, s2, tier2 = (x.jobs for x in stages)
+    assert [j.group for j in group_a] == ["A"] * 6
+    assert [j.with_r2 for j in group_a] == [False] * 6
+    assert [j.k for j in group_a] == [48] * 6
+    (d,) = group_d
+    assert (d.group, d.with_r2, d.k) == ("D", True, 0)
+    (b,) = group_b
+    assert (b.group, b.seed, b.root) == ("B", 3, TEST_ROOT)
+    assert len(hunt) == 8
+    assert all(j.log_root == TEST_LOG_ROOT for j in hunt)
+    assert stages[2].follow_up is not None
+    assert stages[2].cpu_cap_s == 6.0 * 3600.0
+    order = [p4m.fit_job_id(j.truth.id, j.seed, j.text) for j in tier1]
+    assert order == sorted(order)
+    assert {j.truth.id for j in tier1} == {"a", "b", "c", "d", "e", "f", "h"}
+    assert [j.truth.id for j in tier2] == ["g"]
+    assert [j.truth.id for j in s2] == ["e", "d"]  # out-of-dictionary first
+
+
+def test_group_e_runs_in_tier_1_blind_and_not_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The exhaustive unit has no coordinate fit, so it gets a job of its own."""
+    stages = stage_setup(monkeypatch)
+    by_truth = {j.truth.id: j for j in stages[4].jobs}
+    assert by_truth["a"].group == "E"
+    assert by_truth["h"].group == "E"
+    assert by_truth["b"].group is None
+    names = [s.name for s in stages]
+    assert names.index("group_b") < names.index("tier1")
+
+
+def test_a_fits_cap_follows_its_link(monkeypatch: pytest.MonkeyPatch) -> None:
+    text = text_of(MIDDLE, Link.IDENTITY)
+    rows = [census_row("b", B_SYM, text), census_row("c", B_SYM, text_of(MIDDLE))]
+    census = census_of(rows, [p4m.row_key(r) for r in rows])
+    truths = {t: replace(entry("hawkes"), id=t) for t in "bc"}
+    env = environment()
+    group_b = p4m.group_b_job(entry("hawkes"), env, TEST_ROOT)
+    stages = p4m.plan_stages(census, truths, env, group_b, roots=ROOTS, hunt_size=1)
+    assert {j.truth.id: j.cap for j in stages[4].jobs} == {"b": 3_000, "c": 8_000}
+
+
+# --------------------------------------------------------------------------
+# Group B, fresh and off the store (section 2.9)
+# --------------------------------------------------------------------------
+
+
+def test_group_b_holds_the_three_constants_and_asserts_the_two_fields() -> None:
+    job = p4m.group_b_job(entry("hawkes"), environment(), TEST_ROOT)
+    (expected,) = job.rows
+    assert expected.system == ORACLE
+    assert expected.per_event == "-0x1.4051a13cc7023p-1"
+    assert expected.oracle.search_ll == "-0x1.86fd12dec695ap+9"
+    assert expected.oracle.truth_psi_ll == "-0x1.84b974f87ed40p+9"
+    assert expected.oracle.psi_source == "truth"
+    assert expected.oracle.underfit is False
+    assert job.bit_check == ("-0x1.86fd12dec695ap+9", "-0x1.84b974f87ed40p+9")
+    assert (job.seed, job.group, job.k, job.r2_max) == (3, "B", 48, 14_400)
+    assert job.text == p4m.GROUP_B_TEXT
+
+
+def test_group_bs_bit_check_reads_the_fits_themselves() -> None:
+    fits = SimpleNamespace(
+        search=SimpleNamespace(log_likelihood=-1.5),
+        kept=SimpleNamespace(log_likelihood=-1.25),
+    )
+    good = ((-1.5).hex(), (-1.25).hex())
+    assert p4m.bit_check_failures(good, fits) == []
+    off = (math.nextafter(-1.5, 0.0).hex(), (-1.25).hex())
+    assert p4m.bit_check_failures(off, fits)
+    assert p4m.bit_check_failures(((-1.5).hex(), (-2.0).hex()), fits)
+
+
+def test_group_bs_row_is_a_dev_unit_and_reaches_no_p4_count(paths: Any) -> None:
+    table = tabled()
+    records = clean(table)
+    done = next(r for r in records if r.get("job") == "B" and r["type"] == "done")
+    done["rows"] = [row_result(ORACLE, kind="miss", corrected=-0.25, gain=9.0)]
+    plant(paths, records)
+    d = finalise(paths, inputs_of(table))
+    assert d["M_rows"] == 0
+    assert d["H1"]["group_b_caught"] is True
+    assert d["label"] == "CONTRASTS_SURVIVE_FOUND_MISSES"
+
+
+def test_controls_json_is_written_when_the_controls_end_and_holds_no_p4_row(
+    paths: Any,
+) -> None:
+    table = tabled()
+    plant(paths, [*control_records(), *done_records(planted_census(table))], end=None)
+    p4m.write_controls(paths, "group_a")
+    assert not paths.controls.exists()
+    p4m.write_controls(paths, "group_b")
+    body = json.loads(paths.controls.read_text())
+    assert body["H1"]["falsified"] is False
+    assert body["H1"]["group_a_caught"] == 6
+    assert set(body["hunt"]) == set(p4m.HUNT_STRATUM_NAMES)
+    text = paths.controls.read_text()
+    assert not any(t in text for t in ('"t1"', AGC, "per_event"))
+
+
+# --------------------------------------------------------------------------
+# T2 and the hunt, copied (PR 2.9)
+# --------------------------------------------------------------------------
+
+
+def test_group_a_is_the_texts_six_cases() -> None:
+    assert p4m.T2_CASES == (
+        (0, "softplus", 103648458),
+        (2, "exp", 1499614403),
+        (0, "softplus", 1074),
+        (0, "softplus", 3273957339),
+        (0, "softplus", 358866363),
+        (0, "softplus", 2006407976),
+    )
+
+
+def test_the_hunt_strata_are_the_texts() -> None:
+    names = [(s.name, s.link) for s in p4m.HUNT_STRATA]
+    assert names == [
+        ("id-24000", Link.IDENTITY),
+        ("id-large", Link.IDENTITY),
+        ("large-exp", Link.EXP),
+        ("large-softplus", Link.SOFTPLUS),
+    ]
+    sizes = [_Slots.of(Structure(s.features, s.link)).size for s in p4m.HUNT_STRATA]
+    assert sizes == [24_000, 3_456_000, 3_456_000, 3_456_000]
+    assert tuple(x.name for x in p4m.HUNT_STRATA) == p4m.HUNT_STRATUM_NAMES
+
+
+@pytest.mark.parametrize("s", [0, 2])
+def test_a_hunt_case_draws_in_the_texts_order(s: int) -> None:
+    """On a test root and a short horizon, from the stream the text names."""
+    spec = p4m.HUNT_STRATA[s]
+    j = 7
+    structure = Structure(spec.features, spec.link)
+    rng = np.random.default_rng(np.random.SeedSequence([TEST_LOG_ROOT, 1000 * s + j]))
+    generating = p4m.t2_random_point(structure, rng)
+    coefficients = spec.coefficients(structure, rng)
+    log = simulate(
+        structure, generating, coefficients, p4m.T2_CHANNELS, p4m.t2_marks, 30.0, rng
+    )
+    case = p4m.hunt_log(spec.name, j, TEST_LOG_ROOT, horizon=30.0)
+    assert case.generating == generating
+    assert case.log.times.tobytes() == log.times.tobytes()
+
+
+def test_hunt_cases_run_round_robin() -> None:
+    jobs = p4m.hunt_jobs(log_root=TEST_LOG_ROOT, size=2)
+    assert [(j.stratum, j.j) for j in jobs[:5]] == [
+        ("id-24000", 0),
+        ("id-large", 0),
+        ("large-exp", 0),
+        ("large-softplus", 0),
+        ("id-24000", 1),
+    ]
+
+
+def hunt_done(stratum: str, j: int, loss: bool = True) -> Rec:
+    return {
+        "type": "done",
+        "job": p4m.hunt_job_id(stratum, j),
+        "kind": "hunt",
+        "stratum": stratum,
+        "j": j,
+        "sim_failed": False,
+        "found_loss": loss,
+        "uncertified_loss": False,
+        "fit5": {"ll": (-105.0).hex(), "gap": (0.0).hex(), "certified": True},
+        "known": {"ll": (-100.0).hex(), "gap": (0.0).hex(), "certified": True},
+    }
+
+
+def due(records: list[Rec], size: int = 150) -> list[tuple[str, int]]:
+    jobs = p4m.hunt_r1_jobs(records, root=TEST_ROOT, log_root=TEST_LOG_ROOT, size=size)
+    return [(j.stratum, j.j) for j in jobs]
+
+
+def test_r1_runs_on_the_first_25_found_losses_of_a_stratum() -> None:
+    records = [hunt_done("large-exp", j) for j in range(30)]
+    assert due(records) == [("large-exp", j) for j in range(25)]
+
+
+def test_an_unfinished_earlier_case_holds_the_later_ones_back() -> None:
+    assert due([hunt_done("large-exp", 1)]) == []
+
+
+def test_what_is_due_does_not_depend_on_arrival_order() -> None:
+    records = [hunt_done("large-exp", j) for j in range(3)]
+    assert due(records) == due(list(reversed(records)))
+
+
+def test_a_failed_case_does_not_hold_the_stratum_back() -> None:
+    failed = {
+        "type": "reference_failed",
+        "job": p4m.hunt_job_id("large-exp", 0),
+        "reason": "x",
+    }
+    assert due([failed, hunt_done("large-exp", 1)]) == [("large-exp", 1)]
+
+
+def test_a_rehearsal_hunt_of_five_stops_at_its_size() -> None:
+    records = [hunt_done("large-exp", j) for j in range(5)]
+    assert len(due(records, size=5)) == 5
+
+
+def test_group_c_is_summarised_from_r1s_own_record() -> None:
+    j = 0
+    r1 = {
+        "type": "r1",
+        "job": p4m.hunt_r1_job_id("large-exp", j),
+        "best": {"ll": (-100.0).hex(), "gap": (0.0).hex()},
+    }
+    done = {
+        "type": "done",
+        "job": r1["job"],
+        "kind": "hunt_r1",
+        "stratum": "large-exp",
+        "j": j,
+    }
+    got = p4m.hunt_summary([hunt_done("large-exp", j), r1, done])
+    assert got["large-exp"]["caught"] == 1
+    assert got["large-exp"]["r1_run"] == 1
+    assert got["id-large"]["found_losses"] == 0
+
+
+def test_a_found_loss_needs_the_tolerance_and_a_certified_generating_point() -> None:
+    assert p4m.found_loss(valued(-105.0, certified=False), valued(-100.0))
+    assert not p4m.found_loss(valued(-105.0), valued(-100.0, certified=False))
+    assert not p4m.found_loss(valued(-100.0 - 1e-8), valued(-100.0))
+
+
+def test_control_catch_needs_the_known_value_and_a_gain_over_fit5() -> None:
+    fit5, known = valued(-105.0), valued(-100.0)
+    assert p4m.control_caught(valued(-100.0), fit5, known)
+    assert not p4m.control_caught(valued(-103.0), fit5, known)
+    assert not p4m.control_caught(None, fit5, known)
+    assert not p4m.control_caught(valued(-100.0), fit5, None)
+    assert not p4m.control_caught(valued(-105.0), fit5, valued(-105.0))
+
+
+def test_a_searched_fits_stratum_is_fixed_by_link_and_grid() -> None:
+    assert p4m.stratum_of("exp", 24_000) == "groups_a_b"
+    assert p4m.stratum_of("softplus", 24_001) == "large-softplus"
+    assert p4m.stratum_of("identity", 24_000) == "id-24000"
+    assert p4m.stratum_of("identity", 3_456_000) == "id-large"
+    assert p4m.stratum_of("exp", 3_456_001) == "no_control"
+
+
+def test_s1_status_floors() -> None:
+    assert p4m.s1_status(found=4, total=4) == "not_estimable"
+    assert p4m.s1_status(found=3, total=5) == "below_floor"
+    assert p4m.s1_status(found=4, total=5) == "at_floor"
+
+
+def test_the_link_choice_is_choose_links_rule() -> None:
+    (obs,) = toy_data()
+    train, validation = split_dataset(obs, 0.75)
+    config = SparseConfig()
+    d: Any = SimpleNamespace(train_datasets=(train,), validation_datasets=(validation,))
+    want, _ = _choose_link(SMALL, d, p4m.T2_CHANNELS, config, FitConfig())
+    got, scores = p4m.link_choice(
+        SMALL,
+        (train,),
+        (validation,),
+        p4m.T2_CHANNELS,
+        config.links,
+        lambda s: fit(s, (train,), p4m.T2_CHANNELS, config=FitConfig()),
+    )
+    assert got is want
+    assert [s[0] for s in scores] == [link.value for link in config.links]
+
+
+# --------------------------------------------------------------------------
+# main: guards first, the terminal step last (sections 2.8, 2.10)
+# --------------------------------------------------------------------------
+
+
+def toy_setup(paths: Any, **over: Any) -> Any:
+    env = environment()
+    options: dict[str, Any] = {
+        "identity": IDENTITY,
+        "paths": paths,
+        "roots": ROOTS,
+        "hunt_size": 1,
+        "env": env,
+        "plan": (),
+        "truths": (),
+        "controls": PASS,
+        "group_b": None,
+        "store": paths.root / "store",
+        "resamples": 200,
+        **over,
+    }
+    return p4m.Setup(**options)
+
+
+@dataclass(frozen=True)
+class Args:
+    workers: int = 2
+    finalise: bool = False
+    end: bool = False
+    split: Path = Path("/split")
+    test_split: Path = Path("/test")
+
+
+@pytest.fixture
+def toy_run(paths: Any, monkeypatch: pytest.MonkeyPatch) -> Callable[[Any, Any], Any]:
+    """``execute`` on the toy table, a toy store directory and toy stages."""
+    table = tabled()
+    store = paths.root / "store"
+    store.mkdir()
+    (store / "cell").write_text("x")
+    census = planted_census(table)
+
+    def load(*args: Any) -> Any:
+        return table, {}
+
+    monkeypatch.setattr(p4m, "load_store", load)
+    monkeypatch.setattr(p4m, "check_table", lambda *a: None)
+    monkeypatch.setattr(p4m, "build_census", lambda *a: census)
+    monkeypatch.setattr(p4m, "contrast_rows", lambda *a: plan_rows(table))
+
+    def fork_driver(p: Any, stages: Any, *, workers: int, **kw: Any) -> Any:
+        return real_driver(
+            p,
+            stages,
+            workers=workers,
+            read_usage_usec=lambda: 0,
+            read_mem_gib=lambda: 16.0,
+            poll_s=0.005,
+            cpu_poll_s=0.0,
+            start_method="fork",
+            **kw,
+        )
+
+    real_driver = p4m.Driver
+    monkeypatch.setattr(p4m, "Driver", fork_driver)
+
+    def run(stages: Any, args: Any) -> Any:
+        monkeypatch.setattr(p4m, "plan_stages", lambda *a, **k: stages)
+        return p4m.execute(toy_setup(paths), args)
+
+    return run
+
+
+def test_execute_runs_the_stages_then_the_terminal_step(
+    paths: Any, toy_run: Any
+) -> None:
+    table = tabled()
+    plant(paths, clean(table), end=None)
+    code = toy_run((stage(ToyJob("a")),), Args())
+    assert code == 0
+    assert decision_of(paths)["label"] == "CONTRASTS_SURVIVE_FOUND_MISSES"
+    assert paths.reads.exists()
+    assert paths.manifest.exists()
+
+
+def test_execute_refuses_a_resume_once_the_reads_exist_and_changes_nothing(
+    paths: Any, toy_run: Any
+) -> None:
+    table = tabled()
+    plant(paths, clean(table), end=None)
+    toy_run((stage(ToyJob("a")),), Args())
+    before = stamp(paths.reads), stamp(paths.decision), stamp(paths.journal)
+    assert toy_run((stage(ToyJob("b")),), Args()) == p4m.NO_LABEL_EXIT
+    assert (stamp(paths.reads), stamp(paths.decision), stamp(paths.journal)) == before
+
+
+def test_a_second_finalise_returns_the_same_code_and_rewrites_nothing(
+    paths: Any, toy_run: Any
+) -> None:
+    table = tabled()
+    plant(paths, clean(table), end=None)
+    first = toy_run((stage(ToyJob("a")),), Args())
+    before = stamp(paths.reads), stamp(paths.decision)
+    assert toy_run((), Args(finalise=True)) == first
+    assert (stamp(paths.reads), stamp(paths.decision)) == before
+
+
+def test_a_store_changed_during_the_run_is_byte_fail(paths: Any, toy_run: Any) -> None:
+    table = tabled()
+    plant(paths, clean(table), end=None)
+
+    @dataclass(frozen=True)
+    class Touches:
+        id: str = "t"
+
+        def run(self, sink: Any) -> None:
+            (paths.root / "store" / "cell").write_text("changed")
+            sink.record("done", {"kind": "toy"})
+
+    code = toy_run((stage(Touches()),), Args())
+    assert code == 3
+    assert decision_of(paths)["byte_failures"] == ["store_manifest"]
+    assert not paths.reads.exists()
+
+
+def test_a_terminated_run_exits_with_no_label_and_offers_a_resume(
+    paths: Any,
+    toy_run: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    table = tabled()
+    plant(paths, clean(table), end=None)
+    monkeypatch.setattr(p4m.Driver, "run", lambda self: "terminated", raising=False)
+    wrapped = SimpleNamespace(run=lambda: "terminated")
+    monkeypatch.setattr(p4m, "Driver", lambda *a, **k: wrapped)
+    assert toy_run((), Args()) == p4m.NO_LABEL_EXIT
+    assert "systemd-run" in capsys.readouterr().out
+    assert not paths.decision.exists()
+
+
+def test_nothing_is_touched_before_the_guards_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = tmp_path / "store"
+    toy_store(store)
+    before = p4m.store_manifest(store)
+
+    def forbidden(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("touched before the guards passed")
+
+    out = tmp_path / "out"
+    monkeypatch.setattr(p4m, "OUT_DIR", out)
+    monkeypatch.setattr(p4m, "PREREG_SHA256", "0" * 64)
+    monkeypatch.setattr(p4m, "ResultStore", forbidden)
+    monkeypatch.setattr(p4m.pilot, "load_split", forbidden)
+    monkeypatch.setattr(p4m, "split_digest", forbidden)
+    monkeypatch.setattr(p4m, "store_manifest", forbidden)
+    code = p4m.main(
+        [
+            "--split",
+            str(tmp_path / "split"),
+            "--test-split",
+            str(tmp_path / "test"),
+            "--store",
+            str(store),
+        ]
+    )
+    monkeypatch.undo()
+    assert code == p4m.NO_LABEL_EXIT
+    assert p4m.store_manifest(store) == before
+    assert list(json.loads((out / "decision.json").read_text())) == ["refusal"]
+
+
+def test_the_naming_null_is_read_at_t_and_not_at_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[str] = []
+
+    def controls(commit: str) -> Any:
+        seen.append(commit)
+        return PASS
+
+    monkeypatch.setattr(p4m, "OUT_DIR", tmp_path / "out")
+    monkeypatch.setattr(p4m, "run_guards", lambda *a, **k: dict(IDENTITY))
+    monkeypatch.setattr(p4m, "check_paths", lambda **k: None)
+    monkeypatch.setattr(p4m, "check_split", lambda *a: None)
+    monkeypatch.setattr(p4m, "test_split_expected", lambda *a: "e" * 64)
+    monkeypatch.setattr(p4m, "scripted_controls", controls)
+    monkeypatch.setattr(p4m, "p4_inputs", lambda p: ("env", ("plan",), ("truths",)))
+    monkeypatch.setattr(p4m, "group_b_inputs", lambda p: ("truth", "env"))
+    monkeypatch.setattr(p4m, "group_b_job", lambda *a: "job")
+    args = SimpleNamespace(
+        split=Path("/s"),
+        test_split=Path("/t"),
+        store=Path("/st"),
+    )
+    setup = p4m.frozen_setup(args)
+    assert seen == [IDENTITY["T"]]
+    assert setup.roots == p4m.FROZEN_ROOTS
+    assert setup.paths.root == tmp_path / "out"
+    assert setup.controls == PASS
+
+
+def test_the_hashes_for_the_log_entry_are_printed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert p4m.main(["--print-hashes"]) == 0
+    out = capsys.readouterr().out
+    assert p4m.SCRIPT_PATH in out and p4m.TEST_PATH in out
+
+
+def test_split_test_split_and_store_are_needed_for_a_run() -> None:
+    with pytest.raises(SystemExit):
+        p4m.main([])
+
+
+# --------------------------------------------------------------------------
+# Whole jobs on a toy truth (slow tier; test root only)
+# --------------------------------------------------------------------------
+
+
+class ListSink:
+    """Collects a job's records in this process."""
+
+    def __init__(self) -> None:
+        self.records: list[Rec] = []
+
+    def record(self, type_: str, payload: dict[str, Any]) -> None:
+        self.records.append(
+            json.loads(p4m.dumps_record({"type": type_, "job": "j", **payload}))
+        )
+
+    def types(self) -> list[str]:
+        return [r["type"] for r in self.records]
+
+    def only(self, type_: str) -> Rec:
+        (found,) = [r for r in self.records if r["type"] == type_]
+        return found
+
+
+def toy_job(
+    per_event: str | None = None,
+    *,
+    k: int = 1,
+    cap: int = 150,
+    r2_max: int = 0,
+    **over: Any,
+) -> Any:
+    truth = entry("hawkes")
+    env = environment()
+    structure = canonicalise(Structure(MIDDLE, Link.EXP))
+    text = render(structure)
+    if per_event is None:
+        data = p4m.observational_data(truth, 1, env)
+        stored = fit(structure, data.observational, env.channels, config=FitConfig())
+        held = p4m.held_out_dataset(truth.spec, truth.id, 1)
+        model = GLMModel(B_SYM, stored, env.channels, env.marks)
+        per_event = model.held_out_per_event([held]).hex()
+    expected = p4m.RowExpect(system=B_SYM, llm=False, per_event=per_event, oracle=None)
+    return p4m.FitJob(
+        truth=truth,
+        seed=1,
+        text=text,
+        rows=(expected,),
+        env=env,
+        root=TEST_ROOT,
+        k=k,
+        cap=cap,
+        r2_max=r2_max,
+        **over,
+    )
+
+
+@pytest.mark.slow
+def test_a_whole_job_writes_r0_then_r1_then_done_and_stays_blind() -> None:
+    profiles: list[Any] = []
+    real = p4m.fresh_profile
+
+    def capture(*args: Any) -> Any:
+        profiles.append(real(*args))
+        return profiles[-1]
+
+    job = toy_job()
+    sink = ListSink()
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(p4m, "fresh_profile", capture)
+        p4m.run_fit_job(job, sink)
+    assert sink.types() == ["r0", "r1", "done"]
+    assert sink.only("done")["evidence"] == "searched"
+    (profile,) = profiles
+    data = p4m.observational_data(job.truth, job.seed, job.env)
+    second = _Profile(
+        parse(job.text, job.env.channels),
+        tuple(data.observational),
+        job.env.channels,
+        FitConfig(),
+        None,
+    )
+    rng = p4m.reference_rng(p4m.fit_case("hawkes", 1, job.text), TEST_ROOT)
+    blocks = _search_blocks(second.slots, second.config.psi_block_max)
+    with contextlib.suppress(p4m._Budget):
+        for start in p4m.draw_starts(second.slots, rng, job.k):
+            _ascend(second, start, blocks, job.cap)
+    assert set(profile.solutions) == set(second.solutions)
+
+
+@pytest.mark.slow
+def test_a_byte_mismatch_ends_the_job_before_r1() -> None:
+    job = toy_job()
+    value = float.fromhex(job.rows[0].per_event)
+    off = replace(job.rows[0], per_event=math.nextafter(value, 0.0).hex())
+    sink = ListSink()
+    p4m.run_fit_job(replace(job, rows=(off,)), sink)
+    assert sink.types() == ["byte_fail"]
+
+
+@pytest.mark.slow
+def test_group_bs_bit_check_ends_the_job_before_r1() -> None:
+    job = replace(toy_job(), bit_check=((-1.0).hex(), (-1.0).hex()))
+    sink = ListSink()
+    p4m.run_fit_job(job, sink)
+    assert sink.types() == ["byte_fail"]
+
+
+@pytest.mark.slow
+def test_an_r0_that_fails_is_a_byte_failure_not_reference_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = toy_job((-0.75).hex())
+
+    def fail(*args: Any, **kwargs: Any) -> None:
+        raise p4m.FitError("no point")
+
+    monkeypatch.setattr(p4m, "fit", fail)
+    sink = ListSink()
+    p4m.run_fit_job(job, sink)
+    assert sink.types() == ["byte_fail"]
+
+
+@pytest.mark.slow
+def test_a_failing_r1_is_reference_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    job = toy_job()
+
+    def fail(*args: Any, **kwargs: Any) -> None:
+        raise ValueError("numerics")
+
+    monkeypatch.setattr(p4m, "reference_search", fail)
+    sink = ListSink()
+    p4m.run_fit_job(job, sink)
+    assert sink.types() == ["r0", "reference_failed"]
+    assert sink.only("reference_failed")["reason"] == "ValueError"
+
+
+@pytest.mark.slow
+def test_any_other_exception_in_r1_is_a_bug(monkeypatch: pytest.MonkeyPatch) -> None:
+    job = toy_job()
+
+    def fail(*args: Any, **kwargs: Any) -> None:
+        raise KeyError("a bug")
+
+    monkeypatch.setattr(p4m, "reference_search", fail)
+    with pytest.raises(KeyError):
+        p4m.run_fit_job(job, ListSink())
+
+
+@pytest.mark.slow
+def test_a_fit_job_survives_the_trip_to_a_fresh_interpreter(tmp_path: Path) -> None:
+    job = toy_job()
+    run = driver(tmp_path, [stage(job)], start_method=p4m.START_METHOD)
+    assert run.run() == "complete"
+    journal = p4m.OutPaths(tmp_path).journal
+    assert types_of(journal, job.id) == ["r0", "r1", "done"]
+
+
+def test_r1_does_not_depend_on_worker_count_or_order(tmp_path: Path) -> None:
+    names = ["s1", "s2", "s3"]
+
+    def points(root: Path, order: list[str], workers: int) -> dict[str, Any]:
+        root.mkdir()
+        jobs = [SearchJob(n) for n in order]
+        assert driver(root, [stage(*jobs)], workers=workers).run() == "complete"
+        records = p4m.read_records(p4m.OutPaths(root).journal)
+        return {r["job"]: r["points"] for r in records if r["type"] == "done"}
+
+    one = points(tmp_path / "one", names, 1)
+    two = points(tmp_path / "two", list(reversed(names)), 2)
+    assert one == two
+
+
+@dataclass(frozen=True)
+class SearchJob:
+    """A real R1 on a toy log, for the worker-count and order test."""
+
+    name: str
+
+    @property
+    def id(self) -> str:
+        return self.name
+
+    def run(self, sink: Any) -> None:
+        out = p4m.reference_search(
+            structure_of(),
+            toy_data(),
+            p4m.T2_CHANNELS,
+            p4m.reference_rng(self.name, TEST_ROOT),
+            k=2,
+            cap=10**6,
+            r2_max=0,
+        )
+        sink.record("done", {"kind": "toy", "points": sorted(out.profile.solutions)})
+
+
+def t2_job(case: tuple[int, str, int], group: str, with_r2: bool) -> Any:
+    return p4m.T2Job(
+        *case,
+        group,
+        with_r2,
+        TEST_ROOT,
+        0 if group == "D" else p4m.K_STARTS,
+        p4m.r1_cap(case[1]),
+    )
+
+
+@pytest.mark.slow
+def test_t2_control_1_with_r2_reaches_the_known_value_by_enumeration() -> None:
+    sink = ListSink()
+    p4m.run_t2_job(t2_job(p4m.T2_CASES[0], "D", True), sink)
+    assert sink.types() == ["r0", "r2", "done"]
+    done = sink.only("done")
+    known = p4m.valued_of(done["known"])
+    fit5 = p4m.valued_of(done["fit5"])
+    assert known.ll > fit5.ll
+    assert p4m.control_caught(p4m.valued_of(done["r2_best"]), fit5, known)
+
+
+@pytest.mark.slow
+def test_t2_control_2_is_caught_by_r1_alone() -> None:
+    sink = ListSink()
+    p4m.run_t2_job(t2_job(p4m.T2_CASES[1], "A", False), sink)
+    done = sink.only("done")
+    best = p4m.valued_of(sink.only("r1")["best"])
+    assert p4m.control_caught(
+        best, p4m.valued_of(done["fit5"]), p4m.valued_of(done["known"])
+    )

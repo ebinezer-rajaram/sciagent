@@ -2360,6 +2360,19 @@ def read_end_note(paths: OutPaths) -> str:
     return text
 
 
+def authority_notes(paths: OutPaths, end: str) -> Record:
+    """Who stopped or ended the run, on a decision with no reads: section 2.8 and
+    PR 9 copy the note to ``decision.json`` on every end it authorises. A note
+    holds no score, so "the label or end alone" does not exclude it."""
+    notes: Record = {}
+    stop = read_stop_note(paths)
+    if stop is not None:
+        notes["stop_note"] = stop
+    if end == AUTHORISED_END:
+        notes["end_note"] = read_end_note(paths)
+    return notes
+
+
 def byte_failure_kinds(
     records: Sequence[Mapping[str, Json]],
     manifest_failures: Sequence[str],
@@ -2430,10 +2443,11 @@ def terminal_step(
                 "exit_code": EXIT_CODES[label],
                 "end": end,
                 "byte_failures": faults,
+                **authority_notes(paths, end),
             },
         )
     if reads is None:
-        return seal(paths, {**identity, "end": end})
+        return seal(paths, {**identity, "end": end, **authority_notes(paths, end)})
     decision = decide(
         records,
         inputs,
@@ -4701,6 +4715,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             digest = hashlib.sha256((pilot.ROOT / path).read_bytes()).hexdigest()
             print(f"{digest}  {path}")
         return 0
+    if args.end and not args.finalise:
+        parser.error("--end goes with --finalise")
     if args.rehearsal != (args.rehearsal_plan is not None):
         parser.error("--rehearsal and --rehearsal-plan come together")
     if args.split is None or args.store is None:

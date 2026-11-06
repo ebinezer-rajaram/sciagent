@@ -4674,6 +4674,319 @@ def test_a_rehearsal_refused_at_a_guard_writes_nothing_to_the_real_output(
     assert list(decision_of(base)) == ["refusal"]
 
 
+def test_end_without_finalise_is_refused_and_starts_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A flag that needs the owner's authority must not fall through to a run."""
+    monkeypatch.setattr(p4m, "OUT_DIR", tmp_path / "out")
+    with pytest.raises(SystemExit):
+        p4m.main(["--end", "--split", "/s", "--test-split", "/t", "--store", "/st"])
+    assert not (tmp_path / "out").exists()
+
+
+@pytest.fixture(autouse=True)
+def no_test_reaches_the_real_output(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """``main`` writes a refusal to the constant, so a test that forgot to move it
+    would write into the launch's records. Each test finds it absent, and leaves it
+    absent. The launch's directory does not exist until the launch."""
+    before = p4m.OUT_DIR.exists()
+    yield
+    assert p4m.OUT_DIR.exists() == before, f"a test touched {p4m.OUT_DIR}"
+
+
+def test_the_end_note_is_copied_when_the_terminal_step_is_byte_fail(paths: Any) -> None:
+    """Section 2.8: the note goes to ``decision.json``, on every end it authorises."""
+    table = tabled()
+    plant(paths, clean(table), end="terminated")
+    paths.end_note.write_text("owner: abandoned\n")
+    d = finalise(paths, inputs_of(table), end_flag=True, manifest_failures=("x",))
+    assert d["label"] == "BYTE_FAIL"
+    assert d["end_note"] == "owner: abandoned"
+    assert decision_of(paths)["end_note"] == "owner: abandoned"
+    assert not paths.reads.exists()
+
+
+def test_the_stop_note_is_copied_when_a_stopped_run_is_byte_fail(paths: Any) -> None:
+    table = tabled()
+    plant(paths, clean(table), end="stop")
+    paths.stop.write_text("owner: enough\n")
+    d = finalise(paths, inputs_of(table), manifest_failures=("x",))
+    assert d["stop_note"] == "owner: enough"
+
+
+def test_a_control_cannot_pass_on_the_chosen_point() -> None:
+    """Every planted record's ``chosen`` is the known value; R1's own best below
+    it must fail regardless."""
+    planted = json.loads(p4m.dumps_record(control_records(a=0, b=False)))
+    status = p4m.h1_status(planted)
+    assert status.a_caught == 0
+    assert status.b_caught is False
+    assert status.stands is False
+
+
+def r2_lost_records(table: Table) -> tuple[list[Rec], str]:
+    """A fit whose ``done`` never came: R1's result, on the ``r1`` record."""
+    census = planted_census(table)
+    misses = miss(("t1", 1, B_RAND), -0.6875, stored=-0.75)
+    records = done_records(census, rows=misses)
+    target = p4m.fit_job_id("t1", 1, f"{B_RAND} t1 1")
+    done = next(r for r in records if r["type"] == "done" and r["job"] == target)
+    records.remove(done)
+    r1 = next(r for r in records if r["type"] == "r1" and r["job"] == target)
+    r1["result"] = done
+    return records, target
+
+
+def test_r1s_result_stands_when_the_job_dies_in_r2(paths: Any) -> None:
+    """Searched, the miss counts, and no shortfall."""
+    table = tabled()
+    records, target = r2_lost_records(table)
+    tail = {"type": "r2_lost", "job": target, "reason": "cpu_limit"}
+    plant(paths, [*control_records(), *records, tail])
+    d = finalise(paths, inputs_of(table))
+    assert d["label"] == "CONTRASTS_SURVIVE_FOUND_MISSES"
+    assert d["M_rows"] == 1
+    assert d["coverage"]["unchecked_fits"] == 0
+    assert d["clock_stops"]["r2_lost"] == 1
+
+
+def test_a_job_killed_in_r2_with_no_terminal_record_keeps_r1_too(paths: Any) -> None:
+    table = tabled()
+    records, _ = r2_lost_records(table)
+    plant(paths, [*control_records(), *records], end="cpu_stop")
+    d = finalise(paths, inputs_of(table))
+    assert d["partial"] is False
+    assert d["M_rows"] == 1
+
+
+def hawkes_setup() -> tuple[Any, Any, Any, Dataset, str]:
+    truth = entry("hawkes")
+    env = environment()
+    data = p4m.observational_data(truth, 1, env)
+    held = p4m.held_out_dataset(truth.spec, truth.id, 1)
+    return truth, env, data, held, render(canonicalise(truth.structure))
+
+
+def hawkes_job(rows: tuple[Any, ...], group: str | None = None) -> Any:
+    truth, env, _, _, text = hawkes_setup()
+    return p4m.FitJob(
+        truth=truth,
+        seed=1,
+        text=text,
+        rows=rows,
+        env=env,
+        root=TEST_ROOT,
+        k=2,
+        cap=10**6,
+        r2_max=14_400,
+        group=group,
+    )
+
+
+def score_of(fitted: Any, env: Any, held: Dataset) -> str:
+    model = GLMModel(B_SYM, fitted, env.channels, env.marks)
+    return str(model.held_out_per_event([held]).hex())
+
+
+def planted_poor(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, Any, Any, Any]:
+    """R0 planted at the grid's worst point: the row, both fits, and the score."""
+    truth, env, data, held, _ = hawkes_setup()
+    slots = _Slots.of(truth.structure)
+    fits = [
+        fit(
+            truth.structure,
+            data.observational,
+            env.channels,
+            config=FitConfig(),
+            psi=slots.assignment((i,)),
+        )
+        for i in range(slots.size)
+    ]
+    poor = min(fits, key=lambda f: f.log_likelihood)
+    best = max(fits, key=lambda f: f.log_likelihood)
+    monkeypatch.setattr(p4m, "stored_fits", lambda *a: p4m.StoredFits(poor, poor, None))
+    row_expect = p4m.RowExpect(B_SYM, False, score_of(poor, env, held), None)
+    return row_expect, poor, best, score_of(best, env, held)
+
+
+@pytest.mark.slow
+def test_a_real_miss_is_refitted_scored_and_sized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The stored fit is planted at the grid's worst point, so the search really
+    beats it; everything after R0 is the real path."""
+    expected, poor, best, corrected_hex = planted_poor(monkeypatch)
+    sink = ListSink()
+    p4m.run_fit_job(hawkes_job((expected,)), sink)
+    assert sink.only("done")["starts_completed"] == 2
+    (result,) = sink.only("done")["rows"]
+    assert result["call"] == "miss"
+    assert float.fromhex(result["chosen_ll"]) == best.log_likelihood
+    corrected = float.fromhex(result["corrected_per_event"])
+    assert corrected == float.fromhex(corrected_hex)
+    stored = float.fromhex(expected.per_event)
+    assert float.fromhex(result["delta"]) == corrected - stored
+    assert float.fromhex(result["stored_quadrature_error"]) == poor.quadrature_error
+    assert float.fromhex(result["chosen_quadrature_error"]) == best.quadrature_error
+
+
+@pytest.mark.slow
+def test_a_job_dying_in_r2_leaves_r1s_miss_on_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected, *_ = planted_poor(monkeypatch)
+
+    def fail(*args: Any, **kwargs: Any) -> None:
+        raise ValueError("in R2")
+
+    monkeypatch.setattr(p4m, "run_r2", fail)
+    sink = ListSink()
+    p4m.run_fit_job(hawkes_job((expected,)), sink)
+    assert sink.types() == ["r0", "r1", "r2_lost"]
+    result = sink.only("r1")["result"]
+    assert result["evidence"] == "searched"
+    assert result["rows"][0]["call"] == "miss"
+
+
+@pytest.mark.slow
+def test_a_job_past_the_cut_is_flagged_and_searched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected, *_ = planted_poor(monkeypatch)
+    answers = iter([False])
+    monkeypatch.setattr(p4m, "past_job_cut", lambda: next(answers, True))
+    sink = ListSink()
+    p4m.run_fit_job(hawkes_job((expected,)), sink)
+    done = sink.only("done")
+    assert done["cpu_cut"] is True
+    assert done["evidence"] == "searched"
+
+
+@pytest.mark.slow
+def test_a_group_e_job_records_truth_psi_as_its_known_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected, poor, best, _ = planted_poor(monkeypatch)
+    details = {"oracle_truth_psi_ll": best.log_likelihood}
+    monkeypatch.setattr(
+        p4m, "stored_fits", lambda *a: p4m.StoredFits(poor, best, details)
+    )
+    sink = ListSink()
+    p4m.run_fit_job(hawkes_job((expected,), group="E"), sink)
+    control = sink.only("done")["control"]
+    assert control["group"] == "E"
+    assert float.fromhex(control["known"]["ll"]) == best.log_likelihood
+    assert float.fromhex(control["fit5"]["ll"]) == poor.log_likelihood
+
+
+@pytest.mark.slow
+def test_an_s2_job_reports_a_stored_link_it_cannot_reproduce() -> None:
+    truth, env, *_, text = hawkes_setup()
+    sink = ListSink()
+    p4m.S2Job(truth, 1, text, "no-such-link", env, TEST_ROOT).run(sink)
+    done = sink.only("done")
+    assert done["status"] == "link_mismatch"
+    assert done["corrected_per_event"] is None
+
+
+@pytest.mark.slow
+def test_an_s2_job_with_the_same_choice_changes_nothing() -> None:
+    truth, env, *_, text = hawkes_setup()
+    first = ListSink()
+    p4m.S2Job(truth, 1, text, "no-such-link", env, TEST_ROOT).run(first)
+    link = first.only("done")["r0_link"]
+    sink = ListSink()
+    p4m.S2Job(truth, 1, text, link, env, TEST_ROOT).run(sink)
+    assert sink.only("done")["status"] == "same"
+
+
+@pytest.mark.slow
+def test_an_s2_job_whose_reference_differs_fits_and_scores_that_link(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    truth, env, *_, text = hawkes_setup()
+    real = p4m.link_choice
+    calls: list[Any] = []
+
+    def second_differs(*args: Any, **kwargs: Any) -> Any:
+        link, scores = real(*args, **kwargs)
+        calls.append(link)
+        if len(calls) == 2:
+            other = next(x for x in SparseConfig().links if x is not link)
+            return other, scores
+        return link, scores
+
+    monkeypatch.setattr(p4m, "link_choice", second_differs)
+    first = ListSink()
+    p4m.S2Job(truth, 1, text, "no-such-link", env, TEST_ROOT).run(first)
+    calls.clear()
+    sink = ListSink()
+    link = first.only("done")["r0_link"]
+    p4m.S2Job(truth, 1, text, link, env, TEST_ROOT).run(sink)
+    done = sink.only("done")
+    assert done["status"] == "differs"
+    assert done["reference_link"] != link
+    assert math.isfinite(float.fromhex(done["corrected_per_event"]))
+
+
+def toy_case() -> Any:
+    return SimpleNamespace(
+        structure=structure_of(), generating=None, log=toy_data()[0].log
+    )
+
+
+def test_known_values_are_computed_after_the_result_is_recorded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The order of PR 2.2, on a toy case standing in for the T2 log."""
+    case = toy_case()
+    monkeypatch.setattr(p4m, "t2_log", lambda *a: case)
+    sink = ListSink()
+    seen: list[list[str]] = []
+
+    def known(*args: Any) -> Any:
+        seen.append(sink.types())
+        return valued(0.0)
+
+    monkeypatch.setattr(p4m, "known_value", known)
+    p4m.run_t2_job(p4m.T2Job(0, "softplus", 1, "A", False, TEST_ROOT, 1, 10**6), sink)
+    assert seen == [["r0", "r1"]]
+    assert sink.types() == ["r0", "r1", "done"]
+
+
+def test_group_d_is_r2_alone_on_an_empty_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = toy_case()
+    monkeypatch.setattr(p4m, "t2_log", lambda *a: case)
+    monkeypatch.setattr(p4m, "known_value", lambda *a: valued(0.0))
+    captured: list[Any] = []
+    real = p4m.fresh_profile
+
+    def capture(*args: Any) -> Any:
+        captured.append(real(*args))
+        return captured[-1]
+
+    monkeypatch.setattr(p4m, "fresh_profile", capture)
+    sink = ListSink()
+    p4m.run_t2_job(p4m.T2Job(0, "softplus", 1, "D", True, TEST_ROOT, 0, 10**6), sink)
+    assert sink.types() == ["r0", "r2", "done"]
+    assert len(captured[0].solutions) == 30
+    assert sink.only("done")["r2_complete"] is True
+
+
+def test_a_failed_simulation_is_counted_and_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fails(*args: Any, **kwargs: Any) -> Any:
+        raise p4m.SimulationError("too many events")
+
+    monkeypatch.setattr(p4m, "hunt_log", fails)
+    sink = ListSink()
+    p4m.run_hunt_job(p4m.HuntJob("large-exp", 0, TEST_LOG_ROOT), sink)
+    assert sink.only("done")["sim_failed"] is True
+
+
 def test_a_rehearsal_on_a_toy_store_reads_only_at_its_terminal_step(
     paths: Any, toy_run: Any, spy: Path
 ) -> None:

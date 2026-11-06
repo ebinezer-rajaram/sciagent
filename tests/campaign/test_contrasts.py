@@ -376,7 +376,7 @@ def test_the_floor_is_recomputed_per_truth_and_seed() -> None:
     by = {(r.truth, r.seed, r.system): r for r in out}
     assert by[("t1", 1, AGC)].per_event == -0.875
     assert by[("t1", 2, AGC)].per_event == -0.75
-    assert floored == frozenset({("t1", 1, AGC), ("t1", 2, AGC)})
+    assert set(floored) == {("t1", 1, AGC), ("t1", 2, AGC)}
 
 
 def _contrast(key: RowKey) -> bool:
@@ -391,7 +391,7 @@ def test_oracle_and_b_lib_are_never_floored() -> None:
     no_submission(rows, ("t3", 1, ORACLE))
     out, floored = floor_rows(tuple(rows[k] for k in sorted(rows) if _contrast(k)))
     by = {(r.truth, r.seed, r.system): r for r in out}
-    assert floored == frozenset()
+    assert not floored
     assert by[("t1", 1, ORACLE)].per_event == -math.inf
     assert by[("t1", 1, B_LIB)].per_event == -math.inf
     assert by[("t2", 1, B_LIB)].per_event is None
@@ -433,6 +433,110 @@ def test_the_oracle_sets_a_floor() -> None:
     assert by[("t1", 1, AGC)].per_event == -0.5
 
 
+def test_floor_rows_gives_the_row_or_rows_that_set_each_floor() -> None:
+    """A tie at the lowest finite value is set by every row that holds it, and a
+    system with no floored row sets nothing by being in the table."""
+    rows = world()
+    score(rows, "t1", 1, AGC, -math.inf)
+    score(rows, "t2", 1, AGC, -math.inf)
+    score(rows, "t2", 1, B_SPARSE, -0.75)  # level with B-rand
+    _, floored = floor_rows(tuple(rows[k] for k in sorted(rows) if _contrast(k)))
+    assert floored == {
+        ("t1", 1, AGC): (("t1", 1, B_RAND),),
+        ("t2", 1, AGC): (("t2", 1, B_RAND), ("t2", 1, B_SPARSE)),
+    }
+
+
+def test_rows_hold_what_set_a_floor_on_the_reads_own_rows() -> None:
+    """AG-c-S's floor on (t1, 1) is B-rand's, so C1, which reads AG-c-S there, holds
+    B-rand's row, and only that (truth, seed)'s. A read of neither side does not."""
+    rows = world()
+    score(rows, "t1", 1, AGC, -math.inf)
+    got = read(tabled(rows))
+    sides = {(t, s, x) for t in TRUTHS for s in SEEDS for x in (AGC, B_SYM, ORACLE)}
+    assert set(got["C1"].rows) == sides | {("t1", 1, B_RAND)}
+    assert all(("t1", 1, B_RAND) in got[name].rows for name in ("C3-free", "C4"))
+    assert all(
+        ("t1", 1, B_RAND) not in got[name].rows
+        for name in ("C2-AG-o-names", "C2-AG-o-time", "C2-AG-c-names")
+    )
+
+
+def test_b_lib_is_in_rows_when_it_sets_a_floor_and_only_then() -> None:
+    rows = world()
+    assert not any(k[2] == B_LIB for k in read(tabled(rows))["C1"].rows)
+    score(rows, "t1", 1, B_RAND, -0.5)
+    score(rows, "t1", 1, AGC, -math.inf)
+    got = read(tabled(rows))["C1"]
+    assert [k for k in got.rows if k[2] == B_LIB] == [("t1", 1, B_LIB)]
+
+
+def test_substituting_only_the_row_that_sets_a_floor_shows_in_the_reads_rows() -> None:
+    """Finding 3: this read moves, and neither side's row is substituted.
+
+    B-rand falls to -1.75, so AG-c-S's gaps on t1 are -5/4, -1/8, -1/8, mean -1/2,
+    against -1/8: d = -3/8 on t1, point -1/16 where it was -1/144."""
+    rows = world()
+    score(rows, "t1", 1, AGC, -math.inf)
+    table = tabled(rows)
+    key = ("t1", 1, B_RAND)
+    stored = read(table)["C1"]
+    fixed = read(substituted(table, {key: -1.75}))["C1"]
+    assert stored.point == pytest.approx(-1 / 144, abs=1e-12)
+    assert fixed.point == pytest.approx(-1 / 16, abs=1e-12)
+    assert key in stored.rows and key in fixed.rows
+
+
+def test_a_substitution_can_pass_a_floor_to_another_row() -> None:
+    """Raised above B-lib, B-rand no longer sets the floor and B-lib does. So each
+    table's ``rows`` name the row that set the floor on that table."""
+    rows = world()
+    score(rows, "t1", 1, AGC, -math.inf)
+    table = tabled(rows)
+    key = ("t1", 1, B_RAND)
+    stored = read(table)["C1"]
+    fixed = read(substituted(table, {key: -0.5}))["C1"]
+    assert key in stored.rows and ("t1", 1, B_LIB) not in stored.rows
+    assert key not in fixed.rows and ("t1", 1, B_LIB) in fixed.rows
+
+
+def test_a_row_below_the_floor_after_substitution_enters_only_the_fixed_rows() -> None:
+    """B-sparse is no side of C1, and at -1.75 it takes the floor from B-rand: it is
+    in ``fixed``'s rows and not in ``stored``'s."""
+    rows = world()
+    score(rows, "t1", 1, AGC, -math.inf)
+    table = tabled(rows)
+    key = ("t1", 1, B_SPARSE)
+    stored = read(table)["C1"]
+    fixed = read(substituted(table, {key: -1.75}))["C1"]
+    assert key not in stored.rows and key in fixed.rows
+
+
+def test_rows_stay_sorted_and_hold_no_key_twice() -> None:
+    """Both sides floored by one row, and a side that sets the other's floor: each
+    key is still in ``rows`` once."""
+    rows = world()
+    score(rows, "t1", 1, AGC, -math.inf)
+    score(rows, "t1", 1, B_SYM, -math.inf)  # both floored by B-rand
+    score(rows, "t2", 1, AGC, -1.0)  # below B-rand: it sets B-sym's floor
+    score(rows, "t2", 1, B_SYM, -math.inf)
+    got = read(tabled(rows))["C1"]
+    assert list(got.rows) == sorted(set(got.rows))
+    assert ("t1", 1, B_RAND) in got.rows
+    assert ("t2", 1, B_RAND) not in got.rows
+
+
+def test_a_floored_row_on_an_unmatched_seed_adds_nothing_to_rows() -> None:
+    """AG-c-S takes a floor on (t1, 1), but B-sym has no row there, so the pair is
+    not read: what set that floor did not act on the read."""
+    rows = world()
+    score(rows, "t1", 1, AGC, -math.inf)
+    failed(rows, ("t1", 1, B_SYM), "the session timed out")
+    got = read(tabled(rows))["C1"]
+    assert ("t1", 1, AGC) not in got.rows
+    assert ("t1", 1, B_RAND) not in got.rows
+
+
 def test_a_failure_of_any_other_cause_is_absent_and_seeds_stay_matched() -> None:
     """B-sym's seed 1 is at gap 0, against -1/8 on its other seeds, and AG-c-S
     has no row on seed 1. Both sides are then averaged over seeds 2 and 3 only, so
@@ -468,6 +572,9 @@ def test_a_void_row_is_absent_and_sets_no_floor() -> None:
     # AG-c-S/anon floors at B-rand's -0.75, not at the void's -0.9375.
     assert read_floors(plain, PASS, ROOT, 200)["C2-AG-c-names"].floored == 1
     assert got["C2-AG-c-names"].point == pytest.approx(1 / 144, abs=1e-12)
+    # So the read's rows name B-rand as the floor's setter, and never the void.
+    assert ("t1", 1, B_RAND) in got["C2-AG-c-names"].rows
+    assert ("t1", 1, AGO) not in got["C2-AG-c-names"].rows
 
 
 def test_a_live_sessions_row_stays_in() -> None:
@@ -988,6 +1095,24 @@ def test_s6_leaves_out_a_floored_second_side() -> None:
     assert ("t1", 1, B_SYM) not in got.without.rows
     assert ("t1", 1, AGC) not in got.without.rows
     assert got.without.point == 0.0
+
+
+def test_s6_counts_floored_sides_and_not_the_rows_that_set_floors() -> None:
+    """Both sides floored, set by one row: 2, and the left-out read has no setter.
+
+    The setter here is itself a row that takes a floor: submitted is False and a
+    reading is there, which the rule leaves finite for the floor's search. On C1 it
+    is no side, so it is not C1's floored row, though it is in C1's ``rows``."""
+    rows = world()
+    score(rows, "t1", 1, AGC, -math.inf)
+    score(rows, "t1", 1, B_SYM, -math.inf)
+    key = ("t1", 1, B_RAND)
+    rows[key] = replace(rows[key], submitted=False)
+    table = tabled(rows)
+    got = read_floors(table, PASS, ROOT, 200)["C1"]
+    assert key in read(table)["C1"].rows
+    assert got.floored == 2
+    assert key not in got.without.rows
 
 
 def test_s6_with_nothing_floored_is_the_read_itself() -> None:

@@ -66,8 +66,13 @@ another read's rows. Truths enter sorted, and every fold is exactly rounded, so 
 read does not depend on row order. A truth leaving a read makes a new resample
 matrix, which moves an interval's end by itself.
 
-**``rows``** is every row a read used, gap references included: both sides and the
-ORACLE on each matched (truth, seed). B-lib is not read, so it is not in it.
+**``rows``** holds both sides and the ORACLE on each matched (truth, seed), and for
+each floored row the row or rows that set its floor, so substituting a row that
+sets a floor shows in the read that took it. Each key is there once. So B-lib, or
+any other contrast row, is in ``rows`` only where it sets such a floor. A substitution
+can move a floor from one row to another, so ``rows`` is each table's own: the row
+that set a floor on one table need not be in the other's. Rows that act on a read
+only through the truths kept or through a control are not in ``rows``.
 
 **Reportable.** Controls 1, 2 and 3 gate every read and control 4 (the
 :class:`ScriptedControls` value, a scripted run outside the table) gates the C2
@@ -269,25 +274,33 @@ def _takes_floor(row: Row) -> bool:
     return not row.submitted or row.per_event == -math.inf
 
 
-def floor_rows(rows: Sequence[Row]) -> tuple[tuple[Row, ...], frozenset[RowKey]]:
+def floor_rows(
+    rows: Sequence[Row],
+) -> tuple[tuple[Row, ...], Mapping[RowKey, tuple[RowKey, ...]]]:
     """The pair rule's copy of ``rows``, which must be contrast rows and no void,
-    and the keys it floored. A row with no finite row on its (truth, seed) stays
-    as it is: it has no gap, so it is absent."""
+    and each key it floored with the sorted keys of the row or rows that set that
+    floor: every row at the lowest finite value, so a tie gives more than one. A row
+    with no finite row on its (truth, seed) stays as it is: it has no gap, so it is
+    absent."""
     lowest: dict[tuple[str, int], float] = {}
     for r in rows:
         if r.per_event is not None and math.isfinite(r.per_event):
             unit = (r.truth, r.seed)
             lowest[unit] = min(lowest.get(unit, math.inf), r.per_event)
+    setters: dict[tuple[str, int], list[RowKey]] = {}
+    for r in rows:
+        if r.per_event is not None and r.per_event == lowest.get((r.truth, r.seed)):
+            setters.setdefault((r.truth, r.seed), []).append(_key(r))
     out: list[Row] = []
-    floored: set[RowKey] = set()
+    floored: dict[RowKey, tuple[RowKey, ...]] = {}
     for r in rows:
         floor = lowest.get((r.truth, r.seed))
         if floor is not None and _takes_floor(r):
             out.append(replace(r, per_event=floor))
-            floored.add(_key(r))
+            floored[_key(r)] = tuple(sorted(setters[(r.truth, r.seed)]))
         else:
             out.append(r)
-    return tuple(out), frozenset(floored)
+    return tuple(out), floored
 
 
 def _checked_rows(table: Table) -> list[Row]:
@@ -330,7 +343,8 @@ class _Frame:
     naming_null: bool
     #: Each (truth, system)'s finite gaps by seed.
     gaps: Mapping[tuple[str, str], Mapping[int, float]]
-    floored: frozenset[RowKey]
+    #: Each floored key, with the rows that set its floor.
+    floored: Mapping[RowKey, tuple[RowKey, ...]]
     seed: int
     resamples: int
 
@@ -368,13 +382,26 @@ def _mean(values: Sequence[float]) -> float:
     return reductions.mean(np.asarray(values, dtype=np.float64))
 
 
-def _read(
-    index: int, spec: ContrastSpec, frame: _Frame, absent: frozenset[RowKey]
-) -> tuple[ContrastRead, int]:
-    """Read ``index`` with the ``absent`` rows left out, and the truths it lost to
-    having no seed in common."""
+@dataclass(frozen=True)
+class _Pairs:
+    """What one read holds before any number is drawn from it."""
+
+    #: Each truth's mean gap on each side, truths sorted.
+    first: tuple[float, ...]
+    second: tuple[float, ...]
+    #: Both sides on each matched (truth, seed).
+    sides: tuple[RowKey, ...]
+    #: :attr:`ContrastRead.rows`.
+    rows: tuple[RowKey, ...]
+    #: Truths the read lost to having no seed in common.
+    no_common_seed: int
+
+
+def _pairs(spec: ContrastSpec, frame: _Frame, absent: frozenset[RowKey]) -> _Pairs:
+    """One read's pairs with the ``absent`` rows left out."""
     first: list[float] = []
     second: list[float] = []
+    sides: list[RowKey] = []
     used: list[RowKey] = []
     no_common_seed = 0
     for truth in frame.kept:
@@ -394,25 +421,34 @@ def _read(
         first.append(_mean([a[s] for s in seeds]))
         second.append(_mean([b[s] for s in seeds]))
         for s in seeds:
-            used += [
-                (truth, s, spec.first),
-                (truth, s, spec.second),
-                (truth, s, ORACLE),
-            ]
-    rows = tuple(sorted(used))
-    n = len(first)
+            pair = ((truth, s, spec.first), (truth, s, spec.second))
+            sides += pair
+            used += [*pair, (truth, s, ORACLE)]
+            for key in pair:
+                used += frame.floored.get(key, ())
+    # A row can set both sides' floors, or be a side and set the other's.
+    return _Pairs(
+        tuple(first),
+        tuple(second),
+        tuple(sides),
+        tuple(sorted(set(used))),
+        no_common_seed,
+    )
+
+
+def _read(index: int, spec: ContrastSpec, frame: _Frame, pairs: _Pairs) -> ContrastRead:
+    """Read ``index`` of ``pairs``."""
+    n = len(pairs.first)
     gated = frame.controls_pass and (frame.naming_null or not spec.naming)
     if not gated or n < MIN_TRUTHS:
-        return ContrastRead(
-            math.nan, math.nan, math.nan, False, n, rows
-        ), no_common_seed
+        return ContrastRead(math.nan, math.nan, math.nan, False, n, pairs.rows)
     ci = paired_bootstrap_ci(
-        first,
-        second,
+        pairs.first,
+        pairs.second,
         np.random.default_rng(np.random.SeedSequence([frame.seed, index])),
         resamples=frame.resamples,
     )
-    return ContrastRead(ci.mean, ci.low, ci.high, True, n, rows), no_common_seed
+    return ContrastRead(ci.mean, ci.low, ci.high, True, n, pairs.rows)
 
 
 def read_contrasts(
@@ -421,7 +457,8 @@ def read_contrasts(
     """Every read of ``table`` (a table after ``derive``), in sorted name order."""
     frame = _frame(table, controls, seed, resamples)
     return {
-        spec.name: _read(i, spec, frame, frozenset())[0] for i, spec in enumerate(READS)
+        spec.name: _read(i, spec, frame, _pairs(spec, frame, frozenset()))
+        for i, spec in enumerate(READS)
     }
 
 
@@ -430,13 +467,13 @@ def read_floors(
 ) -> Mapping[str, FloorRead]:
     """S6 for every read of ``table``, in sorted name order (module docstring)."""
     frame = _frame(table, controls, seed, resamples)
+    absent = frozenset(frame.floored)
     out: dict[str, FloorRead] = {}
     for i, spec in enumerate(READS):
-        read, no_common_seed = _read(i, spec, frame, frozenset())
-        without, _ = _read(i, spec, frame, frame.floored)
+        pairs = _pairs(spec, frame, frozenset())
         out[spec.name] = FloorRead(
-            floored=sum(key in frame.floored for key in read.rows),
-            no_common_seed=no_common_seed,
-            without=without,
+            floored=sum(key in frame.floored for key in pairs.sides),
+            no_common_seed=pairs.no_common_seed,
+            without=_read(i, spec, frame, _pairs(spec, frame, absent)),
         )
     return out

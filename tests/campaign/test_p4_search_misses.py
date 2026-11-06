@@ -4703,14 +4703,17 @@ def test_end_without_finalise_is_refused_and_starts_nothing(
     assert not (tmp_path / "out").exists()
 
 
+#: Read at import, so a test that moves ``OUT_DIR`` does not move this check.
+REAL_OUT: Final = p4m.OUT_DIR
+
+
 @pytest.fixture(autouse=True)
-def no_test_reaches_the_real_output(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+def no_test_reaches_the_real_output() -> Iterator[None]:
     """``main`` writes a refusal to the constant, so a test that forgot to move it
-    would write into the launch's records. Each test finds it absent, and leaves it
-    absent. The launch's directory does not exist until the launch."""
-    before = p4m.OUT_DIR.exists()
+    would write into the launch's records."""
+    before = REAL_OUT.exists()
     yield
-    assert p4m.OUT_DIR.exists() == before, f"a test touched {p4m.OUT_DIR}"
+    assert REAL_OUT.exists() == before, f"a test touched {REAL_OUT}"
 
 
 def test_the_end_note_is_copied_when_the_terminal_step_is_byte_fail(paths: Any) -> None:

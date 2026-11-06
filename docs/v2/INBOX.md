@@ -190,3 +190,16 @@ entry, and marks it handled with the date and what was done. Newest last.
   a worktree, use the Edit tool from the start. The rule for helpers stands: a block means stop and
   report, whatever tool could make the write.
   Handled 2026-11-06 (lane session 35): LOG corrected, guard left alone, helpers briefed to use Edit in worktrees and to stop on a block. A second block, on the lead's own doc write at 07:21:41Z, was ruled on by the control room the same morning (LOG 2026-11-06).
+
+## 2026-11-06, control room (B-sym tuning and the P4 SPEC text)
+
+- [ ] **B-sym: tune, do not waive.** Before the section 6.1 freeze, tune B-sym on dev only, CPU only.
+  Write the effort budget first: at least the effort the agent arms get, in the same units. Freeze the
+  tuned settings in the 6.1 commit. Record P3's untuned run as a deviation from SPEC section 9, and
+  say in P3's write-up that its B-sym was untuned.
+  In progress 2026-11-06 (lane session 36): deviation recorded in PILOT.md and the LOG; effort budget written first, in `docs/v2/prereg/2026-11-06_bsym-tuning.md` (draft, in red team). Stays open until the tuned settings are frozen in the §6.1 commit.
+- [ ] **SPEC-TEXT-P4.md: accept as drafted**, provided it has had one red-team round. If it has not, run
+  one first and fix any blocking findings. Any wording that changes what the paper claims comes back
+  here.
+  In progress 2026-11-06 (lane session 36): round run, ready with fixes, six blocking (`docs/v2/redteam/2026-11-06_spec-text-p4.md`). The lane's fixes are in `docs/v2/SPEC-TEXT-P4.md` part A. Findings 1 to 4 and B-boed change claims, so they came back as rulings B1 to B5 in part B. SPEC not applied; waits on those.
+  Both decided by the control room under the owner's standing delegation.

@@ -51,6 +51,8 @@ Sources: **[report]** is a number in the generated sections of this file. **[scr
 - The wall limit is in the config and not in the agent's prompt.
 - "Any prediction" in the LLM table counts accepted calls: 19 `predict` calls ran, 10 refused by the parser.
 - The record may not hold everything the agent saw (red team, finding 4; about 400 tokens, an inference, unconfirmed).
+
+**Deviation from SPEC §9: this pilot's B-sym was untuned.** SPEC §9 and LOG 2026-10-02 required B-sym to be tuned on dev in P3 with the same effort as the agent prompt. That was not done: every B-sym, B-sym@10F and planted-hint number in this file comes from `GPConfig`'s untuned defaults. Found 2026-11-06, in lane session 36, before any test data. The verdict's B-sym rows stand as computed on those defaults, and what tuning would have changed in them is not known. Control 3's pass shows the space is searchable at 10×F, and says nothing about B-sym at budget F. So no reading of this file should take B-sym here for the tuned rival §9 asks for. The control room decided to tune on dev before the §6.1 freeze (INBOX 2026-11-06), and P4 uses the tuned setting.
 - `docs/v2/TRANSCRIPTS.md` describes the Windows pilot, not this store.
 
 #### How this file was made

@@ -29,6 +29,10 @@ frozen by the search-miss check's guard). Uncertified fits stay in every number,
 as the rules read them, and are flagged wherever an arm's final-fit scores are
 printed. A cell's ``certified`` is 1, 0, NaN (no GLM fit) or absent, and only 1
 and 0 enter a share.
+
+Prereg 2026-11-05 §2.8: a split holding a truth outside dev is refused until
+``reads.json`` exists (:func:`refuse_unread`), since on P4 the first reading of
+the store is the miss script's terminal step. No option changes this.
 """
 
 from __future__ import annotations
@@ -65,6 +69,11 @@ UNRECORDED: Final = "unrecorded"
 #: The start of the line a softplus fit carries when its θ could not be converted
 #: to the agent's units (``investigation/tools.py``, ``Lab._fit_text``).
 SOFTPLUS_NOTE: Final = "note: softplus-link coefficients are reported as fitted"
+#: The miss script's reads file (prereg 2026-11-05 §2.8, §2.10). A constant there
+#: and here, and not in the store, which that check leaves untouched.
+P4_READS: Final = Path(
+    "/home/ubuntu/research/records/sciagent/p4-search-misses-F2/reads.json"
+)
 
 type RowKey = tuple[str, int, str]
 
@@ -98,6 +107,27 @@ def old_notes(path: Path) -> str:
     if NOTES_OPEN in text and NOTES_CLOSE in text:
         return text.split(NOTES_OPEN, 1)[1].split(NOTES_CLOSE, 1)[0].strip()
     return "_No notes yet._"
+
+
+def refuse_unread(records: Sequence[Any], reads: Path) -> None:
+    """Exit unless every truth of the split is dev or ``reads`` exists.
+
+    The split's records answer for the store: a truth's digest hashes its
+    record, ``split`` included, and is in every address read below, so a
+    relabelled record reaches no cell. The whole split is asked about, whatever
+    ``--ids`` or ``--truths`` select. An unknown split counts as outside dev, as
+    in :mod:`sciagent.campaign.freeze`. Only ``reads``'s existence is read.
+    """
+    from sciagent.campaign.freeze import DEV_SPLIT
+
+    outside = sorted({r.split for r in records if r.split != DEV_SPLIT})
+    if outside and not reads.is_file():
+        print(
+            f"refused: non-dev truths (split {outside}) and no {reads}: the "
+            "contrasts stay unread until the miss script's terminal step writes it",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
 
 
 def timing_lines(root: Path) -> list[dict[str, Any]]:
@@ -851,6 +881,7 @@ def main() -> None:
 
     records = select(load_split(args.split), args.truths, args.ids)
     all_records = load_split(args.split)
+    refuse_unread(all_records, P4_READS)
     env = pointproc_environment(all_records)
     seeds = tuple(int(s) for s in args.seeds.split(","))
     control = tuple(int(s) for s in args.control_seeds.split(",") if int(s) in seeds)

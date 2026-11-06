@@ -36,6 +36,14 @@ so the prefix is the first half of each kind. The ids are sorted first, so the
 order the truths arrive in does not matter. If the prefix did not keep the share
 the rule's reason would be gone, so that is refused.
 
+**The turn cap** (:func:`budget_max_turns`). Each swept budget keeps the headroom
+the main grid has, so the sweep measures the budget and not the cap. A full-budget
+session at E = 8, F = 40 is 58 tool calls under a cap of 100, so 42 are spare. So
+the cap is 100 unless the budget needs more: (8, 80) has 140, (16, 40) has 116, and
+the rest 100 (the lane's decision, LOG 2026-11-06). The cap enters a session's
+text, so it moves those two configs' session addresses and nothing else: it is in
+no surface, and in no baseline's key.
+
 The plan reads a truth's id and kind and nothing else, and sets no
 ``control_truths``, so neither it nor its contrast rows depend on truth order.
 """
@@ -68,6 +76,27 @@ P4_SINGLE_SEED: Final = (1,)
 P4_SWEEP_TRUTHS: Final = 20
 #: The swept (experiments, fits): E at F = 40, then F at E = 8 (decision 15).
 P4_SWEEP_BUDGETS: Final = ((0, 40), (2, 40), (16, 40), (8, 20), (8, 80))
+
+
+def full_budget_calls(experiments: int, fits: int) -> int:
+    """The tool calls of a session that spends its whole budget: every fit, every
+    experiment, the belief each experiment requires (Δ4), the belief the submit
+    requires, and the submit."""
+    return fits + 2 * experiments + 2
+
+
+_MAIN: Final = CampaignConfig()
+#: The calls the main grid leaves spare under its cap.
+P4_TURN_HEADROOM: Final = _MAIN.max_turns - full_budget_calls(
+    _MAIN.experiments, _MAIN.fits
+)
+
+
+def budget_max_turns(experiments: int, fits: int) -> int:
+    """A budget's turn cap: the default, unless that leaves less than
+    :data:`P4_TURN_HEADROOM` (module docstring)."""
+    needed = full_budget_calls(experiments, fits) + P4_TURN_HEADROOM
+    return max(_MAIN.max_turns, needed)
 
 
 def sweep_truths(truths: Sequence[TruthEntry]) -> tuple[str, ...]:
@@ -118,6 +147,7 @@ def p4_plan(truths: Sequence[TruthEntry]) -> tuple[CampaignConfig, ...]:
             llm_arms=tuple(replace(a, budget=(e, fits)) for a in named),
             experiments=e,
             fits=fits,
+            max_turns=budget_max_turns(e, fits),
         )
         for e, fits in P4_SWEEP_BUDGETS
     )

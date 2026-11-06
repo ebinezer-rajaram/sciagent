@@ -41,6 +41,9 @@ from sciagent.campaign.p4plan import (
     P4_SWEEP_BUDGETS,
     P4_SWEEP_TRUTHS,
     P4_TRUTHS,
+    P4_TURN_HEADROOM,
+    budget_max_turns,
+    full_budget_calls,
     p4_plan,
     sweep_truths,
 )
@@ -56,6 +59,7 @@ from sciagent.campaign.plan import (
     KNOWN_BASELINES,
     ORACLE,
     P4_ARMS,
+    P4_RESCALED_ARMS,
     P4_SONNET_ARMS,
     PLANTED,
     CampaignConfig,
@@ -718,6 +722,108 @@ def test_two_configs_share_a_store_and_each_reads_its_own_planned_rows(
     ]
     assert whole.planned == {B_LIB: 2}
     assert not whole.missing
+
+
+# --------------------------------------------------------------------------
+# The turn cap
+# --------------------------------------------------------------------------
+
+#: Every swept budget and its cap, from the control room's rule, by hand.
+SWEEP_TURNS: Final = (
+    ((0, 40), 100),
+    ((2, 40), 100),
+    ((16, 40), 116),
+    ((8, 20), 100),
+    ((8, 80), 140),
+)
+#: The two budgets a cap of 100 would leave short of the main grid's headroom.
+RAISED: Final = ((16, 40), (8, 80))
+
+
+def swept(budget: tuple[int, int]) -> CampaignConfig:
+    return next(c for c in p4_plan(standin())[3:] if (c.experiments, c.fits) == budget)
+
+
+@pytest.mark.parametrize(
+    ("budget", "calls"), [((8, 40), 58), ((8, 80), 98), ((16, 40), 74), ((0, 40), 42)]
+)
+def test_a_full_budget_session_is_its_fits_experiments_beliefs_and_submit(
+    budget: tuple[int, int], calls: int
+) -> None:
+    assert full_budget_calls(*budget) == calls
+
+
+def test_the_main_grid_leaves_42_calls_spare() -> None:
+    assert P4_TURN_HEADROOM == 42
+
+
+@pytest.mark.parametrize(("budget", "turns"), SWEEP_TURNS)
+def test_the_rule_gives_each_swept_budget_its_cap(
+    budget: tuple[int, int], turns: int
+) -> None:
+    assert budget_max_turns(*budget) == turns
+
+
+@pytest.mark.parametrize(("budget", "turns"), SWEEP_TURNS)
+def test_each_sweep_config_runs_at_its_cap(budget: tuple[int, int], turns: int) -> None:
+    assert swept(budget).max_turns == turns
+
+
+@pytest.mark.parametrize(("budget", "turns"), SWEEP_TURNS)
+def test_no_swept_budget_has_less_headroom_than_the_main_grid(
+    budget: tuple[int, int], turns: int
+) -> None:
+    assert swept(budget).max_turns - full_budget_calls(*budget) >= P4_TURN_HEADROOM
+
+
+def test_the_main_grid_haiku_opus_and_rescaled_keep_100() -> None:
+    sonnet, haiku, opus, *_ = p4_plan(standin())
+    assert {c.max_turns for c in (sonnet, haiku, opus)} == {100}
+    assert set(P4_RESCALED_ARMS) <= set(sonnet.llm_arms)
+
+
+def test_plans_default_cap_stays_100() -> None:
+    assert CampaignConfig().max_turns == 100
+
+
+def test_only_the_two_raised_configs_session_addresses_move() -> None:
+    """Each config against itself at the default cap: 24 arms, 4 of them moved."""
+    env = environment()
+    moved: set[tuple[int, int]] = set()
+    arms = 0
+    for config in p4_plan(standin()):
+        at_default = dataclasses.replace(config, max_turns=100)
+        for arm in config.llm_arms:
+            arms += 1
+            if session_config_digest(arm, config, env) != session_config_digest(
+                arm, at_default, env
+            ):
+                moved.add((config.experiments, config.fits))
+    assert arms == 24
+    assert moved == set(RAISED)
+
+
+@pytest.mark.parametrize("budget", RAISED)
+def test_the_cap_is_no_part_of_a_surface(budget: tuple[int, int]) -> None:
+    """So the cap moves a session's text and no pin the freeze would hold."""
+    env = environment()
+    config = swept(budget)
+    at_default = dataclasses.replace(config, max_turns=100)
+    for arm in config.llm_arms:
+        assert surface_digest(arm, config, env) == surface_digest(arm, at_default, env)
+        assert surface_pin_key(arm, config) == surface_pin_key(arm, at_default)
+
+
+def test_the_cap_is_no_part_of_b_sym_at_f80s_address() -> None:
+    env = environment()
+    truth = entry("hawkes")
+    config = swept((8, 80))
+    assert config.baselines == (B_SYM_F80,)
+    unit = Unit(truth.id, 1, B_SYM_F80)
+    at_default = dataclasses.replace(config, max_turns=100)
+    assert baseline_key(unit, truth, env, config) == baseline_key(
+        unit, truth, env, at_default
+    )
 
 
 # --------------------------------------------------------------------------

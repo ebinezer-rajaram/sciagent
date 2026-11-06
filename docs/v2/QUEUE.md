@@ -501,6 +501,7 @@ Each item says when it is done. Move finished items to the bottom section after 
   repository (records kept on dm-devbox and under the S3 prefix; only the sha256 committed) and
   prepare the single freeze commit of SPEC §6.1. The owner approves before any agent touches
   the test split.
+  2026-11-06 (session 36): what `S` still needs, in one place: `R2` (script and test); control 4's runner and the report's refusal (`p4-null`); the launcher's `--reuse-from` refusal; B-sym's tuned setting into `p4_plan`; the SPEC text applied; the 10 sweep surfaces pinned; `scripts/pilot.py` able to run `p4_plan`'s blocks; the sampler's seed for the test split, chosen and committed; then the split itself, by `scripts/sample_truths.py`, outside the repository.
 - [x] 2026-10-29 **Fetch the QTM catalogue** (`scripts/fetch_qtm.py`, for P5) so its three skipped
   acceptance tests run. Low priority. Session 15: fetched into `data/qtm` (gitignored), exit 0;
   `--verify` both files `ok` (201061306 and 99744391 bytes, pinned sha256);

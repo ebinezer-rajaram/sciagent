@@ -30,6 +30,7 @@ from sciagent.investigation import (
     replay_investigation,
     run,
 )
+from sciagent.investigation.view import CONDITIONS
 
 ROOT: Final = Path(__file__).resolve().parents[1]
 
@@ -65,7 +66,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--truth", default="size_excitation", choices=sorted(v2.TRUTHS))
     parser.add_argument("--arm", default="AG-o", choices=["AG-c", "AG-o"])
-    parser.add_argument("--condition", default="named", choices=["named", "anon"])
+    parser.add_argument("--condition", default="named", choices=list(CONDITIONS))
     parser.add_argument("--model", default="sonnet", choices=sorted(MODELS))
     parser.add_argument("--seed", type=int, default=20261002)
     parser.add_argument("--experiments", type=int, default=8)

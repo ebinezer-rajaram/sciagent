@@ -19,6 +19,7 @@ from typing import Any
 
 import pytest
 from campaign_support import FINGERPRINT, TRUTH_IDS, entry, environment, tiny_config
+from test_campaign import SCRIPT, clean
 from test_campaign_analysis import row
 from test_pilot_report_wording import (
     SEEDS,
@@ -29,6 +30,7 @@ from test_pilot_report_wording import (
 )
 
 from sciagent.campaign.analysis import Session, derive
+from sciagent.campaign.contrasts import AG_C_RESCALED, AG_O_RESCALED
 from sciagent.campaign.driver import Campaign, DriverSettings
 from sciagent.campaign.fingerprint import FINGERPRINT_FILE
 from sciagent.campaign.freeze import (
@@ -38,9 +40,12 @@ from sciagent.campaign.freeze import (
     check_surfaces,
     surface_pin_key,
 )
+from sciagent.campaign.llm import run_session
 from sciagent.campaign.plan import (
     P4_ARMS,
     P4_PROMPT_VARIANT,
+    P4_RESCALED_ARMS,
+    P4_SONNET_ARMS,
     PILOT_ARMS,
     CampaignConfig,
     CampaignError,
@@ -48,12 +53,14 @@ from sciagent.campaign.plan import (
     TruthEntry,
     Unit,
     legacy_session_config_digest,
+    llm_units,
     session_key,
     surface_digest,
     system_variant,
 )
 from sciagent.campaign.store import ResultStore
 from sciagent.campaign.voids import VoidStatus
+from sciagent.harness.scripted import ScriptedDriver
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 
@@ -103,6 +110,77 @@ def test_every_p4_arm_is_a_pilot_arm_on_the_frozen_variant() -> None:
         "AG-c-S/anon+link-neutral",
         "AG-o-S/anon+link-neutral",
     ]
+
+
+def test_the_rescaled_arms_are_both_tiers_under_the_contrasts_names() -> None:
+    assert [(a.arm, a.condition) for a in P4_RESCALED_ARMS] == [
+        ("AG-c", "rescaled"),
+        ("AG-o", "rescaled"),
+    ]
+    assert {a.prompt_variant for a in P4_RESCALED_ARMS} == {P4_PROMPT_VARIANT}
+    assert {a.policy for a in P4_RESCALED_ARMS} == {None}
+    assert [a.system("S") for a in P4_RESCALED_ARMS] == [AG_C_RESCALED, AG_O_RESCALED]
+
+
+def test_rescaled_runs_on_sonnet_only() -> None:
+    """Decision 11 (A): the grid every model runs stays the four arms, and only
+    the Sonnet config carries six (P4-PROPOSAL §4: 960 + 160 sessions)."""
+    assert not {a.condition for a in P4_ARMS} & {"rescaled"}
+    assert (*P4_ARMS, *P4_RESCALED_ARMS) == P4_SONNET_ARMS
+    assert CampaignConfig(llm_arms=P4_SONNET_ARMS).llm_letter == "S"
+
+
+def test_the_rescaled_arms_run_after_and_do_not_reorder_the_grid() -> None:
+    ids = ("t1", "t2")
+    grid = llm_units(ids, CampaignConfig(seeds=(1, 2), llm_arms=P4_ARMS))
+    sonnet = llm_units(ids, CampaignConfig(seeds=(1, 2), llm_arms=P4_SONNET_ARMS))
+    assert [u for u in sonnet if "rescaled" not in u.system] == list(grid)
+    assert sum("rescaled" in u.system for u in sonnet) == 2 * 2 * 2
+
+
+def test_a_rescaled_arm_has_its_own_surface_and_key() -> None:
+    config = tiny_config(llm_arms=P4_SONNET_ARMS)
+    env = environment()
+    assert len({surface_digest(a, config, env) for a in P4_SONNET_ARMS}) == 6
+    truth = entry("hawkes")
+    keys = {
+        session_key(Unit("hawkes", 1, system), truth, env, config).digest
+        for system in config.llm_systems()
+    }
+    assert len(keys) == 6
+
+
+def test_a_rescaled_session_reads_back_in_native_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The campaign's reader takes the record through the arm's view, so what
+    the score job is handed is the named session's."""
+    clean(monkeypatch)
+    config = tiny_config(
+        seeds=(1,), llm_arms=(LLMArm("AG-c", "named"), LLMArm("AG-c", "rescaled"))
+    )
+    details = {
+        system: run_session(
+            Unit("size_excitation", 1, system),
+            entry("size_excitation"),
+            environment(),
+            config,
+            tmp_path / system.replace("/", "-"),
+            driver=ScriptedDriver(SCRIPT),
+        ).detail
+        for system in config.llm_systems()
+    }
+    named, rescaled = (details[s] for s in config.llm_systems())
+    assert named["outcome"] == rescaled["outcome"] == "submitted"
+    assert rescaled["submission"] == named["submission"] is not None
+    assert rescaled["fitted"] == named["fitted"]
+
+
+def test_the_pilot_could_not_have_run_rescaled() -> None:
+    """A ``v1`` rescaled arm has no pilot session, so no legacy text finds one."""
+    for tier in ("AG-c", "AG-o"):
+        arm = LLMArm(tier, "rescaled")
+        assert legacy_session_config_digest(arm, CampaignConfig()) is None
 
 
 def test_the_pilot_arms_stay_what_the_pilot_ran() -> None:
@@ -173,6 +251,7 @@ def test_one_v1_arm_among_frozen_ones_is_refused() -> None:
 
 def test_a_test_campaign_on_the_frozen_variant_passes() -> None:
     check_arms(tiny_config(llm_arms=P4_ARMS), [_test_truth()])
+    check_arms(tiny_config(llm_arms=P4_SONNET_ARMS), [_test_truth()])
 
 
 def test_an_unnamed_split_counts_as_outside_dev() -> None:
@@ -347,6 +426,11 @@ def test_the_p4_arm_set(pilot: ModuleType) -> None:
     assert config.llm_arms == P4_ARMS
 
 
+def test_the_p4_sonnet_arm_set_has_the_rescaled_arms(pilot: ModuleType) -> None:
+    config = pilot.campaign_config(_args(pilot, "--arm-set", "p4-sonnet"))
+    assert config.llm_arms == P4_SONNET_ARMS
+
+
 def test_arms_select_within_the_arm_set(pilot: ModuleType) -> None:
     args = _args(pilot, "--arm-set", "p4", "--arms", "AG-o/anon")
     (arm,) = pilot.campaign_config(args).llm_arms
@@ -361,7 +445,7 @@ def test_an_unknown_arm_name_is_refused(pilot: ModuleType) -> None:
 
 
 def test_the_committed_pins_are_the_frozen_arms_surfaces(pilot: ModuleType) -> None:
-    config = CampaignConfig(llm_arms=P4_ARMS)
+    config = CampaignConfig(llm_arms=P4_SONNET_ARMS)
     assert _pins(config) == pilot.P4_SURFACES
 
 

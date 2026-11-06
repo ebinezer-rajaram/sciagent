@@ -212,6 +212,8 @@ EXEMPT_CONSTANTS: Final[dict[str, dict[str, str]]] = {
         "_POLICY_NAME": "an input check on a name",
         "PILOT_ARMS": "arms enter a session's key by their own fields",
         "P4_ARMS": "arms enter a session's key by their own fields",
+        "P4_RESCALED_ARMS": "arms enter a session's key by their own fields",
+        "P4_SONNET_ARMS": "arms enter a session's key by their own fields",
         "P4_PROMPT_VARIANT": "enters a session's key through its arm and surface",
         "LEGACY_HARNESS_VERSION": "the pilot's frozen session text; do not edit",
     },

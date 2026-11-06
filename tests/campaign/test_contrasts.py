@@ -50,14 +50,13 @@ from sciagent.campaign.contrasts import (
 from sciagent.campaign.plan import (
     BASELINES,
     P4_ARMS,
+    P4_SONNET_ARMS,
     CampaignConfig,
     CampaignError,
-    LLMArm,
     TruthEntry,
 )
 from sciagent.campaign.store import ResultStore
 from sciagent.campaign.voids import VoidStatus
-from sciagent.investigation.view import Condition
 from sciagent.scoring.errors import ScoringError
 
 TRUTHS = ("t1", "t2", "t3", "t4", "t5", "t6")
@@ -679,8 +678,8 @@ def test_a_read_with_no_rows_is_not_reportable_and_is_named() -> None:
 
 
 def test_with_no_rescaled_rows_the_four_c2_reads_are_named_and_not_reportable() -> None:
-    """The ``rescaled`` condition is not built. Its reads have no rows, so they
-    are not reportable; the others do not notice."""
+    """A plan without the ``rescaled`` arms: its reads have no rows, so they are
+    not reportable; the others do not notice."""
     rows = {
         k: v for k, v in world().items() if k[2] not in (AGC_RESCALED, AGO_RESCALED)
     }
@@ -924,20 +923,12 @@ def _entries(n: int) -> list[TruthEntry]:
     return [toy_truth(f"test-{k:03d}") for k in range(n)]
 
 
-def _rescaled_stand_in(tier: str) -> LLMArm:
-    """An arm under the name the ``rescaled`` condition would have. It is not
-    built, so ``Condition`` has no such value; this only counts rows."""
-    named = next(a for a in P4_ARMS if a.arm == tier and a.condition == "named")
-    return replace(named, condition=cast(Condition, "rescaled"))
-
-
 def _sonnet(*, rescaled: bool) -> CampaignConfig:
-    extra = (_rescaled_stand_in("AG-c"), _rescaled_stand_in("AG-o")) if rescaled else ()
     return CampaignConfig(
         seeds=(1, 2),
         control_seeds=(1,),
         baselines=BASELINES,
-        llm_arms=(*P4_ARMS, *extra),
+        llm_arms=P4_SONNET_ARMS if rescaled else P4_ARMS,
     )
 
 
@@ -980,8 +971,8 @@ def test_contrast_rows_on_a_p4_shaped_plan_are_section_7s_thousand() -> None:
     assert {k[1] for k in keys if k[2] == B_SYM_10F} == {1}
 
 
-def test_contrast_rows_today_have_no_rescaled_rows() -> None:
-    """Not built: 160 rows short of section 7's table."""
+def test_a_plan_without_the_rescaled_arms_is_160_rows_short() -> None:
+    """Section 7's table needs them: the Sonnet config must carry six arms."""
     keys = contrast_rows(_p4_shaped(rescaled=False), _entries(40))
     assert len(keys) == 840
     assert not any("rescaled" in k[2] for k in keys)
@@ -1046,11 +1037,7 @@ def test_contrast_rows_take_every_truth_before_any_drop() -> None:
         CampaignConfig(
             seeds=SEEDS,
             control_seeds=(1,),
-            llm_arms=(
-                *P4_ARMS,
-                _rescaled_stand_in("AG-c"),
-                _rescaled_stand_in("AG-o"),
-            ),
+            llm_arms=P4_SONNET_ARMS,
         ),
     )
     keys = set(contrast_rows(plan, list(truths().values())))
@@ -1063,11 +1050,7 @@ def test_every_reads_rows_are_contrast_rows_on_both_tables() -> None:
         CampaignConfig(
             seeds=SEEDS,
             control_seeds=(1,),
-            llm_arms=(
-                *P4_ARMS,
-                _rescaled_stand_in("AG-c"),
-                _rescaled_stand_in("AG-o"),
-            ),
+            llm_arms=P4_SONNET_ARMS,
         ),
     )
     allowed = set(contrast_rows(plan, list(truths().values())))
@@ -1094,11 +1077,9 @@ def test_a_reads_rows_are_its_sides_and_its_gap_reference() -> None:
 
 def test_the_system_names_are_the_arms_own() -> None:
     """A renamed arm would otherwise leave its read empty without a word."""
-    names = {arm.system("S") for arm in P4_ARMS}
-    assert names == {AGC, AGC_ANON, AGO, AGO_ANON}
+    names = {arm.system("S") for arm in P4_SONNET_ARMS}
+    assert names == {AGC, AGC_RESCALED, AGC_ANON, AGO, AGO_RESCALED, AGO_ANON}
     assert names <= contrasts.CONTRAST_SYSTEMS
-    assert _rescaled_stand_in("AG-c").system("S") == AGC_RESCALED
-    assert _rescaled_stand_in("AG-o").system("S") == AGO_RESCALED
 
 
 # --------------------------------------------------------------------------

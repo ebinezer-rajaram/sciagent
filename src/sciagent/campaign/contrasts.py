@@ -19,11 +19,11 @@ read                first             second
 ``C4``              AG-c-S named      B-sparse, out of dictionary
 ==================  ================  ===========================
 
-The ``rescaled`` condition (Δ9) is not built: ``Condition`` has no such value, so
-no plan yields those rows. The four C2 reads then have no rows, and a read with
-no rows is not reportable and is named. Their system names here are what
-:meth:`~sciagent.campaign.plan.LLMArm.system` will give, and a test holds the
-pattern to the arms that exist.
+The ``rescaled`` arms (Δ9) are :data:`~sciagent.campaign.plan.P4_RESCALED_ARMS`,
+on Sonnet only, so only a plan whose Sonnet config runs
+:data:`~sciagent.campaign.plan.P4_SONNET_ARMS` yields those rows. Without them
+the four C2 reads have no rows, and a read with no rows is not reportable and is
+named. A test holds the system names here to the arms'.
 
 **Which rows** (:func:`contrast_rows`). Tier 1 of the miss check: every planned
 unit of :data:`CONTRAST_SYSTEMS`, which is the arms above plus what §6.2 and §6.4

@@ -1,9 +1,9 @@
 """System and opening prompts for the AG-c and AG-o arms (SPEC §4.0, §4.4, §5).
 
-One template serves both naming conditions. Channel names, diagnostic names
-and every time-valued number are filled in from the :class:`AgentView`, so the
-named and anonymised prompts differ in exactly the names and units, and in
-nothing else.
+One template serves every condition. Channel names, diagnostic names and every
+time-valued number are filled in from the :class:`AgentView`, so the named and
+anonymised prompts differ in exactly the names and units, and in nothing else;
+the rescaled prompt (P4 Δ9) is the named one in the anonymised units.
 
 What "named" means (SPEC §5). The named condition keeps the environment's own
 channel names (``size``, ``sign``) and diagnostic names, and native time

@@ -2648,3 +2648,18 @@ Corrects the hand-over above: its third decision (T2 and fit/5) is no longer the
 **Next.** Read the red team, fix, save its report, freeze if ready. Integrate the engineer's commits. Then `grep -E '^(FAILED|ERROR)|^exit:' .cache/drafts/s33/slow.log slow2.log`, and the merge as session 33's list says.
 
 **Decision needed from the owner:** none now.
+
+## 2026-11-06: Lane session 35, checkpoint: session 34's results read and the merge's checks run; the merge waits on the determinism run
+
+**Done.**
+- Session 34 ended with no hand-over: the last journal entry is its checkpoint, and its contrast engineer left uncommitted work on `p4-rehearsal` (`contrasts.py`, its tests, `Row.message`). Nothing was running. Its transcript shows it waiting on a test run. 60 tests failed against a stub first, in its `/tmp/s35-contrasts/stub-run.txt`; 63 pass now, ruff and mypy clean, so I committed it as 84390bb, local. Red team running on that commit.
+- Slow tier at b0853a1, `333 passed`, exit 0. Rescore 230 identical, 10 DIFF, all in `result.curve`, all equal once `-inf` is normalised (`/tmp/inf2.py`, not kept: parse both sides, map `'-inf'`, compare). LEDGER rows in.
+- At b0853a1 on a store copy: `store_check` the 1 known budget issue, `session_check` 0 at the current address, `replay_check` refused 240, exit 3, each as the code should give (`.cache/drafts/s35/checks.log`).
+- PILOT.md's regeneration note. Regenerated at 97444b6 from a worktree on the copy: 0 diff lines once the two paths are put back.
+- Trailers stay: 16 of 22 are on `origin/p4-deltas` (LOG 2026-11-06).
+
+**Running, $0.** `sci-det-s35`, b0853a1, ceiling 20 CPU hours. The mini plan took 3 h and 5 h last time, so it outlives this session. Helpers: red team on 84390bb; engineer on `rescaled` and the wall-limit sentence.
+
+**Decision.** The merge into v2 waits for that read: the queue lists the determinism check with the merge, nothing on v2 needs the merge today, and work goes on on the branch.
+
+**Next.** Read the red team and the engineer, then the miss amendment's `F2` and `scripts/p4_search_misses.py`.

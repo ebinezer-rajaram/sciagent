@@ -9,6 +9,8 @@
 - **The contrast code does not exist.** At `p4-rehearsal` a9e43a6 nothing under `src/sciagent/campaign/` or `scripts/` computes C1 to C6: `scoring/stats.py` has the paired bootstrap, and nothing assembles a contrast. `P4_ARMS` holds the four pilot arms, and the `rescaled` condition is not built (`controls_p4.py`). This file fixes an interface (section 2.7), and `R2` cannot exist before that code does. It is analysis code under SPEC §6.1.
 - **The `rescaled` condition is not built either,** and the C2 reads need it.
 
+Both are built since this was written, on `p4-rehearsal`: the contrast code at 84390bb (in review), `rescaled` at 8e2bd69 (LOG 2026-11-06). Neither is on v2 yet, and the two points above stand until they are. `P4_ARMS` stays four arms: `rescaled` is in `P4_SONNET_ARMS`. In `rescaled` the softplus note shows, so C2's time reads hold it and its names reads do not.
+
 **The list of reads is settled.** The owner approved P4-PROPOSAL §5's decisions 1 to 17 as recommended (LOG, lines 583-602), including Δ9's `rescaled` and decision 12's "descope C5 to P4b", which takes C3's AG-S-boed half too. "C1 to C5" in INBOX c81749a was the control room's loose wording, not a reversal (INBOX c65a614). So this amendment covers C1, C2, C3 (AG-o against AG-c) and C4. SPEC §7's P4 row still says C1 to C5; a SPEC change is a stop point and is not made here.
 
 **Extensions beyond the accepted text and plan, stated as such** (red team finding 11):

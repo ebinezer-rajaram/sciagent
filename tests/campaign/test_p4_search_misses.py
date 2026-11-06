@@ -129,16 +129,22 @@ type Key = tuple[str, int, str]
 type Rec = dict[str, Any]
 
 
+#: Ids the tripwire watches beside the frozen roots: its own test uses one, so
+#: that a frozen root is never handed to numpy, even to be refused (INBOX 119eff3).
+WATCHED: Final[set[int]] = set()
+
+
+def holds_frozen(value: Any) -> bool:
+    if isinstance(value, list | tuple):
+        return any(holds_frozen(v) for v in value)
+    return isinstance(value, int) and (value in FROZEN_STREAMS or value in WATCHED)
+
+
 @pytest.fixture(autouse=True)
 def no_frozen_stream(monkeypatch: pytest.MonkeyPatch) -> None:
     """A draw on a frozen root fails the test (module docstring)."""
     real_sequence = np.random.SeedSequence
     real_rng = np.random.default_rng
-
-    def holds_frozen(value: Any) -> bool:
-        if isinstance(value, list | tuple):
-            return any(holds_frozen(v) for v in value)
-        return isinstance(value, int) and value in FROZEN_STREAMS
 
     def seed_sequence(entropy: Any = None, **kw: Any) -> Any:
         assert not holds_frozen(entropy), f"frozen stream drawn: {entropy}"
@@ -152,10 +158,22 @@ def no_frozen_stream(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(np.random, "default_rng", default_rng)
 
 
-def test_the_tripwire_fires_on_each_frozen_root_and_on_nothing_else() -> None:
-    for root in sorted(FROZEN_STREAMS):
+def test_the_tripwire_holds_each_frozen_root_by_membership_alone() -> None:
+    """Set membership, with nothing handed to numpy."""
+    assert all(holds_frozen(root) for root in sorted(FROZEN_STREAMS))
+    assert all(holds_frozen([root, 7]) for root in sorted(FROZEN_STREAMS))
+    assert not holds_frozen([TEST_ROOT, TEST_LOG_ROOT, TEST_READS_ROOT])
+
+
+def test_the_tripwire_fires_on_a_watched_id_and_on_nothing_else() -> None:
+    """A non-control id stands in for the frozen roots."""
+    stand_in = 11
+    WATCHED.add(stand_in)
+    try:
         with pytest.raises(AssertionError, match="frozen stream"):
-            p4m.reference_rng("toy", root)
+            p4m.reference_rng("toy", stand_in)
+    finally:
+        WATCHED.discard(stand_in)
     assert p4m.reference_rng("toy", TEST_ROOT).integers(1 << 30) >= 0
 
 
@@ -4603,12 +4621,13 @@ def test_no_read_reportable_plants_nothing(paths: Any) -> None:
     assert d["label"] == "REHEARSAL CONTROL_FAIL"
 
 
-def test_the_shift_is_refused_on_any_frozen_root(paths: Any) -> None:
-    """The mode cannot reach a launch: it holds only the test roots."""
+def test_a_rehearsal_on_any_root_but_the_test_roots_is_refused(paths: Any) -> None:
+    """The mode holds only the test roots. Tested on non-control ids: the rule
+    refuses everything else, so a frozen root need not be named here."""
     table = tabled()
     plant(paths, clean(table))
     with pytest.raises(p4m.GuardFailure, match="root"):
-        finalise(paths, rehearsal_inputs(table, roots=p4m.FROZEN_ROOTS))
+        finalise(paths, rehearsal_inputs(table, roots=p4m.Roots(1, 2, 3)))
     assert not paths.reads.exists()
 
 

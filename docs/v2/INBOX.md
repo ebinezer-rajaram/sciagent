@@ -203,3 +203,13 @@ entry, and marks it handled with the date and what was done. Newest last.
   here.
   In progress 2026-11-06 (lane session 36): round run, ready with fixes, six blocking (`docs/v2/redteam/2026-11-06_spec-text-p4.md`). The lane's fixes are in `docs/v2/SPEC-TEXT-P4.md` part A. Findings 1 to 4 and B-boed change claims, so they came back as rulings B1 to B5 in part B. SPEC not applied; waits on those.
   Both decided by the control room under the owner's standing delegation.
+
+## 2026-11-06, control room (SPEC-TEXT-P4 part B)
+
+- [ ] **Accept all five recommendations and the floor sentence.** B1: drop the wall claim for P4's C3, and
+  Q7's wall question stays unanswered by P4's confirmatory reads. B2: "bounds" for "measures", with §9
+  and §10 qualified and named minus anon printed per model as a labelled secondary. B3: control 5 gates
+  C5 and C3's AG-S-boed half, in P4b. B4: freeze P4b's contrasts before any P4 read opens; no extra
+  sessions. B5: B-boed moves to P4b. Floor rule: the one sentence under §6.2. These narrow the claims,
+  which is the honest direction; record them as decided by the control room under the owner's standing
+  delegation.

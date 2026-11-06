@@ -2744,10 +2744,12 @@ Corrects the hand-over above: its third decision (T2 and fit/5) is no longer the
 
 **Stop points.** Both this session's were answered by the control room. The phone push did not go out, Remote Control inactive, so they went by session message. Nothing is waiting on the owner now, except the written choice on a softplus seed below, which can be the lane's recommendation first.
 
-**Checks.** Fast tiers by merge: 4,531 dots at 7bc9963; `4627 passed` at affbe02; `4655 passed` at e5e205f; `4748 passed` at 505de7e. At 48db3b4: see the next line. ruff clean, mypy `no issues found in 324 source files`. Slow tier: no full run on v2's head. Slow runs were targeted: `tests/campaign` and invariants at 23f2d6a `49 passed`, plan and contrast slow tests rerun by me, control 4's end-to-end `1 passed`, the report's `6 passed`, the miss script's on the engineer's run.
+**Checks.** Fast tiers by merge: 4,531 dots at 7bc9963; `4627 passed` at affbe02; `4655 passed` at e5e205f; `4748 passed` at 505de7e; `5130 passed`, exit 0 at 16:12:39Z at 48db3b4 plus docs. ruff clean, mypy `no issues found in 324 source files`. Slow runs so far are targeted: `tests/campaign` and invariants at 23f2d6a `49 passed` (engineer), plan, contrast and report slow tests rerun by me, control 4's end-to-end `1 passed` (engineer), the miss script's `16 passed` rerun by me.
+
+**Running, $0.** `sci-slow-s36`: the full slow tier on the pushed head, `-n 1`, worktree `tier2-s33`, ceiling 6 CPU hours. Read `grep -E '^(FAILED|ERROR)|^exit:' .cache/drafts/s36/slow.log`, then add its LEDGER row.
 
 **Not verified.**
-- The full slow tier on the merged head: `src/` changed, and AUTOPILOT asks for it or the affected slow files, so I ran the affected ones. The next session should run it whole.
+- The full slow tier on the merged head: running, not read. Until then only the affected slow files have passed.
 - The determinism run covers b0853a1, not the code merged after it.
 - The address comparison against the base commit was denied and not retried; evidence is the pin tests and a grep.
 - The miss script: no red team, no mutant pass on its critical rules, no rehearsal. I read one path of 4,740 lines.
@@ -2761,6 +2763,6 @@ Corrects the hand-over above: its third decision (T2 and fit/5) is no longer the
 **Next.**
 1. Send `docs/v2/prereg/2026-11-06_bsym-tuning.md`, second text, to its narrow second round. I rewrote it from the report's fixes at the end of this session, unreviewed: 12 candidates plus `weak` and `c0b`, three seeds, a stage 2 check at 10×F, any label but `SELECTED` leaves `c0`, softplus seed as candidate `c11`. Its stage 2 needs B-rand's and ORACLE's stored rows exported at 9db1a46. Tuning is the longest pole, by the reviewer's 91 to 114 CPU hours about 2 to 3 days of wall time at 2 workers, so start it first.
 2. Red team on `scripts/p4_search_misses.py`, with an independent mutant pass. Guards on non-control ids only.
-3. Full slow tier on v2's head, then the rehearsal's store.
+3. Read the slow tier, then the rehearsal's store.
 
 **Decision needed from the owner:** none now. Ahead: the test split and §6.1 freeze, which the owner approves.

@@ -12,8 +12,8 @@ prompt, every tool schema and every tool output:
    time value left native fails this, since the anon number is 8 times it.
 
 The two together leave nothing for rescaled to differ in but the numbers anon
-changes. The softplus note is the one line kept out of (1): whether rescaled
-shows it is not settled here, so nothing in this file pins it either way.
+changes. The softplus note is the one line kept out of (1): rescaled shows it, as
+anon does, because it follows from the time units (LOG 2026-11-06).
 """
 
 from __future__ import annotations
@@ -492,12 +492,22 @@ def _without_note(text: str) -> str:
 
 
 @pytest.mark.slow
-def test_a_softplus_fit_matches_apart_from_the_note_which_is_not_settled() -> None:
+def test_a_softplus_fit_matches_apart_from_the_note() -> None:
     named, rescaled, anon = (
         _without_note(_softplus_fit(c)) for c in ("named", "rescaled", "anon")
     )
     assert _blank(rescaled) == _blank(named)
     assert _renamed(rescaled) == anon
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    ("condition", "shown"), [("named", False), ("rescaled", True), ("anon", True)]
+)
+def test_the_note_goes_with_the_time_units(condition: Condition, shown: bool) -> None:
+    """Rescaled shows it, as anon does: its units are converted and softplus θ is
+    not (LOG 2026-11-06)."""
+    assert (NOTE in _softplus_fit(condition)) is shown
 
 
 # --------------------------------------------------------------------------

@@ -197,6 +197,7 @@ entry, and marks it handled with the date and what was done. Newest last.
   Write the effort budget first: at least the effort the agent arms get, in the same units. Freeze the
   tuned settings in the 6.1 commit. Record P3's untuned run as a deviation from SPEC section 9, and
   say in P3's write-up that its B-sym was untuned.
+  In progress 2026-11-06 (lane session 36): deviation recorded in PILOT.md and the LOG; effort budget written first, in `docs/v2/prereg/2026-11-06_bsym-tuning.md` (draft, in red team). Stays open until the tuned settings are frozen in the §6.1 commit.
 - [ ] **SPEC-TEXT-P4.md: accept as drafted**, provided it has had one red-team round. If it has not, run
   one first and fix any blocking findings. Any wording that changes what the paper claims comes back
   here.

@@ -126,4 +126,10 @@ P4b's own pre-registration and FSD's event cap: each is its own queue item. Name
 | R6 | 9, 10, 11 | What `predict` and `fit` really offer, and that experiments never reach the scored fit, which bears on how C3 and the budget sweep are read |
 | R7 | 16, 20, 21, 28 | Milder: belief entries declared as a measurement intervention; ORACLE an upper bound on training likelihood only; what "scanned" means; Haiku 4.5 beside Sonnet and Opus 5.5 declared under Q5 |
 
+**R2's share, proposed by the lane, for the reviewer.** Accepted by the control room in principle (INBOX 2026-11-07), and the share is ours to pick with the reviewer. Add to control 1, after its last sentence:
+
+> On two seeds a truth with no real difference passes one time in four. If more than 10% of the test truths leave the reads, as dropped or unchecked, that is more than 4 of 40, the reads are reported as not confirmatory.
+
+Why 10%, set before any P4 data. On P3's dev rows (`docs/v2/bsym-tuning/p3-rows.json`), ORACLE minus B-lib is positive on all 60 worlds, the smallest 0.017 nats per event, so on each of the three pairs of seeds no truth drops. So the expected count on an identifiable population is near 0, and 0 of 60 bounds a world's failure at about 5% (rule of three), which gives a truth's at about 10%. More than that says the test population differs from dev, or that the rule is selecting on noise, and either way a read over what remains does not stand for the split. A stricter limit would fire on one or two noisy truths: if 10% of truths truly had no difference, more than 2 of 40 would leave with chance 0.59, more than 4 with 0.18 and more than 6 with 0.03. So this limit is not sensitive to a small unidentifiable share: it catches a large one. The test split is not sampled and nothing is known of it. The reads are still printed, and the label of the miss check does not change, since this is a line in P4's report.
+
 **For information (finding 6):** the void policy's "only" in decision 6 does not hold, since the harness also voids an aborted or hard-timeout run. A `hard_timeout` is absent from the reads while a `wall_time` end with no submission takes the floor.

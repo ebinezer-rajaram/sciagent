@@ -57,7 +57,7 @@ Both are in the floor's domain on purpose, as B-lib is in P4's.
 
 - The pass passes: that setting stands, and `final.json` names it.
 - It fails: the next-ranked candidate by section 5's order, if it ranks above `c0`, takes one pass. If that fails too, or none ranks above `c0`, `c0` stands.
-- After the passes, B-sym at seeds 1 to 3 (60 units) runs for the setting that stands, if it is not `c0`, inside the same limits. No rule reads it: it gives the margin against `c0`'s stored rows on worlds selection did not use. If it does not finish, the note says so.
+- After the passes, B-sym at seeds 1 to 3 (60 units) runs for the setting that stands, if it is not `c0`, inside the same limits. It is a step of its own after `final.json`, and writes `margin.json`, with `finished` false after a stop or a CPU limit. No rule reads it: it gives the margin against `c0`'s stored rows on worlds selection did not use. If it does not finish, the note says so.
 
 **Where it lands.** `p4_plan` holds `gp`, as a named constant `TUNED_GP` that P4b's plan must also import, in the §6.1 commit. If `c11` stands, `pointproc_environment` appends that structure to `sym_seeds`, never to `B_LIB_LIBRARY`, in the same commit. Both records are committed under `docs/v2/bsym-tuning/`, so a test at `T` can tie `TUNED_GP` and `sym_seeds` to them. `GPConfig`'s own defaults do not change, so `gp` moves no pilot address, and `sym_seeds` would move only the P4 systems named above. It applies wherever `config.gp` is read: B-sym, B-sym@10F, B-sym@F=80, planted-hint, and P4b's `PolicySearch`.
 
@@ -66,7 +66,7 @@ Both are in the floor's domain on purpose, as B-lib is in P4's.
 Per world, the held-out `per_event` reading of each setting. The difference between two settings' gaps on a world equals the difference of these readings, since ORACLE's term cancels, so no ORACLE unit runs in stage 1. Any row with no finite reading, whatever the cause, takes the lowest finite reading on that world among the 14 settings, unless all 14 failed. This is stage 1's own rule and is wider than P4's pair rule, which floors only the failure it names. A truth's value is the mean over its seeds.
 
 - **Selection statistic:** each candidate's mean over truths.
-- **H1, graded control:** `c0` at 40 fits minus `c0` at 30 fits, from `c0`'s own curve, paired by truth, bootstrap over truths through `paired_bootstrap_ci`, truths sorted, 10,000 resamples, 95% percentile interval, from `default_rng(SeedSequence([20261113, 0]))`, on complete worlds. `c0`'s reading at 30 fits is the last curve point with `fits_used` ≤ 30, read with `float()`, and at 40 likewise. A `-inf` at 30 or at 40 takes that world's floor, the same number at both ends. A world where `c0` has no curve leaves H1 and is counted. On P3's seeds, read this way, it passes for every 2-seed pair, means 0.0077 to 0.0107, and on 3 seeds 0.0093 [0.0047, 0.0141]. It is nested, so it is lenient, and that is stated wherever it is cited.
+- **H1, graded control:** `c0` at 40 fits minus `c0` at 30 fits, from `c0`'s own curve, paired by truth, bootstrap over truths through `paired_bootstrap_ci`, truths sorted, 10,000 resamples, 95% percentile interval, from `default_rng(SeedSequence([20261113, 0]))`, on complete worlds. `c0`'s reading at 30 fits is the last curve point with `fits_used` ≤ 30, read with `float()`, and at 40 likewise. A `-inf` at 30 or at 40 takes that world's floor, the same number at both ends. A curve with no point within 30 fits takes the floor at 30. A world where `c0` has no curve leaves H1 and is counted, and if every world leaves, H1 has no interval and counts as falsified. On P3's seeds, read this way, it passes for every 2-seed pair, means 0.0077 to 0.0107, and on 3 seeds 0.0093 [0.0047, 0.0141]. It is nested, so it is lenient, and that is stated wherever it is cited.
 
 ## 4. Secondary, labelled exploratory
 
@@ -83,7 +83,9 @@ The script applies these in order, the first that fits, and writes `selection.js
 
 There is no threshold for leaving the default. Choosing on a noisy lead costs little only because stage 2 exists, and requiring significance would favour the default.
 
-**The records.** Stage 1 writes `selection.json`, and stage 2 writes `final.json`, at constant paths with no option, each copied to S3 and committed under `docs/v2/bsym-tuning/`. `final.json` names the setting that stands. If the label is not `SELECTED <name>`, or is `SELECTED c0`, `selection.json` is final and stage 2 does not run. **A pass not finished at the CPU stop, at a `STOP` file, or at the §6.1 commit has failed**, so nobody can keep a stage 1 result by not resuming stage 2.
+**The records.** Stage 1 writes `selection.json`, stage 2 writes `final.json` when its passes end, and the margin step writes `margin.json`, at constant paths under `.cache/drafts/bsym-tune/` with no option. `final.json` names the setting that stands, and nothing after it changes that. If the label is not `SELECTED <name>`, or is `SELECTED c0`, `selection.json` is final and stage 2 does not run. **A pass not finished at the CPU stop or at a `STOP` file has failed**, and the script writes that. So nobody can keep a stage 1 result by stopping stage 2.
+
+**Procedural, and stated as such.** With no `final.json` at the §6.1 commit, `c0` stands: the script cannot see that commit, so the lane applies this, and `check_plan`'s test reads a missing record as `c0`. The run has its own detached worktree at the script's commit, whose HEAD never moves. The lane copies each record to S3 and commits it under `docs/v2/bsym-tuning/` from the main checkout, so doing so cannot move the commit stage 2 checks.
 
 ## 6. Exclusions and failure handling
 

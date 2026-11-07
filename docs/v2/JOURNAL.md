@@ -2850,3 +2850,15 @@ Corrects the hand-over above: its third decision (T2 and fit/5) is no longer the
 **Out.** A K0 recomputation from `runs-ctlA1.jsonl` with no draw (analyst; R5). A red team on `secondaries.py`, `control_rows` and `--p4-block`. The engineer on `merge_tables`: the sweep stays descriptive and exploratory, the lead's call under SPEC §6.2. It found that the per-model named minus anon secondary reads n = 0 for Haiku and Opus, because `pilot_report.py` loads one config, and that is now in scope. A red team on the P4b draft.
 
 **Running, $0.** `sci-bsym-tune` stage 1, `units 124/840 worlds 8/60 cpu_hours 11.79` at 21:28Z (counts only).
+
+## 2026-11-07: Lane session 38, stop point: R3's words let a crashed B-rand pass control 2 (ruling needed)
+
+**Answer in one line.** Under R3 as worded ("a failed unit ranks as `-inf`"), a crash of the comparator helps the control: if every B-rand unit crashes, control 2 passes with a median of `+inf`, on a table where it fails with no crash.
+
+**Evidence.** Red team on the recent analysis code, verdict **not ready**, 4 blocking (`docs/v2/redteam/2026-11-07_analysis-code.md`, finding 1). I reran its script (`nice .venv/bin/python /tmp/rt-s38/d1_controls.py`): `nothing failed: controls_pass=False`; `every B-rand unit CRASHED: controls_pass=True planted=passed=True p=0.0156 median=inf`; `pre-R3 rule (score_rows): controls_pass=False`. The code is `analysis.RANKED_SYSTEMS = {planted-hint, B-rand, B-sym@10F}` and `control_rows` (`analysis.py:681`, `:749-772`). SPEC §6.4: control 2 is planted-hint against B-rand, and control 3 is B-sym@10F against ORACLE, so B-rand is the only comparator a failed unit can help.
+
+**Caveats.** Stand-in rows only, no store. At P4's shape a crash of B-rand on seed 1 of 27 of 40 truths was needed to flip it (same script), so it takes many crashes. A genuinely scored `-inf` B-rand row (the pilot had one, dev-010 s1) is a real outcome and is not in question.
+
+**Recommendation.** A failed unit with no reading ranks against the control passing: `-inf` for the system under test (planted-hint, B-sym@10F; as now) and `+inf` for the comparator (B-rand). A scored `-inf` stays as scored. Test first, before `S`. The words for R3 in `SPEC-TEXT-P4-C.md` change to match.
+
+**Decision needed (control room).** Accept that rule, or another. Until then, `control_rows` is left as it is. The other blocking findings (2: the report's gate takes typed root, resamples and naming commit; 3: R2's scope line on the wrong table or truths; 4: Haiku and Opus reads) are engineering and do not change a claim. Two engineers are on them now, on disjoint files.

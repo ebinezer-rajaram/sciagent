@@ -24,41 +24,53 @@ set then, and a commit that sets them is the script's commit the LOG names.
         --truths dev-000 --seeds 1 --fits 4
 
     # stage 2, once selection.json names a winner other than c0: the launch line
-    # with --stage2 (--print-launch --stage2 prints it)
+    # with --stage2 (--print-launch --stage2 prints it), at the same commit
 
     # section 2's table, once, read-only from a P3 store; its hash is P3_TABLE_SHA256
     uv run python scripts/bsym_tune.py --export-p3-table <store>
+
+    # section 5: each record, once written, goes to S3 and into docs/v2/bsym-tuning/.
+    # Commit them after stage 2: stage 2 refuses any other commit than the selecting
+    # one. The script does neither, and touches no AWS.
 
 **Stage 1.** All 20 dev truths at seeds 4, 5 and 6, 60 worlds, each of the 14
 settings (:data:`SETTINGS`) on every world at F = 40. A unit runs by the framework's
 normal path, :func:`~sciagent.campaign.execute.run_baseline_job`, under a
 :class:`~sciagent.campaign.plan.CampaignConfig` holding the setting's ``gp`` and an
-environment holding its ``sym_seeds``, so ``gp`` and the seeds are in its address.
-``c0b`` alone cannot go that way: the search seed is no argument of that path, and
-its ``gp`` and seeds are ``c0``'s. It runs :func:`run_shifted_unit`, which a test
-ties to the framework's path byte for byte, and its address is ``c0``'s plus the
-field :data:`C0B_ADDRESS_FIELD`.
+environment holding its ``sym_seeds``, so ``gp`` and the seeds are in its address,
+and its cell is in ``_record``'s shape. ``c0b`` alone cannot go that way: the search
+seed is no argument of that path. It runs :func:`run_shifted_unit`, which a test ties
+to the framework's path byte for byte. An address holds no search seed, so ``c0b``
+has ``c0``'s, and its cells go in the store :data:`C0B_STORE` under the run's own.
 
 **Processes.** As ``pilot_search_misses.py``, whose mechanism is copied here and not
 imported, since that file is frozen: a unit is one process that serves that unit
 only, so ``RLIMIT_CPU`` is per unit and a unit's death cannot break a sibling. The
-exit is read by :func:`exit_kind`: SIGXCPU is the CPU limit (the unit is killed and
-takes the floor), any other signal is a lost worker (retried once, after the rest),
-and an uncaught exception is a bug, which stops the run with no label.
+exit is read by :func:`exit_kind`: SIGXCPU is the CPU limit, journalled ``cpu_limit``
+so that a resume does not rerun the unit, any other signal is a lost worker (retried
+once, after the rest; lost twice is journalled ``worker_lost``), and both take the
+floor. An uncaught exception is a bug, which stops the run with no label.
 
 **Records.** ``journal.jsonl`` is appended and fsynced per record by whichever process
 owns the unit, so the driver may die at any moment. The driver alone writes the
-store, from the journal, so the store keeps its one writer. ``cpu.json`` carries the
-kernel's count across restarts. ``selection.json`` is written last and is the latch:
-nothing starts once it exists. ``cpu_report.json`` holds what is not repeatable,
-so that ``selection.json``'s bytes are.
+stores, from the journal, so each keeps its one writer. ``cpu.json`` carries the
+kernel's count across restarts. ``selection.json`` is written last and is stage 1's
+latch. ``cpu_report.json`` holds what is not repeatable, so that ``selection.json``'s
+bytes are.
 
-**Stage 2** (:func:`run_stage2`) takes the winner, and if it fails the next rank once,
-through :func:`plan_stage2`'s units, and reads them by :func:`read_pass` beside the
-stored rows of P3. It reads the same way ``analysis.verdict`` does: control 1's drop
-rule fixes the truths, then ``gonogo``'s control 2 and control 3. ``stage2.json`` is
-its latch, and :func:`final_setting` is what goes into ``p4_plan``: a winner other
-than ``c0`` stands only by a stage 2 result on the rule's own passes.
+**Stage 2** (:func:`run_stage2`), on its own store and CPU count, at the selecting
+commit. A pass (:func:`plan_stage2`) is B-sym@10F, then planted-hint, read by
+:func:`read_pass` with gaps against P3's stored ORACLE: ``gonogo``'s control 2 on all
+20 truths and control 3 on the ten. A pass not finished has failed. The winner takes a
+pass, and on failure the next rank takes one. Then B-sym (:func:`plan_margin`) runs
+for what stands, and no rule reads it. ``final.json`` comes last and is the latch,
+so a kill anywhere before it resumes. :func:`final_setting` is what stands: a winner
+other than ``c0`` stands only by a ``final.json`` on the rule's own passes.
+
+**A bug found after an outcome is read** stops every further step, and ``c0`` stands
+(section 6). Nothing here reruns it. An amendment that meets section 6's conditions
+moves :data:`STORE_DIR`, which every path of a run derives from, so the rerun is on the
+same seeds in a new directory and the first result stays beside it.
 
 **Choices the text leaves open** are the constants under "Open in the text" below.
 They are not decided here: each is a named constant for the freeze to confirm.
@@ -82,7 +94,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field, replace
 from itertools import product
 from pathlib import Path
@@ -125,8 +137,7 @@ from sciagent.campaign.store import (
     json_safe,
 )
 from sciagent.core import reductions
-from sciagent.core.types import FrozenDict
-from sciagent.glm.grammar import Link, Structure
+from sciagent.glm.grammar import ALL, Excite, KernelKind, Link, One, Structure
 from sciagent.registry.store import ExperimentKey
 from sciagent.scenarios.records import canonical_json
 from sciagent.scoring import gonogo
@@ -162,8 +173,21 @@ PREREG_PATH: Final = "docs/v2/prereg/2026-11-06_bsym-tuning.md"
 LOG_PATH: Final = "docs/v2/LOG.md"
 SCRIPT_PATH: Final = "scripts/bsym_tune.py"
 TEST_PATH: Final = "tests/campaign/test_bsym_tune.py"
-#: Section 11: the launch's store.
+#: Section 11: the launch's store. Every path of a run derives from this, and
+#: section 6's amendment names a new one.
 STORE_DIR: Final = ".cache/drafts/bsym-tune"
+#: Section 2: ``c0b``'s store, under the run's own.
+C0B_STORE: Final = "c0b"
+#: Section 6: stage 2's store, under the run's own.
+STAGE2_STORE: Final = "stage2"
+#: Section 5: the records, at constant paths with no option, and where the §6.1
+#: commit puts them. Until they exist, :func:`final_setting_at` reads ``c0``.
+SELECTION_RECORD: Final = "docs/v2/bsym-tuning/selection.json"
+FINAL_RECORD: Final = "docs/v2/bsym-tuning/final.json"
+#: Section 2: the softplus Hawkes seed ``c11`` adds, by its DSL text.
+C11_SEED_TEXT: Final = "link=softplus; Excite(ExpK, One, all)"
+#: Section 2: ``c0b``'s search seed is ``(search_seed + 1) % 2**63``.
+C0B_SEED_SHIFT: Final = 1
 #: Section 11: new, and the launch's alone. Passed in, never defaulted.
 SEED_ROOT: Final = 20261113
 #: Section 6: exactly these in stage 1.
@@ -178,8 +202,8 @@ LEVEL: Final = 0.95
 MIN_COMPLETE_WORLDS: Final = 54
 #: The dev split's size (section 7).
 DEV_TRUTHS: Final = 20
-#: Section 8.
-MEM_GATE_GIB: Final = 6
+#: Section 8: the mechanism's gate, checked before each dispatch.
+MEM_GATE_GIB: Final = 8
 WORKERS: Final = 2
 UNIT_NAME: Final = "sci-bsym-tune"
 #: Section 3's phrase for a search with nothing to submit (``search.py``).
@@ -208,61 +232,55 @@ class StageLimits:
     stop_s: int
 
 
-STAGE1: Final = StageLimits(limit_s=2 * 3600, stop_s=90 * 3600)
-STAGE2: Final = StageLimits(limit_s=8 * 3600, stop_s=84 * 3600)
+STAGE1: Final = StageLimits(limit_s=2 * 3600, stop_s=110 * 3600)
+STAGE2: Final = StageLimits(limit_s=14 * 3600, stop_s=120 * 3600)
+
+#: Section 4: candidate ``i`` of the 12 draws ``SeedSequence([root, 1 + i])``.
+SECONDARY_STREAM: Final = 1
+#: Section 2: pass ``p``, from 1, draws ``SeedSequence([root, 12 + p])``.
+STAGE2_STREAM: Final = 12
+#: Section 2: the winner and, once, the next-ranked.
+MAX_STAGE2_PASSES: Final = 2
+#: Section 2: stage 2's seeds, and B-sym@10F's truths, which control 3 reads at the
+#: first of those seeds: the first three near, the first three far and all four mid.
+STAGE2_SEEDS: Final = (1, 2, 3)
+STAGE2_CONTROL_TRUTHS: Final = (
+    "dev-000",
+    "dev-001",
+    "dev-002",
+    "dev-003",
+    "dev-004",
+    "dev-005",
+    "dev-010",
+    "dev-015",
+    "dev-016",
+    "dev-019",
+)
+#: Section 2: a unit killed, failed or without a reading.
+STAGE2_UNSCORED_GAP: Final = -math.inf
+#: Section 2's table of stored rows, exported once, and its pin. Empty refuses.
+P3_TABLE_PATH: Final = "docs/v2/bsym-tuning/p3-rows.json"
+P3_TABLE_SHA256: Final = (
+    "1766167791b93ccbc5b7cbcaada6d2b406e6bf41bce9d89a7e9f18e438dda792"
+)
+P3_TABLE_COMMIT: Final = "9db1a46"
+P3_TABLE_SEEDS: Final = (1, 2, 3)
+P3_TABLE_CONTROL_TRUTHS: Final = 10
+P3_SYSTEMS: Final = (ORACLE, B_LIB, B_RAND, B_SYM)
 
 # --------------------------------------------------------------------------
 # Open in the text: named here, for the freeze to confirm
 # --------------------------------------------------------------------------
 
-#: ``c0b``'s search seed is ``search_seed + 1``, mod 2**63: the shift the first
-#: round's reviewer ran (``real.py``), the one the text's noise figure rests on.
-C0B_SEED_SHIFT: Final = 1
-C0B_SEED_RULE: Final = "(search_seed + 1) mod 2**63"
-#: ``c0b``'s address is ``c0``'s plus this key, holding the rule above.
-C0B_ADDRESS_FIELD: Final = "search_seed_rule"
-#: A status-0 row that is none of section 3's kinds, on a world where another
-#: setting has a finite row, takes the floor: section 6 excludes no candidate for
-#: its outcome, and a world that went unfinished would do exactly that. Read by
-#: :func:`build_table`; when every setting fails, there is no floor and the world
-#: is dropped, as section 5 says.
-OTHER_FAILURE_TAKES_FLOOR: Final = True
-#: The first stream of the exploratory intervals: candidate ``c<i>`` draws
-#: ``SeedSequence([root, SECONDARY_STREAM + i])``. Section 3 fixes stream 0 only.
-SECONDARY_STREAM: Final = 1
 #: Rehearsal only: its roots, seeds and the share of worlds rule 2 asks for.
 REHEARSAL_DIR: Final = ".cache/drafts/bsym-tune-rehearsal"
 REHEARSAL_ROOTS: Final = (20261120,)
 REHEARSAL_SEEDS: Final = (1, 2, 3)
 #: 54 of 60, as a share, for a rehearsal's smaller grid.
 REHEARSAL_COMPLETE_SHARE: Final = (9, 10)
-#: Section 11's tie: where the §6.1 commit puts ``selection.json`` and stage 2's
-#: result. Until they exist, :func:`final_setting_at` reads ``c0``.
-SELECTION_RECORD: Final = "docs/v2/bsym-tuning/selection.json"
-STAGE2_RECORD: Final = "docs/v2/bsym-tuning/stage2.json"
-#: Section 2: the winner and, once, the next-ranked.
-MAX_STAGE2_PASSES: Final = 2
-#: Section 2: stage 2's seeds and B-sym@10F's truths, which control 3 reads at the
-#: first of those seeds.
-STAGE2_SEEDS: Final = (1, 2, 3)
-STAGE2_CONTROL_TRUTHS: Final = tuple(f"dev-{i:03}" for i in range(10))
-#: Control 2's stream in pass ``i`` is ``SeedSequence([root, STAGE2_STREAM + i])``:
-#: section 2 fixes the rule and not the stream. Past the exploratory streams.
-STAGE2_STREAM: Final = SECONDARY_STREAM + 12
-#: A stage 2 unit with no reading of its own: gonogo reads a gap or ``-inf``, and
-#: section 2 gives no floor here. ``-inf`` ranks it lowest, so a killed or failed
-#: unit can only count against the candidate. A unit that never ran has no row, and
-#: its pass cannot pass.
-STAGE2_UNSCORED_GAP: Final = -math.inf
-#: Section 2's table of stored rows, exported once, and its pin. Empty refuses. The
-#: file is committed with the pin. :func:`export_p3_rows` reads the store by
-#: enumeration, so no address is computed; the commit is the text's.
-P3_TABLE_PATH: Final = "docs/v2/bsym-tuning/p3-table.json"
-P3_TABLE_SHA256: Final = ""
-P3_TABLE_COMMIT: Final = "9db1a46"
-#: What the table holds. B-lib is there for control 1's drop rule, which fixes the
-#: truths controls 2 and 3 read, and default B-sym for the margin.
-P3_SYSTEMS: Final = (ORACLE, B_LIB, B_RAND, B_SYM)
+#: ``final.json``'s place: beside ``selection.json``, not in stage 2's store. The
+#: text fixes the name and that the path is constant.
+FINAL_FILE: Final = "final.json"
 
 #: Exit codes. A label is not an exit code: any label writes ``selection.json``.
 EXIT_DONE: Final = 0
@@ -336,7 +354,10 @@ SETTINGS: Final = (
             mutation_weights=_weights(ADD_FEATURE=4.0, MULTIPLY=2.0, WRAP_GATE=2.0)
         ),
     ),
-    Setting("c11", extra_seeds=(Structure((), Link.SOFTPLUS),)),
+    Setting(
+        "c11",
+        extra_seeds=(Structure((Excite(KernelKind.EXP, One(), ALL),), Link.SOFTPLUS),),
+    ),
     Setting(
         "weak",
         GPConfig(
@@ -361,7 +382,7 @@ def setting(name: str) -> Setting:
 
 
 def shifted_seed(truth: str, seed: int) -> int:
-    """``c0b``'s search seed (:data:`C0B_SEED_RULE`)."""
+    """``c0b``'s search seed (section 2)."""
     return (search_seed(truth, seed) + C0B_SEED_SHIFT) % 2**63
 
 
@@ -582,7 +603,9 @@ class UnitJob:
 
 @dataclass(frozen=True)
 class PlannedUnit:
-    """A unit of the plan: its address and text, and the job that fills them."""
+    """A unit of the plan: its address and text, and the job that fills them.
+    ``store`` is the directory under the run's own, empty for the run's own store.
+    ``job.id`` names the unit in the journal: it is the address, but for ``c0b``."""
 
     setting: str
     truth: str
@@ -592,20 +615,7 @@ class PlannedUnit:
     text: str
     job: Job
     system: str = B_SYM
-
-
-def _key(
-    unit: Unit,
-    truth: TruthEntry,
-    s: Setting,
-    env: CampaignEnvironment,
-    config: CampaignConfig,
-) -> ExperimentKey:
-    key = baseline_key(unit, truth, env, config)
-    if not s.shifted:
-        return key
-    extra = {**dict(key.config.items()), C0B_ADDRESS_FIELD: C0B_SEED_RULE}
-    return replace(key, config=FrozenDict[str, str](extra))
+    store: str = ""
 
 
 def plan_stage1(
@@ -625,9 +635,10 @@ def plan_stage1(
         for s in SETTINGS:
             config = replace(base, gp=s.gp)
             unit_env = setting_env(env, s)
-            key = _key(unit, truth, s, unit_env, config)
+            key = baseline_key(unit, truth, unit_env, config)
+            store = C0B_STORE if s.shifted else ""
             job = UnitJob(
-                str(key.digest),
+                f"{store}|{key.digest}" if store else str(key.digest),
                 s.name,
                 truth,
                 seed,
@@ -637,7 +648,16 @@ def plan_stage1(
             )
             text = system_config_text(B_SYM, unit_env, config)
             units.append(
-                PlannedUnit(s.name, truth_id, seed, truth.in_dictionary, key, text, job)
+                PlannedUnit(
+                    s.name,
+                    truth_id,
+                    seed,
+                    truth.in_dictionary,
+                    key,
+                    text,
+                    job,
+                    store=store,
+                )
             )
     return tuple(units)
 
@@ -649,8 +669,8 @@ def plan_stage1(
 
 @dataclass(frozen=True)
 class Reading:
-    """What one unit gives the analysis. ``why`` is ``finite`` or the floor's kind:
-    ``minus_inf``, ``no_submission``, ``no_certified_fit``, ``cpu_limit`` or
+    """What one unit gives the analysis. ``why`` is ``finite``, or why it has no finite
+    reading: ``minus_inf``, ``no_certified_fit``, ``cpu_limit``, ``worker_lost`` or
     ``other_failure``. ``curve`` is (fits, held-out per event)."""
 
     setting: str
@@ -673,8 +693,6 @@ def read_cell(
     if reading.get("status") != 1.0:
         message = str(result.get("message", ""))
         why = "no_certified_fit" if NO_PROPOSAL in message else "other_failure"
-    elif reading.get("has_structure") != 1.0:
-        why = "no_submission"
     elif per_event == -math.inf:
         why = "minus_inf"
     elif not math.isfinite(per_event):
@@ -704,7 +722,9 @@ class Table:
 def build_table(
     rows: Iterable[Reading], truths: tuple[str, ...], seeds: tuple[int, ...]
 ) -> Table:
-    """Floors (section 3) and worlds (section 5, rule 2)."""
+    """Floors (section 3: any row with no finite reading, whatever the cause, unless
+    all 14 failed) and worlds (section 5, rule 2). A unit that never ran has no row,
+    so its world is unfinished. Not P4's pair rule, which floors one named failure."""
     index = {(r.truth, r.seed, r.setting): r for r in rows}
     floors: dict[str, dict[str, int]] = {name: {} for name in SETTING_NAMES}
     values: dict[Cell, float] = {}
@@ -729,11 +749,6 @@ def build_table(
             dropped.append(world)
             continue
         floor = min(finite)
-        if not OTHER_FAILURE_TAKES_FLOOR and any(
-            r.why == "other_failure" for r in present
-        ):
-            unfinished.append(world)
-            continue
         complete.append(world)
         lowest[world] = floor
         for r in present:
@@ -807,17 +822,17 @@ def curve_at(curve: Sequence[tuple[int, float]], fits: int) -> float | None:
 
 def c0_at(table: Table, truth: str, seed: int, fits: int) -> float:
     """``c0`` at ``fits`` from its own curve, and the world's floor where that reads
-    nothing finite: section 3's floor, as the reviewer's P3 figures take it."""
+    ``-inf``: section 3, the same number at both ends. A curve with no point within
+    ``fits`` reads the floor too, as nothing within that budget was selectable."""
     value = curve_at(table.curves[(truth, seed)], fits)
     if value is None or not math.isfinite(value):
         return table.lowest[(truth, seed)]
     return value
 
 
-class Draws(Protocol):
-    """What the bootstrap reads of a generator."""
-
-    def integers(self, low: int, high: int, size: tuple[int, int]) -> Any: ...
+def h1_left(table: Table) -> tuple[World, ...]:
+    """Section 3: the complete worlds where ``c0`` has no curve, which leave H1."""
+    return tuple(w for w in table.complete if not table.curves[w])
 
 
 def graded_rng(root: int) -> np.random.Generator:
@@ -827,8 +842,9 @@ def graded_rng(root: int) -> np.random.Generator:
 
 def graded_control(
     table: Table, fits: int, low: int, rng: Any, *, resamples: int
-) -> BootstrapCI:
-    """H1: ``c0`` at ``fits`` minus at ``low``, paired by truth (section 3)."""
+) -> BootstrapCI | None:
+    """H1: ``c0`` at ``fits`` minus at ``low``, paired by truth, truths sorted
+    (section 3). None if no world is left to read, which falsifies it."""
 
     def top(truth: str, seed: int) -> float:
         return c0_at(table, truth, seed, fits)
@@ -836,8 +852,12 @@ def graded_control(
     def bottom(truth: str, seed: int) -> float:
         return c0_at(table, truth, seed, low)
 
-    high_by_truth = truth_means(table, top)
-    low_by_truth = truth_means(table, bottom)
+    gone = set(h1_left(table))
+    worlds = [w for w in table.complete if w not in gone]
+    if not worlds:
+        return None
+    high_by_truth = truth_means(table, top, worlds)
+    low_by_truth = truth_means(table, bottom, worlds)
     names = sorted(high_by_truth)
     return paired_bootstrap_ci(
         [high_by_truth[t] for t in names],
@@ -869,6 +889,7 @@ class Selection:
     dropped: tuple[World, ...]
     unfinished: tuple[World, ...]
     floors: Mapping[str, Mapping[str, int]]
+    h1_left: tuple[World, ...]
 
 
 def decide(table: Table, spec: RunSpec) -> Selection:
@@ -897,6 +918,7 @@ def decide(table: Table, spec: RunSpec) -> Selection:
             table.dropped,
             table.unfinished,
             table.floors,
+            h1_left(table),
         )
 
     if not table.complete:
@@ -916,7 +938,7 @@ def decide(table: Table, spec: RunSpec) -> Selection:
         return outcome("BUG_STOP", None, means, ranking, rank, h1)
     if len(table.complete) < spec.min_complete:
         return outcome("INCOMPLETE", None, means, ranking, rank, h1)
-    if not h1.low > 0.0:
+    if h1 is None or not h1.low > 0.0:
         return outcome("NOT_SEPARATED", None, means, ranking, rank, h1)
     return outcome("SELECTED", ranking[0], means, ranking, rank, h1)
 
@@ -999,6 +1021,7 @@ def selection_bytes(
             "dropped": [list(w) for w in selection.dropped],
             "unfinished": [list(w) for w in selection.unfinished],
         },
+        "h1_left": [list(w) for w in selection.h1_left],
         "floors": {k: dict(v) for k, v in selection.floors.items()},
         "end": end,
         "identity": dict(identity),
@@ -1048,15 +1071,16 @@ def next_candidate(selection: Mapping[str, Json], failed: Sequence[str]) -> str 
 
 
 def final_setting(
-    selection: Mapping[str, Json], stage2: Mapping[str, Json] | None
+    selection: Mapping[str, Json], final: Mapping[str, Json] | None
 ) -> str:
-    """What goes into ``p4_plan`` (section 2). A winner that is not ``c0`` stands only
-    by passing stage 2, so with no stage 2 result ``c0`` does. A record whose passes
-    are not the ones the rule gives is read as no record."""
+    """What the §6.1 commit lands (section 2). A winner other than ``c0`` stands only
+    by ``final.json``, so with none ``c0`` does: a pass not finished at that commit has
+    failed. A record whose passes are not the rule's, or that names anything but what
+    they give, is read as no record."""
     candidate: str | None = stands(selection)
-    if candidate == DEFAULT or stage2 is None:
+    if candidate == DEFAULT or final is None:
         return DEFAULT
-    passes = stage2.get("passes")
+    passes = final.get("passes")
     if not isinstance(passes, list) or len(passes) > MAX_STAGE2_PASSES:
         return DEFAULT
     failed: list[str] = []
@@ -1064,15 +1088,15 @@ def final_setting(
         if not isinstance(one, Mapping) or one.get("setting") != candidate:
             return DEFAULT
         if one.get("passed") is True:
-            return str(candidate)
+            return str(candidate) if final.get("stands") == candidate else DEFAULT
         failed.append(str(candidate))
         candidate = next_candidate(selection, failed)
     return DEFAULT
 
 
-def final_setting_at(selection: Path, stage2: Path) -> str:
+def final_setting_at(selection: Path, final: Path) -> str:
     body = _read_body(selection)
-    return DEFAULT if body is None else final_setting(body, _read_body(stage2))
+    return DEFAULT if body is None else final_setting(body, _read_body(final))
 
 
 def check_plan(
@@ -1164,12 +1188,9 @@ def replace_file(path: Path, data: bytes) -> None:
 
 @dataclass(frozen=True)
 class OutPaths:
-    """Everything a run writes, store included, under one directory. Stage 2's two
-    passes each have one, and share a CPU count and a ``STOP`` above them."""
+    """Everything a stage writes, store included, under one directory."""
 
     root: Path
-    cpu_file: Path | None = None
-    stop_file: Path | None = None
 
     @property
     def journal(self) -> Path:
@@ -1189,11 +1210,11 @@ class OutPaths:
 
     @property
     def cpu(self) -> Path:
-        return self.cpu_file or self.root / "cpu.json"
+        return self.root / "cpu.json"
 
     @property
     def stop(self) -> Path:
-        return self.stop_file or self.root / "STOP"
+        return self.root / "STOP"
 
     @property
     def lock(self) -> Path:
@@ -1210,6 +1231,26 @@ def launch_paths(repo: Path) -> OutPaths:
 
 def rehearsal_paths(repo: Path, name: str) -> OutPaths:
     return OutPaths(repo / REHEARSAL_DIR / name)
+
+
+@dataclass(frozen=True)
+class Stage2Paths:
+    """Stage 2's store and CPU count, under the run's directory (section 6), and
+    ``final.json`` beside ``selection.json``."""
+
+    root: Path
+
+    @property
+    def store(self) -> OutPaths:
+        return OutPaths(self.root / STAGE2_STORE)
+
+    @property
+    def final(self) -> Path:
+        return self.root / FINAL_FILE
+
+
+def stage2_paths(repo: Path) -> Stage2Paths:
+    return Stage2Paths(repo / STORE_DIR)
 
 
 class Sink:
@@ -1404,9 +1445,11 @@ class Driver:
     """Runs units, each in its own process (sections 6, 8, 9).
 
     The driver owns no result: it reads a unit's exit and the journal, and adds
-    ``job_lost``, ``unit_lost``, ``unit_killed``, ``run_start`` and ``run_end``.
-    ``log`` receives counts and CPU and nothing else (section 9). ``on_unit`` gets
-    each unit record once, on the driver's own thread.
+    ``job_lost``, ``unit_failed``, ``run_start`` and ``run_end``. ``unit_failed`` ends
+    a unit: its ``reason`` is ``cpu_limit`` or ``worker_lost``, and a resume does not
+    rerun it. ``log`` receives counts and CPU and nothing else (section 9). ``on_unit``
+    gets each unit record of ``jobs`` once, on the driver's own thread: a journal may
+    hold other drivers' units, as stage 2's does across its blocks.
     """
 
     def __init__(
@@ -1480,15 +1523,16 @@ class Driver:
 
     def _ingest(self) -> None:
         self.finished, self.lost = set(), {}
+        mine = {j.id for j in self.jobs}
         for r in read_records(self.paths.journal):
             kind = r["type"]
             if kind == "unit":
                 self.finished.add(r["job"])
-                if r["job"] not in self.stored:
+                if r["job"] in mine and r["job"] not in self.stored:
                     self.stored.add(r["job"])
                     if self.on_unit is not None:
                         self.on_unit(r)
-            elif kind == "unit_killed":
+            elif kind == "unit_failed":
                 self.finished.add(r["job"])
             elif kind == "job_lost":
                 self.lost[r["job"]] = self.lost.get(r["job"], 0) + 1
@@ -1588,30 +1632,31 @@ class Driver:
             if kind == "bug":
                 return "bug"
             if kind == "cpu_limit":
-                self.journal.append(
-                    {
-                        "type": "unit_killed",
-                        "job": job_id,
-                        "setting": handle.job.setting,
-                        "reason": "cpu_limit",
-                    }
-                )
-                self.finished.add(job_id)
+                self._fail(handle.job, "cpu_limit")
             elif kind == "terminated" and self.terminating:
                 continue  # the unit is stopping: a resume runs this one again
             elif self.lost.get(job_id, 0) >= 1:
-                # An environment's failure is no result: no row, no floor, and a
-                # resume runs it again.
-                self.journal.append({"type": "unit_lost", "job": job_id})
+                self._fail(handle.job, "worker_lost")
             else:
                 self.journal.append({"type": "job_lost", "job": job_id})
                 self.lost[job_id] = self.lost.get(job_id, 0) + 1
                 retry.append(handle.job)
         return None
 
+    def _fail(self, job: Job, reason: str) -> None:
+        """Section 6: journalled, so a resume does not rerun it."""
+        record = {
+            "type": "unit_failed",
+            "job": job.id,
+            "setting": job.setting,
+            "reason": reason,
+        }
+        self.journal.append(record)
+        self.finished.add(job.id)
+
     def _drain(self, running: dict[str, _Running], reason: str) -> str:
-        """Let the units in flight finish. A unit lost now has no row: nothing
-        dispatches after a stop, so section 5 reads its world as unfinished."""
+        """Let the units in flight finish. A first loss now has no row: nothing
+        dispatches after a stop, so its world is unfinished."""
         ignored: deque[Job] = deque()
         while running:
             failure = self._reap(running, ignored)
@@ -1640,9 +1685,22 @@ class Driver:
 
 
 def check_no_selection(paths: OutPaths) -> None:
-    """Section 6: there is one run."""
+    """Section 6: there is one run of stage 1."""
     if paths.selection.exists():
         raise GuardFailure(f"{paths.selection} exists: there is one run")
+
+
+def _store_root(paths: OutPaths, store: str) -> Path:
+    return paths.root / store if store else paths.root
+
+
+def check_stores(paths: OutPaths, plan: Iterable[PlannedUnit]) -> None:
+    """:func:`check_store` on every store the plan writes, each on its own cells."""
+    held: dict[str, set[str]] = {}
+    for u in plan:
+        held.setdefault(u.store, set()).add(str(u.key.digest))
+    for store in sorted(held):
+        check_store(_store_root(paths, store), held[store])
 
 
 def check_store(root: Path, planned: Iterable[str]) -> None:
@@ -1677,24 +1735,34 @@ def check_manifest(paths: OutPaths, body: Mapping[str, Json]) -> None:
 def load_readings(
     paths: OutPaths, plan: Sequence[PlannedUnit], *, by_system: bool = False
 ) -> list[Reading]:
-    """The planned units with a row or a killed record; the rest have neither.
+    """The planned units with a row or a journalled failure; the rest have neither.
     A reading is named by its setting, or in stage 2 by its system."""
-    killed = {
-        r["job"] for r in read_records(paths.journal) if r["type"] == "unit_killed"
+    failed = {
+        r["job"]: r["reason"]
+        for r in read_records(paths.journal)
+        if r["type"] == "unit_failed"
     }
     out: list[Reading] = []
-    with ResultStore(paths.root, read_only=True) as store:
+    with ExitStack() as stack:
+        stores = {
+            name: stack.enter_context(
+                ResultStore(_store_root(paths, name), read_only=True)
+            )
+            for name in sorted({u.store for u in plan})
+        }
         for u in plan:
             name = u.system if by_system else u.setting
+            store = stores[u.store]
             if store.done(u.key):
                 out.append(read_cell(name, u.truth, u.seed, store.cell(u.key.digest)))
-            elif u.job.id in killed:
-                out.append(Reading(name, u.truth, u.seed, "cpu_limit", math.nan, ()))
+            elif u.job.id in failed:
+                why = failed[u.job.id]
+                out.append(Reading(name, u.truth, u.seed, why, math.nan, ()))
     return out
 
 
 def cpu_by_setting(
-    timing: Path, killed: Sequence[Mapping[str, Json]], limit_s: int
+    timing: Path, failed: Sequence[Mapping[str, Json]], limit_s: int
 ) -> dict[str, float]:
     """Section 4: a unit's own CPU, and a killed unit's limit, which it spent."""
     parts: dict[str, list[float]] = {}
@@ -1702,8 +1770,9 @@ def cpu_by_setting(
         for row in timing.read_text(encoding="utf-8").splitlines():
             line = json.loads(row)
             parts.setdefault(line["setting"], []).append(line.get("cpu_s") or 0.0)
-    for record in killed:
-        parts.setdefault(record["setting"], []).append(float(limit_s))
+    for record in failed:
+        if record["reason"] == "cpu_limit":
+            parts.setdefault(record["setting"], []).append(float(limit_s))
     return {name: math.fsum(parts[name]) for name in sorted(parts)}
 
 
@@ -1727,13 +1796,13 @@ def finalise(
     halves = {u.truth: u.in_dictionary for u in plan}
     extra = secondary(table, spec, halves) if table.complete else None
     records = read_records(paths.journal)
-    killed = [r for r in records if r["type"] == "unit_killed"]
+    failed = [r for r in records if r["type"] == "unit_failed"]
     report = {
         "cpu_hours": CpuLedger.load(paths.cpu).total_usec / 3.6e9,
-        "cpu_s_by_setting": cpu_by_setting(paths.timing, killed, cpu_limit_s),
+        "cpu_s_by_setting": cpu_by_setting(paths.timing, failed, cpu_limit_s),
         "units_planned": len(plan),
-        "units_killed": len(killed),
-        "units_lost": sum(r["type"] == "unit_lost" for r in records),
+        "units_killed": sum(r["reason"] == "cpu_limit" for r in failed),
+        "units_lost": sum(r["reason"] == "worker_lost" for r in failed),
     }
     replace_file(paths.cpu_report, (json.dumps(report, sort_keys=True) + "\n").encode())
     data = selection_bytes(selection, identity, end, extra)
@@ -1744,24 +1813,24 @@ def finalise(
 def _run_pass(
     plan: Sequence[PlannedUnit],
     paths: OutPaths,
-    manifest: Mapping[str, Json],
     *,
     stop_s: float,
     cpu_limit_s: int,
     log: Callable[[str], None],
     **driver: Any,
 ) -> str:
-    """The units of one store, under the caller's lock; returns how it ended."""
+    """The units of a plan, under the caller's lock and guards; returns how it ended.
+    Cells are in ``Campaign._record``'s shape (section 2)."""
     by_id = {u.job.id: u for u in plan}
-    check_store(paths.root, by_id)
-    check_manifest(paths, manifest)
-    with ResultStore(paths.root) as store:
-        store.recover()
+    with ExitStack() as stack:
+        stores: dict[str, ResultStore] = {}
+        for name in sorted({u.store for u in plan}):
+            stores[name] = stack.enter_context(ResultStore(_store_root(paths, name)))
+            stores[name].recover()
 
         def put(record: Record) -> None:
-            unit = by_id.get(record["job"])
-            if unit is None:
-                raise ByteFailure(f"journal names unit {record['job']}: not planned")
+            unit = by_id[record["job"]]
+            store = stores[unit.store]
             if store.done(unit.key):
                 return
             reading = {k: float.fromhex(v) for k, v in record["reading"].items()}
@@ -1775,9 +1844,8 @@ def _run_pass(
                         "system": unit.system,
                         "kind": "baseline",
                     },
-                    "setting": unit.setting,
-                    "system_config": unit.text,
                     "result": record["detail"],
+                    "system_config": unit.text,
                 },
             )
 
@@ -1812,10 +1880,11 @@ def run_stage1(
     check_no_selection(paths)
     manifest = {"identity": identity, "spec": dataclasses.asdict(spec)}
     with driver_lock(paths):
+        check_stores(paths, plan)
+        check_manifest(paths, manifest)
         end = _run_pass(
             plan,
             paths,
-            manifest,
             stop_s=stop_s,
             cpu_limit_s=cpu_limit_s,
             log=log,
@@ -1860,15 +1929,14 @@ def stage2_launch_spec(truths: Sequence[str]) -> Stage2Spec:
     )
 
 
-def plan_stage2(
+def _stage2_planner(
     name: str,
     spec: Stage2Spec,
     entries: Sequence[TruthEntry],
     env: CampaignEnvironment,
-) -> tuple[PlannedUnit, ...]:
-    """A pass under candidate ``name``: on each world B-sym and planted-hint, in
-    section 8's order of worlds, then B-sym@10F. The units go by the framework's
-    path, so a candidate's ``gp`` and seeds are in every address."""
+) -> Callable[[str, int, str], PlannedUnit]:
+    """Builds a unit under candidate ``name``. The units go by the framework's path,
+    so a candidate's ``gp`` and seeds are in every address."""
     if name not in SELECTABLE or name == DEFAULT:
         raise GuardFailure(f"no stage 2 for {name}: it is for a candidate above c0")
     by_id = {e.id: e for e in entries}
@@ -1899,16 +1967,37 @@ def plan_stage2(
             name, truth_id, seed, truth.in_dictionary, key, text, job, system
         )
 
-    units = [
-        planned(truth, seed, system)
-        for truth, seed in world_order(spec.truths, spec.seeds)
-        for system in (B_SYM, PLANTED)
+    return planned
+
+
+def plan_stage2(
+    name: str,
+    spec: Stage2Spec,
+    entries: Sequence[TruthEntry],
+    env: CampaignEnvironment,
+) -> tuple[PlannedUnit, ...]:
+    """A pass under candidate ``name``, in section 2's order, by sorted truth and seed:
+    B-sym@10F at the first seed on the ten truths, then planted-hint on all."""
+    planned = _stage2_planner(name, spec, entries, env)
+    tenfold = [
+        planned(t, spec.seeds[0], B_SYM_10F) for t in sorted(spec.control_truths)
     ]
-    units += [
-        planned(truth, seed, B_SYM_10F)
-        for truth, seed in world_order(spec.control_truths, (control_seed,))
-    ]
-    return tuple(units)
+    worlds = sorted(product(spec.truths, spec.seeds))
+    return (*tenfold, *(planned(t, s, PLANTED) for t, s in worlds))
+
+
+def plan_margin(
+    name: str,
+    spec: Stage2Spec,
+    entries: Sequence[TruthEntry],
+    env: CampaignEnvironment,
+) -> tuple[PlannedUnit, ...]:
+    """B-sym under the setting that stands, by sorted truth and seed: no rule reads
+    it (section 2)."""
+    planned = _stage2_planner(name, spec, entries, env)
+    return tuple(
+        planned(t, s, B_SYM) for t, s in sorted(product(spec.truths, spec.seeds))
+    )
 
 
 @dataclass(frozen=True)
@@ -1925,6 +2014,8 @@ def p3_table_bytes(rows: Iterable[Mapping[str, Json]]) -> bytes:
     body = {
         "schema": "sciagent.bsym-tune.p3-table/1",
         "commit": P3_TABLE_COMMIT,
+        "seeds": list(P3_TABLE_SEEDS),
+        "control_truths": P3_TABLE_CONTROL_TRUTHS,
         "rows": ordered,
     }
     return (canonical_json(_encode(body)) + "\n").encode("utf-8")
@@ -1973,31 +2064,27 @@ def export_p3_rows(store_root: Path) -> list[Record]:
     return [rows[k] for k in sorted(rows)]
 
 
-def stage2_rng(root: int, index: int) -> np.random.Generator:
-    """Control 2's stream in pass ``index`` (:data:`STAGE2_STREAM`)."""
-    return np.random.default_rng(np.random.SeedSequence([root, STAGE2_STREAM + index]))
+def stage2_rng(root: int, p: int) -> np.random.Generator:
+    """Control 2's stream in pass ``p``, from 1 (:data:`STAGE2_STREAM`)."""
+    return np.random.default_rng(np.random.SeedSequence([root, STAGE2_STREAM + p]))
 
 
-def _margin(
-    readings: Mapping[Cell, Reading], table: P3Table, spec: Stage2Spec
-) -> Record:
-    """Section 2's margin: the candidate's B-sym over P3's default, per truth then
-    over truths, on these worlds. A row that is not finite takes the lowest finite
-    reading the world has, as section 3's does. Reported, and it decides nothing."""
+def margin_of(rows: Iterable[Reading], table: P3Table, spec: Stage2Spec) -> Record:
+    """Section 2's margin: the standing setting's B-sym over ``c0``'s stored rows, per
+    truth then over truths. No rule reads it. A row with no finite reading takes the
+    lowest finite reading its world has among these rows and stored B-rand's."""
+    readings = {(r.truth, r.seed): r for r in rows}
+    worlds = sorted(product(spec.truths, spec.seeds))
     floored = 0
     by_truth: dict[str, list[float]] = {}
-    for truth, seed in sorted(product(spec.truths, spec.seeds)):
-        mine = readings.get((truth, seed, B_SYM))
-        planted = readings.get((truth, seed, PLANTED))
+    for truth, seed in worlds:
+        mine = readings.get((truth, seed))
         pair = [
             None if mine is None else mine.per_event,
             table.rows.get((truth, seed, B_SYM)),
         ]
-        others = [
-            None if planted is None else planted.per_event,
-            table.rows.get((truth, seed, B_RAND)),
-        ]
-        finite = [v for v in (*pair, *others) if v is not None and math.isfinite(v)]
+        rand = table.rows.get((truth, seed, B_RAND))
+        finite = [v for v in (*pair, rand) if v is not None and math.isfinite(v)]
         if not finite:
             continue
         lowest = min(finite)
@@ -2005,7 +2092,47 @@ def _margin(
         floored += sum(v is None or not math.isfinite(v) for v in pair)
         by_truth.setdefault(truth, []).append(one - two)
     means = [_mean(by_truth[t]) for t in sorted(by_truth)]
-    return {"mean": _mean(means) if means else None, "floored": floored}
+    return {
+        "mean": _mean(means) if means else None,
+        "floored": floored,
+        "finished": all(w in readings for w in worlds),
+    }
+
+
+def _gap(table: P3Table, truth: str, seed: int, value: float) -> float:
+    """Section 2: ``per_event`` minus the stored ORACLE's, unfloored."""
+    oracle = table.rows.get((truth, seed, ORACLE))
+    if oracle is None or not math.isfinite(oracle):
+        raise ByteFailure(f"the table has no finite ORACLE on {truth} s{seed}")
+    return value - oracle
+
+
+def _stored_rows(
+    table: P3Table, in_dictionary: Mapping[str, bool]
+) -> list[gonogo.ScoreRow]:
+    """P3's ORACLE, B-lib and B-rand as ``ScoreRow``s on these truths."""
+    out: list[gonogo.ScoreRow] = []
+    for (truth, seed, system), value in sorted(table.rows.items()):
+        if value is None or truth not in in_dictionary or system == B_SYM:
+            continue
+        gap = _gap(table, truth, seed, value)
+        out.append(
+            gonogo.ScoreRow(truth, seed, system, gap, None, False, in_dictionary[truth])
+        )
+    return out
+
+
+def check_retained(
+    table: P3Table, spec: Stage2Spec, in_dictionary: Mapping[str, bool]
+) -> None:
+    """Section 2: P3's control 1 kept every truth, and any other count is a bug."""
+    checks = gonogo.oracle_beats_lib(_stored_rows(table, in_dictionary))
+    kept = sorted(c.truth for c in checks if c.passed)
+    if kept != sorted(spec.truths):
+        raise ByteFailure(
+            f"control 1 on the table keeps {len(kept)} of {len(spec.truths)} truths: "
+            "any other count than all of them is a bug"
+        )
 
 
 def read_pass(
@@ -2014,74 +2141,36 @@ def read_pass(
     table: P3Table,
     spec: Stage2Spec,
     in_dictionary: Mapping[str, bool],
-    index: int,
+    p: int,
 ) -> Record:
-    """Controls 2 and 3 as ``scoring/gonogo.py`` has them, read as
-    ``analysis.verdict`` does, with this pass's rows beside P3's. A pass passes only
-    complete, and only if both pass (section 2)."""
+    """Controls 2 and 3 as ``scoring/gonogo.py`` has them, on this pass's rows beside
+    P3's. A unit killed, failed or without a reading has gap ``-inf``, so it stays in
+    the rank and the median. A unit never run means the pass did not finish, and a
+    pass not finished has failed (sections 2, 5)."""
     readings = {(r.truth, r.seed, r.setting): r for r in rows}
-    wanted = [
-        (t, s, system)
-        for t, s in sorted(product(spec.truths, spec.seeds))
-        for system in (B_SYM, PLANTED)
-    ]
-    control_seed = spec.seeds[0]
-    wanted += [(t, control_seed, B_SYM_10F) for t in sorted(spec.control_truths)]
-    complete = all(key in readings for key in wanted)
-
-    def gap(truth: str, seed: int, value: float) -> float:
-        oracle = table.rows.get((truth, seed, ORACLE))
-        if oracle is None or not math.isfinite(oracle):
-            raise ByteFailure(f"the table has no finite ORACLE on {truth} s{seed}")
-        return value - oracle
-
-    def score(truth: str, seed: int, system: str, value: float) -> gonogo.ScoreRow:
-        return gonogo.ScoreRow(
-            truth, seed, system, value, None, False, in_dictionary[truth]
-        )
-
-    stored: list[gonogo.ScoreRow] = []
-    for (truth, seed, system), value in sorted(table.rows.items()):
-        wanted_system = system in (ORACLE, B_LIB, B_RAND)
-        if value is not None and truth in in_dictionary and wanted_system:
-            stored.append(score(truth, seed, system, gap(truth, seed, value)))
-    seeds_of: dict[tuple[str, str], set[int]] = {}
-    for r in stored:
-        if math.isfinite(r.gap):
-            seeds_of.setdefault((r.truth, r.system), set()).add(r.seed)
-    paired = [
-        t
-        for t in sorted(spec.truths)
-        if len(seeds_of.get((t, ORACLE), set()) & seeds_of.get((t, B_LIB), set())) >= 2
-    ]
-    checks = gonogo.oracle_beats_lib([r for r in stored if r.truth in paired])
-    kept = tuple(c.truth for c in checks if c.passed)
-
-    fresh: list[gonogo.ScoreRow] = []
+    wanted = [(t, spec.seeds[0], B_SYM_10F) for t in sorted(spec.control_truths)]
+    wanted += [(t, s, PLANTED) for t, s in sorted(product(spec.truths, spec.seeds))]
+    finished = all(key in readings for key in wanted)
+    both = _stored_rows(table, in_dictionary)
     for truth, seed, system in wanted:
-        if system == B_SYM:
-            continue
         one = readings.get((truth, seed, system))
-        scored = one is not None and one.why in ("finite", "minus_inf")
-        value = (
-            gap(truth, seed, one.per_event)
-            if one is not None and scored
-            else STAGE2_UNSCORED_GAP
+        gap = STAGE2_UNSCORED_GAP
+        if one is not None and one.why in ("finite", "minus_inf"):
+            gap = _gap(table, truth, seed, one.per_event)
+        both.append(
+            gonogo.ScoreRow(truth, seed, system, gap, None, False, in_dictionary[truth])
         )
-        fresh.append(score(truth, seed, system, value))
-    both = [*stored, *fresh]
-    have_rand = {r.truth for r in stored if r.system == B_RAND}
-    control_2_truths = [t for t in kept if t in have_rand]
-    control_3_truths = [t for t in spec.control_truths if t in kept]
-    control_2: Record = {"passed": False, "truths": 0}
-    if control_2_truths:
-        planted = gonogo.planted_beats_rand(
-            both,
-            control_2_truths,
-            rng=stage2_rng(spec.root, index),
-            resamples=spec.resamples,
-        )
-        control_2 = {
+    planted = gonogo.planted_beats_rand(
+        both,
+        sorted(spec.truths),
+        rng=stage2_rng(spec.root, p),
+        resamples=spec.resamples,
+    )
+    check = gonogo.bsym_approaches_oracle(both, sorted(spec.control_truths))
+    return {
+        "setting": name,
+        "finished": finished,
+        "control_2": {
             "passed": planted.passed,
             "truths": planted.n,
             "wins": planted.wins,
@@ -2091,54 +2180,35 @@ def read_pass(
             "median": planted.median,
             "low": planted.median_ci.low,
             "high": planted.median_ci.high,
-        }
-    control_3: Record = {"passed": False, "truths": 0}
-    if control_3_truths:
-        check = gonogo.bsym_approaches_oracle(both, control_3_truths)
-        control_3 = {
+        },
+        "control_3": {
             "passed": check.passed,
-            "truths": len(control_3_truths),
+            "truths": len(spec.control_truths),
             "median_gap": check.median_gap,
             "tolerance": check.tolerance,
-        }
-    return {
-        "setting": name,
-        "complete": complete,
-        "retained": len(kept),
-        "control_2": control_2,
-        "control_3": control_3,
-        "passed": complete and control_2["passed"] and control_3["passed"],
-        "margin": _margin(readings, table, spec),
+        },
+        "passed": finished and planted.passed and check.passed,
     }
 
 
-@dataclass(frozen=True)
-class Stage2Paths:
-    """Stage 2's directory: a CPU count and ``STOP`` for both passes, and the result
-    :func:`final_setting` reads, written last."""
-
-    root: Path
-
-    @property
-    def result(self) -> Path:
-        return self.root / "stage2.json"
-
-    @property
-    def cpu(self) -> Path:
-        return self.root / "cpu.json"
-
-    @property
-    def stop(self) -> Path:
-        return self.root / "STOP"
-
-    def of_pass(self, index: int, name: str) -> OutPaths:
-        return OutPaths(self.root / f"pass{index + 1}-{name}", self.cpu, self.stop)
+def check_same_commit(
+    selection: Mapping[str, Json], identity: Mapping[str, Json]
+) -> None:
+    """Section 6: stage 2 runs at the commit that selected."""
+    recorded = selection.get("identity")
+    fingerprint = recorded.get("fingerprint") if isinstance(recorded, Mapping) else None
+    if not fingerprint or fingerprint != identity.get("fingerprint"):
+        raise GuardFailure(
+            f"selection.json is from commit {fingerprint}, "
+            f"not this one {identity.get('fingerprint')}"
+        )
 
 
 def run_stage2(
     spec: Stage2Spec,
     selection: Mapping[str, Json],
     plan_of: Callable[[str], Sequence[PlannedUnit]],
+    margin_plan_of: Callable[[str], Sequence[PlannedUnit]],
     table: P3Table,
     in_dictionary: Mapping[str, bool],
     paths: Stage2Paths,
@@ -2146,73 +2216,86 @@ def run_stage2(
     *,
     log: Callable[[str], None],
     read_usage_usec: Callable[[], int] = read_usage_usec,
+    check_code: Callable[[], None] | None = None,
     **driver: Any,
 ) -> str | None:
-    """The winner's pass and, if it fails, the next rank's (section 2). Returns what
-    stands, or None if a kill or a bug left no result, and the same command resumes:
-    a finished pass is read again from its store, and runs nothing."""
-    if paths.result.exists():
-        raise GuardFailure(f"{paths.result} exists: there is one run")
+    """The winner's pass, the next rank's if that fails, then B-sym for what stands
+    (section 2), on one store and one CPU count. Returns what stands, or None if a
+    kill or a bug left no result. The same command resumes: a finished block is read
+    again from the store and runs nothing, so ``final.json`` comes last. After a stop
+    the blocks still go by in order and dispatch nothing, so a pass unfinished at it
+    has failed, and so has the one after it."""
+    if paths.final.exists():
+        raise GuardFailure(f"{paths.final} exists: there is one run")
     winner = stands(selection)
     if winner == DEFAULT:
         raise GuardFailure("no stage 2: only a SELECTED winner other than c0 takes it")
-    paths.root.mkdir(parents=True, exist_ok=True)
-    results: list[Record] = []
-    failed: list[str] = []
-    final = DEFAULT
-    candidate: str | None = winner
-    end = "complete"
-    # The kernel's count for a unit only grows, and each pass starts its own entry in
-    # the ledger: the second reads from where the first ended, so nothing counts twice.
+    check_same_commit(selection, identity)
+    check_retained(table, spec, in_dictionary)
+    second = next_candidate(selection, (winner,))
+    candidates = (winner,) if second is None else (winner, second)
+    plans = {name: tuple(plan_of(name)) for name in candidates}
+    margins = {name: tuple(margin_plan_of(name)) for name in candidates}
+    store = paths.store
+    # The kernel's count for a systemd unit only grows, and each block starts its own
+    # entry in the ledger: each reads from where the last ended, so none counts twice.
     base = 0
-    for index in range(MAX_STAGE2_PASSES):
-        if candidate is None:
-            break
-        plan = plan_of(candidate)
-        pass_paths = paths.of_pass(index, candidate)
+
+    def block(units: Sequence[PlannedUnit]) -> str:
+        nonlocal base
         start = base
 
-        def usage(start: int = start) -> int:
+        def usage() -> int:
             return read_usage_usec() - start
 
-        manifest = {
-            "identity": identity,
-            "spec": dataclasses.asdict(spec),
-            "setting": candidate,
-        }
-        with driver_lock(pass_paths):
-            end = _run_pass(
-                plan,
-                pass_paths,
-                manifest,
-                stop_s=STAGE2.stop_s,
-                cpu_limit_s=STAGE2.limit_s,
-                log=log,
-                read_usage_usec=usage,
-                **driver,
-            )
+        end = _run_pass(
+            units,
+            store,
+            stop_s=STAGE2.stop_s,
+            cpu_limit_s=STAGE2.limit_s,
+            log=log,
+            read_usage_usec=usage,
+            **driver,
+        )
+        base = read_usage_usec()
+        return end
+
+    results: list[Record] = []
+    final = DEFAULT
+    margin: Record | None = None
+    with driver_lock(store):
+        everything = [u for name in candidates for u in (*plans[name], *margins[name])]
+        check_stores(store, everything)
+        check_manifest(store, {"identity": identity, "spec": dataclasses.asdict(spec)})
+        end = "complete"
+        for p, candidate in enumerate(candidates, start=1):
+            end = block(plans[candidate])
             if end not in FINAL_ENDS:
                 return None
-            rows = load_readings(pass_paths, plan, by_system=True)
-        one = read_pass(candidate, rows, table, spec, in_dictionary, index)
-        results.append(one)
-        if one["passed"]:
-            final = candidate
-            break
-        if end != "complete":
-            break
-        failed.append(candidate)
-        candidate = next_candidate(selection, failed)
-        base = read_usage_usec()
+            rows = load_readings(store, plans[candidate], by_system=True)
+            one = read_pass(candidate, rows, table, spec, in_dictionary, p)
+            results.append(one)
+            if one["passed"]:
+                final = candidate
+                break
+        if final != DEFAULT:
+            end = block(margins[final])
+            if end not in FINAL_ENDS:
+                return None
+            rows = load_readings(store, margins[final], by_system=True)
+            margin = margin_of(rows, table, spec)
+    if check_code is not None:
+        check_code()
     body = {
-        "schema": "sciagent.bsym-tune.stage2/1",
+        "schema": "sciagent.bsym-tune.final/1",
         "winner": winner,
         "passes": results,
-        "final": final,
+        "stands": final,
+        "margin": margin,
         "end": end,
         "identity": dict(identity),
     }
-    replace_file(paths.result, (canonical_json(_encode(body)) + "\n").encode("utf-8"))
+    replace_file(paths.final, (canonical_json(_encode(body)) + "\n").encode("utf-8"))
     log(f"stage 2: {final} stands")
     return final
 
@@ -2288,12 +2371,6 @@ def check_unit(cgroup: str) -> None:
         raise GuardFailure(f"launch under the unit {UNIT_NAME}, not {name}")
 
 
-def check_out(path: Path, repo: Path) -> None:
-    """Section 11: the launch's store is ``.cache/drafts/bsym-tune/``."""
-    if path.resolve() != (repo / STORE_DIR).resolve():
-        raise GuardFailure(f"the launch's store is {STORE_DIR}, not {path}")
-
-
 def split_digest(split: Path) -> str:
     """``find data/v2/truths/dev -type f -print0 | sort -z | xargs -0 sha256sum
     | sha256sum``, from the root of whichever checkout holds the split."""
@@ -2319,6 +2396,8 @@ def check_split(split: Path, expected: str = SPLIT_SHA256) -> None:
 
 
 def launch_line(repo: Path, split: Path, *, stage2: bool = False) -> str:
+    """Section 8's form. A stage's CPU count is its own unit's cgroup, and a resume
+    is a new unit, whose count :class:`CpuLedger` adds to the last."""
     env = " ".join(f"-E {name}=1" for name in BLAS_VARIABLES)
     line = (
         f"systemd-run --user --collect --unit={UNIT_NAME} --nice=10 "
@@ -2385,13 +2464,15 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def check_selected_by_this_script(selection: Mapping[str, Json]) -> None:
-    """Section 11: a change after the script's commit is an amendment, so stage 2
-    runs the code that selected."""
-    identity = selection.get("identity")
-    recorded = identity.get("script_sha256") if isinstance(identity, Mapping) else None
-    if recorded != script_sha256():
-        raise GuardFailure(f"selection.json is from script {recorded}, not this one")
+def _same_code(fingerprint: str) -> Callable[[], None]:
+    """Run before a record is written: the code that ran is the code on disk."""
+
+    def check() -> None:
+        after = pilot.code_fingerprint(pilot.ROOT)
+        if after != fingerprint:
+            raise GuardFailure(f"code moved under the run: {after}")
+
+    return check
 
 
 def _export(args: argparse.Namespace) -> int:
@@ -2405,7 +2486,7 @@ def _export(args: argparse.Namespace) -> int:
     return EXIT_DONE
 
 
-def _stage2(args: argparse.Namespace, paths: OutPaths) -> int:
+def _stage2(args: argparse.Namespace) -> int:
     if args.rehearsal:
         raise GuardFailure("stage 2 has no rehearsal on the command line")
     identity = launch_guards(
@@ -2415,10 +2496,8 @@ def _stage2(args: argparse.Namespace, paths: OutPaths) -> int:
         environ=initial_environment(),
     )
     check_unit(Path("/proc/self/cgroup").read_text(encoding="utf-8"))
-    check_out(paths.root, pilot.ROOT)
     check_split(args.split)
-    selection = _read_body(paths.selection) or {}
-    check_selected_by_this_script(selection)
+    selection = _read_body(launch_paths(pilot.ROOT).selection) or {}
     table = load_p3_table(pilot.ROOT / P3_TABLE_PATH, P3_TABLE_SHA256)
     records = pilot.load_split(args.split)
     entries = pilot.truth_entries(records)
@@ -2428,15 +2507,20 @@ def _stage2(args: argparse.Namespace, paths: OutPaths) -> int:
     def plan_of(name: str) -> tuple[PlannedUnit, ...]:
         return plan_stage2(name, spec, entries, env)
 
+    def margin_plan_of(name: str) -> tuple[PlannedUnit, ...]:
+        return plan_margin(name, spec, entries, env)
+
     final = run_stage2(
         spec,
         selection,
         plan_of,
+        margin_plan_of,
         table,
         {e.id: e.in_dictionary for e in entries},
-        Stage2Paths(paths.root / "stage2"),
+        stage2_paths(pilot.ROOT),
         identity,
         log=_print_line,
+        check_code=_same_code(identity["fingerprint"]),
         workers=args.workers,
     )
     return EXIT_NO_LABEL if final is None else EXIT_DONE
@@ -2447,10 +2531,13 @@ def _print_line(line: str) -> None:
 
 
 def check_launch_arguments(args: argparse.Namespace) -> None:
-    """Section 6: the launch's truths, seeds and budget are the text's. Ignoring a
-    value given here would run something other than what was asked for."""
-    if args.truths is not None or args.seeds is not None or args.fits is not None:
-        raise GuardFailure("--truths, --seeds and --fits are a rehearsal's alone")
+    """Sections 5 and 6: the launch's truths, seeds, budget and paths are the text's,
+    with no option. Ignoring a value given here would run something else."""
+    given = (args.truths, args.seeds, args.fits, args.out)
+    if any(value is not None for value in given):
+        raise GuardFailure(
+            "--truths, --seeds, --fits and --out are a rehearsal's alone"
+        )
 
 
 def _rehearsal(
@@ -2468,9 +2555,7 @@ def _rehearsal(
     return spec, {"mode": "rehearsal", "script_sha256": script_sha256()}
 
 
-def _launch(
-    args: argparse.Namespace, paths: OutPaths
-) -> tuple[RunSpec, dict[str, str]]:
+def _launch(args: argparse.Namespace) -> tuple[RunSpec, dict[str, str]]:
     identity = launch_guards(
         pilot.ROOT,
         prereg_sha=PREREG_SHA256,
@@ -2478,7 +2563,6 @@ def _launch(
         environ=initial_environment(),
     )
     check_unit(Path("/proc/self/cgroup").read_text(encoding="utf-8"))
-    check_out(paths.root, pilot.ROOT)
     check_split(args.split)
     ids = tuple(sorted(r.id for r in pilot.load_split(args.split)))
     spec = launch_spec(ids)
@@ -2510,22 +2594,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not args.rehearsal:
             check_launch_arguments(args)
         if args.stage2:
-            return _stage2(args, paths)
+            return _stage2(args)
         check_no_selection(paths)
         check_code: Callable[[], None] | None = None
         if args.rehearsal:
             spec, identity = _rehearsal(args, paths)
             usage = relative_usage()
         else:
-            spec, identity = _launch(args, paths)
-            fingerprint = identity["fingerprint"]
-
-            def same_code() -> None:
-                after = pilot.code_fingerprint(pilot.ROOT)
-                if after != fingerprint:
-                    raise GuardFailure(f"code moved under the run: {after}")
-
-            check_code = same_code
+            spec, identity = _launch(args)
+            check_code = _same_code(identity["fingerprint"])
         records = pilot.load_split(args.split)
         plan = plan_stage1(
             spec, pilot.truth_entries(records), pilot.pointproc_environment(records)

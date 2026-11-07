@@ -36,6 +36,8 @@ import numpy as np
 import pytest
 from campaign_support import entry, environment
 
+from environments.pointproc import v2
+from sciagent.campaign import p4plan
 from sciagent.campaign.execute import BaselineJob, UnitResult, run_baseline_job
 from sciagent.campaign.p4plan import P4_TRUTHS, p4_plan
 from sciagent.campaign.plan import (
@@ -47,12 +49,15 @@ from sciagent.campaign.plan import (
     search_seed,
 )
 from sciagent.campaign.store import ResultStore
-from sciagent.glm.grammar import Link, Structure
+from sciagent.core.types import FrozenDict
+from sciagent.glm.grammar import ALL, Excite, KernelKind, Link, One, Structure
+from sciagent.glm.syntax import render
 from sciagent.systems.v2.search import (
     DEFAULT_MUTATION_WEIGHTS,
     GPConfig,
     Mutation,
 )
+from sciagent.systems.v2.systems import GrammarMember
 
 REPO: Final = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "scripts"))
@@ -71,6 +76,9 @@ WATCHED: Final[set[int]] = set()
 FROZEN_MISS_SCRIPT_SHA256: Final = (
     "94003dea9db544f8ff88d360b2906468db4dba77b06afa99531c34ddecc4713b"
 )
+
+#: Section 2's ``c11`` seed, typed out here and not read from the script.
+SOFTPLUS_HAWKES: Final = Structure((Excite(KernelKind.EXP, One(), ALL),), Link.SOFTPLUS)
 
 TRUTHS: Final = ("t1", "t2", "t3", "t4")
 SEEDS: Final = (1, 2, 3)
@@ -196,8 +204,9 @@ def test_weak_has_every_weight_0_but_remove_feature() -> None:
     assert gp.crossover_prob == GPConfig().crossover_prob
 
 
-def test_only_c11_adds_a_seed_and_it_is_a_softplus_null() -> None:
-    assert bt.setting("c11").extra_seeds == (Structure((), Link.SOFTPLUS),)
+def test_only_c11_adds_a_seed_and_it_is_the_texts_softplus_hawkes() -> None:
+    assert bt.setting("c11").extra_seeds == (SOFTPLUS_HAWKES,)
+    assert render(SOFTPLUS_HAWKES) == "link=softplus; Excite(ExpK, One, all)"
     assert all(s.extra_seeds == () for s in bt.SETTINGS if s.name != "c11")
 
 
@@ -277,9 +286,18 @@ def test_all_14_settings_run_on_a_world_before_the_next() -> None:
         assert [u.setting for u in block] == names
 
 
-def test_every_unit_has_its_own_address() -> None:
+def test_every_unit_has_its_own_journal_id() -> None:
     _, _, plan = toy_plan()
     assert len({u.job.id for u in plan}) == len(plan) == 14 * 4
+
+
+def test_within_a_store_no_two_units_share_an_address() -> None:
+    _, _, plan = toy_plan()
+    main = [u for u in plan if u.store == ""]
+    assert len({u.key.digest for u in main}) == len(main) == 13 * 4
+    c0b = [u for u in plan if u.store == bt.C0B_STORE]
+    assert len({u.key.digest for u in c0b}) == len(c0b) == 4
+    assert {u.setting for u in c0b} == {"c0b"}
 
 
 def test_c0s_address_is_the_frameworks_for_the_default() -> None:
@@ -293,7 +311,8 @@ def test_c0s_address_is_the_frameworks_for_the_default() -> None:
     assert unit.key == want
 
 
-def test_c0b_is_c0_with_one_more_address_field() -> None:
+def test_c0b_has_c0s_address_in_a_store_of_its_own() -> None:
+    """Section 2: the address holds no search seed, so only the store parts them."""
     _, _, plan = toy_plan()
     c0 = next(u for u in plan if u.setting == "c0")
     c0b = next(
@@ -301,9 +320,10 @@ def test_c0b_is_c0_with_one_more_address_field() -> None:
         for u in plan
         if u.setting == "c0b" and (u.truth, u.seed) == (c0.truth, c0.seed)
     )
-    extra = dict(c0b.key.config.items())
-    assert extra.pop("search_seed_rule") == bt.C0B_SEED_RULE
-    assert extra == dict(c0.key.config.items())
+    assert c0b.key == c0.key
+    assert c0b.text == c0.text
+    assert (c0.store, c0b.store) == ("", "c0b")
+    assert c0b.job.id != c0.job.id
 
 
 def test_c11s_seed_reaches_its_job_and_its_address_only() -> None:
@@ -316,7 +336,7 @@ def test_c11s_seed_reaches_its_job_and_its_address_only() -> None:
     )
     env = environment()
     assert c0.job.env.sym_seeds == env.sym_seeds
-    assert c11.job.env.sym_seeds == (*env.sym_seeds, Structure((), Link.SOFTPLUS))
+    assert c11.job.env.sym_seeds == (*env.sym_seeds, SOFTPLUS_HAWKES)
     assert c0.key != c11.key
     assert "softplus" in c11.text and "softplus" not in c0.text
 
@@ -367,7 +387,13 @@ CURVE: Final = [[1, "a", -0.75], [6, "b", -0.625], [8, "c", -0.5]]
     ("body", "why"),
     [
         (cell(OK | {"per_event": -math.inf}), "minus_inf"),
-        (cell(OK | {"per_event": -0.5, "has_structure": 0.0}), "no_submission"),
+        (
+            cell(
+                error="SystemRunError",
+                message="no proposal produced a certified fit: prefix absent",
+            ),
+            "no_certified_fit",
+        ),
         (
             cell(
                 error="SystemRunError",
@@ -445,7 +471,7 @@ def table_of(
 
 @pytest.mark.parametrize(
     "why",
-    ["minus_inf", "no_submission", "no_certified_fit", "cpu_limit", "other_failure"],
+    ["minus_inf", "no_certified_fit", "cpu_limit", "worker_lost", "other_failure"],
 )
 def test_a_floored_row_takes_the_lowest_finite_reading_on_its_world(why: str) -> None:
     rows = rows_for(("t1",), (1,), {"c3": -0.25, "c5": -2.0})
@@ -492,22 +518,18 @@ def test_a_failure_common_to_all_14_drops_the_world() -> None:
     assert table.unfinished == ()
 
 
-def test_a_failure_of_another_kind_takes_the_floor_by_the_named_constant() -> None:
-    assert bt.OTHER_FAILURE_TAKES_FLOOR is True
-    rows = rows_for(("t1",), (1,))
-    rows = swap(rows, reading("c2", "t1", 1, math.nan, "other_failure", ()))
-    assert table_of(rows, ("t1",), (1,)).values[("t1", 1, "c2")] == -1.5
-
-
-def test_the_other_reading_of_that_constant_leaves_the_world_unfinished(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """If the freeze goes the other way, no nan reaches a mean."""
-    monkeypatch.setattr(bt, "OTHER_FAILURE_TAKES_FLOOR", False)
+def test_any_row_with_no_finite_reading_takes_the_floor_whatever_the_cause() -> None:
+    """Section 3 is wider than P4's pair rule, which floors one named failure."""
     rows = rows_for(("t1",), (1,))
     rows = swap(rows, reading("c2", "t1", 1, math.nan, "other_failure", ()))
     table = table_of(rows, ("t1",), (1,))
-    assert table.complete == () and table.unfinished == (("t1", 1),)
+    assert table.complete == (("t1", 1),)
+    assert table.values[("t1", 1, "c2")] == -1.5
+
+
+def test_the_script_does_not_use_p4s_pair_rule() -> None:
+    source = (REPO / "scripts/bsym_tune.py").read_text(encoding="utf-8")
+    assert "floor_rows" not in source
 
 
 def test_a_truths_value_is_the_mean_over_its_seeds_then_over_truths() -> None:
@@ -558,13 +580,52 @@ def test_c0_at_low_reads_the_curve_and_floors_what_is_not_finite() -> None:
     assert bt.c0_at(table, "t1", 1, FITS) == -0.75
 
 
-def test_c0_with_no_curve_reads_the_floor_at_both_budgets() -> None:
-    """A killed c0 has no curve: its world's difference is 0, by the floor."""
+def test_a_minus_inf_at_both_ends_is_the_same_number_at_both_ends() -> None:
+    """The floor at fit 30 and at fit 40: this world's difference is exactly 0."""
     rows = rows_for(("t1",), (1,), {"c5": -2.0})
-    rows = swap(rows, reading("c0", "t1", 1, -math.inf, "cpu_limit", ()))
+    bad = ((LOW, -math.inf), (FITS, -math.inf))
+    rows = swap(rows, reading("c0", "t1", 1, -math.inf, "minus_inf", bad))
     table = table_of(rows, ("t1",), (1,))
-    assert bt.c0_at(table, "t1", 1, LOW) == -2.0
+    assert bt.c0_at(table, "t1", 1, LOW) == bt.c0_at(table, "t1", 1, FITS) == -2.0
+
+
+def test_a_minus_inf_at_40_alone_takes_the_floor_at_40_alone() -> None:
+    rows = rows_for(("t1",), (1,), {"c5": -2.0})
+    bad = ((LOW, -0.75), (FITS, -math.inf))
+    rows = swap(rows, reading("c0", "t1", 1, -math.inf, "minus_inf", bad))
+    table = table_of(rows, ("t1",), (1,))
+    assert bt.c0_at(table, "t1", 1, LOW) == -0.75
     assert bt.c0_at(table, "t1", 1, FITS) == -2.0
+
+
+def test_a_world_where_c0_has_no_curve_leaves_h1_and_is_counted() -> None:
+    """t1's c0 was killed: the interval reads t2 and t3 alone, and says so."""
+    rows = graded_rows({"t1": 9.0, "t2": 0.25, "t3": 0.75})
+    rows = swap(rows, reading("c0", "t1", 1, math.nan, "cpu_limit", ()))
+    table = table_of(rows, ("t1", "t2", "t3"), (1,))
+    assert table.complete == (("t1", 1), ("t2", 1), ("t3", 1))
+    assert bt.h1_left(table) == (("t1", 1),)
+    got = bt.graded_control(table, FITS, LOW, FixedDraws([[0, 1]]), resamples=1)
+    assert got.n == 2
+    assert got.mean == pytest.approx(0.5, abs=1e-12)
+
+
+def test_h1_with_every_world_gone_is_no_interval_and_not_separated() -> None:
+    """A finite c0 row with no curve, so that rule 1 passes and rule 3 is reached."""
+    rows = rows_for(values={"c3": -0.5})
+    rows = [replace(r, curve=()) if r.setting == "c0" else r for r in rows]
+    got = decide(rows)
+    assert got.h1 is None and len(got.h1_left) == 12
+    assert (got.label, got.stands) == ("NOT_SEPARATED", "c0")
+
+
+def test_a_curve_with_no_point_within_30_fits_takes_the_floor_there() -> None:
+    """Named in the report: the text covers ``-inf`` and no curve, not this case."""
+    rows = rows_for(("t1",), (1,), {"c5": -2.0})
+    rows = swap(rows, reading("c0", "t1", 1, -0.75, curve=((FITS, -0.75),)))
+    table = table_of(rows, ("t1",), (1,))
+    assert bt.h1_left(table) == ()
+    assert bt.c0_at(table, "t1", 1, LOW) == -2.0
 
 
 def test_c0_before_its_first_point_reads_the_floor() -> None:
@@ -951,15 +1012,9 @@ def stubbed(
 ) -> tuple[Any, ...]:
     out = []
     for unit in plan:
-        extra = (changes or {}).get((unit.setting, unit.truth, unit.seed), {})
-        job = StubJob(
-            unit.job.id,
-            unit.setting,
-            unit.truth,
-            unit.seed,
-            stub_value(unit.setting),
-            **extra,
-        )
+        extra = dict((changes or {}).get((unit.setting, unit.truth, unit.seed), {}))
+        value = extra.pop("value", stub_value(unit.setting))
+        job = StubJob(unit.job.id, unit.setting, unit.truth, unit.seed, value, **extra)
         out.append(replace(unit, job=job))
     return tuple(out)
 
@@ -1009,24 +1064,61 @@ def test_a_full_run_writes_the_store_and_selection(tmp_path: Path) -> None:
     assert outcome.selection is not None
     body = json.loads((tmp_path / "selection.json").read_text(encoding="utf-8"))
     assert (body["label"], body["winner"]) == ("SELECTED", "c3")
-    with ResultStore(tmp_path, read_only=True) as store:
-        assert len(store.cells()) == len(plan)
+    assert cells_in(tmp_path) == 13 * 2
+    assert cells_in(tmp_path / "c0b") == 2
 
 
-def test_a_cell_carries_the_campaigns_fields_and_the_setting(tmp_path: Path) -> None:
+def cells_in(root: Path) -> int:
+    with ResultStore(root, read_only=True) as store:
+        return len(store.cells())
+
+
+def test_a_cell_is_in_records_shape_and_nothing_more(tmp_path: Path) -> None:
+    """Section 2: ``_record``'s shape, so a cell reads as the campaign's own does."""
     spec, plan = stub_run()
     stage1(spec, plan, tmp_path)
     with ResultStore(tmp_path, read_only=True) as store:
-        got = store.cell(plan[0].job.id)
+        got = store.cell(plan[0].key.digest)
+    assert set(got["detail"]) == {"unit", "result", "system_config"}
     assert got["detail"]["unit"] == {
         "truth": plan[0].truth,
         "seed": plan[0].seed,
         "system": B_SYM,
         "kind": "baseline",
     }
-    assert got["detail"]["setting"] == plan[0].setting
     assert got["detail"]["system_config"] == plan[0].text
     assert got["detail"]["result"]["submitted"] == "m"
+
+
+def test_c0_and_c0b_hold_one_address_in_two_stores_and_are_read_apart(
+    tmp_path: Path,
+) -> None:
+    spec, _, plan = toy_plan((1,))
+    changes = {
+        (u.setting, u.truth, u.seed): {"value": -0.75}
+        for u in plan
+        if u.setting == "c0b"
+    }
+    stage1(spec, stubbed(plan, changes), tmp_path)
+    c0 = next(u for u in plan if u.setting == "c0")
+    with ResultStore(tmp_path, read_only=True) as store:
+        one = store.cell(c0.key.digest)
+    with ResultStore(tmp_path / "c0b", read_only=True) as store:
+        two = store.cell(c0.key.digest)
+    assert float.fromhex(one["reading"]["per_event"]) == -1.0
+    assert float.fromhex(two["reading"]["per_event"]) == -0.75
+    body = json.loads((tmp_path / "selection.json").read_text(encoding="utf-8"))
+    assert float.fromhex(body["means"]["c0"]) == -1.0
+    assert float.fromhex(body["means"]["c0b"]) == -0.75
+
+
+def test_a_stray_cell_in_the_c0b_store_is_another_runs(tmp_path: Path) -> None:
+    spec, plan = stub_run()
+    other = next(u for u in plan if u.setting == "c3")
+    with ResultStore(tmp_path / "c0b") as store:
+        store.put(other.key, {"status": 0.0}, {"result": {}})
+    with pytest.raises(bt.GuardFailure, match="other run"):
+        stage1(spec, plan, tmp_path)
 
 
 def test_a_unit_past_its_cpu_limit_is_killed_and_takes_the_floor(
@@ -1039,7 +1131,8 @@ def test_a_unit_past_its_cpu_limit_is_killed_and_takes_the_floor(
     outcome = stage1(spec, plan, tmp_path, cpu_limit_s=1)
     assert outcome.end == "complete"
     records = bt.read_records(tmp_path / "journal.jsonl")
-    assert [r["job"] for r in records if r["type"] == "unit_killed"] == [target.job.id]
+    failed = [r for r in records if r["type"] == "unit_failed"]
+    assert [(r["job"], r["reason"]) for r in failed] == [(target.job.id, "cpu_limit")]
     body = json.loads((tmp_path / "selection.json").read_text(encoding="utf-8"))
     assert body["floors"][target.setting] == {"cpu_limit": 1}
     assert body["worlds"]["complete"] == 2
@@ -1113,8 +1206,7 @@ def test_a_resume_skips_units_on_record_and_runs_the_rest(tmp_path: Path) -> Non
     records = bt.read_records(paths.journal)
     units = [r["job"] for r in records if r["type"] == "unit"]
     assert sorted(units) == sorted(u.job.id for u in plan)
-    with ResultStore(tmp_path, read_only=True) as store:
-        assert len(store.cells()) == len(plan)
+    assert cells_in(tmp_path) + cells_in(tmp_path / "c0b") == len(plan)
 
 
 def test_a_resume_ingests_a_record_the_dead_driver_never_stored(
@@ -1140,7 +1232,7 @@ def test_a_killed_unit_stays_killed_across_a_resume(tmp_path: Path) -> None:
     journal.append({"type": "run_start"})
     journal.append(
         {
-            "type": "unit_killed",
+            "type": "unit_failed",
             "job": target.job.id,
             "setting": target.setting,
             "reason": "cpu_limit",
@@ -1154,22 +1246,44 @@ def test_a_killed_unit_stays_killed_across_a_resume(tmp_path: Path) -> None:
     assert body["floors"][target.setting] == {"cpu_limit": 1}
 
 
-def test_a_unit_lost_twice_runs_again_on_a_resume(tmp_path: Path) -> None:
-    """An environment's failure is no result, so it gets no floor and no latch."""
-    _, plan = stub_run()
+def test_a_unit_lost_twice_stays_lost_across_a_resume(tmp_path: Path) -> None:
+    spec, plan = stub_run()
+    target = plan[0]
     paths = bt.OutPaths(tmp_path)
-    jobs = tuple(u.job for u in plan)
     bt.CpuLedger.begin(paths.cpu)
     journal = bt.Journal(paths.journal)
     journal.append({"type": "run_start"})
-    journal.append({"type": "job_lost", "job": jobs[0].id})
-    journal.append({"type": "unit_lost", "job": jobs[0].id})
-    driver = bt.Driver(
-        paths, jobs, stop_s=3600.0, cpu_limit_s=60, log=lambda _line: None, **FAST
+    journal.append({"type": "job_lost", "job": target.job.id})
+    journal.append(
+        {
+            "type": "unit_failed",
+            "job": target.job.id,
+            "setting": target.setting,
+            "reason": "worker_lost",
+        }
     )
-    assert driver.run() == "complete"
+    assert stage1(spec, plan, tmp_path).end == "complete"
     records = bt.read_records(paths.journal)
-    assert jobs[0].id in [r["job"] for r in records if r["type"] == "unit"]
+    assert target.job.id not in [r["job"] for r in records if r["type"] == "unit"]
+    body = json.loads((tmp_path / "selection.json").read_text(encoding="utf-8"))
+    assert body["floors"][target.setting] == {"worker_lost": 1}
+
+
+def test_a_loss_before_a_restart_counts_towards_the_two(tmp_path: Path) -> None:
+    """Lost once, the driver dies, lost once more: that is twice."""
+    spec, plan = stub_run()
+    target = plan[1]
+    key = (target.setting, target.truth, target.seed)
+    paths = bt.OutPaths(tmp_path)
+    bt.CpuLedger.begin(paths.cpu)
+    journal = bt.Journal(paths.journal)
+    journal.append({"type": "run_start"})
+    journal.append({"type": "job_lost", "job": target.job.id})
+    stage1(spec, stubbed(plan, {key: {"behaviour": "die"}}), tmp_path)
+    records = bt.read_records(paths.journal)
+    assert [r["job"] for r in records if r["type"] == "job_lost"] == [target.job.id]
+    failed = [r for r in records if r["type"] == "unit_failed"]
+    assert [(r["job"], r["reason"]) for r in failed] == [(target.job.id, "worker_lost")]
 
 
 def test_a_torn_last_line_is_dropped_on_resume(tmp_path: Path) -> None:
@@ -1231,14 +1345,18 @@ def test_a_lost_worker_is_retried_once(tmp_path: Path) -> None:
     assert target.job.id in [r["job"] for r in records if r["type"] == "unit"]
 
 
-def test_a_unit_lost_twice_leaves_its_world_unfinished(tmp_path: Path) -> None:
+def test_a_unit_lost_twice_takes_the_floor_and_its_world_is_complete(
+    tmp_path: Path,
+) -> None:
     spec, plan = stub_run()
     target = plan[1]
     key = (target.setting, target.truth, target.seed)
     plan = stubbed(plan, {key: {"behaviour": "die"}})
     outcome = stage1(spec, plan, tmp_path)
     assert outcome.end == "complete"
-    assert (target.truth, target.seed) in outcome.selection.unfinished
+    assert (target.truth, target.seed) in outcome.selection.complete
+    assert outcome.selection.unfinished == ()
+    assert outcome.selection.floors[target.setting] == {"worker_lost": 1}
 
 
 def test_sigterm_kills_units_in_flight_writes_no_label_and_resumes(
@@ -1261,9 +1379,9 @@ def test_sigterm_kills_units_in_flight_writes_no_label_and_resumes(
 
 
 def test_no_dispatch_while_memory_is_below_the_gate() -> None:
-    assert bt.MEM_GATE_GIB == 6
-    assert bt.may_start(running=0, workers=2, mem_gib=6.0)
-    assert not bt.may_start(running=0, workers=2, mem_gib=5.99)
+    assert bt.MEM_GATE_GIB == 8
+    assert bt.may_start(running=0, workers=2, mem_gib=8.0)
+    assert not bt.may_start(running=0, workers=2, mem_gib=7.99)
     assert not bt.may_start(running=2, workers=2, mem_gib=16.0)
 
 
@@ -1276,10 +1394,10 @@ def test_exit_kinds() -> None:
 
 
 def test_the_stage_limits_are_the_texts() -> None:
-    assert bt.STAGE1.limit_s == 2 * 3600 and bt.STAGE1.stop_s == 90 * 3600
-    assert bt.STAGE2.limit_s == 8 * 3600 and bt.STAGE2.stop_s == 84 * 3600
-    for stage in (bt.STAGE1, bt.STAGE2):
-        assert stage.stop_s + 2 * stage.limit_s <= 100 * 3600
+    assert bt.STAGE1.limit_s == 2 * 3600 and bt.STAGE1.stop_s == 110 * 3600
+    assert bt.STAGE2.limit_s == 14 * 3600 and bt.STAGE2.stop_s == 120 * 3600
+    assert bt.STAGE1.stop_s + 2 * bt.STAGE1.limit_s == 114 * 3600
+    assert bt.STAGE2.stop_s + 2 * bt.STAGE2.limit_s == 148 * 3600
 
 
 def test_the_cpu_limit_is_set_soft_below_hard_so_it_arrives_as_sigxcpu() -> None:
@@ -1310,8 +1428,11 @@ def test_the_cpu_report_counts_a_killed_unit_at_its_limit(tmp_path: Path) -> Non
         {"job": "c", "setting": "c3", "cpu_s": 7.0},
     ]
     timing.write_text("".join(json.dumps(x) + "\n" for x in lines), encoding="utf-8")
-    killed = [{"type": "unit_killed", "job": "d", "setting": "c3"}]
-    assert bt.cpu_by_setting(timing, killed, 100) == {"c0": 15.0, "c3": 107.0}
+    failed = [
+        {"type": "unit_failed", "job": "d", "setting": "c3", "reason": "cpu_limit"},
+        {"type": "unit_failed", "job": "e", "setting": "c3", "reason": "worker_lost"},
+    ]
+    assert bt.cpu_by_setting(timing, failed, 100) == {"c0": 15.0, "c3": 107.0}
 
 
 # --------------------------------------------------------------------------
@@ -1369,18 +1490,18 @@ def test_a_killed_unit_prints_nothing_of_itself_before_the_end(tmp_path: Path) -
 # --------------------------------------------------------------------------
 
 
-def test_a_store_under_the_drafts_directory() -> None:
+def test_the_stores_and_records_are_at_constant_paths() -> None:
+    root = Path("/repo/.cache/drafts/bsym-tune")
     assert bt.STORE_DIR == ".cache/drafts/bsym-tune"
-    assert bt.launch_paths(Path("/repo")).root == Path("/repo/.cache/drafts/bsym-tune")
-
-
-def test_the_launch_refuses_a_store_anywhere_else(tmp_path: Path) -> None:
-    good = tmp_path / ".cache/drafts/bsym-tune"
-    bt.check_out(good, tmp_path)
-    with pytest.raises(bt.GuardFailure, match="bsym-tune"):
-        bt.check_out(tmp_path / ".cache/pilot-merged", tmp_path)
-    with pytest.raises(bt.GuardFailure, match="bsym-tune"):
-        bt.check_out(tmp_path / "elsewhere", tmp_path)
+    paths = bt.launch_paths(Path("/repo"))
+    assert paths.root == root and paths.selection == root / "selection.json"
+    stage2 = bt.stage2_paths(Path("/repo"))
+    assert stage2.store.root == root / "stage2"
+    assert stage2.final == root / "final.json"
+    assert bt.SELECTION_RECORD == "docs/v2/bsym-tuning/selection.json"
+    assert bt.FINAL_RECORD == "docs/v2/bsym-tuning/final.json"
+    assert bt.P3_TABLE_PATH == "docs/v2/bsym-tuning/p3-rows.json"
+    assert bt.C0B_STORE == "c0b"
 
 
 def test_a_rehearsal_never_writes_where_the_launch_writes() -> None:
@@ -1483,7 +1604,7 @@ def test_a_store_holding_only_this_runs_cells_is_accepted(tmp_path: Path) -> Non
     _, plan = stub_run()
     with ResultStore(tmp_path) as store:
         store.put(plan[0].key, {"status": 0.0}, {"result": {}})
-    bt.check_store(tmp_path, {u.job.id for u in plan})
+    bt.check_store(tmp_path, {str(u.key.digest) for u in plan})
 
 
 def test_a_detail_file_with_no_ledger_row_counts_as_a_cell(tmp_path: Path) -> None:
@@ -1491,7 +1612,7 @@ def test_a_detail_file_with_no_ledger_row_counts_as_a_cell(tmp_path: Path) -> No
     (tmp_path / "details").mkdir()
     (tmp_path / "details" / ("0" * 64 + ".json")).write_text("{}", encoding="utf-8")
     with pytest.raises(bt.GuardFailure, match="other run"):
-        bt.check_store(tmp_path, {u.job.id for u in plan})
+        bt.check_store(tmp_path, {str(u.key.digest) for u in plan})
 
 
 def test_a_start_is_refused_once_selection_json_exists(tmp_path: Path) -> None:
@@ -1504,13 +1625,16 @@ def test_a_start_is_refused_once_selection_json_exists(tmp_path: Path) -> None:
 
 
 def test_selection_json_is_checked_before_anything_else_in_main(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """No split, no guard, no directory is touched: the file alone refuses."""
-    out = tmp_path / "out"
-    out.mkdir()
+    monkeypatch.setattr(bt.pilot, "ROOT", tmp_path)
+    out = tmp_path / bt.STORE_DIR
+    out.mkdir(parents=True)
     (out / "selection.json").write_text("{}", encoding="utf-8")
-    code = bt.main(["--out", str(out), "--split", str(tmp_path / "none")])
+    code = bt.main(["--split", str(tmp_path / "none")])
     assert code == bt.EXIT_REFUSED
     assert "selection.json" in capsys.readouterr().out
 
@@ -1607,13 +1731,19 @@ def test_a_rehearsal_cannot_write_into_the_launchs_store(
 
 @pytest.mark.parametrize(
     "extra",
-    [["--seeds", "7"], ["--truths", "dev-000"], ["--fits", "8"]],
+    [
+        ["--seeds", "7"],
+        ["--truths", "dev-000"],
+        ["--fits", "8"],
+        ["--out", "/tmp/elsewhere"],
+    ],
 )
 def test_a_launch_refuses_a_rehearsals_arguments_rather_than_ignore_them(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], extra: list[str]
 ) -> None:
-    """Non-control values: the rule refuses every value, so none need be a launch's."""
-    args = ["--out", str(tmp_path / "out"), "--split", str(tmp_path), *extra]
+    """Section 5's paths have no option. Non-control values: the rule refuses every
+    value, so none need be a launch's."""
+    args = ["--split", str(tmp_path), *extra]
     assert bt.main(args) == bt.EXIT_REFUSED
     assert "rehearsal" in capsys.readouterr().out
 
@@ -1717,21 +1847,23 @@ def test_print_launch_prints_the_line_and_runs_nothing(
 
 
 def test_the_command_refuses_a_launch_before_the_freeze(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    code = bt.main(["--out", str(tmp_path / "out"), "--split", str(tmp_path)])
-    assert code == bt.EXIT_REFUSED
+    monkeypatch.setattr(bt.pilot, "ROOT", tmp_path)
+    assert bt.main(["--split", str(tmp_path)]) == bt.EXIT_REFUSED
     assert "not frozen" in capsys.readouterr().out
-    assert not (tmp_path / "out").exists()
+    assert not (tmp_path / ".cache").exists()
 
 
 def test_the_command_refuses_stage_2_before_the_freeze(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    code = bt.main(
-        ["--stage2", "--out", str(tmp_path / "out"), "--split", str(tmp_path)]
-    )
-    assert code == bt.EXIT_REFUSED
+    monkeypatch.setattr(bt.pilot, "ROOT", tmp_path)
+    assert bt.main(["--stage2", "--split", str(tmp_path)]) == bt.EXIT_REFUSED
     assert "not frozen" in capsys.readouterr().out
 
 
@@ -1769,15 +1901,6 @@ def test_the_command_refuses_a_rehearsal_on_other_seeds(
     assert "seeds" in capsys.readouterr().out
 
 
-def test_stage_2_runs_under_the_script_that_selected(tmp_path: Path) -> None:
-    body = {"identity": {"script_sha256": bt.script_sha256()}}
-    bt.check_selected_by_this_script(body)
-    with pytest.raises(bt.GuardFailure, match="script"):
-        bt.check_selected_by_this_script({"identity": {"script_sha256": "0" * 64}})
-    with pytest.raises(bt.GuardFailure, match="script"):
-        bt.check_selected_by_this_script({})
-
-
 def test_the_export_command_writes_the_table_and_prints_its_pin(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1787,7 +1910,7 @@ def test_the_export_command_writes_the_table_and_prints_its_pin(
     fields = dict(key.config.items()) | {"system": bt.ORACLE, "truth": "dev-000"}
     with ResultStore(store_root) as store:
         store.put(
-            replace(key, config=bt.FrozenDict[str, str](fields)),
+            replace(key, config=FrozenDict[str, str](fields)),
             {"status": 1.0, "per_event": -1.0},
             {"result": {}},
         )
@@ -1858,17 +1981,33 @@ def test_c11_ties_the_environments_seeds_and_not_only_the_gp() -> None:
     env = environment()
     with pytest.raises(bt.PlanMismatch, match="sym_seeds"):
         bt.check_plan(plan, env, "c11", env.sym_seeds)
-    wider = replace(env, sym_seeds=(*env.sym_seeds, Structure((), Link.SOFTPLUS)))
+    wider = replace(env, sym_seeds=(*env.sym_seeds, SOFTPLUS_HAWKES))
     bt.check_plan(plan, wider, "c11", env.sym_seeds)
 
 
-def test_p4_plans_gp_is_what_the_committed_record_says() -> None:
-    """The tie. The record is committed in the §6.1 commit; until then, c0 stands."""
-    record = REPO / bt.SELECTION_RECORD
-    stage2 = REPO / bt.STAGE2_RECORD
-    name = bt.final_setting_at(record, stage2)
-    env = environment()
-    bt.check_plan(p4_plan(standin_truths()), env, name, env.sym_seeds)
+def test_tuned_gp_and_sym_seeds_are_what_the_committed_records_say() -> None:
+    """Section 11's tie, on the real plan and the real environment. The records come
+    in the §6.1 commit, with ``TUNED_GP``; until then ``c0`` stands, and the default
+    is what the plan holds. A record that names anything else fails here until the
+    plan and ``pointproc_environment`` follow it."""
+    name = bt.final_setting_at(REPO / bt.SELECTION_RECORD, REPO / bt.FINAL_RECORD)
+    assert getattr(p4plan, "TUNED_GP", GPConfig()) == bt.setting(name).gp
+    library = tuple(
+        m.structure for m in v2.B_LIB_LIBRARY if isinstance(m, GrammarMember)
+    )
+    env = bt.pilot.pointproc_environment(())
+    bt.check_plan(p4_plan(standin_truths()), env, name, library)
+
+
+def test_the_tie_fails_a_record_the_plan_has_not_followed(tmp_path: Path) -> None:
+    selection, final = tmp_path / "selection.json", tmp_path / "final.json"
+    selection.write_text(json.dumps(RANKED), encoding="utf-8")
+    final.write_text(json.dumps(passes(("c3", True))), encoding="utf-8")
+    name = bt.final_setting_at(selection, final)
+    assert name == "c3"
+    with pytest.raises(bt.PlanMismatch):
+        env = environment()
+        bt.check_plan(p4_plan(standin_truths()), env, name, env.sym_seeds)
 
 
 # --------------------------------------------------------------------------
@@ -1879,11 +2018,17 @@ RANKED: Final = {
     "label": "SELECTED",
     "winner": "c3",
     "ranking": ["c3", "c7", "c0", "c1", "c2"],
+    "identity": IDENTITY,
 }
 
 
 def passes(*results: tuple[str, bool]) -> dict[str, Any]:
-    return {"passes": [{"setting": s, "passed": p} for s, p in results]}
+    """``final.json``'s rule fields; it names the last pass that passed, or ``c0``."""
+    passed = [s for s, p in results if p]
+    return {
+        "passes": [{"setting": s, "passed": p} for s, p in results],
+        "stands": passed[-1] if passed else "c0",
+    }
 
 
 def test_the_next_rank_is_the_next_candidate_above_c0() -> None:
@@ -1922,6 +2067,13 @@ def test_a_winner_with_no_stage_2_result_does_not_stand() -> None:
     assert bt.final_setting(RANKED, None) == "c0"
 
 
+def test_a_pass_unfinished_at_the_commit_has_failed(tmp_path: Path) -> None:
+    """Section 5: nobody keeps a stage 1 result by not resuming stage 2."""
+    selection = tmp_path / "selection.json"
+    selection.write_text(json.dumps(RANKED), encoding="utf-8")
+    assert bt.final_setting_at(selection, tmp_path / "final.json") == "c0"
+
+
 def test_selected_c0_needs_no_stage_2() -> None:
     assert bt.final_setting({"label": "SELECTED", "winner": "c0"}, None) == "c0"
 
@@ -1935,8 +2087,10 @@ def test_selected_c0_needs_no_stage_2() -> None:
         passes(("c7", True)),
         passes(("c3", False), ("c1", True)),
         passes(("c3", False), ("c7", False), ("c3", True)),
-        {"passes": [{"setting": "c3", "passed": "yes"}]},
-        {"passes": ["c3"]},
+        {"passes": [{"setting": "c3", "passed": "yes"}], "stands": "c3"},
+        {"passes": ["c3"], "stands": "c3"},
+        {"passes": [{"setting": "c3", "passed": True}]},
+        passes(("c3", True)) | {"stands": "c7"},
     ],
 )
 def test_a_stage_2_record_off_the_rule_leaves_c0(stage2: dict[str, Any]) -> None:
@@ -1952,11 +2106,37 @@ def test_only_one_fallback_pass_exists() -> None:
     assert bt.MAX_STAGE2_PASSES == 2
 
 
+THREE_ABOVE: Final = RANKED | {"ranking": ["c3", "c7", "c5", "c0", "c1"]}
+
+
+def test_a_third_pass_stands_for_nothing_even_with_a_third_rank_above_c0() -> None:
+    record = passes(("c3", False), ("c7", False), ("c5", True))
+    assert bt.final_setting(THREE_ABOVE, record) == "c0"
+
+
+def test_a_run_stops_at_two_passes_with_a_third_rank_above_c0(tmp_path: Path) -> None:
+    assert run2(tmp_path, {"c3": -1.25, "c7": -1.25}, THREE_ABOVE) == "c0"
+    assert [p["setting"] for p in result_of(tmp_path)["passes"]] == ["c3", "c7"]
+
+
 # --------------------------------------------------------------------------
 # Stage 2: units (section 2)
 # --------------------------------------------------------------------------
 
 DEV_IDS: Final = tuple(f"dev-{i:03}" for i in range(20))
+#: Section 2: dev-001, 002, 004 near; dev-000, 003, 005 far; the four mid. Sorted.
+TEXT_TEN: Final = (
+    "dev-000",
+    "dev-001",
+    "dev-002",
+    "dev-003",
+    "dev-004",
+    "dev-005",
+    "dev-010",
+    "dev-015",
+    "dev-016",
+    "dev-019",
+)
 TEN_IDS: Final = DEV_IDS[:10]
 
 
@@ -1985,20 +2165,33 @@ def dev_entries(ids: Sequence[str] = DEV_IDS) -> list[TruthEntry]:
 def test_the_launch_stage_2_spec_is_the_texts() -> None:
     spec = bt.stage2_launch_spec(DEV_IDS)
     assert spec.seeds == (1, 2, 3) and spec.fits == 40
-    assert spec.control_truths == TEN_IDS
+    assert spec.control_truths == TEXT_TEN
     assert spec.root == 20261113 and spec.resamples == 10_000
 
 
-def test_stage_2_runs_the_three_blocks_of_the_text() -> None:
+def test_a_pass_is_10f_first_then_planted_hint_by_sorted_truth_and_seed() -> None:
     plan = bt.plan_stage2(
         "c3", bt.stage2_launch_spec(DEV_IDS), dev_entries(), environment()
     )
-    bsym = [u for u in plan if u.system == bt.B_SYM]
-    planted = [u for u in plan if u.system == bt.PLANTED]
-    tenfold = [u for u in plan if u.system == bt.B_SYM_10F]
-    assert (len(bsym), len(planted), len(tenfold)) == (60, 60, 10)
-    assert {u.seed for u in bsym} == {u.seed for u in planted} == {1, 2, 3}
-    assert {(u.truth, u.seed) for u in tenfold} == {(t, 1) for t in TEN_IDS}
+    assert len(plan) == 70
+    tenfold, planted = plan[:10], plan[10:]
+    assert [u.system for u in tenfold] == [bt.B_SYM_10F] * 10
+    assert [(u.truth, u.seed) for u in tenfold] == [(t, 1) for t in TEXT_TEN]
+    assert [u.system for u in planted] == [bt.PLANTED] * 60
+    assert [(u.truth, u.seed) for u in planted] == [
+        (t, s) for t in DEV_IDS for s in (1, 2, 3)
+    ]
+
+
+def test_the_margin_block_is_b_sym_at_seeds_1_to_3_by_sorted_truth_and_seed() -> None:
+    plan = bt.plan_margin(
+        "c3", bt.stage2_launch_spec(DEV_IDS), dev_entries(), environment()
+    )
+    assert [u.system for u in plan] == [B_SYM] * 60
+    assert [(u.truth, u.seed) for u in plan] == [
+        (t, s) for t in DEV_IDS for s in (1, 2, 3)
+    ]
+    assert {u.job.config.gp for u in plan} == {bt.setting("c3").gp}
 
 
 def test_stage_2_units_carry_the_candidates_gp_and_seeds() -> None:
@@ -2006,8 +2199,7 @@ def test_stage_2_units_carry_the_candidates_gp_and_seeds() -> None:
     assert {u.job.config.gp for u in plan} == {bt.setting("c3").gp}
     assert all(u.setting == "c3" for u in plan)
     plan = bt.plan_stage2("c11", stage2_spec(), dev_entries(TEN_IDS), environment())
-    softplus = Structure((), Link.SOFTPLUS)
-    assert all(u.job.env.sym_seeds[-1] == softplus for u in plan)
+    assert all(u.job.env.sym_seeds[-1] == SOFTPLUS_HAWKES for u in plan)
 
 
 def test_a_stage_2_unit_runs_the_system_it_names_at_its_budget() -> None:
@@ -2022,7 +2214,7 @@ def test_two_candidates_never_share_an_address() -> None:
     args = (stage2_spec(), dev_entries(TEN_IDS), environment())
     one = {u.job.id for u in bt.plan_stage2("c3", *args)}
     two = {u.job.id for u in bt.plan_stage2("c7", *args)}
-    assert len(one) == 70 and not one & two
+    assert len(one) == 40 and not one & two
 
 
 def test_stage_2_refuses_a_truth_outside_dev() -> None:
@@ -2077,23 +2269,24 @@ def p3_rows(
 
 
 def stage2_readings(
-    candidate: str = "c3",
     *,
     planted: float = -1.0,
     tenfold: float = -1.0,
-    bsym: float = -1.0625,
     spec: Any = None,
 ) -> list[Any]:
     spec = spec or stage2_spec()
-    rows: list[Any] = []
-    for t in spec.truths:
-        for s in spec.seeds:
-            rows.append(reading(B_SYM, t, s, bsym, curve=()))
-            rows.append(reading(bt.PLANTED, t, s, planted, curve=()))
+    worlds = [(t, s) for t in spec.truths for s in spec.seeds]
+    rows = [reading(bt.PLANTED, t, s, planted, curve=()) for t, s in worlds]
     rows += [
         reading(bt.B_SYM_10F, t, 1, tenfold, curve=()) for t in spec.control_truths
     ]
     return rows
+
+
+def margin_rows(value: float = -1.0625, spec: Any = None) -> list[Any]:
+    spec = spec or stage2_spec()
+    worlds = [(t, s) for t in spec.truths for s in spec.seeds]
+    return [reading(B_SYM, t, s, value, curve=()) for t, s in worlds]
 
 
 def read_pass(
@@ -2101,20 +2294,28 @@ def read_pass(
     table: Any = None,
     spec: Any = None,
     candidate: str = "c3",
+    p: int = 1,
 ) -> dict[str, Any]:
     spec = spec or stage2_spec()
     halves = dict.fromkeys(spec.truths, True)
     out: dict[str, Any] = bt.read_pass(
-        candidate, rows, table or p3_rows(), spec, halves, 0
+        candidate, rows, table or p3_rows(), spec, halves, p
     )
     return out
 
 
 def test_a_pass_with_both_controls_passing_passes() -> None:
     got = read_pass(stage2_readings())
-    assert got["setting"] == "c3" and got["complete"]
+    assert got["setting"] == "c3" and got["finished"]
     assert got["control_2"]["passed"] and got["control_3"]["passed"]
     assert got["passed"] is True
+
+
+def test_b_sym_units_are_no_part_of_a_pass() -> None:
+    """Section 2: no rule reads them."""
+    assert read_pass(stage2_readings()) == read_pass(
+        [*stage2_readings(), *margin_rows(-99.0)]
+    )
 
 
 def test_control_2_is_gonogos_rank_rule_against_the_stored_b_rand() -> None:
@@ -2151,16 +2352,20 @@ def test_control_3_reads_only_the_control_truths_at_seed_1() -> None:
     assert read_pass(rows, spec=spec)["control_3"]["truths"] == 5
 
 
-def test_a_truth_control_1_drops_is_read_by_neither_control() -> None:
-    """dev-000's B-lib beats ORACLE: gonogo's rule drops it before anything is read."""
+def test_control_1_on_the_table_keeping_every_truth_passes_the_check() -> None:
+    spec = stage2_spec()
+    bt.check_retained(p3_rows(), spec, dict.fromkeys(spec.truths, True))
+
+
+def test_control_1_keeping_any_other_count_is_a_bug() -> None:
+    """Section 2: P3's control 1 kept all 20, so the table must say so."""
 
     def lib(truth: str, seed: int) -> float:
         return -0.75 if truth == "dev-000" else -1.5 - 0.0625 * seed
 
-    got = read_pass(stage2_readings(), p3_rows(lib=lib))
-    assert got["retained"] == 9
-    assert got["control_2"]["wins"] == 9
-    assert got["control_3"]["truths"] == 9
+    spec = stage2_spec()
+    with pytest.raises(bt.ByteFailure, match="a bug"):
+        bt.check_retained(p3_rows(lib=lib), spec, dict.fromkeys(spec.truths, True))
 
 
 def test_a_minus_inf_planted_unit_ranks_lowest() -> None:
@@ -2172,36 +2377,52 @@ def test_a_minus_inf_planted_unit_ranks_lowest() -> None:
     assert got["losses"] == 1 and got["wins"] == 9
 
 
-@pytest.mark.parametrize("why", ["cpu_limit", "other_failure", "no_certified_fit"])
+@pytest.mark.parametrize(
+    "why", ["cpu_limit", "worker_lost", "other_failure", "no_certified_fit"]
+)
 def test_a_unit_with_no_score_reads_as_minus_inf_and_never_helps(why: str) -> None:
     rows = swap(stage2_readings(), reading(bt.PLANTED, "dev-000", 1, math.nan, why, ()))
     got = read_pass(rows)
-    assert got["complete"] and got["control_2"]["losses"] == 1
+    assert got["finished"] and got["control_2"]["losses"] == 1
 
 
-def test_a_pass_missing_a_unit_cannot_pass() -> None:
+def test_a_killed_10f_unit_does_not_vanish_from_the_median() -> None:
+    """Round 2: ``score_rows`` would drop it and take the median over survivors."""
+    rows = stage2_readings(tenfold=-1.0078125)
+    for truth in TEN_IDS[:4]:
+        rows = swap(rows, reading(bt.B_SYM_10F, truth, 1, math.nan, "cpu_limit", ()))
+    assert read_pass(rows)["control_3"]["passed"] is True
+    rows = swap(rows, reading(bt.B_SYM_10F, TEN_IDS[4], 1, math.nan, "cpu_limit", ()))
+    got = read_pass(rows)["control_3"]
+    assert got["median_gap"] == -math.inf and got["passed"] is False
+
+
+def test_a_pass_missing_a_unit_did_not_finish_and_has_failed() -> None:
     rows = stage2_readings()[1:]
     got = read_pass(rows)
-    assert got["complete"] is False and got["passed"] is False
+    assert got["finished"] is False and got["passed"] is False
 
 
 def test_a_pass_with_no_rows_cannot_pass_and_does_not_raise() -> None:
     got = read_pass([])
-    assert got["complete"] is False and got["passed"] is False
+    assert got["finished"] is False and got["passed"] is False
 
 
 def test_the_margin_is_the_candidates_b_sym_over_the_stored_default() -> None:
-    assert read_pass(stage2_readings())["margin"]["mean"] == -1.0625 - -1.125
+    got = bt.margin_of(margin_rows(), p3_rows(), stage2_spec())
+    assert got["mean"] == -1.0625 - -1.125 and got["finished"] is True
 
 
 def test_the_margin_takes_the_floor_on_a_world_with_no_finite_candidate_row() -> None:
-    rows = swap(
-        stage2_readings(),
-        reading(B_SYM, "dev-000", 1, -math.inf, "minus_inf", ()),
-    )
-    margin = read_pass(rows)["margin"]
-    assert margin["floored"] == 1
-    assert math.isfinite(margin["mean"])
+    rows = swap(margin_rows(), reading(B_SYM, "dev-000", 1, -math.inf, "minus_inf", ()))
+    got = bt.margin_of(rows, p3_rows(), stage2_spec())
+    assert got["floored"] == 1
+    assert math.isfinite(got["mean"])
+
+
+def test_a_margin_short_of_units_says_it_did_not_finish() -> None:
+    got = bt.margin_of(margin_rows()[1:], p3_rows(), stage2_spec())
+    assert got["finished"] is False
 
 
 def test_the_read_repeats_and_does_not_depend_on_the_order_of_rows() -> None:
@@ -2209,15 +2430,38 @@ def test_the_read_repeats_and_does_not_depend_on_the_order_of_rows() -> None:
     assert read_pass(rows) == read_pass(list(reversed(rows)))
 
 
+def test_the_streams_are_the_texts_and_never_meet() -> None:
+    """Candidate ``i`` of 12 on ``1 + i``; pass ``p`` of control 2 on ``12 + p``."""
+    assert bt.SECONDARY_STREAM == 1 and bt.STAGE2_STREAM == 12
+    streams = [bt.SECONDARY_STREAM + i for i in range(12)]
+    streams += [bt.STAGE2_STREAM + p for p in (1, 2)]
+    assert len(set(streams)) == 14 and 0 not in streams
+
+
 def test_each_pass_draws_its_own_stream() -> None:
-    spec = stage2_spec()
-    one = bt.stage2_rng(spec.root, 0).integers(1 << 62, size=4).tolist()
-    two = bt.stage2_rng(spec.root, 1).integers(1 << 62, size=4).tolist()
-    want = np.random.default_rng(
-        np.random.SeedSequence([TEST_ROOT, bt.STAGE2_STREAM])
-    ).integers(1 << 62, size=4)
+    one = bt.stage2_rng(TEST_ROOT, 1).integers(1 << 62, size=4).tolist()
+    two = bt.stage2_rng(TEST_ROOT, 2).integers(1 << 62, size=4).tolist()
+    want = np.random.default_rng(np.random.SeedSequence([TEST_ROOT, 13])).integers(
+        1 << 62, size=4
+    )
     assert one == want.tolist() and one != two
-    assert bt.SECONDARY_STREAM + len(bt.SELECTABLE) <= bt.STAGE2_STREAM
+
+
+def test_the_second_pass_reads_on_the_second_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[int] = []
+    real = bt.stage2_rng
+
+    def spy(root: int, p: int) -> np.random.Generator:
+        seen.append(p)
+        rng: np.random.Generator = real(root, p)
+        return rng
+
+    monkeypatch.setattr(bt, "stage2_rng", spy)
+    read_pass(stage2_readings(), p=1)
+    read_pass(stage2_readings(), p=2)
+    assert seen == [1, 2]
 
 
 # --------------------------------------------------------------------------
@@ -2262,9 +2506,41 @@ def test_the_table_is_refused_off_its_pin(tmp_path: Path) -> None:
 def test_an_empty_pin_refuses_the_table(tmp_path: Path) -> None:
     path = tmp_path / "p3.json"
     toy_table_json(path)
-    assert bt.P3_TABLE_SHA256 == ""
     with pytest.raises(bt.GuardFailure, match="not pinned"):
-        bt.load_p3_table(path, bt.P3_TABLE_SHA256)
+        bt.load_p3_table(path, "")
+
+
+def committed_table() -> Any:
+    return bt.load_p3_table(REPO / bt.P3_TABLE_PATH, bt.P3_TABLE_SHA256)
+
+
+def test_the_committed_table_is_pinned_and_holds_the_four_systems() -> None:
+    assert len(bt.P3_TABLE_SHA256) == 64
+    table = committed_table()
+    assert len(table.rows) == 240
+    for system in (bt.ORACLE, bt.B_LIB, bt.B_RAND, B_SYM):
+        keys = [k for k in table.rows if k[2] == system]
+        assert sorted(k[:2] for k in keys) == [
+            (t, s) for t in DEV_IDS for s in (1, 2, 3)
+        ]
+
+
+def test_the_committed_table_states_how_it_was_exported() -> None:
+    body = json.loads((REPO / bt.P3_TABLE_PATH).read_text(encoding="utf-8"))
+    assert body["commit"] == "9db1a46"
+    assert body["seeds"] == [1, 2, 3] and body["control_truths"] == 10
+
+
+def test_on_the_committed_table_control_1_keeps_all_20() -> None:
+    spec = bt.stage2_launch_spec(DEV_IDS)
+    bt.check_retained(committed_table(), spec, dict.fromkeys(DEV_IDS, True))
+
+
+def test_every_oracle_row_of_the_committed_table_is_finite() -> None:
+    rows = committed_table().rows
+    assert all(
+        v is not None and math.isfinite(v) for k, v in rows.items() if k[2] == bt.ORACLE
+    )
 
 
 def test_a_missing_table_is_refused(tmp_path: Path) -> None:
@@ -2286,7 +2562,7 @@ def test_the_export_reads_a_store_by_enumeration_and_holds_four_systems(
         ):
             fields = dict(key.config.items()) | {"system": system, "truth": "dev-000"}
             store.put(
-                replace(key, config=bt.FrozenDict[str, str](fields)),
+                replace(key, config=FrozenDict[str, str](fields)),
                 {"status": 1.0, "per_event": value},
                 {"result": {}},
             )
@@ -2309,7 +2585,7 @@ def test_the_export_refuses_two_cells_for_one_row(tmp_path: Path) -> None:
             store.put(
                 replace(
                     u.key,
-                    config=bt.FrozenDict[str, str](fields | {"extra": u.setting}),
+                    config=FrozenDict[str, str](fields | {"extra": u.setting}),
                 ),
                 {"status": 1.0, "per_event": -1.0},
                 {"result": {}},
@@ -2324,7 +2600,7 @@ def test_the_export_gives_a_failed_unit_no_reading(tmp_path: Path) -> None:
     fields = dict(key.config.items()) | {"system": bt.B_RAND, "truth": "dev-000"}
     with ResultStore(tmp_path) as store:
         store.put(
-            replace(key, config=bt.FrozenDict[str, str](fields)),
+            replace(key, config=FrozenDict[str, str](fields)),
             {"status": 0.0},
             {"result": {"error": "ValueError"}},
         )
@@ -2360,18 +2636,31 @@ class SystemStub:
         )
 
 
+def stub_plan(
+    units: Sequence[Any], name: str, values: Mapping[str, float]
+) -> tuple[Any, ...]:
+    out = []
+    for u in units:
+        value = values[name] if u.system == bt.PLANTED else -1.0
+        job = SystemStub(u.job.id, name, u.system, u.truth, u.seed, value)
+        out.append(replace(u, job=job))
+    return tuple(out)
+
+
 def plan_for(values: Mapping[str, float]) -> Callable[[str], tuple[Any, ...]]:
     """``values``: each candidate's planted reading; -1 passes, -1.25 fails."""
-    spec = stage2_spec()
-    entries = dev_entries(TEN_IDS)
 
     def plan(name: str) -> tuple[Any, ...]:
-        out = []
-        for u in bt.plan_stage2(name, spec, entries, environment()):
-            value = values[name] if u.system == bt.PLANTED else -1.0
-            job = SystemStub(u.job.id, name, u.system, u.truth, u.seed, value)
-            out.append(replace(u, job=job))
-        return tuple(out)
+        units = bt.plan_stage2(name, stage2_spec(), dev_entries(TEN_IDS), environment())
+        return stub_plan(units, name, values)
+
+    return plan
+
+
+def margin_for(values: Mapping[str, float]) -> Callable[[str], tuple[Any, ...]]:
+    def plan(name: str) -> tuple[Any, ...]:
+        units = bt.plan_margin(name, stage2_spec(), dev_entries(TEN_IDS), environment())
+        return stub_plan(units, name, values)
 
     return plan
 
@@ -2380,19 +2669,22 @@ def run2(
     tmp_path: Path,
     values: Mapping[str, float],
     selection: Mapping[str, Any] = RANKED,
+    identity: Mapping[str, str] = IDENTITY,
     **driver: Any,
 ) -> Any:
     kwargs = FAST | driver
     spec = stage2_spec()
     log = kwargs.pop("log", lambda _line: None)
+    full = {name: values.get(name, -1.25) for name in ("c3", "c7")}
     return bt.run_stage2(
         spec,
         selection,
-        plan_for(values),
+        plan_for(full),
+        margin_for(full),
         p3_rows(),
         dict.fromkeys(spec.truths, True),
         bt.Stage2Paths(tmp_path),
-        IDENTITY,
+        identity,
         log=log,
         **kwargs,
     )
@@ -2400,16 +2692,63 @@ def run2(
 
 def result_of(tmp_path: Path) -> dict[str, Any]:
     body: dict[str, Any] = json.loads(
-        (tmp_path / "stage2.json").read_text(encoding="utf-8")
+        (tmp_path / "final.json").read_text(encoding="utf-8")
     )
     return body
+
+
+def units_run(tmp_path: Path, system: str | None = None) -> int:
+    records = bt.read_records(tmp_path / "stage2" / "journal.jsonl")
+    return sum(
+        r["type"] == "unit" and (system is None or r["system"] == system)
+        for r in records
+    )
 
 
 def test_a_passing_winner_ends_stage_2_and_stands(tmp_path: Path) -> None:
     assert run2(tmp_path, {"c3": -1.0}) == "c3"
     body = result_of(tmp_path)
     assert [p["setting"] for p in body["passes"]] == ["c3"]
-    assert body["final"] == "c3"
+    assert body["stands"] == "c3"
+    assert bt.final_setting(RANKED, body) == "c3"
+
+
+def test_b_sym_runs_after_the_passes_for_the_setting_that_stands(
+    tmp_path: Path,
+) -> None:
+    run2(tmp_path, {"c3": -1.25, "c7": -1.0})
+    records = bt.read_records(tmp_path / "stage2" / "journal.jsonl")
+    bsym = [r for r in records if r["type"] == "unit" and r["system"] == B_SYM]
+    assert len(bsym) == 30 and {r["setting"] for r in bsym} == {"c7"}
+    units = [r for r in records if r["type"] == "unit"]
+    assert all(r["system"] == B_SYM for r in units[-30:])
+    margin = result_of(tmp_path)["margin"]
+    assert margin["finished"] is True
+    assert float.fromhex(margin["mean"]) == -1.0 - -1.125
+
+
+def test_no_b_sym_unit_runs_if_c0_stands(tmp_path: Path) -> None:
+    run2(tmp_path, {"c3": -1.25, "c7": -1.25})
+    assert units_run(tmp_path, B_SYM) == 0
+    assert result_of(tmp_path)["margin"] is None
+
+
+def test_a_stop_in_the_margin_block_leaves_the_setting_standing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No rule reads the block: if it does not finish, the record says so."""
+    real = bt._run_pass
+
+    def stop_first(plan: Sequence[Any], *args: Any, **kwargs: Any) -> str:
+        if plan[0].system == B_SYM:
+            (tmp_path / "stage2" / "STOP").write_text("", encoding="utf-8")
+        end: str = real(plan, *args, **kwargs)
+        return end
+
+    monkeypatch.setattr(bt, "_run_pass", stop_first)
+    assert run2(tmp_path, {"c3": -1.0}) == "c3"
+    body = result_of(tmp_path)
+    assert body["stands"] == "c3" and body["margin"]["finished"] is False
     assert bt.final_setting(RANKED, body) == "c3"
 
 
@@ -2425,7 +2764,7 @@ def test_a_failed_winner_hands_on_to_the_next_rank_once(tmp_path: Path) -> None:
 
 def test_both_failing_leaves_c0(tmp_path: Path) -> None:
     assert run2(tmp_path, {"c3": -1.25, "c7": -1.25}) == "c0"
-    assert result_of(tmp_path)["final"] == "c0"
+    assert result_of(tmp_path)["stands"] == "c0"
 
 
 def test_no_candidate_above_c0_leaves_c0_after_one_pass(tmp_path: Path) -> None:
@@ -2434,11 +2773,47 @@ def test_no_candidate_above_c0_leaves_c0_after_one_pass(tmp_path: Path) -> None:
     assert len(result_of(tmp_path)["passes"]) == 1
 
 
-def test_the_two_passes_keep_their_own_stores(tmp_path: Path) -> None:
+def test_a_run_gives_its_passes_p_1_and_p_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[int] = []
+    real = bt.stage2_rng
+
+    def spy(root: int, p: int) -> np.random.Generator:
+        seen.append(p)
+        rng: np.random.Generator = real(root, p)
+        return rng
+
+    monkeypatch.setattr(bt, "stage2_rng", spy)
     run2(tmp_path, {"c3": -1.25, "c7": -1.0})
-    for name in ("pass1-c3", "pass2-c7"):
-        with ResultStore(tmp_path / name, read_only=True) as store:
-            assert len(store.cells()) == 70
+    assert seen == [1, 2]
+
+
+def test_stage_2_has_one_store_and_its_own_cpu_count(tmp_path: Path) -> None:
+    run2(tmp_path, {"c3": -1.25, "c7": -1.0})
+    assert cells_in(tmp_path / "stage2") == 40 + 40 + 30
+    assert (tmp_path / "stage2" / "cpu.json").exists()
+    assert not (tmp_path / "cpu.json").exists()
+
+
+def test_a_cell_of_another_run_in_stage_2s_store_refuses(tmp_path: Path) -> None:
+    _, plan = stub_run()
+    with ResultStore(tmp_path / "stage2") as store:
+        store.put(plan[0].key, {"status": 0.0}, {"result": {}})
+    with pytest.raises(bt.GuardFailure, match="other run"):
+        run2(tmp_path, {"c3": -1.0})
+
+
+def test_a_stage_2_start_at_another_commit_is_refused(tmp_path: Path) -> None:
+    other = {"script_sha256": "s" * 64, "fingerprint": "another"}
+    with pytest.raises(bt.GuardFailure, match="commit"):
+        run2(tmp_path, {"c3": -1.0}, identity=other)
+    assert not (tmp_path / "stage2").exists()
+
+
+def test_a_selection_with_no_commit_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(bt.GuardFailure, match="commit"):
+        run2(tmp_path, {"c3": -1.0}, RANKED | {"identity": {}})
 
 
 @pytest.mark.parametrize(
@@ -2457,26 +2832,43 @@ def test_stage_2_runs_only_on_a_selected_winner_that_is_not_c0(
         run2(tmp_path, {"c3": -1.0}, selection)
 
 
-def test_stage_2_is_refused_once_its_result_exists(tmp_path: Path) -> None:
+def test_stage_2_is_refused_once_final_json_exists(tmp_path: Path) -> None:
     run2(tmp_path, {"c3": -1.0})
-    with pytest.raises(bt.GuardFailure, match=r"stage2\.json"):
+    before = (tmp_path / "final.json").read_bytes()
+    with pytest.raises(bt.GuardFailure, match=r"final\.json"):
         run2(tmp_path, {"c3": -1.0})
+    assert (tmp_path / "final.json").read_bytes() == before
 
 
-def test_a_stage_2_stop_leaves_c0_and_starts_no_second_pass(tmp_path: Path) -> None:
-    (tmp_path / "STOP").write_text("", encoding="utf-8")
+def test_a_pass_unfinished_at_stop_has_failed_and_c0_stands(tmp_path: Path) -> None:
+    (tmp_path / "stage2").mkdir()
+    (tmp_path / "stage2" / "STOP").write_text("", encoding="utf-8")
     assert run2(tmp_path, {"c3": -1.0, "c7": -1.0}) == "c0"
     body = result_of(tmp_path)
-    assert len(body["passes"]) == 1
-    assert body["passes"][0]["complete"] is False
-    assert body["end"] == "stop"
+    assert [p["finished"] for p in body["passes"]] == [False, False]
+    assert units_run(tmp_path) == 0
+    assert body["end"] == "stop" and bt.final_setting(RANKED, body) == "c0"
+
+
+def test_a_pass_unfinished_at_the_cpu_stop_has_failed_and_c0_stands(
+    tmp_path: Path,
+) -> None:
+    """The stop is the text's 120 hours; the count reads past it from the start."""
+    got = run2(
+        tmp_path,
+        {"c3": -1.0, "c7": -1.0},
+        read_usage_usec=lambda: 121 * 3600 * 10**6,
+    )
+    assert got == "c0"
+    body = result_of(tmp_path)
+    assert body["end"] == "cpu_stop" and not body["passes"][0]["finished"]
 
 
 def test_the_cpu_stop_spans_both_passes_and_counts_each_unit_once(
     tmp_path: Path,
 ) -> None:
-    """The kernel's count for one unit only grows, so pass 2 reads it from where
-    pass 1 ended, and the shared ledger holds the unit's count once."""
+    """The kernel's count for one unit only grows, so each block reads it from where
+    the last ended, and the ledger holds the unit's count once."""
     clock = {"usec": 0}
 
     def usage() -> int:
@@ -2484,44 +2876,61 @@ def test_the_cpu_stop_spans_both_passes_and_counts_each_unit_once(
         return clock["usec"]
 
     assert run2(tmp_path, {"c3": -1.25, "c7": -1.0}, read_usage_usec=usage) == "c7"
-    total = bt.CpuLedger.load(tmp_path / "cpu.json").total_usec
+    total = bt.CpuLedger.load(tmp_path / "stage2" / "cpu.json").total_usec
     assert total <= clock["usec"]
 
 
 def test_a_stage_2_resume_reads_the_finished_pass_again_and_goes_on(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A kill between passes: the first pass re-reads from its store; nothing reruns."""
-    paths = bt.Stage2Paths(tmp_path)
-    spec = stage2_spec()
-    halves = dict.fromkeys(spec.truths, True)
-    values = {"c3": -1.25, "c7": -1.0}
+    """A kill between passes: the first re-reads from the store, and nothing reruns."""
+    real = bt._run_pass
+    calls: list[int] = []
 
-    def stop_before_pass_2(name: str) -> tuple[Any, ...]:
-        if name == "c7":
+    def killed_at_the_second(*args: Any, **kwargs: Any) -> str:
+        calls.append(1)
+        if len(calls) == 2:
             raise KeyboardInterrupt
-        return plan_for(values)(name)
+        end: str = real(*args, **kwargs)
+        return end
 
-    with pytest.raises(KeyboardInterrupt):
-        bt.run_stage2(
-            spec,
-            RANKED,
-            stop_before_pass_2,
-            p3_rows(),
-            halves,
-            paths,
-            IDENTITY,
-            log=lambda _line: None,
-            **FAST,
-        )
+    values = {"c3": -1.25, "c7": -1.0}
+    with monkeypatch.context() as patched:
+        patched.setattr(bt, "_run_pass", killed_at_the_second)
+        with pytest.raises(KeyboardInterrupt):
+            run2(tmp_path, values)
+    assert units_run(tmp_path) == 40
     assert run2(tmp_path, values) == "c7"
-    records = bt.read_records(tmp_path / "pass1-c3" / "journal.jsonl")
-    assert sum(r["type"] == "unit" for r in records) == 70
+    assert units_run(tmp_path) == 40 + 40 + 30
+    records = bt.read_records(tmp_path / "stage2" / "journal.jsonl")
+    ids = [r["job"] for r in records if r["type"] == "unit"]
+    assert len(set(ids)) == len(ids)
+
+
+def test_a_stage_2_resume_after_a_killed_margin_block_finishes_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nothing was written, so the same command goes on: final.json comes last."""
+    real = bt._run_pass
+
+    def killed_at_the_margin(plan: Sequence[Any], *args: Any, **kwargs: Any) -> str:
+        if plan[0].system == B_SYM:
+            raise KeyboardInterrupt
+        end: str = real(plan, *args, **kwargs)
+        return end
+
+    with monkeypatch.context() as patched:
+        patched.setattr(bt, "_run_pass", killed_at_the_margin)
+        with pytest.raises(KeyboardInterrupt):
+            run2(tmp_path, {"c3": -1.0})
+    assert not (tmp_path / "final.json").exists()
+    assert run2(tmp_path, {"c3": -1.0}) == "c3"
+    assert result_of(tmp_path)["margin"]["finished"] is True
 
 
 def test_stage_2_prints_counts_and_cpu_until_its_result_exists(tmp_path: Path) -> None:
     lines: list[tuple[bool, str]] = []
-    path = tmp_path / "stage2.json"
+    path = tmp_path / "final.json"
 
     def log(line: str) -> None:
         lines.append((path.exists(), line))
@@ -2532,33 +2941,17 @@ def test_stage_2_prints_counts_and_cpu_until_its_result_exists(tmp_path: Path) -
     assert [line for exists, line in lines if exists] == ["stage 2: c3 stands"]
 
 
-def test_a_stage_2_killed_run_writes_no_result(tmp_path: Path) -> None:
+def test_a_stage_2_killed_run_writes_no_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A SIGTERM leaves nothing to read: the same command resumes."""
-    spec = stage2_spec()
-    outcome = None
-    paths = bt.Stage2Paths(tmp_path)
 
     def terminated(*args: Any, **kwargs: Any) -> str:
         return "terminated"
 
-    patched = pytest.MonkeyPatch()
-    patched.setattr(bt, "_run_pass", terminated)
-    try:
-        outcome = bt.run_stage2(
-            spec,
-            RANKED,
-            plan_for({"c3": -1.0}),
-            p3_rows(),
-            dict.fromkeys(spec.truths, True),
-            paths,
-            IDENTITY,
-            log=lambda _line: None,
-            **FAST,
-        )
-    finally:
-        patched.undo()
-    assert outcome is None
-    assert not (tmp_path / "stage2.json").exists()
+    monkeypatch.setattr(bt, "_run_pass", terminated)
+    assert run2(tmp_path, {"c3": -1.0}) is None
+    assert not (tmp_path / "final.json").exists()
 
 
 # --------------------------------------------------------------------------

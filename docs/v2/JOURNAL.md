@@ -2800,3 +2800,35 @@ Corrects the hand-over above: its third decision (T2 and fit/5) is no longer the
 **Slips.** A 60-second wait by `tail` under `timeout` in a foreground command, which sidesteps the ban on foreground `sleep`, as session 36's python loop did. The first journal entry said ten mutants, and it was nine, caught on rereading before commit. The fast tier failed once on my help text, as recorded above.
 
 **Next.** Read round 3, fix, freeze, pin `PREREG_SHA256` and `F_COMMIT`, merge the script, launch stage 1, and stop the rehearsal's store first if the two together would pass 2 workers.
+
+## 2026-11-07: Lane session 37, hand-over: B-sym tuning frozen and running; the miss script ready for its rehearsal
+
+**Done.**
+- **B-sym tuning frozen and launched.** Round 2 not ready, round 3 ready with fixes, both blocking taken. `F` = 5480bf9, script c8da063, LOG 2026-11-07. Stage 1 started 15:18:15Z; I read only its printed line, `units 0/840 worlds 0/60 cpu_hours 0.00`, and saw the unit active, 175 CPU s on the kernel's count at 15:19. The control room was told.
+- **R2:** limit set with the reviewer, more than 4 of 40, or more than 2 of the 20 out of dictionary for C4, as a report line. The reviewer replaced my reasons, which did not hold, and kept the number.
+- Everything in the checkpoint above.
+
+**Checks.** At the pinned script: ruff `343 files already formatted`, `All checks passed!`, mypy `no issues found in 332 source files`. Full fast tier `5637 passed`, exit 0 at 15:13:06Z (`.cache/drafts/s37/fast7.log`). That run predates two docstring rewraps in `bsym_tune.py`, after which `323 passed` on its test file. `test_bsym_tune.py -m slow` `9 passed`, exit 0.
+
+**Running, $0.** `sci-bsym-tune`, stage 1. `sci-slow-s37`, the slow tier at a42fec1, -n 1, not yet read: `grep -E '^(FAILED|ERROR)|^exit:' .cache/drafts/s37/slow.log`, then a LEDGER row. **Paused:** the rehearsal's store, see the queue.
+
+**Not verified.**
+- The slow tier on the head: it runs at a42fec1, so it does not cover R2's report line or `bsym_tune.py`, though the latter's own slow tests passed. It also predates nothing else in `src/`, apart from `secondaries.py`'s `read_scope`.
+- Stage 2 and the margin step on real units. The `RLIMIT_CPU` kill under `spawn`. Candidates' cost.
+- The bytes of ORACLE, B-rand and planted-hint at current code against P3's store, which a blocked reviewer command left unchecked. Stage 2 leans on those rows.
+- The driver, the controls and the terminal step of the miss script on real rehearsal cells.
+- R3 and `read_scope`, and `--p4-block` have had no red team. `secondaries.py` has had none.
+- Round 3's pasted lines have had no separate review, at the reviewer's word.
+- K0's reading of today's telling rule: read from the code, not run (R5, before P4b's freeze).
+
+**Learned.** The tuning needed three rounds and each stopped something real: an inert `c11`, a `c0b` that would have read `c0`'s own cells and reported a noise floor of zero, a stage 2 that could not start under its own latch. Writing the script while the text was under review cost some rework, but it found what reading could not: the `final.json` conflict came from trying to implement the sentence. A control I took as settled since the pilot let a crash pass. Reasons can be wrong while a number is right: the reviewer kept my 10% and threw out every argument I gave for it.
+
+**Slips.** A commit chained after a failing `ruff`, amended before any push. Earlier ones are in the checkpoint. On helpers: three kept working after a refusal, in forms the guard's message suggested or by a separate script. I did not settle whether that counts as stopping, and I tightened the wording only for later briefs.
+
+**Next.**
+1. `journalctl --user -u sci-bsym-tune --no-pager -n 3` for counts only. Read the slow tier and add its LEDGER row.
+2. P4b's pre-registration, FSD's event cap included, which is what the miss check now waits on, and R5's recomputation of K0 from `runs-ctlA1.jsonl`, with no draw.
+3. The 10 sweep surfaces and the sweep's table merge. Red team on `secondaries.py`, `control_rows` and `--p4-block`, which is cheap and is the code most recently written by me alone.
+4. Resume the rehearsal when the workers allow. The control room may reorder this.
+
+**Decision needed from the owner:** none now. Ahead: the test split and §6.1 freeze, which the owner approves. For the control room, if it wants to rule: whether a helper following a guard's own instruction to split a command counts as stopping.

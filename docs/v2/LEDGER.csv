@@ -44,4 +44,6 @@ date,item,provider,hours,usd,stage
 2026-11-06,v2 fast tiers after the merges (sci-fast-s36 to sci-fast5-s36; 7bc9963 to 48db3b4; exit 0 each; 22 min 35 s CPU by the kernel count; ceiling 1 CPU hour each and $0),dm-devbox,0.38,0,p3
 2026-11-06,Helpers' tests and reviews in session 36 (3 engineers and 3 red teams; targeted tests and real dev units on seeds 1 to 3 only; not metered; an estimate from the helpers' stated ceilings and reports),dm-devbox,3.0,0,p3
 2026-11-06,v2 slow tier (sci-slow-s36; 4c5a21c; -n 1; 362 passed; exit 0 at 18:19:31Z; 2 h 3 min 47 s wall by pytest and CPU not metered; ceiling 6 CPU hours and $0),dm-devbox,2.06,0,p3
-2026-11-07,Helpers' tests and reviews in session 37 so far (3 engineers and 3 red teams; targeted tests; a one-truth wiring store; real dev units on seeds 1 to 3 only; not metered; an estimate from the helpers' reports),dm-devbox,4.0,0,p3
+2026-11-07,Helpers' tests and reviews in session 37 (3 engineers and 4 red teams; targeted tests; a one-truth wiring store; real dev units on seeds 1 to 3 only; not metered; an estimate from the helpers' reports),dm-devbox,5.0,0,p3
+2026-11-07,v2 fast tiers in session 37 (fast1 to fast7; 7 runs; one failed on help text and was fixed; last 5637 passed at the pinned script; not metered; an estimate),dm-devbox,0.8,0,p3
+2026-11-07,Rehearsal store of the P4 miss check (sci-rehearsal-s37; 7d78c84; stopped by STOP at 15:18Z so tuning has the workers; 1 h 51 min 11 s CPU by systemd; ceiling 24 CPU hours over every repeat and $0),dm-devbox,1.85,0,p3

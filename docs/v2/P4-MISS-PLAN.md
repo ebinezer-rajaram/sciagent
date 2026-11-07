@@ -2,6 +2,8 @@
 
 **Status: plan, its decision taken (lane session 32, 2026-11-05).** The control room accepted the proposal below as an amendment, with one red-team round (INBOX c81749a; LOG 2026-11-05). Nothing here is frozen, no code is written and no P4 unit exists. It answers the queue item "Apply the frozen miss check to P4's fits before P4's verdict is read" (INBOX 0577e79; LOG 2026-11-05). Section numbers mean `docs/v2/prereg/2026-11-04_pilot-search-misses.md` (`F` = 3226f9b).
 
+**Before launch (control room, INBOX 2026-11-07):** the miss check is not launched on the P4 store until P4b's freeze is in the LOG. The rule is procedural, since the script goes to its terminal step by itself when its run ends, so launching it is what opens P4's reads, and SPEC §6.1 freezes P4b first. It changes neither `R2`'s bytes nor `F2`, and P4's campaign itself may launch before P4b freezes.
+
 **In one line:** the rule for finding and sizing a miss carries over to P4 unchanged, but "same rules" cannot hold for the parts that say what a miss does to the verdict, because P4 has no §7.1 verdict and its contrasts read the LLM rows the pilot rule set aside. The control room decided how (status above).
 
 ## What carries over unchanged

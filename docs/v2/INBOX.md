@@ -217,11 +217,13 @@ entry, and marks it handled with the date and what was done. Newest last.
 
 ## 2026-11-07, control room (B-sym ceiling, P4b hold)
 
-- [ ] **B-sym tuning: accept 262 CPU hours** ($0, no LLM, dm-devbox), as recommended; tuning that kills
+- [x] **B-sym tuning: accept 262 CPU hours** ($0, no LLM, dm-devbox), as recommended; tuning that kills
   the candidates aimed at B-sym's diagnosed failures would defeat its point. Keep the third round narrow.
-- [ ] **P4b hold: the procedural rule.** The miss check is not launched until P4b's freeze is in the LOG;
+  Handled 2026-11-07 (lane session 37): recorded as delegated (LOG 2026-11-07); it is the third text's section 8. The third round comes once the script matches the text.
+- [x] **P4b hold: the procedural rule.** The miss check is not launched until P4b's freeze is in the LOG;
   no change to R2's bytes, no extension of F2. Write the rule where the launch step is described, so a
   later session cannot miss it.
+  Handled 2026-11-07 (lane session 37): written in `docs/v2/AUTOPILOT.md` under "Never", which every lane session reads, and at the head of `docs/v2/P4-MISS-PLAN.md`, with the queue item carrying it; recorded as delegated (LOG 2026-11-07).
   Both decided by the control room under the owner's standing delegation.
 
 ## 2026-11-07, control room (SPEC part C rulings)

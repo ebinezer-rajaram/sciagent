@@ -80,5 +80,8 @@ and numbers are produced only on dm-devbox. Edit an instrument while a run uses 
 results, stores or S3 objects. Rewrite pushed history. Write test-split records inside the
 repository. Create AWS access keys. Use browser automation. Reinterpret a preregistered rule
 after seeing numbers. Remove or bypass a stream guard, even in a mutant or a test: test guards on
-non-control ids only, and say so in every helper's brief (INBOX 119eff3). If time is short, stop at a clean point and record, commit and push
+non-control ids only, and say so in every helper's brief (INBOX 119eff3). Launch
+`scripts/p4_search_misses.py` on the P4 store before P4b's freeze is in `docs/v2/LOG.md`: nothing
+in the script enforces this, because its reads follow the run's end by themselves (INBOX
+2026-11-07, SPEC §6.1). If time is short, stop at a clean point and record, commit and push
 first.

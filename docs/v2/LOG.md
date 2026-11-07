@@ -2765,3 +2765,12 @@ Decided in INBOX 2026-11-07, on the lane's stop point after round 2 of the analy
 3. A failed or NaN B-lib unit leaves the truth unchecked for the reads and counts in R2's scope.
 
 All three are test first, before `S`. **The general rule, from now on:** a crash or missing reading must never make a control pass that would otherwise fail. It is applied to every control path before `S`, and only real design choices go to the control room. This entry narrows INBOX 2026-11-06 ("Truths control 1 cannot check leave the reads"): such truths still leave the reads, but not controls 2 and 3.
+
+## 2026-11-07: D5, the agent's wall limit is on its own clock (session 38)
+
+P4b's D5 (`docs/v2/redteam/2026-11-07_p4b-policies.md`, finding 2). An engineer's branch, reviewed and merged as 21e0518 and 156d98e, written test first.
+- **The clock.** The session's wall limit is now on the agent's clock: wall time less the framework time measured on the tool layer's `FrameworkClock` (a policy decision inside `run_experiment`). The deadline pauses while a decision runs (`harness/live.py`, `_Deadline`). The limit the prompt states is unchanged.
+- **The hard deadline.** The parent's hard deadline (`campaign/llm.py`, wall time plus grace) is on the child's own time, read from a lock-protected shared array of its framework clock, so a long decision is neither cut nor voided. Before the change, a stand-in 12 s decision under a 10 s grace was killed as `hard_timeout`; now it submits. A child that hangs outside a decision is still killed.
+- **The record.** Per-call `framework_s` and the session's `agent_s` go in the record's unhashed timing and in `timing.jsonl`, so no content address moves, replay is unchanged, and `HARNESS_VERSION` stays `harness/2`. Sessions with no policy record 0.0 per call.
+- **Caveats.** A decision that never ends is no longer bounded by the hard deadline; D6's CPU meter must bound it before P4b launches. The stored `hard_timeout` message's wording changed for future cells, and no key moved.
+- **Checks.** Merged, `3790 passed` on harness, investigation and campaign (fast), and the six isolation slow tests passed on the branch.

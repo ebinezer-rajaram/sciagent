@@ -28,6 +28,7 @@ import json
 import math
 import multiprocessing
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -47,7 +48,13 @@ from campaign_support import entry, environment, tiny_config
 from sciagent.campaign import analysis, contrasts
 from sciagent.campaign.analysis import Row, Table, derive
 from sciagent.campaign.contrasts import ContrastRead, ScriptedControls
-from sciagent.campaign.plan import baseline_key, baseline_units
+from sciagent.campaign.plan import (
+    baseline_key,
+    baseline_units,
+    llm_units,
+    score_key,
+    session_key,
+)
 from sciagent.campaign.store import ResultStore
 from sciagent.campaign.voids import VoidStatus
 from sciagent.glm.canonical import canonicalise
@@ -2366,10 +2373,24 @@ def test_a_launch_copy_that_cannot_be_fetched_is_refused(
         p4m.read_launch_copy()
 
 
-def test_the_launch_copy_is_read_from_beside_the_results() -> None:
-    assert p4m.LAUNCH_FINGERPRINT_URI == (
-        "s3://delaymargin-results-482913/sciagent/p4/fingerprint.jsonl"
-    )
+def test_the_launch_copy_is_read_from_beside_the_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Section 2.10's "beside the results", from the text's own output path, and
+    the key the guard really asks ``aws`` for."""
+    text = (REPO / p4m.PREREG_PATH).read_text(encoding="utf-8")
+    (results,) = set(re.findall(r"s3://[^`\s]*/search-misses-F2/", text))
+    parent = results.removesuffix("search-misses-F2/")
+    assert parent + "fingerprint.jsonl" == p4m.LAUNCH_FINGERPRINT_URI
+    called: list[Any] = []
+
+    def answers(command: Any, **kwargs: Any) -> Any:
+        called.append(command)
+        return subprocess.CompletedProcess(command, 0, b"witness", b"")
+
+    monkeypatch.setattr(p4m.subprocess, "run", answers)
+    assert p4m.read_launch_copy() == b"witness"
+    assert called == [["aws", "s3", "cp", parent + "fingerprint.jsonl", "-"]]
 
 
 def test_a_fit_diff_other_than_the_constant_is_refused(chain: Chain) -> None:
@@ -2444,7 +2465,9 @@ def test_the_options_are_the_texts_and_none_sets_a_number() -> None:
     parser = p4m.build_parser()
     options = {o for a in parser._actions for o in a.option_strings}
     assert {"--out", "--naming-null", "--controls", "--root"}.isdisjoint(options)
-    assert options >= {
+    assert options == {
+        "-h",
+        "--help",
         "--split",
         "--test-split",
         "--store",
@@ -2452,6 +2475,8 @@ def test_the_options_are_the_texts_and_none_sets_a_number() -> None:
         "--finalise",
         "--end",
         "--print-hashes",
+        "--rehearsal",
+        "--rehearsal-plan",
     }
     with pytest.raises(SystemExit):
         parser.parse_args(["--out", "/tmp/x"])
@@ -2508,9 +2533,13 @@ def test_the_two_splits_hash_under_their_own_names(tmp_path: Path) -> None:
 
 
 def test_the_dev_constant_is_the_pilot_rules() -> None:
-    assert p4m.SPLIT_SHA256 == (
-        "31c18f10ca7c8a4ad6b599de5436bb15426bd02c67f3eb44fb0e93cb512ba577"
-    )
+    """Section 2.10: "with PR 2.10's constant", read from the rule and from the
+    pilot's frozen script and not from a literal typed here."""
+    rule = REPO / "docs/v2/prereg/2026-11-04_pilot-search-misses.md"
+    text = rule.read_text(encoding="utf-8").split("**The split.**")[1]
+    assert re.findall(r"must equal `([0-9a-f]{64})`", text)[0] == p4m.SPLIT_SHA256
+    script = (REPO / "scripts/pilot_search_misses.py").read_text(encoding="utf-8")
+    assert f'SPLIT_SHA256: Final = "{p4m.SPLIT_SHA256}"' in script
 
 
 def test_a_split_hash_mismatch_stops(tmp_path: Path) -> None:
@@ -2535,7 +2564,7 @@ def test_no_hash_at_s_or_a_malformed_one_is_refused(tmp_path: Path) -> None:
 
 
 def test_every_path_must_be_absolute(tmp_path: Path) -> None:
-    repo = tmp_path / "repo"
+    repo = toy_git(tmp_path / "repo")
     options = {
         "split": tmp_path / "s",
         "test_split": tmp_path / "t",
@@ -2550,7 +2579,7 @@ def test_every_path_must_be_absolute(tmp_path: Path) -> None:
 
 
 def test_the_test_split_must_be_outside_the_repository(tmp_path: Path) -> None:
-    repo = tmp_path / "repo"
+    repo = toy_git(tmp_path / "repo")
     with pytest.raises(p4m.GuardFailure, match="outside"):
         p4m.check_paths(
             split=tmp_path / "s",
@@ -2565,7 +2594,7 @@ def test_the_test_split_must_be_outside_the_repository(tmp_path: Path) -> None:
 def test_the_output_must_be_outside_the_repository_and_the_store(
     tmp_path: Path, inside: str
 ) -> None:
-    repo, store = tmp_path / "repo", tmp_path / "store"
+    repo, store = toy_git(tmp_path / "repo"), tmp_path / "store"
     with pytest.raises(p4m.GuardFailure, match="outside"):
         p4m.check_paths(
             split=tmp_path / "s",
@@ -3547,7 +3576,7 @@ def test_the_census_prints_counts_and_no_score(
     out = capsys.readouterr().out
     assert "coordinate" in out
     assert "0x" not in out and "-0." not in out
-    assert "group E" not in out
+    assert "group E cases: 0\n" in out
 
 
 def stage_setup(monkeypatch: pytest.MonkeyPatch) -> Any:
@@ -3906,6 +3935,8 @@ def toy_run(paths: Any, monkeypatch: pytest.MonkeyPatch) -> Callable[[Any, Any],
     store = paths.root / "store"
     store.mkdir()
     (store / "cell").write_text("x")
+    # What a first start took: a planted run has ``cpu.json``, so it needs this.
+    paths.manifest.write_text(json.dumps(p4m.store_manifest(store)))
     census = planted_census(table)
 
     def load(*args: Any) -> Any:
@@ -4081,6 +4112,677 @@ def test_the_hashes_for_the_log_entry_are_printed(
 def test_split_test_split_and_store_are_needed_for_a_run() -> None:
     with pytest.raises(SystemExit):
         p4m.main([])
+
+
+# --------------------------------------------------------------------------
+# Red team 2026-11-07: the limits, and the real plan through the real store path
+# --------------------------------------------------------------------------
+
+
+def test_the_ceiling_is_the_stop_plus_two_jobs_at_their_limit() -> None:
+    """Section 8: "at most 2 jobs in flight at 3 CPU hours each take the run to
+    178". No code reads ``CPU_CEILING_HOURS``, so it is kept by the three things
+    that do the keeping: the most workers, each job's limit, and the stop."""
+    (workers,) = (
+        a for a in p4m.build_parser()._actions if "--workers" in a.option_strings
+    )
+    limit = inspect.signature(p4m.Driver.__init__).parameters["cpu_limit_s"].default
+    assert limit == p4m.JOB_CPU_HOURS * 3600
+    in_flight = max(workers.choices) * limit / 3600
+    assert p4m.CPU_STOP_HOURS + in_flight == p4m.CPU_CEILING_HOURS
+
+
+def test_a_job_runs_under_the_kernels_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    set_limits: list[Any] = []
+    monkeypatch.setattr(p4m.signal, "signal", lambda *a: None)
+    monkeypatch.setattr(p4m.resource, "setrlimit", lambda *a: set_limits.append(a))
+    journal, timing = tmp_path / "journal", tmp_path / "timing"
+    p4m.job_main(ToyJob("a"), "stage", str(journal), str(timing), 1234)
+    margin = p4m.CPU_HARD_MARGIN_S
+    assert set_limits == [(p4m.resource.RLIMIT_CPU, (1234, 1234 + margin))]
+
+
+def test_no_job_starts_at_the_stop(tmp_path: Path, paths: Any) -> None:
+    """So nothing is in flight past the stop but what had already started."""
+    table = tabled()
+    plant(paths, clean(table), end=None)
+    marker = tmp_path / "ran"
+    over = p4m.CPU_STOP_HOURS * 3600 * 10**6
+    job = ToyJob("a", marker=str(marker))
+    run = driver(paths.root, [stage(job)], read_usage_usec=lambda: over)
+    assert run.run() == "cpu_stop"
+    assert not marker.exists()
+
+
+#: What each system's cell reads on the stand-in plan: the toy world's values.
+PLAN_VALUES: Final = {
+    ORACLE: -0.5,
+    B_LIB: -0.6875,
+    B_RAND: -0.75,
+    PLANTED: -0.5,
+    B_SYM_10F: -0.5,
+    B_NP: -2.0,
+}
+
+
+def standin_truths() -> tuple[Any, ...]:
+    """As ``test_p4_plan.standin``: in, ood, in, ood. Ids only, and no P4 unit."""
+    return tuple(
+        replace(
+            entry("hawkes"),
+            id=f"test-{k:03d}",
+            in_dictionary=k % 2 == 0,
+            split="test",
+        )
+        for k in range(40)
+    )
+
+
+def stand_in_cell(system: str, text: str) -> tuple[Any, Any]:
+    """A cell's reading and detail. Only keys and addresses are real here."""
+    reading = {
+        "status": 1.0,
+        "per_event": PLAN_VALUES.get(system, -0.625),
+        "certified": 1.0,
+        "exact": 0.0,
+        "distance": 0.5,
+        "has_structure": 1.0,
+        "similarity": 0.9,
+        "fits_used": 1.0,
+    }
+    detail: Rec = {"structure": None if system == B_NP else text}
+    if system == ORACLE:
+        detail |= {"oracle_underfit": False, "oracle_psi_source": "search"}
+    return reading, {"result": detail}
+
+
+def fill_plan_store(root: Path, env: Any, plan: Any, truths: Any) -> None:
+    """Every unit of the plan at its real address, sessions and scores included,
+    with one 6-point structure so that every fit is exhaustive."""
+    by_id = {t.id: t for t in truths}
+    ids = [t.id for t in truths]
+    text = render(canonicalise(truths[0].structure))
+    with ResultStore(root) as store:
+        for config in plan:
+            for unit in baseline_units(ids, config):
+                key = baseline_key(unit, by_id[unit.truth_id], env, config)
+                store.put(key, *stand_in_cell(unit.system, text))
+            for unit in llm_units(ids, config):
+                session = session_key(unit, by_id[unit.truth_id], env, config)
+                store.put(session, {"status": 1.0}, {"session": {}})
+                score = score_key(unit, session, env, config)
+                store.put(score, *stand_in_cell(unit.system, text))
+
+
+@pytest.mark.slow
+def test_the_real_plan_runs_through_the_real_store_path(
+    paths: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``toy_run`` mocks ``load_store``, ``check_table``, ``build_census`` and
+    ``contrast_rows``, and nothing else in this file calls ``p4_plan``. So a change
+    of the plan (``TUNED_GP`` enters at ``S``, after ``R2``) would pass there. This
+    is the reviewer's probe: the real four, under the real ``execute``, on a store
+    filled from the real plan on stand-in ids."""
+    env = environment()
+    given = standin_truths()
+    monkeypatch.setattr(p4m.pilot, "load_split", lambda path: given)
+    monkeypatch.setattr(p4m.pilot, "truth_entries", lambda records: records)
+    monkeypatch.setattr(p4m.pilot, "pointproc_environment", lambda records: env)
+    _, plan, truths = p4m.p4_inputs(Path("/stand-in"))
+    store = paths.root / "store"
+    fill_plan_store(store, env, plan, truths)
+
+    table, cells = p4m.load_store(store, env, plan, truths)
+    assert sum(table.planned.values()) == len(table.rows) == 1940
+    assert len(table.sessions) == 1320
+    assert table.missing == {}
+    p4m.check_table(table, cells)
+    rows = p4m.contrast_rows(plan, truths)
+    census = p4m.build_census(table, cells, env.channels, frozenset(rows))
+    assert sum(p4m.row_key(r) in census.tier1 for r in census.rows) == len(rows) == 1000
+
+    paths.manifest.write_text(json.dumps(p4m.store_manifest(store)))
+    plant(paths, control_records(), end=None)
+    real_driver = p4m.Driver
+
+    def stub_clock(p: Any, stages: Any, *, workers: int, **kw: Any) -> Any:
+        options = {"read_usage_usec": lambda: 0, "read_mem_gib": lambda: 16.0, **kw}
+        return real_driver(p, stages, workers=workers, **options)
+
+    monkeypatch.setattr(p4m, "Driver", stub_clock)
+    monkeypatch.setattr(p4m, "plan_stages", lambda *a, **k: ())
+    setup = toy_setup(paths, env=env, plan=plan, truths=truths, store=store)
+    assert p4m.execute(setup, Args()) == 0
+    assert decision_of(paths)["label"] == "CONTRASTS_SURVIVE_FOUND_MISSES"
+    stored = reads_of(paths)["stored"]
+    assert (stored["C1"]["n"], len(stored["C1"]["rows"])) == (40, 240)
+    assert stored["C4"]["reportable"] is True
+    assert (stored["C4"]["n"], len(stored["C4"]["rows"])) == (20, 120)
+
+
+# --------------------------------------------------------------------------
+# Red team 2026-11-07: D7 and D8, group E's count and control 4's words
+# --------------------------------------------------------------------------
+
+
+def test_the_census_prints_group_es_count_and_nothing_else_of_it(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Section 2.9: "The script selects the cases and prints only their count"."""
+    text = text_of(MIDDLE)
+    rows = [
+        census_row("first-case", ORACLE, text, oracle_psi_source="truth"),
+        census_row("not-a-case", ORACLE, text, oracle_psi_source="search"),
+        census_row("second-case", ORACLE, text_of(SMALL), oracle_psi_source="truth"),
+        census_row("no-oracle", B_SYM, text),
+    ]
+    p4m.print_counts(census_of(rows, []), tabled())
+    out = capsys.readouterr().out
+    assert "group E cases: 2\n" in out
+    assert "case" not in out.replace("group E cases: 2\n", "")
+    assert "oracle" not in out.lower()
+
+
+def test_no_text_says_a_rehearsal_reads_a_control_4_record() -> None:
+    """LOG 2026-11-06: control 4 is False in a rehearsal, and it reads no record."""
+    doc = " ".join(p4m.rehearsal_setup.__doc__.split())
+    assert "dev record" not in doc
+    assert "Control 4 is False" in doc
+    source = (REPO / "scripts" / "naming_null_record.py").read_text(encoding="utf-8")
+    assert "a rehearsal asks for" not in source
+
+
+# --------------------------------------------------------------------------
+# Red team 2026-11-07: D6, the store's manifest before and after (PR 2.8)
+# --------------------------------------------------------------------------
+
+
+def test_a_resume_with_its_manifest_deleted_is_refused(
+    paths: Any, toy_run: Any
+) -> None:
+    """A new baseline would hide whatever changed the store before the resume, and
+    PR 2.8's "before" is the first start's: the one route toward an unearned pass
+    the reviewer found."""
+    table = tabled()
+    plant(paths, clean(table), end=None)
+    (paths.root / "store" / "cell").write_text("changed before the resume")
+    paths.manifest.unlink()
+    assert toy_run((stage(ToyJob("a")),), Args()) == p4m.NO_LABEL_EXIT
+    assert not paths.manifest.exists()
+    assert not paths.reads.exists()
+    assert list(decision_of(paths)) == ["refusal"]
+    assert "manifest" in decision_of(paths)["refusal"]
+
+
+def test_a_fresh_start_takes_the_manifest_of_the_store(
+    paths: Any, toy_run: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Before the ledger exists, so a real run never has ``cpu.json`` alone."""
+    paths.manifest.unlink()
+    wrapped = SimpleNamespace(run=lambda: "terminated")
+    monkeypatch.setattr(p4m, "Driver", lambda *a, **k: wrapped)
+    assert toy_run((), Args()) == p4m.NO_LABEL_EXIT
+    store = p4m.store_manifest(paths.root / "store")
+    assert json.loads(paths.manifest.read_text()) == store
+
+
+def test_the_manifest_comes_before_the_ledger_on_a_real_first_start(
+    paths: Any, toy_run: Any
+) -> None:
+    paths.manifest.unlink()
+    seen: list[bool] = []
+
+    class Looks:
+        id = "looks"
+
+        def run(self, sink: Any) -> None:
+            sink.record("done", {"kind": "toy"})
+
+    real_begin = p4m.CpuLedger.begin
+
+    def begin(*args: Any) -> Any:
+        seen.append(paths.manifest.exists())
+        return real_begin(*args)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(p4m.CpuLedger, "begin", begin)
+        toy_run((stage(Looks()),), Args())
+    assert seen == [True]
+
+
+def test_finalise_with_no_manifest_is_byte_fail_and_writes_no_read(
+    paths: Any, toy_run: Any
+) -> None:
+    table = tabled()
+    plant(paths, clean(table), end="complete")
+    paths.manifest.unlink()
+    assert toy_run((), Args(finalise=True)) == 3
+    assert decision_of(paths)["byte_failures"] == ["store_manifest"]
+    assert not paths.reads.exists()
+
+
+# --------------------------------------------------------------------------
+# Red team 2026-11-07: D5, --test-split outside the repository (section 2.10)
+# --------------------------------------------------------------------------
+
+
+def toy_git(repo: Path) -> Path:
+    repo.mkdir(parents=True)
+    git(repo, "init", "-q", "-b", "v2")
+    return repo
+
+
+@pytest.fixture
+def checkouts(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """A main checkout, and a worktree outside it and one inside it, as ``T``'s
+    may be: real ones, since the guard asks git."""
+    main = toy_git(tmp_path / "main")
+    write(main, "README", "x\n")
+    commit(main, "base")
+    beside, inside = tmp_path / "beside", main / ".claude" / "worktrees" / "t"
+    git(main, "worktree", "add", "-q", "--detach", str(beside))
+    git(main, "worktree", "add", "-q", "--detach", str(inside))
+    return main, beside, inside
+
+
+def paths_from(repo: Path, tmp_path: Path, test_split: Path) -> None:
+    p4m.check_paths(
+        split=tmp_path / "s",
+        test_split=test_split,
+        store=tmp_path / "st",
+        out=tmp_path / "o",
+        repo=repo,
+    )
+
+
+@pytest.mark.parametrize("worktree", [1, 2], ids=["beside", "inside"])
+def test_a_test_split_in_the_main_checkout_is_refused_from_a_worktree(
+    checkouts: tuple[Path, Path, Path], tmp_path: Path, worktree: int
+) -> None:
+    """The script runs in ``T``'s worktree, so ``repo`` is that worktree, and the
+    main checkout's ``data/v2/truths/test`` is not under it."""
+    main, repo = checkouts[0], checkouts[worktree]
+    with pytest.raises(p4m.GuardFailure, match="outside"):
+        paths_from(repo, tmp_path, main / "data" / "v2" / "truths" / "test")
+
+
+def test_a_link_into_the_main_checkout_is_refused(
+    checkouts: tuple[Path, Path, Path], tmp_path: Path
+) -> None:
+    main, beside, _ = checkouts
+    (main / "data").mkdir()
+    link = tmp_path / "elsewhere"
+    link.symlink_to(main / "data")
+    with pytest.raises(p4m.GuardFailure, match="outside"):
+        paths_from(beside, tmp_path, link / "test")
+
+
+def test_the_main_checkout_refuses_its_own_tree_when_it_is_the_repo(
+    checkouts: tuple[Path, Path, Path], tmp_path: Path
+) -> None:
+    """There ``--git-common-dir`` is relative."""
+    main = checkouts[0]
+    with pytest.raises(p4m.GuardFailure, match="outside"):
+        paths_from(main, tmp_path, main / "data" / "test")
+
+
+@pytest.mark.parametrize("worktree", [0, 1, 2], ids=["main", "beside", "inside"])
+def test_a_test_split_outside_every_checkout_passes(
+    checkouts: tuple[Path, Path, Path], tmp_path: Path, worktree: int
+) -> None:
+    paths_from(checkouts[worktree], tmp_path, tmp_path / "held" / "test")
+
+
+def test_a_directory_git_does_not_know_fails_closed(tmp_path: Path) -> None:
+    repo = tmp_path / "not-a-repo"
+    repo.mkdir()
+    with pytest.raises(p4m.GuardFailure, match="git"):
+        paths_from(repo, tmp_path, tmp_path / "held" / "test")
+
+
+# --------------------------------------------------------------------------
+# Red team 2026-11-07: D3 and D4, S2's stream and its clock (PR 2.2, 2.10, 6)
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class S2World:
+    """``run_s2_job`` with every fit stubbed and its searches watched."""
+
+    job: Any
+    streams: list[Any]
+    fires: list[bool]
+
+
+def s2_world(
+    monkeypatch: pytest.MonkeyPatch, *, stored: Link, reference: Link
+) -> S2World:
+    """R0 chooses ``stored``, and the reference ``reference`` after one training
+    search; a full-log search follows only if they differ."""
+    env = environment()
+    truth = entry("hawkes")
+    fitted = SimpleNamespace()
+    fires: list[bool] = []
+    streams: list[Any] = []
+    chosen = iter([stored, reference])
+
+    def choice(
+        features: Any,
+        train: Any,
+        validation: Any,
+        channels: Any,
+        links: Any,
+        fitter: Any,
+        **kw: Any,
+    ) -> Any:
+        link = next(chosen)
+        fitter(canonicalise(Structure(features, link)))
+        return link, [(link.value, -1.0, True)]
+
+    def search(
+        structure: Any,
+        datasets: Any,
+        channels: Any,
+        rng: Any,
+        *,
+        should_stop: Any,
+        **kw: Any,
+    ) -> Any:
+        streams.append((render(structure), rng.bit_generator.state))
+        fires.append(should_stop())
+        return SimpleNamespace(r1=SimpleNamespace(best=None), best=None)
+
+    log = SimpleNamespace(observational=("obs",))
+    monkeypatch.setattr(p4m, "observational_data", lambda *a: log)
+    monkeypatch.setattr(p4m, "split_dataset", lambda *a: ("train", "validation"))
+    monkeypatch.setattr(p4m, "parse", lambda *a: SimpleNamespace(features=SMALL))
+    monkeypatch.setattr(p4m, "link_choice", choice)
+    monkeypatch.setattr(p4m, "fit", lambda *a, **k: fitted)
+    monkeypatch.setattr(p4m, "is_exhaustive", lambda size: False)
+    monkeypatch.setattr(p4m, "reference_search", search)
+    monkeypatch.setattr(p4m, "r0_value", lambda *a: None)
+    monkeypatch.setattr(p4m, "choose_point", lambda *a: None)
+    monkeypatch.setattr(p4m, "held_out_dataset", lambda *a: "held")
+    model = SimpleNamespace(held_out_per_event=lambda held: -0.5)
+    monkeypatch.setattr(p4m, "GLMModel", lambda *a: model)
+    job = p4m.S2Job(truth, 1, "stored text", stored.value, env, TEST_ROOT)
+    return S2World(job, streams, fires)
+
+
+def text_at(link: Link) -> str:
+    return render(canonicalise(Structure(SMALL, link)))
+
+
+def test_s2s_full_log_search_draws_the_s2_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PR 2.2: "For S2, ``c = f"s2|{truth}|{seed}|{text}"``", and section 2.2
+    keeps it. The plain case is a fit's own stream."""
+    world = s2_world(monkeypatch, stored=Link.EXP, reference=Link.SOFTPLUS)
+    sink = ListSink()
+    p4m.run_s2_job(world.job, sink)
+    assert sink.only("done")["status"] == "differs"
+    text, state = world.streams[-1]
+    assert text == text_at(Link.SOFTPLUS)
+    case = f"s2|{world.job.truth.id}|1|{text}"
+    assert state == p4m.reference_rng(case, TEST_ROOT).bit_generator.state
+    plain = p4m.fit_case(world.job.truth.id, 1, text)
+    assert state != p4m.reference_rng(plain, TEST_ROOT).bit_generator.state
+
+
+def test_s2s_training_search_draws_the_s2_stream_too(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world = s2_world(monkeypatch, stored=Link.EXP, reference=Link.EXP)
+    p4m.run_s2_job(world.job, ListSink())
+    text, state = world.streams[0]
+    case = f"s2|{world.job.truth.id}|1|{text}"
+    assert state == p4m.reference_rng(case, TEST_ROOT).bit_generator.state
+
+
+def test_the_s2_case_is_the_rules_form() -> None:
+    assert p4m.s2_case("t", 3, "text") == "s2|t|3|text"
+
+
+@pytest.mark.parametrize(
+    ("reference", "status", "searches"),
+    [(Link.EXP, "same", 1), (Link.SOFTPLUS, "differs", 2)],
+)
+def test_no_cut_is_recorded_as_no_cut_on_every_status(
+    monkeypatch: pytest.MonkeyPatch, reference: Link, status: str, searches: int
+) -> None:
+    world = s2_world(monkeypatch, stored=Link.EXP, reference=reference)
+    monkeypatch.setattr(p4m, "past_job_cut", lambda: False)
+    sink = ListSink()
+    p4m.run_s2_job(world.job, sink)
+    done = sink.only("done")
+    assert done["status"] == status
+    assert len(world.fires) == searches
+    assert done["cpu_cut"] is False
+
+
+@pytest.mark.parametrize(
+    ("reference", "status", "answers"),
+    [
+        (Link.EXP, "same", [True]),
+        (Link.SOFTPLUS, "differs", [True, True]),
+        (Link.SOFTPLUS, "differs", [False, True]),
+    ],
+    ids=["training-same", "training-differs", "full-log"],
+)
+def test_a_cut_in_any_of_s2s_searches_reaches_the_record(
+    monkeypatch: pytest.MonkeyPatch, reference: Link, status: str, answers: list[bool]
+) -> None:
+    """PR 2.10: a clock-based stop can change the bytes, and "the record names
+    which", so section 6's flag has to reach ``_clock_stops``."""
+    world = s2_world(monkeypatch, stored=Link.EXP, reference=reference)
+    given = iter(answers)
+    monkeypatch.setattr(p4m, "past_job_cut", lambda: next(given))
+    sink = ListSink()
+    p4m.run_s2_job(world.job, sink)
+    done = sink.only("done")
+    assert done["status"] == status
+    assert done["cpu_cut"] is True
+    records = [{"type": "done", **done}]
+    assert p4m._clock_stops(records, [], "complete")["cpu_cut"] == 1
+
+
+def test_a_cut_stays_on_record_once_it_fires(monkeypatch: pytest.MonkeyPatch) -> None:
+    answers = iter([True, False])
+    monkeypatch.setattr(p4m, "past_job_cut", lambda: next(answers))
+    cut = p4m.JobCut()
+    assert cut.fired is False
+    assert cut() is True
+    assert cut() is True
+    assert cut.fired is True
+
+
+def test_a_stored_link_that_is_not_reproduced_ran_no_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world = s2_world(monkeypatch, stored=Link.EXP, reference=Link.EXP)
+    wrong = replace(world.job, stored_link="no-such-link")
+    sink = ListSink()
+    p4m.run_s2_job(wrong, sink)
+    done = sink.only("done")
+    assert done["status"] == "link_mismatch"
+    assert done["cpu_cut"] is False
+    assert world.fires == []
+
+
+@pytest.mark.slow
+def test_a_real_s2_job_past_the_cut_says_so(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Nothing stubbed but the clock, on a coordinate grid: an exhaustive one is
+    settled by R0 and searches nothing, so it has nothing to cut."""
+    truth, env, *_ = hawkes_setup()
+    text = text_of(MIDDLE)
+    assert not p4m.is_exhaustive(_Slots.of(parse(text, env.channels)).size)
+    monkeypatch.setattr(p4m, "past_job_cut", lambda: True)
+    first = ListSink()
+    p4m.S2Job(truth, 1, text, "no-such-link", env, TEST_ROOT).run(first)
+    link = first.only("done")["r0_link"]
+    sink = ListSink()
+    p4m.S2Job(truth, 1, text, link, env, TEST_ROOT).run(sink)
+    done = sink.only("done")
+    assert done["cpu_cut"] is True
+    records = [{"type": "done", **done}]
+    assert p4m._clock_stops(records, [], "complete")["cpu_cut"] == 1
+
+
+# --------------------------------------------------------------------------
+# Red team 2026-11-07: D2, a torn journal under --finalise (sections 2.8, 5)
+# --------------------------------------------------------------------------
+
+#: A write cut off by a power loss or a full disk: a record with no newline.
+TORN: Final = b'{"type":"done","job":"abc"'
+
+
+def tear(paths: Any) -> None:
+    with paths.journal.open("ab") as handle:
+        handle.write(TORN)
+
+
+def test_end_state_on_a_torn_tail_reads_the_whole_records_and_no_fragment(
+    paths: Any,
+) -> None:
+    """``read_records`` drops a last line with no newline, so ``end_state`` neither
+    fails nor sees the fragment: the failure comes after the append."""
+    table = tabled()
+    plant(paths, clean(table), end="terminated")
+    whole = p4m.read_records(paths.journal)
+    tear(paths)
+    assert p4m.read_records(paths.journal) == whole
+    assert p4m.end_state(whole, paths) == "terminated"
+
+
+@pytest.mark.parametrize("end", ["terminated", None])
+def test_end_on_a_torn_journal_reaches_the_label_through_the_real_finalise(
+    paths: Any, end: str | None
+) -> None:
+    """Section 2.8: ``--end`` is how a stuck unit is abandoned, and section 5 has
+    ``INCOMPLETE`` follow it. A merged line ends in a newline, so nothing would
+    ever treat it as torn, and no label would be possible."""
+    table = tabled()
+    plant(paths, clean(table), end=end)
+    whole = p4m.read_records(paths.journal)
+    tear(paths)
+    paths.end_note.write_text("control room: power loss, abandoned\n")
+    d = finalise(paths, inputs_of(table), end_flag=True)
+    assert d["end"] == p4m.AUTHORISED_END
+    assert d["end_note"] == "control room: power loss, abandoned"
+    assert d["label"] == "CONTRASTS_SURVIVE_FOUND_MISSES"
+    assert paths.reads.exists()
+    assert TORN not in paths.journal.read_bytes()
+    after = p4m.read_records(paths.journal)
+    assert after == [*whole, {"type": "run_end", "reason": p4m.AUTHORISED_END}]
+
+
+def test_a_refused_end_leaves_a_torn_journal_as_it_found_it(paths: Any) -> None:
+    """No note, no choice: nothing is appended, so nothing is repaired."""
+    table = tabled()
+    plant(paths, clean(table), end="terminated")
+    tear(paths)
+    before = paths.journal.read_bytes()
+    with pytest.raises(p4m.ResumeRefused, match="note"):
+        finalise(paths, inputs_of(table), end_flag=True)
+    with pytest.raises(p4m.ResumeRefused, match="--end"):
+        finalise(paths, inputs_of(table))
+    assert paths.journal.read_bytes() == before
+
+
+def test_a_fault_at_the_terminal_step_goes_on_a_whole_line_after_a_torn_tail(
+    paths: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A kill with STOP present reaches the terminal step with no ``--end``, so
+    ``terminal_fault`` is that path's append: the reason must stay readable."""
+    table = tabled()
+    plant(paths, clean(table), end=None)
+    tear(paths)
+    paths.stop.write_text("owner: stop\n")
+
+    def fails(*args: Any) -> Any:
+        raise ValueError("a read function failed")
+
+    monkeypatch.setattr(p4m, "compute_reads", fails)
+    d = finalise(paths, inputs_of(table))
+    assert d["label"] == "BYTE_FAIL"
+    last = p4m.read_records(paths.journal)[-1]
+    assert last["type"] == "terminal_fault"
+    assert "a read function failed" in last["reason"]
+
+
+# --------------------------------------------------------------------------
+# Red team 2026-11-07: D1, the rehearsal's truths and seeds (section 2.10)
+# --------------------------------------------------------------------------
+
+STAND_IN_DEV: Final = tuple(f"dev-{i:03d}" for i in range(20))
+#: Section 2.10's rehearsal truths, as a stand-in split of 20 ids gives them.
+FIRST_EIGHT: Final = STAND_IN_DEV[:8]
+
+
+def plan_with(r: Rehearsal, **spec: Any) -> Any:
+    r.plan.write_text(json.dumps(spec))
+    return p4m.rehearsal_records(r.plan, [dev_record(x) for x in STAND_IN_DEV])
+
+
+def test_the_first_eight_by_sorted_id_on_two_seeds_is_the_rehearsal(
+    rehearsal: Rehearsal,
+) -> None:
+    chosen, spec = plan_with(rehearsal, truths=list(FIRST_EIGHT), seeds=[1, 2])
+    assert [r.id for r in chosen] == list(FIRST_EIGHT)
+    assert spec["seeds"] == [1, 2]
+
+
+@pytest.mark.parametrize(
+    "truths",
+    [
+        list(STAND_IN_DEV[13:20]),  # the reviewer's hand-picked seven
+        list(FIRST_EIGHT[:7]),
+        list(STAND_IN_DEV[:9]),
+        list(reversed(FIRST_EIGHT)),
+        [*FIRST_EIGHT[:7], "dev-008"],
+    ],
+    ids=["hand-picked", "seven", "nine", "reversed", "one-swapped"],
+)
+def test_any_truths_but_the_first_eight_are_refused(
+    rehearsal: Rehearsal, truths: list[str]
+) -> None:
+    with pytest.raises(p4m.GuardFailure, match="first eight"):
+        plan_with(rehearsal, truths=truths, seeds=[1, 2])
+
+
+def test_the_first_eight_do_not_depend_on_the_order_of_the_records(
+    rehearsal: Rehearsal,
+) -> None:
+    rehearsal.plan.write_text(
+        json.dumps({"truths": list(FIRST_EIGHT), "seeds": [1, 2]})
+    )
+    records = [dev_record(x) for x in reversed(STAND_IN_DEV)]
+    chosen, _ = p4m.rehearsal_records(rehearsal.plan, records)
+    assert [r.id for r in chosen] == list(FIRST_EIGHT)
+
+
+def test_a_plan_with_no_seeds_is_refused_and_gets_no_default(
+    rehearsal: Rehearsal,
+) -> None:
+    """The reviewer's plan: truths alone took three seeds at full budget."""
+    with pytest.raises(p4m.GuardFailure, match="two seeds"):
+        plan_with(rehearsal, truths=list(FIRST_EIGHT))
+    with pytest.raises(KeyError):
+        p4m.rehearsal_configs({"truths": list(FIRST_EIGHT)})
+
+
+@pytest.mark.parametrize(
+    "seeds",
+    [[1], [1, 2, 3], [], [1, 1], "12", 2, None, [1, "2"], [True, 2], [1.0, 2.0]],
+)
+def test_anything_but_two_distinct_seeds_is_refused(
+    rehearsal: Rehearsal, seeds: Any
+) -> None:
+    with pytest.raises(p4m.GuardFailure, match="two seeds"):
+        plan_with(rehearsal, truths=list(FIRST_EIGHT), seeds=seeds)
 
 
 # --------------------------------------------------------------------------
@@ -4341,7 +5043,7 @@ def rehearsal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Rehearsal:
     split = toy_split(tmp_path)
     monkeypatch.setattr(p4m, "SPLIT_SHA256", p4m.split_digest(split, p4m.DEV_RELATIVE))
     plan = tmp_path / "plan.json"
-    plan.write_text(json.dumps({"truths": ["dev-001", "dev-002"], "seeds": [1, 2]}))
+    plan.write_text(json.dumps({"truths": list(FIRST_EIGHT), "seeds": [1, 2]}))
     return Rehearsal(repo, split, store, plan)
 
 
@@ -4412,13 +5114,13 @@ def test_a_rehearsal_refuses_the_test_split(rehearsal: Rehearsal) -> None:
 
 
 def plan_of(r: Rehearsal, records: Sequence[Any] | None = None) -> Any:
-    given = records or [dev_record("dev-001"), dev_record("dev-002")]
+    given = records or [dev_record(x) for x in FIRST_EIGHT]
     return p4m.rehearsal_records(r.plan, given)
 
 
 def test_the_plans_truths_are_records_of_the_split(rehearsal: Rehearsal) -> None:
     chosen, spec = plan_of(rehearsal)
-    assert [r.id for r in chosen] == ["dev-001", "dev-002"]
+    assert [r.id for r in chosen] == list(FIRST_EIGHT)
     assert spec["seeds"] == [1, 2]
 
 
@@ -4431,8 +5133,9 @@ def test_a_truth_that_is_no_record_of_the_split_is_refused(
 
 @pytest.mark.parametrize("split", ["test", "calibration"])
 def test_a_truth_of_another_split_is_refused(rehearsal: Rehearsal, split: str) -> None:
-    records = [dev_record("dev-001"), dev_record("dev-002", split)]
-    with pytest.raises(p4m.GuardFailure, match="split"):
+    records = [dev_record(x) for x in FIRST_EIGHT[:-1]]
+    records.append(dev_record(FIRST_EIGHT[-1], split))
+    with pytest.raises(p4m.GuardFailure, match="of split"):
         plan_of(rehearsal, records)
 
 
@@ -4494,7 +5197,7 @@ def setup_of(
 
         return called
 
-    records = [dev_record("dev-001"), dev_record("dev-015"), dev_record("dev-002")]
+    records = [dev_record(x) for x in (*FIRST_EIGHT, "dev-015")]
     truth = replace(entry("hawkes"), id="dev-015")
     monkeypatch.setattr(p4m.pilot, "load_split", lambda p: records)
     monkeypatch.setattr(p4m.pilot, "pointproc_environment", lambda x: environment())
@@ -4540,7 +5243,7 @@ def test_the_mode_changes_exactly_the_texts_list(
     drafts = rehearsal.repo / ".cache" / "drafts"
     assert setup.paths.root.is_relative_to(drafts)
     assert setup.paths.root != p4m.OUT_DIR
-    assert [t.id for t in setup.truths] == ["dev-001", "dev-002"]
+    assert [t.id for t in setup.truths] == list(FIRST_EIGHT)
     assert len(setup.plan) == 1
 
 
@@ -4561,7 +5264,8 @@ def test_the_output_moves_with_the_script_and_the_plan(
     """A fix means rehearsing again, and a repeat is not a fresh start over
     another run's records."""
     first = setup_of(rehearsal, monkeypatch).paths.root
-    rehearsal.plan.write_text(json.dumps({"truths": ["dev-001"], "fits": 9}))
+    spec = {"truths": list(FIRST_EIGHT), "seeds": [1, 2], "fits": 9}
+    rehearsal.plan.write_text(json.dumps(spec))
     second = setup_of(rehearsal, monkeypatch).paths.root
     assert first != second
 
@@ -5008,11 +5712,20 @@ def test_a_failed_simulation_is_counted_and_skipped(
 
 
 def test_a_rehearsal_on_a_toy_store_reads_only_at_its_terminal_step(
-    paths: Any, toy_run: Any, spy: Path
+    paths: Any, toy_run: Any, spy: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """``execute`` in the mode, end to end on a toy table."""
     table = tabled()
     plant(paths, clean(table), end=None)
+    real_step = p4m.terminal_step
+
+    def step(*args: Any, **kwargs: Any) -> Any:
+        """When: nothing has been read at the door, and the run is over."""
+        assert not spy.exists(), "a read before the terminal step"
+        assert p4m.journal_end(p4m.read_records(paths.journal)) == "complete"
+        return real_step(*args, **kwargs)
+
+    monkeypatch.setattr(p4m, "terminal_step", step)
     run = toy_run((stage(ToyJob("a")),), Args(), rehearsal=True)
     assert run == 2
     assert decision_of(paths)["label"].startswith("REHEARSAL ")

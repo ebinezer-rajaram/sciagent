@@ -2102,9 +2102,13 @@ def build_chain(
     freeze: str | None = None,
     in_t: Sequence[str] = (),
     pushed: bool = True,
+    early: bool = False,
+    side: bool = False,
 ) -> Chain:
     """base, F2, R2, a LOG line naming R2, S, T. ``log`` replaces S's LOG (``{r2}``
-    filled in), ``freeze`` the file's line, ``in_t`` adds paths to T's commit."""
+    filled in), ``freeze`` the file's line, ``in_t`` adds paths to T's commit.
+    ``early`` commits the script and test before F2 and ``side`` off the chain, each
+    as ``{early}`` and ``{side}`` in ``log``: both hold R2's bytes."""
     repo = root / "repo"
     repo.mkdir()
     git(repo, "init", "-q", "-b", "v2")
@@ -2114,6 +2118,11 @@ def build_chain(
     write(repo, p4m.FIT_GUARD_PATHS[0], "one changed line\n")
     write(repo, p4m.REDUCTIONS_PATH, "new\n")
     commit(repo, "the one-line diff")
+    before_f2 = ""
+    if early:
+        write(repo, p4m.SCRIPT_PATH, "script\n")
+        write(repo, p4m.TEST_PATH, "test\n")
+        before_f2 = commit(repo, "the same bytes before F2")
     write(repo, p4m.PREREG_PATH, "the rule\n")
     f2 = commit(repo, "F2")
     write(repo, p4m.SCRIPT_PATH, "script\n")
@@ -2121,7 +2130,15 @@ def build_chain(
     hashes = f"sha256: {sha_of('script\n')}\nsha256: {sha_of('test\n')}\n"
     write(repo, p4m.LOG_PATH, hashes)
     r2 = commit(repo, "R2")
-    text = f"{hashes}`R2` = {r2}\n" if log is None else log.format(r2=r2, f2=f2)
+    off_chain = ""
+    if side:
+        git(repo, "checkout", "-q", "-b", "side")
+        write(repo, "side.txt")
+        off_chain = commit(repo, "the same bytes off the chain")
+        git(repo, "checkout", "-q", "v2")
+    text = f"{hashes}`R2` = {r2}\n"
+    if log is not None:
+        text = log.format(r2=r2, f2=f2, early=before_f2, side=off_chain)
     write(repo, p4m.LOG_PATH, text)
     write(repo, p4m.TEST_SPLIT_HASH_PATH, f"{TOY_TEST_SPLIT_SHA}\n")
     s = commit(repo, "S")
@@ -5017,3 +5034,235 @@ def test_a_rehearsal_on_a_toy_store_reads_only_at_its_terminal_step(
     assert run == 2
     assert decision_of(paths)["label"].startswith("REHEARSAL ")
     assert "read_contrasts" in spy.read_text()
+
+
+# --------------------------------------------------------------------------
+# The mutant pass (2026-11-07): rules no test noticed being deleted or inverted
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("a", "b", "changed"),
+    [
+        # An interval that ends on zero does not exclude it.
+        (read_of(0.1, 0.0, 0.3), read_of(0.1, 0.05, 0.3), True),
+        (read_of(-0.1, -0.3, 0.0), read_of(-0.1, -0.3, -0.05), True),
+        (read_of(0.1, 0.0, 0.3), read_of(0.1, -0.05, 0.3), False),
+        # The reportable clause alone: the numbers do not differ.
+        (read_of(0.1, 0.01, 0.3), read_of(0.1, 0.01, 0.3, False), True),
+    ],
+)
+def test_a_read_changes_at_zero_and_on_reportable_alone(
+    a: Any, b: Any, changed: bool
+) -> None:
+    assert p4m.read_changed(a, b) is changed
+    assert p4m.read_changed(b, a) is changed
+
+
+def test_the_empty_substitution_is_read_on_the_rebuilt_table(
+    paths: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Section 2.7's check is on "the table rebuilt by the same code", so a rebuild
+    that moves a row is a fault even when the second read is honest."""
+    table = tabled()
+    plant(paths, clean(table))
+    real = p4m.corrected_table
+
+    def moved(t: Table, corrected: Any, underfit: Any) -> Any:
+        return real(t, {("t1", 1, AGC): -0.5, **corrected}, underfit)
+
+    monkeypatch.setattr(p4m, "corrected_table", moved)
+    d = finalise(paths, inputs_of(table))
+    assert d["label"] == "BYTE_FAIL"
+    assert d["byte_failures"] == ["empty_corrected"]
+    assert not paths.reads.exists()
+
+
+def test_a_near_tie_is_no_miss_and_is_not_substituted(tmp_path: Path) -> None:
+    """``_compare_row`` gives a near tie no corrected reading (section 2.3)."""
+    table = tabled()
+    key = ("t1", 1, AGC)
+    tie = {key: row_result(AGC, kind="near_tie", llm=True, gain=1e-8)}
+    out, d = run_terminal(tmp_path, "a", table, rows=tie)
+    assert d["label"] == "CONTRASTS_SURVIVE_FOUND_MISSES"
+    assert d["M_rows"] == 0
+    assert d["s3"]["near_ties"] == 1
+    got = reads_of(out)
+    assert got["stored"]["C1"] == got["fixed"]["C1"]
+
+
+def swapped_controls() -> dict[Key, Rec]:
+    """Planted-hint and B-rand change places, so control 2 fails on the corrected
+    table alone."""
+    rows: dict[Key, Rec] = {}
+    for t in TRUTHS:
+        for s in SEEDS:
+            rows |= miss((t, s, PLANTED), -0.75, stored=-0.5)
+            rows |= miss((t, s, B_RAND), -0.5, stored=-0.75)
+    return rows
+
+
+def test_a_read_reportable_on_one_table_is_changed_and_not_no_statement(
+    tmp_path: Path,
+) -> None:
+    """ "Not reportable, no statement" is for a read not reportable on both tables.
+    One that stopped being reportable is a change, and the line must say so."""
+    out, d = run_terminal(tmp_path, "a", tabled(), rows=swapped_controls())
+    assert all(not r["reportable"] for r in reads_of(out)["fixed"].values())
+    assert d["no_statement"] == []
+    assert {x["status"] for x in d["reads"]} == {"changed"}
+
+
+def test_a_report_with_no_label_exits_with_no_labels_code(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert p4m.report({"end": "bug"}) == p4m.NO_LABEL_EXIT
+    assert "no label" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("gone", ["B", "D"])
+def test_a_control_that_never_finished_is_not_caught(gone: str) -> None:
+    """A run can reach the terminal step short of group B or D (section 2.8), and
+    a control with no record has not passed (section 2.9)."""
+    records = json.loads(p4m.dumps_record(control_records()))
+    kept = [r for r in records if r["job"] != gone]
+    status = p4m.h1_status(kept)
+    assert status.a_caught == 6
+    assert status.b_caught is (gone != "B")
+    assert status.d_caught is (gone != "D")
+    assert status.stands is False
+
+
+def test_only_failed_units_and_only_voids_are_listed(paths: Any) -> None:
+    """Section 2.1: void and failed units are counted and listed."""
+    table = replace(
+        tabled(),
+        sessions=(session("t1", HAIKU, True), session("t2", HAIKU, False)),
+    )
+    census = planted_census(table)
+    classes = {
+        ("t1", 1, B_NP): "failed",
+        ("t2", 1, B_NP): "no_submission",
+    }
+    census = replace(
+        census,
+        rows=tuple(
+            replace(r, klass=classes.get((r.truth, r.seed, r.system), r.klass))
+            for r in census.rows
+        ),
+    )
+    plant(paths, clean(table))
+    d = finalise(paths, inputs_of(table, census=census))
+    assert d["failed_units"] == [["t1", 1, B_NP]]
+    assert d["void_units"] == [["t1", 1, HAIKU]]
+    assert d["classes"]["failed"] == 1
+
+
+def test_the_drivers_default_limit_is_three_cpu_hours_a_job(paths: Any) -> None:
+    """Section 8's 178 is 172 and two jobs at 3 hours. ``execute`` passes no limit,
+    so this default is that 3."""
+    assert p4m.Driver(paths, (), workers=2).cpu_limit_s == 3 * 3600
+
+
+def test_the_fixed_tables_floors_and_controls_are_read_on_the_fixed_table(
+    tmp_path: Path,
+) -> None:
+    """A row at ``-inf`` that a better fit lifts takes no floor on the fixed table,
+    and control 2 fails there alone."""
+    rows = world()
+    key = ("t3", 1, AGC)
+    rows[key] = replace(rows[key], per_event=-math.inf)
+    table = tabled(rows)
+    lifted = miss(key, -0.625, stored=-math.inf)
+    out, _ = run_terminal(tmp_path, "a", table, rows=lifted | swapped_controls())
+    got = reads_of(out)
+    assert got["floors"]["stored"]["C1"]["floored"] == 1
+    assert got["floors"]["fixed"]["C1"]["floored"] == 0
+    assert got["controls"]["stored"]["controls_pass"] is True
+    assert got["controls"]["fixed"]["controls_pass"] is False
+
+
+def test_the_hashes_are_read_from_ss_log_and_not_the_working_log(
+    tmp_path: Path,
+) -> None:
+    """``check_hashes`` itself, on a working LOG that would satisfy it.
+    ``test_the_working_log_does_not_count`` is refused earlier, by the dirty tree."""
+    other = build_chain(tmp_path, log="`R2` = {r2}\n")
+    hashes = f"sha256: {sha_of('script\n')}\nsha256: {sha_of('test\n')}\n"
+    write(other.repo, p4m.LOG_PATH, f"{hashes}`R2` = {other.r2}\n")
+    with pytest.raises(p4m.GuardFailure, match="S's LOG"):
+        p4m.check_hashes(other.repo, other.s, other.f2)
+
+
+def test_r2_must_come_after_f2(tmp_path: Path) -> None:
+    hashes = f"sha256: {sha_of('script\n')}\nsha256: {sha_of('test\n')}\n"
+    other = build_chain(tmp_path, log=hashes + "`R2` = {early}\n", early=True)
+    with pytest.raises(p4m.GuardFailure, match="between F2 and S"):
+        p4m.check_hashes(other.repo, other.s, other.f2)
+
+
+def test_r2_must_come_before_s(tmp_path: Path) -> None:
+    hashes = f"sha256: {sha_of('script\n')}\nsha256: {sha_of('test\n')}\n"
+    other = build_chain(tmp_path, log=hashes + "`R2` = {side}\n", side=True)
+    with pytest.raises(p4m.GuardFailure, match="between F2 and S"):
+        p4m.check_hashes(other.repo, other.s, other.f2)
+
+
+def test_the_launch_checks_both_splits_and_the_paths_before_reading_a_truth(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Section 2.10: the dev split against the constant, the test split against the
+    hash at ``S``, and neither is opened until both have passed."""
+    calls: list[tuple[Any, ...]] = []
+
+    def note(name: str, value: Any = None) -> Callable[..., Any]:
+        def called(*args: Any, **kwargs: Any) -> Any:
+            calls.append((name, *args, *sorted(kwargs.items())))
+            return value
+
+        return called
+
+    expected = "e" * 64
+    monkeypatch.setattr(p4m, "OUT_DIR", tmp_path / "out")
+    monkeypatch.setattr(p4m, "run_guards", lambda *a, **k: dict(IDENTITY))
+    monkeypatch.setattr(p4m, "check_paths", note("check_paths"))
+    monkeypatch.setattr(p4m, "check_split", note("check_split"))
+    monkeypatch.setattr(
+        p4m, "test_split_expected", note("test_split_expected", expected)
+    )
+    monkeypatch.setattr(p4m, "scripted_controls", lambda commit: PASS)
+    monkeypatch.setattr(
+        p4m, "p4_inputs", note("p4_inputs", ("env", ("plan",), ("truths",)))
+    )
+    monkeypatch.setattr(p4m, "group_b_inputs", note("group_b", ("truth", "env")))
+    monkeypatch.setattr(p4m, "group_b_job", lambda *a: "job")
+    dev, test, store = Path("/s"), Path("/t"), Path("/st")
+    p4m.frozen_setup(SimpleNamespace(split=dev, test_split=test, store=store))
+    assert calls == [
+        (
+            "check_paths",
+            ("out", tmp_path / "out"),
+            ("repo", p4m.pilot.ROOT),
+            ("split", dev),
+            ("store", store),
+            ("test_split", test),
+        ),
+        ("check_split", dev, p4m.SPLIT_SHA256, p4m.DEV_RELATIVE),
+        ("test_split_expected", p4m.pilot.ROOT, IDENTITY["S"]),
+        ("check_split", test, expected, p4m.TEST_RELATIVE),
+        ("p4_inputs", test),
+        ("group_b", dev),
+    ]
+
+
+def test_a_rehearsal_read_reportable_on_one_table_does_not_meet_the_bar(
+    tmp_path: Path,
+) -> None:
+    """Section 2.10's bar is a read reportable on both tables."""
+    table = tabled(nonzero_world())
+    out = p4m.OutPaths(tmp_path / "a")
+    plant(out, clean(table, rows=swapped_controls()))
+    d = finalise(out, rehearsal_inputs(table))
+    assert d["rehearsal"]["kept"] == len(TRUTHS)
+    assert d["rehearsal"]["reportable_on_both"] == 0
+    assert d["rehearsal"]["shown"] is False

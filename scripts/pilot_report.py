@@ -731,6 +731,38 @@ def interim_controls(tab: Any, resamples: int) -> list[str]:
     return [*out, ""]
 
 
+def named_minus_anon_lines(
+    tab: Any, naming_null: bool, root: int, resamples: int
+) -> list[str]:
+    """SPEC §6.2's labelled secondary, one line per tier and model. ``root`` is the
+    reads' root, and ``naming_null`` control 4's pass state."""
+    from sciagent.campaign.contrasts import ScriptedControls
+    from sciagent.campaign.secondaries import read_named_minus_anon
+
+    reads = read_named_minus_anon(
+        tab, ScriptedControls(naming_null=naming_null), root, resamples
+    )
+    return [
+        "### Named minus anon, per model",
+        "",
+        "Labelled secondary, exploratory (SPEC §6.2): named minus anonymised on the "
+        "held-out gap, paired by truth, 95% bootstrap CI. It mixes names and time, so "
+        "it bounds reliance on recall and does not measure it. It is not covered by "
+        "the miss check, and its gates are C2's. A floor comes from the contrast rows "
+        "and the read's own two systems.",
+        "",
+        *table(
+            ["read", "truths", "mean", "low", "high"],
+            [
+                [name, str(r.n), fmt(r.point), fmt(r.low), fmt(r.high)]
+                if r.reportable
+                else [name, str(r.n), "not reportable", "-", "-"]
+                for name, r in reads.items()
+            ],
+        ),
+    ]
+
+
 def cost_table(root: Path, systems: Sequence[str], tab: Any) -> list[str]:
     """The LLM arms' cost and behaviour table: a row per arm with sessions.
 
@@ -860,8 +892,20 @@ def main() -> None:
         default="stored",
         help="find LLM sessions by enumeration (rescore) or at the current address",
     )
+    parser.add_argument(
+        "--read-root",
+        type=int,
+        help="the contrasts' frozen root: print named minus anon, which draws from it",
+    )
+    parser.add_argument(
+        "--naming-commit",
+        default="",
+        help="the commit control 4's record must name, needed with --read-root",
+    )
     reconfigure_stdout()
     args = parser.parse_args()
+    if args.read_root is not None and not args.naming_commit:
+        parser.error("--read-root needs --naming-commit")
     if not (args.root / "ledger.sqlite").is_file():
         # A reader: the store is opened read-only below and never created.
         print(f"{args.root}: not a campaign store", file=sys.stderr)
@@ -1270,6 +1314,15 @@ def main() -> None:
     ]
     L += ["### The softplus note", ""]
     L += softplus_note_table(args.root, llm_systems, tab)
+    if args.read_root is not None:
+        from naming_null_record import read_naming_null
+
+        L += named_minus_anon_lines(
+            tab,
+            read_naming_null(args.naming_commit),
+            args.read_root,
+            args.resamples,
+        )
     flagged_runs = [x for x in tab.sessions if x.void.void or x.void.stored_void]
     L += [
         "### Void runs",

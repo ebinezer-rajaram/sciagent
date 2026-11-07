@@ -76,6 +76,13 @@ P4_SINGLE_SEED: Final = (1,)
 P4_SWEEP_TRUTHS: Final = 20
 #: The swept (experiments, fits): E at F = 40, then F at E = 8 (decision 15).
 P4_SWEEP_BUDGETS: Final = ((0, 40), (2, 40), (16, 40), (8, 20), (8, 80))
+#: The name of each config of :func:`p4_plan`, in its order: what the launcher takes.
+P4_BLOCKS: Final = (
+    "sonnet",
+    "haiku",
+    "opus",
+    *(f"sweep-e{e}-f{fits}" for e, fits in P4_SWEEP_BUDGETS),
+)
 
 
 def full_budget_calls(experiments: int, fits: int) -> int:
@@ -152,3 +159,10 @@ def p4_plan(truths: Sequence[TruthEntry]) -> tuple[CampaignConfig, ...]:
         for e, fits in P4_SWEEP_BUDGETS
     )
     return (sonnet, *others, *sweep)
+
+
+def p4_block(name: str, truths: Sequence[TruthEntry]) -> CampaignConfig:
+    """The config of :func:`p4_plan` called ``name`` in :data:`P4_BLOCKS`."""
+    if name not in P4_BLOCKS:
+        raise CampaignError(f"no P4 block is named {name!r}")
+    return p4_plan(truths)[P4_BLOCKS.index(name)]

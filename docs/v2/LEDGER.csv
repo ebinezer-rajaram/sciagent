@@ -43,3 +43,4 @@ date,item,provider,hours,usd,stage
 2026-11-06,p4-rehearsal slow tier (sci-slow3-s35; dd7ca91; -n 1; 343 passed; exit 0 at 11:52:01Z; 2 h 59 min 25 s CPU by the kernel count; ceiling 5 CPU hours and $0),dm-devbox,2.99,0,p3
 2026-11-06,v2 fast tiers after the merges (sci-fast-s36 to sci-fast5-s36; 7bc9963 to 48db3b4; exit 0 each; 22 min 35 s CPU by the kernel count; ceiling 1 CPU hour each and $0),dm-devbox,0.38,0,p3
 2026-11-06,Helpers' tests and reviews in session 36 (3 engineers and 3 red teams; targeted tests and real dev units on seeds 1 to 3 only; not metered; an estimate from the helpers' stated ceilings and reports),dm-devbox,3.0,0,p3
+2026-11-06,v2 slow tier (sci-slow-s36; 4c5a21c; -n 1; 362 passed; exit 0 at 18:19:31Z; 2 h 3 min 47 s wall by pytest and CPU not metered; ceiling 6 CPU hours and $0),dm-devbox,2.06,0,p3

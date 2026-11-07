@@ -2862,3 +2862,23 @@ Corrects the hand-over above: its third decision (T2 and fit/5) is no longer the
 **Recommendation.** A failed unit with no reading ranks against the control passing: `-inf` for the system under test (planted-hint, B-sym@10F; as now) and `+inf` for the comparator (B-rand). A scored `-inf` stays as scored. Test first, before `S`. The words for R3 in `SPEC-TEXT-P4-C.md` change to match.
 
 **Decision needed (control room).** Accept that rule, or another. Until then, `control_rows` is left as it is. The other blocking findings (2: the report's gate takes typed root, resamples and naming commit; 3: R2's scope line on the wrong table or truths; 4: Haiku and Opus reads) are engineering and do not change a claim. Two engineers are on them now, on disjoint files.
+
+## 2026-11-07: Lane session 38, stop point: under today's at-stop rule, control 5 will almost surely fail, so P4b's reads would all be exploratory (decision needed)
+
+**Answer in one line.** As built today, control 5 (truthFSD against random on the telling rate) agrees with telling's d\* on about as many dev truths as random would, so it cannot pass, and by R5 every P4b read (C5, and C3's AG-S-boed half) would then be exploratory.
+
+**Evidence.**
+- At decision 0 on dev, truthFSD under rule (a) picks telling's d\* (rule (b)) on 3 of 14 truths, and on at most 6 of 14 under any tie option (`.cache/drafts/fsd-ties/draft.md:82,113`; reproduced by the session-16 red team, `redteam-s16.md:4`). Random's chance per unit is 0.207 (8 picks over 35 diagnostics, `.cache/drafts/s38/c5_power.py`). The comparator and the truth do not change between decisions.
+- K0 is today's rule on A1's stored streams, now confirmed by a run with no draw: (iii) p = 1 (`.cache/drafts/s38/k0/`).
+- P4b's first text: red team **not ready**, 9 blocking (`docs/v2/redteam/2026-11-07_p4b-policies.md`). Its finding 3 says B (option 2) cannot come back through the control room: SPEC §4.2 sends it to the owner, after criteria §8's He² resolution and a new control on streams with no test data. Its finding 4: today's FSD (rule Fa) failed control B's B1 (0/120), and criteria §8 reads that as "FSD needs its own exclusion, whatever the telling rule".
+- Also found: the EIG tie rule adopted on 2026-10-28 was never built (finding 1, checked: `policies.py` last changed 2026-10-09, ties still go to menu order). An engineer is on it now.
+
+**Caveats.** The 3 of 14 is decision 0 at bff61ec, with B-lib's pick as the comparator and two truth-side replicates on the stop figures. The test split may differ from dev, but nothing suggests it would differ enough.
+
+**Recommendation.**
+1. Freeze P4b's contrasts now, as SPEC §6.1 and B4 ask, with today's telling and truthFSD rule (K0), and say in the text that control 5 is expected to fail, so P4b is planned as exploratory, with the reads and labels still fixed in advance.
+2. FSD takes its own exclusion (Fx: skip a design where either of its sides truncates or stops in its 16 replicates), as control B's frozen reading says. It changes neither telling nor truthFSD, so nothing A1 tested. Code test first, before P4b's freeze commit. This is the control room's "K0 with Fx" candidate.
+3. No dev measurement first: the existing dev evidence already answers it, and the run would cost about 38 CPU hours and delay P4's miss check.
+4. Option 2 stays parked. Reopening it, so that Q6 could ever be read confirmatorily, is the owner's own call under SPEC §4.2, and it is a separate track (He² resolution, then a new control on fresh streams).
+
+**Decision needed (owner, through the control room).** Accept P4b as planned-exploratory, with K0 for telling and truthFSD and Fx for FSD, or reopen option 2 as a separate track (P4b's contrasts would still freeze now). Until then, P4b's second text is written to recommendation 1 to 3, and nothing freezes.

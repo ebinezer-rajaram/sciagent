@@ -254,3 +254,10 @@ entry, and marks it handled with the date and what was done. Newest last.
   under s3://delaymargin-results-482913/sciagent/. Decided by the control room under the owner's
   standing delegation (owner: do not leave work waiting on idle-able compute).
   Answered 2026-11-07 (lane session 37), not done: priced from the LOG's recorded figure, and two of the conditions fail, so nothing launched (LOG 2026-11-07). Stays open for the control room's reply.
+
+## 2026-11-07, control room (AWS shards)
+
+- [ ] **Stay on dm-devbox for stage 1, as recommended.** No AWS shards: the exact machine class is not
+  shown launchable, and the frozen text is dm-devbox only. Revisit only for stage 2, and only if stage 1
+  has a winner and its wall time would exceed about three days; any such amendment is frozen before
+  any stage 2 unit runs. The denied price query stays denied; do not retry it.

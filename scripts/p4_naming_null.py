@@ -55,6 +55,7 @@ from pilot import (
 
 if TYPE_CHECKING:
     from sciagent.campaign.execute import UnitResult
+    from sciagent.campaign.llm import SessionOutcome
     from sciagent.campaign.plan import (
         CampaignConfig,
         CampaignEnvironment,
@@ -145,6 +146,24 @@ def planted_config() -> CampaignConfig:
     )
 
 
+def check_session(done: SessionOutcome) -> None:
+    """Refuse a session control 4 cannot read: retryable, void (or with no void
+    reading), or ended other than by a submit. A refusal stops the run before
+    any record is written, so the answer stays False (red team 2026-11-07,
+    finding 3)."""
+    from sciagent.scoring.errors import ScoringError
+
+    if done.retryable:
+        raise ScoringError(f"{done.unit}: no session to read: {done.detail}")
+    if done.reading.get("void") != 0.0:
+        raise ScoringError(f"{done.unit}: the session is void: {done.detail}")
+    if done.detail.get("outcome") != "submitted":
+        raise ScoringError(
+            f"{done.unit}: the session ended {done.detail.get('outcome')!r}, "
+            "not by the script's submit"
+        )
+
+
 def run_condition(
     arm: LLMArm,
     truth: TruthEntry,
@@ -160,15 +179,13 @@ def run_condition(
     from sciagent.harness.scripted import ScriptedDriver
     from sciagent.investigation.view import make_view
     from sciagent.scoring.controls_p4 import planted_hint_script
-    from sciagent.scoring.errors import ScoringError
 
     view = make_view(arm.condition, truth.spec.channels, ANON_CHANNELS)
     script = planted_hint_script(truth.structure, view)
     system = arm.system(config.llm_letter)
     unit = Unit(truth.id, NAMING_SEED, system)
     done = run_session(unit, truth, env, config, out_dir, driver=ScriptedDriver(script))
-    if done.retryable:
-        raise ScoringError(f"{unit}: no session to read: {done.detail}")
+    check_session(done)
     record = SessionRecord.load(out_dir / str(done.detail["record"]))
     job = ScoreJob(
         truth, NAMING_SEED, system, done.submission, done.fitted, env, config

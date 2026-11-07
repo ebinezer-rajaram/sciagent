@@ -594,6 +594,7 @@ def _c5_cell(hit: bool, computed: bool = True) -> dict[str, Any]:
 
 def _c5_table(
     hits: dict[str, frozenset[str]] = _C5_HITS,
+    /,
     *,
     failed: frozenset[tuple[str, str]] = frozenset(),
     removed: frozenset[tuple[str, str]] = frozenset(),

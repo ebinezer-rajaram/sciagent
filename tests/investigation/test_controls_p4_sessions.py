@@ -47,6 +47,7 @@ from sciagent.scoring.controls_p4 import (
     behaviour_control,
     behaviour_script,
     naming_null,
+    planted_call_shape,
     planted_hint_script,
     session_facts,
 )
@@ -224,6 +225,92 @@ def test_the_planted_script_proposes_the_hint_first() -> None:
     )
     # In anon, no native channel name reaches the agent's text.
     assert "size" not in repr(calls)
+
+
+# --------------------------------------------------------------------------
+# Control 4 and the crash rule (red team 2026-11-07, finding 3)
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("condition", NAMING_CONDITIONS)
+def test_the_planted_shape_is_the_script_s_own(condition: Condition) -> None:
+    """Read from the script's definition, and the same for any truth and view:
+    2 beliefs, the fit budget's fits, 1 experiment and 1 submit."""
+    shape = planted_call_shape()
+    for truth in sorted(v2.TRUTHS):
+        view = lab("AG-c", condition, truth=truth).view
+        script = planted_hint_script(v2.TRUTHS[truth].structure, view)
+        assert shape == tuple(name for step in script for name, _ in step.calls)
+    assert sorted(shape) == sorted(
+        ("belief",) * 2 + ("fit",) * PLANTED_FITS + ("run_experiment", "submit")
+    )
+
+
+def _rebuilt(record: SessionRecord, call: int, edit: str) -> SessionRecord:
+    """``record`` with tool call ``call`` errored (as the layer records a
+    refusal: no record, nothing charged) or removed; other entries kept."""
+    out = SessionRecord()
+    for e in record.entries:
+        body = e.body
+        if e.kind == "tool_call" and body["call"] == call:
+            if edit == "removed":
+                continue
+            body = {**body, "is_error": True, "record": None, "charged": None}
+        out.append(e.kind, body)
+    return out
+
+
+def _calls_of(record: SessionRecord) -> list[int]:
+    return sorted(int(e.body["call"]) for e in record.of_kind("tool_call"))
+
+
+def test_the_planted_records_have_the_full_shape(
+    planted: dict[str, SessionRecord],
+) -> None:
+    shape = planted_call_shape()
+    for record in planted.values():
+        bodies = sorted(
+            (e.body for e in record.of_kind("tool_call")), key=lambda b: b["call"]
+        )
+        assert tuple(b["name"] for b in bodies) == shape
+        assert not any(b["is_error"] for b in bodies)
+
+
+@pytest.mark.parametrize("edit", ["errored", "removed"])
+def test_no_call_errored_or_lost_alike_in_every_condition_passes(
+    edit: str, planted: dict[str, SessionRecord]
+) -> None:
+    """The red team's case: an experiment refused in all three conditions
+    left two fits to compare, and a latent difference on the experiment path
+    passed. Every call, errored or removed in every condition alike, fails."""
+    assert naming_null(planted, _equal_gaps()).passed
+    for call in _calls_of(planted["named"]):
+        records = {c: _rebuilt(planted[c], call, edit) for c in NAMING_CONDITIONS}
+        v = naming_null(records, _equal_gaps())
+        assert not v.passed, (call, edit)
+        assert any("call" in m for m in v.mismatches), v.mismatches
+
+
+def test_an_errored_experiment_fails_even_with_a_latent_difference_hidden(
+    planted: dict[str, SessionRecord],
+) -> None:
+    """``run_experiment`` refused everywhere: its two fits on ``e0`` error too."""
+    names = {
+        int(e.body["call"]): e.body["name"]
+        for e in planted["named"].of_kind("tool_call")
+    }
+    (experiment,) = (k for k, n in names.items() if n == "run_experiment")
+    after = [k for k, n in names.items() if n == "fit" and k > experiment]
+    records = {}
+    for c in NAMING_CONDITIONS:
+        record = _rebuilt(planted[c], experiment, "errored")
+        for k in after:
+            record = _rebuilt(record, k, "errored")
+        records[c] = record
+    v = naming_null(records, _equal_gaps())
+    assert not v.passed
+    for c in NAMING_CONDITIONS:
+        assert any(m.startswith(f"{c}: call") for m in v.mismatches), v.mismatches
 
 
 # --------------------------------------------------------------------------

@@ -26,7 +26,8 @@ import numpy as np
 import pytest
 
 from sciagent.campaign.execute import UnitResult
-from sciagent.campaign.plan import CampaignError
+from sciagent.campaign.llm import SessionOutcome
+from sciagent.campaign.plan import CampaignError, Unit
 from sciagent.harness.record import SessionRecord
 from sciagent.scenarios.records import TruthRecord, read_split
 from sciagent.scoring.controls_p4 import (
@@ -533,6 +534,70 @@ def test_a_failed_verdict_keeps_its_reasons_and_survives_nan(
     path = tmp_path / "r.json"
     record_module.write_record(path, body)
     assert json.loads(path.read_text(encoding="utf-8"))["passed"] is False
+
+
+# --------------------------------------------------------------------------
+# A session control 4 cannot read is refused (red team 2026-11-07, finding 3)
+# --------------------------------------------------------------------------
+
+
+def _outcome(
+    *,
+    retryable: bool = False,
+    void: float | None = 0.0,
+    outcome: str | None = "submitted",
+) -> SessionOutcome:
+    reading = {} if void is None else {"status": 1.0, "void": void}
+    detail: dict[str, Any] = {"record": "investigation-x.json"}
+    if outcome is not None:
+        detail["outcome"] = outcome
+    unit = Unit("dev-000", 1, "AG-c-S/named")
+    return SessionOutcome(unit, retryable, reading, detail, "s", (), 0.0, {})
+
+
+def test_a_submitted_unvoided_session_is_read(runner: ModuleType) -> None:
+    runner.check_session(_outcome())
+
+
+@pytest.mark.parametrize(
+    "done",
+    [
+        pytest.param(_outcome(retryable=True), id="retryable"),
+        pytest.param(_outcome(void=1.0), id="void"),
+        pytest.param(_outcome(void=None), id="no-void-reading"),
+        pytest.param(_outcome(outcome="aborted", void=1.0), id="aborted"),
+        pytest.param(_outcome(outcome="max_turns"), id="max-turns"),
+        pytest.param(_outcome(outcome="wall_time"), id="wall-time"),
+        pytest.param(_outcome(outcome="ended_without_submit"), id="no-submit"),
+        pytest.param(_outcome(outcome=None), id="no-outcome"),
+    ],
+)
+def test_a_session_that_is_void_or_did_not_submit_is_refused(
+    runner: ModuleType, done: SessionOutcome
+) -> None:
+    with pytest.raises(ScoringError):
+        runner.check_session(done)
+
+
+def test_run_condition_refuses_a_void_session_before_reading_it(
+    runner: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No record is loaded and no score cell is computed: the run stops, so no
+    control 4 record is written and the answer stays False."""
+    import sciagent.campaign.llm as llm
+
+    records = _records()
+    (truth,) = runner.truth_entries(records[:1])
+    config = runner.planted_config()
+    monkeypatch.setattr(llm, "run_session", lambda *a, **k: _outcome(void=1.0))
+    with pytest.raises(ScoringError, match="void"):
+        runner.run_condition(
+            config.llm_arms[0],
+            truth,
+            runner.pointproc_environment(records),
+            config,
+            tmp_path,
+        )
 
 
 # --------------------------------------------------------------------------

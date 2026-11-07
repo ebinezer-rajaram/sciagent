@@ -218,9 +218,7 @@ def test_a_plan_that_does_not_hold_the_reads_is_refused(
     planned: list[tuple[str, int]],
 ) -> None:
     with pytest.raises(ScoringError):
-        policy_separation(
-            _units(_PASSING_T), _units(_PASSING_R), planned=planned
-        )
+        policy_separation(_units(_PASSING_T), _units(_PASSING_R), planned=planned)
 
 
 def test_no_unit_read_at_all_counts_every_planned_unit_random_only() -> None:

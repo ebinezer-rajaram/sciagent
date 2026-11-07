@@ -16,8 +16,10 @@ conversion is bit-exact and the framework's native numbers must not move:
 :func:`naming_null` passes only when the canonical submission, every fit's
 ``(structure, data, log-likelihood)`` and the submission's held-out gap are
 *exactly* equal (float equality, no tolerance) between each condition and
-``named``, and that gap is finite. The gaps are the score cells' readings, which
-no record holds, so the caller passes them. The script proposes the
+``named``, that gap is finite, and every condition made the script's every
+call (:func:`planted_call_shape`) with none errored, so the comparison covers
+belief, fit, experiment and submit (SPEC §6.4). The gaps are the score cells'
+readings, which no record holds, so the caller passes them. The script proposes the
 truth's :func:`~sciagent.systems.v2.search.hint` first, as SPEC §6.4's
 planted-hint agent does, fits it and the truth on the observational log, runs
 one unintervened experiment (so a design crosses the view's time conversion),
@@ -197,6 +199,17 @@ def planted_hint_script(
     )
 
 
+def planted_call_shape() -> tuple[str, ...]:
+    """The planted script's tool calls by name, in order, from its definition.
+
+    The steps do not depend on the truth or the view (only their arguments
+    do), so a stand-in of each gives them: the null structure in the named
+    view of no channels.
+    """
+    stand_in = planted_hint_script(Structure(()), AgentView("named", (), None))
+    return tuple(name for step in stand_in for name, _ in step.calls)
+
+
 @dataclass(frozen=True)
 class FitFact:
     """One charged fit, as the framework recorded it (native units)."""
@@ -258,7 +271,13 @@ def naming_null(
     records: Mapping[str, SessionRecord], gaps: Mapping[str, float]
 ) -> NamingNullVerdict:
     """Control 4 over one planted-hint session per naming condition, and the
-    held-out gap each session's submission scored."""
+    held-out gap each session's submission scored.
+
+    Each condition must show the script's whole call shape
+    (:func:`planted_call_shape`: belief, fit, experiment and submit) with no
+    errored call; otherwise a call refused alike in every condition would
+    leave less to compare and could pass (red team 2026-11-07, finding 3).
+    """
     for what, given in (("records", records), ("gaps", gaps)):
         if set(given) != set(NAMING_CONDITIONS):
             raise ScoringError(
@@ -269,6 +288,17 @@ def naming_null(
     by = dict(facts)
     ref = by[NAMING_REFERENCE]
     bad: list[str] = []
+    shape = planted_call_shape()
+    for c in NAMING_CONDITIONS:
+        calls = _calls(records[c])
+        names = tuple(str(b["name"]) for b in calls)
+        if names != shape:
+            bad.append(f"{c}: calls {list(names)} are not the script's {list(shape)}")
+        bad.extend(
+            f"{c}: call {b['call']} ({b['name']}) errored"
+            for b in calls
+            if b["is_error"]
+        )
     if ref.submission is None:
         bad.append(f"{NAMING_REFERENCE}: no submission")
     if not ref.fits:

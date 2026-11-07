@@ -130,6 +130,7 @@ from sciagent.campaign.store import ResultStore
 from sciagent.campaign.voids import VoidStatus, decoded, session_void
 from sciagent.core import reductions
 from sciagent.scoring import gonogo
+from sciagent.scoring.errors import ScoringError
 from sciagent.scoring.heldout import gap_closed
 from sciagent.scoring.stats import DEFAULT_RESAMPLES
 from sciagent.scoring.telling import observed
@@ -752,7 +753,27 @@ def control_rows(
     """:func:`score_rows`, plus each unit of controls 2 and 3 with no reading at
     ``-inf``, so a crash cannot pass a control that a ``-inf`` fails (control room
     ruling R3, INBOX 2026-11-07). A row with a reading and no gap is left out: its
-    ORACLE is what is missing, and control 1 answers for that."""
+    ORACLE is what is missing, and control 1 answers for that.
+
+    A NaN or ``+inf`` reading of a ranked system raises :class:`ScoringError`: no
+    rule ranks it, and leaving it out would let it pass a control that ``-inf``
+    fails (red team finding 6, 2026-11-07)."""
+    bad = sorted(
+        [
+            (r.truth, r.seed, r.system, r.per_event)
+            for r in rows
+            if r.system in RANKED_SYSTEMS
+            and not r.llm
+            and r.per_event is not None
+            and (math.isnan(r.per_event) or r.per_event == math.inf)
+        ],
+        key=lambda unit: unit[:3],
+    )
+    if bad:
+        raise ScoringError(
+            f"controls 2 and 3 cannot rank a NaN or +inf reading: {len(bad)} unit(s) "
+            f"(truth, seed, system, per_event) {bad}"
+        )
     return [
         *score_rows(rows, truths),
         *(

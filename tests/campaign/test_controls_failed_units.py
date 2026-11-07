@@ -33,6 +33,7 @@ from sciagent.campaign.analysis import (
     derive,
     verdict,
 )
+from sciagent.scoring.errors import ScoringError
 
 type Change = Callable[[Row], Row]
 
@@ -146,6 +147,36 @@ def test_the_contrasts_read_it_through_their_controls() -> None:
         failed(rows, (t, 1, B_SYM_10F), FIT_FAILURE)
     reads = read(tabled(rows))
     assert not any(r.reportable for r in reads.values())
+
+
+RANKED = ("planted-hint", "B-rand", "B-sym@10F")
+
+
+@pytest.mark.parametrize("value", [math.nan, math.inf], ids=["nan", "plus_inf"])
+@pytest.mark.parametrize("system", RANKED)
+def test_a_nan_or_plus_inf_reading_of_a_ranked_system_is_refused(
+    system: str, value: float
+) -> None:
+    """Red team finding 6 (2026-11-07): such a reading left the control, so NaN or
+    ``+inf`` on most of B-sym@10F's units passed control 3 where ``-inf`` fails it."""
+    table = changed(system, MOST, lambda r: replace(r, per_event=value))
+    with pytest.raises(ScoringError, match=system):
+        control_rows(table.rows, table.truths)
+    with pytest.raises(ScoringError, match=system):
+        read_verdict(table)
+
+
+@pytest.mark.parametrize("value", [math.nan, math.inf], ids=["nan", "plus_inf"])
+def test_a_nan_or_plus_inf_reading_outside_the_controls_is_not_refused_here(
+    value: float,
+) -> None:
+    table = changed("B-sym", NAMES[:1], lambda r: replace(r, per_event=value))
+    assert read_verdict(table).controls_pass
+
+
+def test_a_minus_inf_reading_of_a_ranked_system_is_still_read() -> None:
+    table = changed("B-sym@10F", MOST, at_minus_inf)
+    assert not read_verdict(table).controls_pass
 
 
 def test_one_failed_unit_of_many_does_not_fail_control_3() -> None:

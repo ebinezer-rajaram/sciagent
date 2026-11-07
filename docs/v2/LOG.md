@@ -2731,3 +2731,13 @@ Decided in INBOX 2026-11-07 ("P4b as planned-exploratory"), on the lane's stop p
 - an AG row records no policy `computed` (D1).
 
 The second text answers all fifteen findings. It freezes after round 2, with D1, D3, D7 and D8 in its code commit.
+
+## 2026-11-07: The red team's launcher and control-row findings fixed; R3 direction in code (session 38)
+
+From `docs/v2/redteam/2026-11-07_analysis-code.md`, in an engineer's branch I reviewed and merged (99056b1, 51a34ce, 2a378a1). Each was written test first.
+- **Finding 1, as ruled (INBOX "R3 direction"):** a crashed B-rand unit enters control 2 at `+inf`, and a truth with any such unit reads `+inf` for B-rand whatever its other seeds scored, so a mixed case never gives NaN. `gonogo._index` accepts `+inf` on B-rand rows only. A crashed planted-hint or B-sym@10F unit still ranks `-inf`, and a scored `-inf` is unchanged. The red team's case now fails control 2. One test's assertion moved by the ruling; it is renamed, not deleted.
+- **Finding 6:** a NaN or `+inf` reading of a ranked system raises.
+- **Finding 5:** the `--reuse-from` refusal reads the whole split, and refuses a store holding any cell whose truth id is outside the split. It goes by ids, not digests, so a dev store from an older dev regeneration can still be reused.
+- **Finding 9:** a split with any truth outside dev, or a P4 arm set (even on dev), needs `--p4-block`, and a block refuses `--no-llm`, `--no-baselines` and `--llm-limit`. Mutants M15 and M16 were applied by hand and killed.
+
+No address or version constant moves. Findings 2, 3, 7 (part), 8 and 10 to 13 are with a second engineer, on `pilot_report.py` and `secondaries.py`.

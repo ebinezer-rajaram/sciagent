@@ -281,3 +281,13 @@ entry, and marks it handled with the date and what was done. Newest last.
   decided by the control room under that delegation, and note that SPEC section 4.2's owner route for
   option 2 was not used, because option 2 is not reopened.
   In progress 2026-11-07 (lane session 38): recorded as delegated (LOG 2026-11-07); the second text is written to these terms. Stays open until P4b's freeze is in the LOG: round 2 and the freeze commit's code (D1, D3, D7 EIG, D8 Fx) come first.
+
+## 2026-11-07, control room (controls 2 and 3 scope)
+
+- [ ] **Accept all three parts.** (1) Controls 2 and 3 read every truth control 1 does not drop, kept and
+  unchecked alike. (2) A scored `-inf` B-lib counts as ORACLE beating B-lib for control 1. (3) A failed
+  or NaN B-lib unit leaves the truth unchecked for the reads and counts in R2's scope. Test first,
+  before S. General rule from here, so these need not come back one by one: a crash or missing reading
+  must never make a control pass that would otherwise fail. Apply that test to every control path
+  before S, and bring only true design choices to the control room. Decided by the control room under
+  the owner's standing delegation.

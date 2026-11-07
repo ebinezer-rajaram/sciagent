@@ -4591,6 +4591,21 @@ def rehearsal_configs(spec: Mapping[str, Json]) -> tuple[CampaignConfig, ...]:
     )
 
 
+def rehearsal_world(
+    plan: Path, split: Path
+) -> tuple[CampaignEnvironment, tuple[CampaignConfig, ...], tuple[TruthEntry, ...]]:
+    """The environment, the configs and the truths of a rehearsal plan on ``split``.
+    ``scripts/p4_rehearsal_store.py`` builds its store from this too, so what it
+    writes and what this script reads are one address."""
+    records = pilot.load_split(split)
+    chosen, spec = rehearsal_records(plan, records)
+    return (
+        pilot.pointproc_environment(records),
+        rehearsal_configs(spec),
+        pilot.truth_entries(tuple(chosen)),
+    )
+
+
 def rehearsal_setup(args: argparse.Namespace, repo: Path) -> Setup:
     """The mode changes exactly section 2.10's list. The commit-chain guards do not
     run; the fit, tree and BLAS guards do. Control 4 is False, and no record is read:
@@ -4601,8 +4616,7 @@ def rehearsal_setup(args: argparse.Namespace, repo: Path) -> Setup:
     check_tree(repo, None)
     check_fit(repo, BASE_COMMIT, FIT_DIFF_SHA256, REDUCTIONS_BLOB)
     check_blas(initial_environment())
-    records = pilot.load_split(args.split)
-    chosen, spec = rehearsal_records(args.rehearsal_plan, records)
+    env, plan, truths = rehearsal_world(args.rehearsal_plan, args.split)
     truth, dev_env = group_b_inputs(args.split)
     head = head_commit(repo)
     plan_sha = hashlib.sha256(args.rehearsal_plan.read_bytes()).hexdigest()
@@ -4612,9 +4626,9 @@ def rehearsal_setup(args: argparse.Namespace, repo: Path) -> Setup:
         paths=OutPaths(repo / DRAFTS / name),
         roots=REHEARSAL_ROOTS,
         hunt_size=REHEARSAL_HUNT_SIZE,
-        env=pilot.pointproc_environment(records),
-        plan=rehearsal_configs(spec),
-        truths=pilot.truth_entries(tuple(chosen)),
+        env=env,
+        plan=plan,
+        truths=truths,
         # Section 2.10's list does not change control 4, and a rehearsal has no
         # ``T``, so section 2.7's rule gives False and the C2 reads stay unreportable.
         controls=ScriptedControls(naming_null=False),

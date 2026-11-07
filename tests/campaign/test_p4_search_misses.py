@@ -4084,6 +4084,78 @@ def test_split_test_split_and_store_are_needed_for_a_run() -> None:
 
 
 # --------------------------------------------------------------------------
+# Red team 2026-11-07: D1, the rehearsal's truths and seeds (section 2.10)
+# --------------------------------------------------------------------------
+
+STAND_IN_DEV: Final = tuple(f"dev-{i:03d}" for i in range(20))
+#: Section 2.10's rehearsal truths, as a stand-in split of 20 ids gives them.
+FIRST_EIGHT: Final = STAND_IN_DEV[:8]
+
+
+def plan_with(r: Rehearsal, **spec: Any) -> Any:
+    r.plan.write_text(json.dumps(spec))
+    return p4m.rehearsal_records(r.plan, [dev_record(x) for x in STAND_IN_DEV])
+
+
+def test_the_first_eight_by_sorted_id_on_two_seeds_is_the_rehearsal(
+    rehearsal: Rehearsal,
+) -> None:
+    chosen, spec = plan_with(rehearsal, truths=list(FIRST_EIGHT), seeds=[1, 2])
+    assert [r.id for r in chosen] == list(FIRST_EIGHT)
+    assert spec["seeds"] == [1, 2]
+
+
+@pytest.mark.parametrize(
+    "truths",
+    [
+        list(STAND_IN_DEV[13:20]),  # the reviewer's hand-picked seven
+        list(FIRST_EIGHT[:7]),
+        list(STAND_IN_DEV[:9]),
+        list(reversed(FIRST_EIGHT)),
+        [*FIRST_EIGHT[:7], "dev-008"],
+    ],
+    ids=["hand-picked", "seven", "nine", "reversed", "one-swapped"],
+)
+def test_any_truths_but_the_first_eight_are_refused(
+    rehearsal: Rehearsal, truths: list[str]
+) -> None:
+    with pytest.raises(p4m.GuardFailure, match="first eight"):
+        plan_with(rehearsal, truths=truths, seeds=[1, 2])
+
+
+def test_the_first_eight_do_not_depend_on_the_order_of_the_records(
+    rehearsal: Rehearsal,
+) -> None:
+    rehearsal.plan.write_text(
+        json.dumps({"truths": list(FIRST_EIGHT), "seeds": [1, 2]})
+    )
+    records = [dev_record(x) for x in reversed(STAND_IN_DEV)]
+    chosen, _ = p4m.rehearsal_records(rehearsal.plan, records)
+    assert [r.id for r in chosen] == list(FIRST_EIGHT)
+
+
+def test_a_plan_with_no_seeds_is_refused_and_gets_no_default(
+    rehearsal: Rehearsal,
+) -> None:
+    """The reviewer's plan: truths alone took three seeds at full budget."""
+    with pytest.raises(p4m.GuardFailure, match="two seeds"):
+        plan_with(rehearsal, truths=list(FIRST_EIGHT))
+    with pytest.raises(KeyError):
+        p4m.rehearsal_configs({"truths": list(FIRST_EIGHT)})
+
+
+@pytest.mark.parametrize(
+    "seeds",
+    [[1], [1, 2, 3], [], [1, 1], "12", 2, None, [1, "2"], [True, 2], [1.0, 2.0]],
+)
+def test_anything_but_two_distinct_seeds_is_refused(
+    rehearsal: Rehearsal, seeds: Any
+) -> None:
+    with pytest.raises(p4m.GuardFailure, match="two seeds"):
+        plan_with(rehearsal, truths=list(FIRST_EIGHT), seeds=seeds)
+
+
+# --------------------------------------------------------------------------
 # Whole jobs on a toy truth (slow tier; test root only)
 # --------------------------------------------------------------------------
 
@@ -4341,7 +4413,7 @@ def rehearsal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Rehearsal:
     split = toy_split(tmp_path)
     monkeypatch.setattr(p4m, "SPLIT_SHA256", p4m.split_digest(split, p4m.DEV_RELATIVE))
     plan = tmp_path / "plan.json"
-    plan.write_text(json.dumps({"truths": ["dev-001", "dev-002"], "seeds": [1, 2]}))
+    plan.write_text(json.dumps({"truths": list(FIRST_EIGHT), "seeds": [1, 2]}))
     return Rehearsal(repo, split, store, plan)
 
 
@@ -4412,13 +4484,13 @@ def test_a_rehearsal_refuses_the_test_split(rehearsal: Rehearsal) -> None:
 
 
 def plan_of(r: Rehearsal, records: Sequence[Any] | None = None) -> Any:
-    given = records or [dev_record("dev-001"), dev_record("dev-002")]
+    given = records or [dev_record(x) for x in FIRST_EIGHT]
     return p4m.rehearsal_records(r.plan, given)
 
 
 def test_the_plans_truths_are_records_of_the_split(rehearsal: Rehearsal) -> None:
     chosen, spec = plan_of(rehearsal)
-    assert [r.id for r in chosen] == ["dev-001", "dev-002"]
+    assert [r.id for r in chosen] == list(FIRST_EIGHT)
     assert spec["seeds"] == [1, 2]
 
 
@@ -4431,8 +4503,9 @@ def test_a_truth_that_is_no_record_of_the_split_is_refused(
 
 @pytest.mark.parametrize("split", ["test", "calibration"])
 def test_a_truth_of_another_split_is_refused(rehearsal: Rehearsal, split: str) -> None:
-    records = [dev_record("dev-001"), dev_record("dev-002", split)]
-    with pytest.raises(p4m.GuardFailure, match="split"):
+    records = [dev_record(x) for x in FIRST_EIGHT[:-1]]
+    records.append(dev_record(FIRST_EIGHT[-1], split))
+    with pytest.raises(p4m.GuardFailure, match="of split"):
         plan_of(rehearsal, records)
 
 
@@ -4494,7 +4567,7 @@ def setup_of(
 
         return called
 
-    records = [dev_record("dev-001"), dev_record("dev-015"), dev_record("dev-002")]
+    records = [dev_record(x) for x in (*FIRST_EIGHT, "dev-015")]
     truth = replace(entry("hawkes"), id="dev-015")
     monkeypatch.setattr(p4m.pilot, "load_split", lambda p: records)
     monkeypatch.setattr(p4m.pilot, "pointproc_environment", lambda x: environment())
@@ -4540,7 +4613,7 @@ def test_the_mode_changes_exactly_the_texts_list(
     drafts = rehearsal.repo / ".cache" / "drafts"
     assert setup.paths.root.is_relative_to(drafts)
     assert setup.paths.root != p4m.OUT_DIR
-    assert [t.id for t in setup.truths] == ["dev-001", "dev-002"]
+    assert [t.id for t in setup.truths] == list(FIRST_EIGHT)
     assert len(setup.plan) == 1
 
 
@@ -4561,7 +4634,8 @@ def test_the_output_moves_with_the_script_and_the_plan(
     """A fix means rehearsing again, and a repeat is not a fresh start over
     another run's records."""
     first = setup_of(rehearsal, monkeypatch).paths.root
-    rehearsal.plan.write_text(json.dumps({"truths": ["dev-001"], "fits": 9}))
+    spec = {"truths": list(FIRST_EIGHT), "seeds": [1, 2], "fits": 9}
+    rehearsal.plan.write_text(json.dumps(spec))
     second = setup_of(rehearsal, monkeypatch).paths.root
     assert first != second
 

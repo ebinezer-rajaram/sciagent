@@ -36,7 +36,7 @@ journal, which nobody reads before the run ends (PR 9, point 4).
 **The rehearsal** (``--rehearsal --rehearsal-plan <json>``) changes exactly section
 2.10's list, runs only on the allowlist of :func:`check_rehearsal` and
 :func:`rehearsal_records`, and prefixes its label. The plan is JSON with the keys
-:data:`REHEARSAL_PLAN_KEYS`, and only ``truths`` is required.
+:data:`REHEARSAL_PLAN_KEYS`, and ``truths`` and ``seeds`` are required.
 
 **Processes and records** are as PR: a job is one fit in one process
 (:class:`Driver`), ``journal.jsonl`` is appended and fsynced by whichever process
@@ -233,6 +233,9 @@ DEV_SPLIT: Final = "dev"
 DRAFTS: Final = Path(".cache") / "drafts"
 REHEARSAL_DIR: Final = "p4-search-misses-rehearsal"
 REHEARSAL_HUNT_SIZE: Final = 5
+#: "the first eight dev truths by sorted id ... two seeds".
+REHEARSAL_TRUTHS: Final = 8
+REHEARSAL_SEEDS: Final = 2
 REHEARSAL_MIN_KEPT: Final = 6
 REHEARSAL_MIN_OUT_OF_DICTIONARY: Final = 2
 REHEARSAL_PLAN_KEYS: Final = (
@@ -4484,7 +4487,9 @@ def rehearsal_records(
     path: Path, records: Sequence[Any]
 ) -> tuple[list[Any], Mapping[str, Json]]:
     """The plan's truths, each a record of ``--split`` with ``split`` equal to
-    ``dev``, so a truth file cannot be brought in by the plan alone."""
+    ``dev``, so a truth file cannot be brought in by the plan alone. They are the
+    first eight dev truths by sorted id, on two seeds: section 2.10 lets a short
+    rehearsal raise its budget, and not swap its truths."""
     try:
         spec = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
@@ -4502,13 +4507,30 @@ def rehearsal_records(
         if by_id[truth].split != DEV_SPLIT:
             raise GuardFailure(f"{truth} is of split {by_id[truth].split}, not dev")
         chosen.append(by_id[truth])
+    dev = sorted(r.id for r in records if r.split == DEV_SPLIT)
+    first = dev[:REHEARSAL_TRUTHS]
+    if spec["truths"] != first:
+        raise GuardFailure(
+            f"a rehearsal runs on the first eight dev truths by sorted id, {first}, "
+            f"and the plan names {spec['truths']}"
+        )
+    seeds = spec.get("seeds")
+    distinct = (
+        isinstance(seeds, list)
+        and len(seeds) == REHEARSAL_SEEDS
+        and all(type(seed) is int for seed in seeds)
+        and len(set(seeds)) == REHEARSAL_SEEDS
+    )
+    if not distinct:
+        raise GuardFailure(f"a rehearsal runs on two seeds, and the plan has {seeds!r}")
     return chosen, spec
 
 
 def rehearsal_configs(spec: Mapping[str, Json]) -> tuple[CampaignConfig, ...]:
     """The plan as one Sonnet config at the stated budget: P4's contrast systems
-    and baselines, at reduced budget (section 2.10). A key left out keeps its
-    default, so the store's maker and this script build the same addresses."""
+    and baselines, at reduced budget (section 2.10). ``seeds`` is required, and any
+    other key left out keeps its default. ``scripts/p4_rehearsal_store.py`` calls
+    this too, so the store's maker and this script build the same addresses."""
     config = CampaignConfig(
         llm_arms=P4_SONNET_ARMS,
         llm_model=MODELS["sonnet"],
@@ -4523,7 +4545,7 @@ def rehearsal_configs(spec: Mapping[str, Json]) -> tuple[CampaignConfig, ...]:
     return (
         replace(
             config,
-            seeds=tuple(spec.get("seeds", config.seeds)),
+            seeds=tuple(spec["seeds"]),
             control_seeds=tuple(spec.get("control_seeds", config.control_seeds)),
             gp=replace(config.gp, **gp),
             **plain,

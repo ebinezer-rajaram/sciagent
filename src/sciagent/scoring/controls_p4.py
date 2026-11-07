@@ -36,7 +36,11 @@ P(Binom(b + c, 1/2) >= b)``, counted with integers. It passes when ``p <``
 :data:`CONTROL_5_ALPHA`. Concordant units carry no information about the
 difference and do not enter ``p``; ``p >= 2**-(b + c)``, so it cannot pass on
 fewer than 5 discordant units. Both telling rates are reported truth-weighted,
-as ``telling_rate`` computes them.
+as ``telling_rate`` computes them. The control reads every planned unit, and a
+crash or a missing reading ranks against the pass (INBOX 2026-11-07): a unit
+truthFSD has no reading for counts as not observed, and one random has no
+reading for as observed, so a failed or missing telling cell, or a unit
+neither arm read, counts as random-only.
 
 **Control 6, the behaviour instrument (gates C6).** A scripted agent with a
 known belief timeline (:func:`behaviour_script`, the 10b script of WP3/WP7)
@@ -336,13 +340,26 @@ class PolicySeparationVerdict:
 
 
 def _by_unit(
-    observed: Sequence[tuple[str, int, bool]], arm: str
-) -> dict[tuple[str, int], bool]:
-    out: dict[tuple[str, int], bool] = {}
+    observed: Sequence[tuple[str, int, bool | None]], arm: str
+) -> dict[tuple[str, int], bool | None]:
+    out: dict[tuple[str, int], bool | None] = {}
     for truth, seed, hit in observed:
         if (truth, seed) in out:
             raise ScoringError(f"{arm}: unit ({truth!r}, {seed}) appears twice")
-        out[(truth, seed)] = bool(hit)
+        out[(truth, seed)] = None if hit is None else bool(hit)
+    return out
+
+
+def _against_the_pass(
+    read: Mapping[tuple[str, int], bool | None],
+    planned: Sequence[tuple[str, int]],
+    unread: bool,
+) -> dict[tuple[str, int], bool]:
+    """Every planned unit's reading; ``unread`` where the arm has none."""
+    out: dict[tuple[str, int], bool] = {}
+    for key in planned:
+        hit = read.get(key)
+        out[key] = unread if hit is None else hit
     return out
 
 
@@ -355,23 +372,38 @@ def _truth_rate(units: Mapping[tuple[str, int], bool]) -> float:
 
 
 def policy_separation(
-    truth_fsd: Sequence[tuple[str, int, bool]],
-    random: Sequence[tuple[str, int, bool]],
+    truth_fsd: Sequence[tuple[str, int, bool | None]],
+    random: Sequence[tuple[str, int, bool | None]],
+    *,
+    planned: Sequence[tuple[str, int]],
 ) -> PolicySeparationVerdict:
     """Control 5: truthFSD against random on the telling rate.
 
     Each input is ``telling_observed``'s ``(truth, seed, observed)`` list for
-    one arm. The two must cover the same units: an unpaired unit is refused
-    rather than dropped, since which units go missing is not random.
+    one arm, ``observed`` None for a failed unit. ``planned`` is every
+    (truth, seed) the plan gives both arms (``plan.baseline_units``), so no
+    unit can vanish. The two arms must read the same units: one arm's unit
+    without the other's is refused rather than dropped, since which units go
+    missing is not random. Otherwise a unit with no reading ranks against the
+    pass (INBOX 2026-11-07, the crash rule): truthFSD did not observe it and
+    random did. That covers a failed unit of either arm, and a planned unit
+    neither arm read (no cell, no ``computed``, or a failed or missing telling
+    cell), which so counts as random-only.
     """
-    t = _by_unit(truth_fsd, "truthFSD")
-    r = _by_unit(random, "random")
-    if not t:
-        raise ScoringError("control 5 has no unit to read")
-    if set(t) != set(r):
-        only = sorted(set(t) ^ set(r))
+    t_read = _by_unit(truth_fsd, "truthFSD")
+    r_read = _by_unit(random, "random")
+    plan = _by_unit([(truth, seed, None) for truth, seed in planned], "the plan")
+    if not plan:
+        raise ScoringError("control 5 has no planned unit to read")
+    if set(t_read) != set(r_read):
+        only = sorted(set(t_read) ^ set(r_read))
         raise ScoringError(f"control 5's arms cover different units: {only[:5]}")
-    keys = sorted(t)
+    unplanned = sorted(set(t_read) - set(plan))
+    if unplanned:
+        raise ScoringError(f"control 5 read units outside its plan: {unplanned[:5]}")
+    keys = sorted(plan)
+    t = _against_the_pass(t_read, keys, unread=False)
+    r = _against_the_pass(r_read, keys, unread=True)
     both = sum(t[k] and r[k] for k in keys)
     b = sum(t[k] and not r[k] for k in keys)
     c = sum(r[k] and not t[k] for k in keys)

@@ -595,17 +595,19 @@ def summarise(rows: Sequence[Row], system: str) -> SystemSummary:
     )
 
 
-def telling_observed(table: Table, system: str) -> list[tuple[str, int, bool]]:
+def telling_observed(table: Table, system: str) -> list[tuple[str, int, bool | None]]:
     """Whether ``system`` observed the telling diagnostic, per (truth, seed).
 
     SPEC §4.2's second read-out. Read for the units with a telling cell whose
-    row records what was computed (the B-sym policy arms); a failed unit
-    counts as not observed, as it counts as neither recovering nor closing
-    (:func:`truth_share`). "Observed": some diagnostic computed on an
-    experiment dataset has d*'s name and channel arguments
-    (:func:`sciagent.scoring.telling.observed`). Sorted by (truth, seed).
+    row records what was computed (the B-sym policy arms); a failed unit has
+    no reading and gives None, so a reader can rank it against what it tests
+    (control 5: ``controls_p4.policy_separation``). "Observed": some
+    diagnostic computed on an experiment dataset has d*'s name and channel
+    arguments (:func:`sciagent.scoring.telling.observed`). Sorted by (truth,
+    seed). A unit with no row, or no telling cell, is not listed: a reader
+    that must not lose it takes the planned units, as control 5 does.
     """
-    out: list[tuple[str, int, bool]] = []
+    out: list[tuple[str, int, bool | None]] = []
     for r in table.rows:
         target = table.telling.get((r.truth, r.seed))
         if r.system != system or target is None:
@@ -617,15 +619,17 @@ def telling_observed(table: Table, system: str) -> list[tuple[str, int, bool]]:
             dict(target.channel_args),
             ((name, dict(args)) for name, args in r.computed or ()),
         )
-        out.append((r.truth, r.seed, hit))
-    return sorted(out)
+        out.append((r.truth, r.seed, hit if r.ok else None))
+    return sorted(out, key=lambda u: (u[0], u[1]))
 
 
 def telling_rate(table: Table, system: str) -> tuple[float | None, int]:
-    """Truth-weighted share of :func:`telling_observed`, and the truths read."""
+    """Truth-weighted share of :func:`telling_observed`, and the truths read.
+    A failed unit counts as not observed, as it counts as neither recovering
+    nor closing (:func:`truth_share`)."""
     per_truth: dict[str, list[bool]] = {}
     for truth, _, hit in telling_observed(table, system):
-        per_truth.setdefault(truth, []).append(hit)
+        per_truth.setdefault(truth, []).append(hit is True)
     if not per_truth:
         return None, 0
     shares = [sum(v) / len(v) for _, v in sorted(per_truth.items())]

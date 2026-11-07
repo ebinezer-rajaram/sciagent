@@ -24,6 +24,8 @@ from sciagent.campaign.analysis import (
     Table,
     TellingCell,
     load_rows,
+    row_from_cell,
+    telling_cell,
     telling_observed,
     telling_rate,
 )
@@ -49,6 +51,7 @@ from sciagent.campaign.store import ResultStore
 from sciagent.glm.interventions import Compose, Experiment
 from sciagent.investigation.world import World
 from sciagent.scoring.controls_p4 import policy_separation
+from sciagent.scoring.errors import ScoringError
 from sciagent.scoring.telling import Telling
 from sciagent.systems.v2.policies import (
     POLICY_MAX_EVENTS,
@@ -378,8 +381,8 @@ def test_the_telling_rate_matches_by_name_and_channel_arguments() -> None:
         _row("a", 1, B_SYM_FSD, hit),
         _row("a", 2, B_SYM_FSD, wrong_channel),
         _row("b", 1, B_SYM_FSD, (("mean_rate", ()),)),
-        _row("c", 1, B_SYM_FSD, hit),  # no telling cell: not counted
-        _row("a", 1, B_SYM_RANDOM, (), ok=False),  # failed: not observed
+        _row("c", 1, B_SYM_FSD, hit),  # no telling cell: not read (control 5: plan)
+        _row("a", 1, B_SYM_RANDOM, (), ok=False),  # failed: no reading (None)
         _row("a", 1, "B-sym", None),  # not a policy arm: not read
     )
     table = Table(
@@ -393,7 +396,8 @@ def test_the_telling_rate_matches_by_name_and_channel_arguments() -> None:
     assert seen == [("a", 1, True), ("a", 2, False), ("b", 1, True)]
     share, n = telling_rate(table, B_SYM_FSD)
     assert n == 2 and share == pytest.approx((0.5 + 1.0) / 2)
-    assert telling_observed(table, B_SYM_RANDOM) == [("a", 1, False)]
+    assert telling_observed(table, B_SYM_RANDOM) == [("a", 1, None)]
+    assert telling_rate(table, B_SYM_RANDOM) == (0.0, 1)  # the rate: not observed
     assert telling_observed(table, "B-sym") == []
 
 
@@ -520,7 +524,7 @@ def test_the_pilot_environment_carries_the_mark_law_for_eig_and_fsd(
 
 def test_control_5_reads_the_two_arms_telling_observations() -> None:
     """Control 5 (WP11) pairs truthFSD and random by (truth, seed) on the
-    analysis read-out; a failed unit counts as not observed."""
+    analysis read-out; a failed truthFSD unit counts as not observed."""
     target = TellingCell("mean_rate", ())
     hit = (("mean_rate", ()),)
     miss = (("fano_factor", ()),)
@@ -533,10 +537,174 @@ def test_control_5_reads_the_two_arms_telling_observations() -> None:
     )
     table = Table({}, rows, (), {}, telling={(t, 1): target for t in truths})
     v = policy_separation(
-        telling_observed(table, B_SYM_TRUTH_FSD), telling_observed(table, B_SYM_RANDOM)
+        telling_observed(table, B_SYM_TRUTH_FSD),
+        telling_observed(table, B_SYM_RANDOM),
+        planned=[(t, 1) for t in truths],
     )
     assert (v.units, v.both, v.truth_only, v.random_only, v.neither) == (7, 1, 5, 1, 0)
     # P(Binom(6, 1/2) >= 5) = 7/64 > 0.05: five against one does not pass.
     assert v.p_value == 7 / 64 and not v.passed
     assert v.truth_rate == pytest.approx(6 / 7)
     assert v.random_rate == pytest.approx(2 / 7)
+
+
+# --------------------------------------------------------------------------
+# Control 5 and the crash rule (red team 2026-11-07, findings 1, 2 and 4)
+# --------------------------------------------------------------------------
+
+#: The red team's stand-in: 10 truths at seed 1; truthFSD observes t01 to t06
+#: and random t06 and t07, so b = 5, c = 1, p = 7/64: control 5 fails.
+_C5_TRUTHS = tuple(f"t{i:02d}" for i in range(1, 11))
+_C5_PLAN = tuple((t, 1) for t in _C5_TRUTHS)
+_C5_TARGET: tuple[str, dict[str, Any]] = ("mark_moment", {"channel": "a"})
+_C5_HITS = {
+    B_SYM_TRUTH_FSD: frozenset(f"t{i:02d}" for i in range(1, 7)),
+    B_SYM_RANDOM: frozenset({"t06", "t07"}),
+}
+_C5_FAILED: dict[str, Any] = {
+    "reading": {"status": (0.0).hex()},
+    "detail": {"result": {"error": "ValueError", "message": "boom"}},
+}
+_C5_TOLD: dict[str, Any] = {
+    "reading": {"status": (1.0).hex()},
+    "detail": {
+        "result": {"diagnostic": {"name": _C5_TARGET[0], "channel_args": _C5_TARGET[1]}}
+    },
+}
+
+type _Edit = dict[str, frozenset[Any]]
+
+
+def _c5_cell(hit: bool, computed: bool = True) -> dict[str, Any]:
+    chosen = [list(_C5_TARGET)] if hit else [["rate", {"channel": "b"}]]
+    result: dict[str, Any] = {"structure": "s", "curve": []}
+    if computed:
+        result["computed"] = chosen
+    reading = {
+        "status": 1.0,
+        "per_event": -1.0,
+        "has_structure": 1.0,
+        "fits_used": 40.0,
+    }
+    return {
+        "reading": {k: v.hex() for k, v in reading.items()},
+        "detail": {"result": result},
+    }
+
+
+def _c5_table(
+    hits: dict[str, frozenset[str]] = _C5_HITS,
+    *,
+    failed: frozenset[tuple[str, str]] = frozenset(),
+    removed: frozenset[tuple[str, str]] = frozenset(),
+    uncomputed: frozenset[tuple[str, str]] = frozenset(),
+    telling_failed: frozenset[str] = frozenset(),
+    telling_removed: frozenset[str] = frozenset(),
+) -> Table:
+    """Stored cells read as ``load_rows`` reads them. ``(arm, truth)`` pairs
+    fail (status 0), have no cell, or are ``ok`` without ``computed``."""
+    rows: list[Row] = []
+    telling: dict[tuple[str, int], TellingCell] = {}
+    for t in _C5_TRUTHS:
+        if t not in telling_removed:
+            found = telling_cell(_C5_FAILED if t in telling_failed else _C5_TOLD)
+            if found is not None:
+                telling[(t, 1)] = found
+        for arm in (B_SYM_TRUTH_FSD, B_SYM_RANDOM):
+            if (arm, t) in removed:
+                continue
+            cell = (
+                _C5_FAILED
+                if (arm, t) in failed
+                else _c5_cell(t in hits[arm], (arm, t) not in uncomputed)
+            )
+            rows.append(row_from_cell(t, 1, arm, False, cell))
+    return Table({}, tuple(rows), (), {}, telling=telling)
+
+
+def _c5(table: Table) -> Any:
+    return policy_separation(
+        telling_observed(table, B_SYM_TRUTH_FSD),
+        telling_observed(table, B_SYM_RANDOM),
+        planned=_C5_PLAN,
+    )
+
+
+def _arms_on(t: str) -> frozenset[tuple[str, str]]:
+    return frozenset({(B_SYM_TRUTH_FSD, t), (B_SYM_RANDOM, t)})
+
+
+def test_the_control_5_stand_in_fails_as_built_and_passes_without_t07() -> None:
+    v = _c5(_c5_table())
+    assert (v.passed, v.p_value, v.units) == (False, 7 / 64, 10)
+    assert (v.truth_only, v.random_only) == (5, 1)
+    passing = {**_C5_HITS, B_SYM_RANDOM: frozenset({"t06"})}
+    v = _c5(_c5_table(passing))
+    assert (v.passed, v.p_value, v.truth_only, v.random_only) == (True, 1 / 32, 5, 0)
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        pytest.param({"failed": frozenset({(B_SYM_RANDOM, "t07")})}, id="f1-random"),
+        pytest.param({"failed": _arms_on("t07")}, id="f1-both-failed"),
+        pytest.param({"telling_failed": frozenset({"t07"})}, id="f2-telling-failed"),
+        pytest.param({"telling_removed": frozenset({"t07"})}, id="f2-no-telling"),
+        pytest.param({"removed": _arms_on("t07")}, id="f4-both-missing"),
+        pytest.param({"uncomputed": _arms_on("t07")}, id="f4-no-computed"),
+    ],
+)
+def test_the_red_team_s_crashes_keep_control_5_failing(edit: _Edit) -> None:
+    """As coded these passed at p = 1/32 on 9 or 10 units. A failure ranks
+    against the pass, so each reads b = 5, c = 1, p = 7/64 on all 10 units."""
+    v = _c5(_c5_table(**edit))
+    assert (v.passed, v.p_value, v.units) == (False, 7 / 64, 10)
+    assert (v.truth_only, v.random_only) == (5, 1)
+
+
+def test_random_failing_on_a_truth_fsd_only_unit_moves_it_to_both() -> None:
+    """The red team's case 8: random failed on t07 and on t01."""
+    failed = frozenset({(B_SYM_RANDOM, "t07"), (B_SYM_RANDOM, "t01")})
+    v = _c5(_c5_table(failed=failed))
+    assert (v.passed, v.both, v.truth_only, v.random_only) == (False, 2, 4, 1)
+
+
+def _c5_sweep() -> list[tuple[str, _Edit]]:
+    cases: list[tuple[str, _Edit]] = []
+    for t in _C5_TRUTHS:
+        for arm in (B_SYM_TRUTH_FSD, B_SYM_RANDOM):
+            one = frozenset({(arm, t)})
+            cases += [
+                (f"{arm} {t} failed", {"failed": one}),
+                (f"{arm} {t} removed", {"removed": one}),
+                (f"{arm} {t} without computed", {"uncomputed": one}),
+            ]
+        cases += [
+            (f"both arms {t} failed", {"failed": _arms_on(t)}),
+            (f"both arms {t} removed", {"removed": _arms_on(t)}),
+            (f"both arms {t} without computed", {"uncomputed": _arms_on(t)}),
+            (f"telling {t} failed", {"telling_failed": frozenset({t})}),
+            (f"telling {t} removed", {"telling_removed": frozenset({t})}),
+        ]
+    return cases
+
+
+def test_no_single_crash_or_missing_reading_makes_control_5_pass() -> None:
+    """The crash rule (INBOX 2026-11-07): on a stand-in where control 5 fails,
+    fail or remove each unit of each arm and each telling cell, one at a time.
+    Each must still fail with p no smaller than the stand-in's, or be refused
+    (one arm's unit without the other's voids the control)."""
+    assert len(_c5_sweep()) == 10 * 11
+    improved: list[str] = []
+    refused: list[str] = []
+    for label, edit in _c5_sweep():
+        try:
+            v = _c5(_c5_table(**edit))
+        except ScoringError:
+            refused.append(label)
+            continue
+        if v.passed or v.p_value < 7 / 64:
+            improved.append(f"{label}: p={v.p_value}")
+    assert improved == []
+    # Unpaired: one arm's unit removed, or ok without computed (2 x 2 x 10).
+    assert len(refused) == 40, refused

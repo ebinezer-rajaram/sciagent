@@ -3547,7 +3547,7 @@ def test_the_census_prints_counts_and_no_score(
     out = capsys.readouterr().out
     assert "coordinate" in out
     assert "0x" not in out and "-0." not in out
-    assert "group E" not in out
+    assert "group E cases: 0\n" in out
 
 
 def stage_setup(monkeypatch: pytest.MonkeyPatch) -> Any:
@@ -4083,6 +4083,38 @@ def test_the_hashes_for_the_log_entry_are_printed(
 def test_split_test_split_and_store_are_needed_for_a_run() -> None:
     with pytest.raises(SystemExit):
         p4m.main([])
+
+
+# --------------------------------------------------------------------------
+# Red team 2026-11-07: D7 and D8, group E's count and control 4's words
+# --------------------------------------------------------------------------
+
+
+def test_the_census_prints_group_es_count_and_nothing_else_of_it(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Section 2.9: "The script selects the cases and prints only their count"."""
+    text = text_of(MIDDLE)
+    rows = [
+        census_row("first-case", ORACLE, text, oracle_psi_source="truth"),
+        census_row("not-a-case", ORACLE, text, oracle_psi_source="search"),
+        census_row("second-case", ORACLE, text_of(SMALL), oracle_psi_source="truth"),
+        census_row("no-oracle", B_SYM, text),
+    ]
+    p4m.print_counts(census_of(rows, []), tabled())
+    out = capsys.readouterr().out
+    assert "group E cases: 2\n" in out
+    assert "case" not in out.replace("group E cases: 2\n", "")
+    assert "oracle" not in out.lower()
+
+
+def test_no_text_says_a_rehearsal_reads_a_control_4_record() -> None:
+    """LOG 2026-11-06: control 4 is False in a rehearsal, and it reads no record."""
+    doc = " ".join(p4m.rehearsal_setup.__doc__.split())
+    assert "dev record" not in doc
+    assert "Control 4 is False" in doc
+    source = (REPO / "scripts" / "naming_null_record.py").read_text(encoding="utf-8")
+    assert "a rehearsal asks for" not in source
 
 
 # --------------------------------------------------------------------------

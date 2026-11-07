@@ -4323,9 +4323,10 @@ def build_census(
 
 def print_counts(census: Census, table: Table) -> None:
     """Section 2.1: counts only. No score, ``oracle_*`` or ``certified`` value, and
-    nothing of group E, whose selection reads a P4 row."""
+    of group E, whose selection reads a P4 row, only the count (section 2.9)."""
     print(f"classes: {_count(r.klass for r in census.rows)}", flush=True)
     print(f"void sessions: {analysis.void_counts(table)}", flush=True)
+    print(f"group E cases: {sum(r.group_e for r in census.rows)}", flush=True)
 
 
 def hunt_jobs(*, log_root: int, size: int = HUNT_SIZE) -> tuple[HuntJob, ...]:
@@ -4592,8 +4593,8 @@ def rehearsal_configs(spec: Mapping[str, Json]) -> tuple[CampaignConfig, ...]:
 
 def rehearsal_setup(args: argparse.Namespace, repo: Path) -> Setup:
     """The mode changes exactly section 2.10's list. The commit-chain guards do not
-    run; the fit, tree and BLAS guards do. Control 4 has its own dev record, at
-    HEAD, since there is no ``T`` here."""
+    run; the fit, tree and BLAS guards do. Control 4 is False, and no record is read:
+    the list does not change it, and there is no ``T`` here (LOG 2026-11-06)."""
     check_rehearsal(
         repo, split=args.split, store=args.store, test_split=args.test_split
     )

@@ -35,7 +35,7 @@ NAMING_SEED: Final = 1
 #: The halves of the split, one truth each: in and out of dictionary.
 IN_HALF: Final = "in"
 OUT_HALF: Final = "out"
-#: The split §2.7 names; a rehearsal asks for ``dev`` by name.
+#: The split §2.7 names. A rehearsal reads no record: control 4 is False there.
 TEST_SPLIT: Final = "test"
 
 

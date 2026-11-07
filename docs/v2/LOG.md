@@ -2786,3 +2786,15 @@ The decision adopted on 2026-10-28 (LOG 2026-10-27, items 2, 3 and 5) never land
 - **Assertions moved by design**, none deleted: menu-order tie picks became the random arm's pick, and the argmax test reads `eig_choice`.
 - **Not verified.** The new maths costs about 5× per cell, estimated at about 5 s more per decision and not measured; how often ties and infinite KL occur on real dev decisions is unknown.
 - **Checks.** Merged: `4063 passed` (systems_v2, investigation, campaign, scoring; fast); the touched files' slow tests passed on the branch (`12 passed`).
+
+## 2026-11-07: Controls 4 and 5 under the crash rule (session 38)
+
+From `docs/v2/redteam/2026-11-07_controls-4-6-crash-rule.md` (not ready, 4 blocking). An engineer's branch, reviewed and merged as 45adece and 719e784, written test first. **The lead's rulings**, applying the control room's general rule and the R3-direction pattern ("a failure ranks against the control passing"):
+- **Control 5.** `policy_separation` takes the planned units, so no unit can vanish. A unit truthFSD has no reading for counts as not observed, and one random has no reading for counts as observed. So a failed or missing telling cell, or a unit neither arm read, counts as random-only.
+  - The reviewer marked the choice between this and voiding control 5 as a design choice. It is decided by the pattern already ruled for R3, not brought back.
+  - An unpaired unit is still refused.
+  - A sweep test makes 110 one-at-a-time crash or blank edits; none passes or lowers p.
+- **Control 4.** It fails unless every condition made the planted script's whole call shape (`planted_call_shape()`, read from the script itself: beliefs, fits, the experiment and submit) with no errored call. The runner stops on a retryable, void or non-submit session.
+- **Not done: finding 7.** `read_naming_null` ignores the record's split hash. The miss script calls it with no hash from `T`, so a working fix changes the script's bytes. Queued for before `R2`.
+
+Mutants killed by hand: six. Moved assertion: a failed random unit reads `None` in `telling_observed`, and `telling_rate` is unchanged. Merged: `3704 passed` (scoring, campaign, systems_v2; fast); control 4's slow tests passed on the branch (`2 passed`). No address or version constant moves.

@@ -271,3 +271,12 @@ entry, and marks it handled with the date and what was done. Newest last.
   first, before S, with R3's words in SPEC-TEXT-P4-C.md changed to match. Decided by the control room
   under the owner's standing delegation.
   In progress 2026-11-07 (lane session 38): words changed in `SPEC-TEXT-P4-C.md` ("R3 amended"); the code change is with an engineer, test first. Stays open until it is on v2.
+
+## 2026-11-07, control room (P4b as planned-exploratory)
+
+- [ ] **Accept P4b as planned-exploratory, on the lane's four terms.** (1) Freeze P4b's contrasts now
+  with today's telling and truthFSD rule, stating that P4b is planned as exploratory. (2) Give FSD its
+  own exclusion, Fx. (3) Skip the dev measurement. (4) Option 2 stays parked; it is not reopened. Owner
+  delegated all such calls on 2026-11-05 ("you dont need me i trust you to do this"); record this as
+  decided by the control room under that delegation, and note that SPEC section 4.2's owner route for
+  option 2 was not used, because option 2 is not reopened.

@@ -594,7 +594,9 @@ def read_records(path: Path) -> list[Record]:
 
 
 def repair_tail(path: Path) -> None:
-    """Before a resume appends: drop a torn fragment, which was never a record."""
+    """Before a resume or the terminal step appends: drop a torn fragment, which
+    was never a record. Appended to, it would merge with the new line into one that
+    ends in a newline, so nothing could tell it was torn and no label could follow."""
     if not path.exists():
         return
     data = path.read_bytes()
@@ -2426,6 +2428,7 @@ def terminal_step(
             faults.append("read_exception")
             fault = f"{type(error).__name__}: {error}"
         if faults:
+            repair_tail(paths.journal)
             Journal(paths.journal).append(
                 {"type": "terminal_fault", "kind": faults[-1], "reason": fault[:2000]}
             )
@@ -2514,6 +2517,7 @@ def finalise(
                 "--end, on the owner's or the control room's authority"
             )
         read_end_note(paths)
+        repair_tail(paths.journal)
         Journal(paths.journal).append({"type": "run_end", "reason": AUTHORISED_END})
         end = AUTHORISED_END
     elif end_flag:

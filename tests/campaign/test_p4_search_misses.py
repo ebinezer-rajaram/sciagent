@@ -4084,6 +4084,88 @@ def test_split_test_split_and_store_are_needed_for_a_run() -> None:
 
 
 # --------------------------------------------------------------------------
+# Red team 2026-11-07: D2, a torn journal under --finalise (sections 2.8, 5)
+# --------------------------------------------------------------------------
+
+#: A write cut off by a power loss or a full disk: a record with no newline.
+TORN: Final = b'{"type":"done","job":"abc"'
+
+
+def tear(paths: Any) -> None:
+    with paths.journal.open("ab") as handle:
+        handle.write(TORN)
+
+
+def test_end_state_on_a_torn_tail_reads_the_whole_records_and_no_fragment(
+    paths: Any,
+) -> None:
+    """``read_records`` drops a last line with no newline, so ``end_state`` neither
+    fails nor sees the fragment: the failure comes after the append."""
+    table = tabled()
+    plant(paths, clean(table), end="terminated")
+    whole = p4m.read_records(paths.journal)
+    tear(paths)
+    assert p4m.read_records(paths.journal) == whole
+    assert p4m.end_state(whole, paths) == "terminated"
+
+
+@pytest.mark.parametrize("end", ["terminated", None])
+def test_end_on_a_torn_journal_reaches_the_label_through_the_real_finalise(
+    paths: Any, end: str | None
+) -> None:
+    """Section 2.8: ``--end`` is how a stuck unit is abandoned, and section 5 has
+    ``INCOMPLETE`` follow it. A merged line ends in a newline, so nothing would
+    ever treat it as torn, and no label would be possible."""
+    table = tabled()
+    plant(paths, clean(table), end=end)
+    whole = p4m.read_records(paths.journal)
+    tear(paths)
+    paths.end_note.write_text("control room: power loss, abandoned\n")
+    d = finalise(paths, inputs_of(table), end_flag=True)
+    assert d["end"] == p4m.AUTHORISED_END
+    assert d["end_note"] == "control room: power loss, abandoned"
+    assert d["label"] == "CONTRASTS_SURVIVE_FOUND_MISSES"
+    assert paths.reads.exists()
+    assert TORN not in paths.journal.read_bytes()
+    after = p4m.read_records(paths.journal)
+    assert after == [*whole, {"type": "run_end", "reason": p4m.AUTHORISED_END}]
+
+
+def test_a_refused_end_leaves_a_torn_journal_as_it_found_it(paths: Any) -> None:
+    """No note, no choice: nothing is appended, so nothing is repaired."""
+    table = tabled()
+    plant(paths, clean(table), end="terminated")
+    tear(paths)
+    before = paths.journal.read_bytes()
+    with pytest.raises(p4m.ResumeRefused, match="note"):
+        finalise(paths, inputs_of(table), end_flag=True)
+    with pytest.raises(p4m.ResumeRefused, match="--end"):
+        finalise(paths, inputs_of(table))
+    assert paths.journal.read_bytes() == before
+
+
+def test_a_fault_at_the_terminal_step_goes_on_a_whole_line_after_a_torn_tail(
+    paths: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A kill with STOP present reaches the terminal step with no ``--end``, so
+    ``terminal_fault`` is that path's append: the reason must stay readable."""
+    table = tabled()
+    plant(paths, clean(table), end=None)
+    tear(paths)
+    paths.stop.write_text("owner: stop\n")
+
+    def fails(*args: Any) -> Any:
+        raise ValueError("a read function failed")
+
+    monkeypatch.setattr(p4m, "compute_reads", fails)
+    d = finalise(paths, inputs_of(table))
+    assert d["label"] == "BYTE_FAIL"
+    last = p4m.read_records(paths.journal)[-1]
+    assert last["type"] == "terminal_fault"
+    assert "a read function failed" in last["reason"]
+
+
+# --------------------------------------------------------------------------
 # Red team 2026-11-07: D1, the rehearsal's truths and seeds (section 2.10)
 # --------------------------------------------------------------------------
 

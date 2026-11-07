@@ -2798,3 +2798,37 @@ From `docs/v2/redteam/2026-11-07_controls-4-6-crash-rule.md` (not ready, 4 block
 - **Not done: finding 7.** `read_naming_null` ignores the record's split hash. The miss script calls it with no hash from `T`, so a working fix changes the script's bytes. Queued for before `R2`.
 
 Mutants killed by hand: six. Moved assertion: a failed random unit reads `None` in `telling_observed`, and `telling_rate` is unchanged. Merged: `3704 passed` (scoring, campaign, systems_v2; fast); control 4's slow tests passed on the branch (`2 passed`). No address or version constant moves.
+
+## 2026-11-07: Controls 1 to 3 under the crash rule; round 2's findings 2 to 8 (session 38)
+
+An engineer's branch, reviewed and merged as one commit after 6595f29, written test first; 18 mutants were killed by hand.
+
+**The ruling (round 2, finding 1), as built.**
+- A scored `-inf` B-lib counts as ORACLE beating B-lib, so the truth is kept.
+- A failed or NaN B-lib leaves the truth unchecked, still counted in R2's scope. `read_controls` still refuses a NaN B-lib outright.
+- **The lead's application of the general rule:** controls 2 and 3 read kept truths, plus an unchecked truth only where it counts against them. For control 2, that is where planted-hint does not beat B-rand; for control 3, where B-sym@10F is below the tolerance. The reviewer's crashed-B-lib case now fails (p 0.222).
+
+**The engineer's sweep** crashed, blanked or NaN'd each unit of every system controls 1 to 3 read, on 7 stand-in tables. It found three more holes, fixed as direct applications of the rule:
+- an ORACLE unit with no reading counts as unrecorded, so control 1 fails;
+- a (truth, seed) with control rows and no ORACLE row counts as unrecorded too;
+- a planned planted-hint, B-rand or B-sym@10F unit that was not run leaves its control unread, so it cannot pass.
+
+**Two limits remain.**
+1. Control 2's exact signed-rank p is not monotone in adding a loss. Nine truths with one loss of 9 and eight wins of 1 give p = 0.074, and adding an unchecked loss of 0.5 gives p = 0.047, a pass. A test pins this, and the report notes any unchecked truth that enters control 2. **This breaks the general rule and is owed before `S`** (queue).
+2. Where ORACLE has no reading on a world, controls 2 and 3 still leave that world out, so either can print PASS on its own. Control 1 fails there, so the gate stays closed.
+
+**Round 2's findings 2 to 8.**
+- Every block's headline reads the merged table.
+- `--reuse-from` is refused on an established store with no cell.
+- The block's fixed options are checked against `main()`'s full parser, so `--rescore-llm` is refused.
+- `sweep_rows` carries the merged table's controls 1 to 3 verdict, and refuses missing reference seeds.
+- `merge_tables` refuses stray sessions and telling cells, and refuses two roots under one fingerprint without `one_store=True`.
+- The merged-size check has its own test.
+- `ScoreRow.failed` marks a failed unit, and gonogo refuses an unmarked `+inf`.
+
+**Side effects at head.**
+- `go_no_go` and `bsym_tune.check_retained` keep a truth with a `-inf` B-lib.
+- A stored `+inf` B-rand now raises in `bsym_tune.py`'s path.
+- The running tuning is unaffected: it runs from its own worktree at c8da063, whose HEAD does not move.
+
+No address or version constant moves. **Checks.** Merged at 56eef1e: ruff `350 files already formatted`, `All checks passed!`, mypy `no issues found in 339 source files`, full fast tier `5931 passed`, exit 0 (`.cache/drafts/s38/fast3.log`). The touched files' slow tests passed on the branch (`52 passed`).

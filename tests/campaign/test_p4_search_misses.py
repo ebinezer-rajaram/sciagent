@@ -28,6 +28,7 @@ import json
 import math
 import multiprocessing
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -47,7 +48,13 @@ from campaign_support import entry, environment, tiny_config
 from sciagent.campaign import analysis, contrasts
 from sciagent.campaign.analysis import Row, Table, derive
 from sciagent.campaign.contrasts import ContrastRead, ScriptedControls
-from sciagent.campaign.plan import baseline_key, baseline_units
+from sciagent.campaign.plan import (
+    baseline_key,
+    baseline_units,
+    llm_units,
+    score_key,
+    session_key,
+)
 from sciagent.campaign.store import ResultStore
 from sciagent.campaign.voids import VoidStatus
 from sciagent.glm.canonical import canonicalise
@@ -2366,10 +2373,24 @@ def test_a_launch_copy_that_cannot_be_fetched_is_refused(
         p4m.read_launch_copy()
 
 
-def test_the_launch_copy_is_read_from_beside_the_results() -> None:
-    assert p4m.LAUNCH_FINGERPRINT_URI == (
-        "s3://delaymargin-results-482913/sciagent/p4/fingerprint.jsonl"
-    )
+def test_the_launch_copy_is_read_from_beside_the_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Section 2.10's "beside the results", from the text's own output path, and
+    the key the guard really asks ``aws`` for."""
+    text = (REPO / p4m.PREREG_PATH).read_text(encoding="utf-8")
+    (results,) = set(re.findall(r"s3://[^`\s]*/search-misses-F2/", text))
+    parent = results.removesuffix("search-misses-F2/")
+    assert parent + "fingerprint.jsonl" == p4m.LAUNCH_FINGERPRINT_URI
+    called: list[Any] = []
+
+    def answers(command: Any, **kwargs: Any) -> Any:
+        called.append(command)
+        return subprocess.CompletedProcess(command, 0, b"witness", b"")
+
+    monkeypatch.setattr(p4m.subprocess, "run", answers)
+    assert p4m.read_launch_copy() == b"witness"
+    assert called == [["aws", "s3", "cp", parent + "fingerprint.jsonl", "-"]]
 
 
 def test_a_fit_diff_other_than_the_constant_is_refused(chain: Chain) -> None:
@@ -2444,7 +2465,9 @@ def test_the_options_are_the_texts_and_none_sets_a_number() -> None:
     parser = p4m.build_parser()
     options = {o for a in parser._actions for o in a.option_strings}
     assert {"--out", "--naming-null", "--controls", "--root"}.isdisjoint(options)
-    assert options >= {
+    assert options == {
+        "-h",
+        "--help",
         "--split",
         "--test-split",
         "--store",
@@ -2452,6 +2475,8 @@ def test_the_options_are_the_texts_and_none_sets_a_number() -> None:
         "--finalise",
         "--end",
         "--print-hashes",
+        "--rehearsal",
+        "--rehearsal-plan",
     }
     with pytest.raises(SystemExit):
         parser.parse_args(["--out", "/tmp/x"])
@@ -2508,9 +2533,13 @@ def test_the_two_splits_hash_under_their_own_names(tmp_path: Path) -> None:
 
 
 def test_the_dev_constant_is_the_pilot_rules() -> None:
-    assert p4m.SPLIT_SHA256 == (
-        "31c18f10ca7c8a4ad6b599de5436bb15426bd02c67f3eb44fb0e93cb512ba577"
-    )
+    """Section 2.10: "with PR 2.10's constant", read from the rule and from the
+    pilot's frozen script and not from a literal typed here."""
+    rule = REPO / "docs/v2/prereg/2026-11-04_pilot-search-misses.md"
+    text = rule.read_text(encoding="utf-8").split("**The split.**")[1]
+    assert re.findall(r"must equal `([0-9a-f]{64})`", text)[0] == p4m.SPLIT_SHA256
+    script = (REPO / "scripts/pilot_search_misses.py").read_text(encoding="utf-8")
+    assert f'SPLIT_SHA256: Final = "{p4m.SPLIT_SHA256}"' in script
 
 
 def test_a_split_hash_mismatch_stops(tmp_path: Path) -> None:
@@ -4086,6 +4115,154 @@ def test_split_test_split_and_store_are_needed_for_a_run() -> None:
 
 
 # --------------------------------------------------------------------------
+# Red team 2026-11-07: the limits, and the real plan through the real store path
+# --------------------------------------------------------------------------
+
+
+def test_the_ceiling_is_the_stop_plus_two_jobs_at_their_limit() -> None:
+    """Section 8: "at most 2 jobs in flight at 3 CPU hours each take the run to
+    178". No code reads ``CPU_CEILING_HOURS``, so it is kept by the three things
+    that do the keeping: the most workers, each job's limit, and the stop."""
+    (workers,) = (
+        a for a in p4m.build_parser()._actions if "--workers" in a.option_strings
+    )
+    limit = inspect.signature(p4m.Driver.__init__).parameters["cpu_limit_s"].default
+    assert limit == p4m.JOB_CPU_HOURS * 3600
+    in_flight = max(workers.choices) * limit / 3600
+    assert p4m.CPU_STOP_HOURS + in_flight == p4m.CPU_CEILING_HOURS
+
+
+def test_a_job_runs_under_the_kernels_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    set_limits: list[Any] = []
+    monkeypatch.setattr(p4m.signal, "signal", lambda *a: None)
+    monkeypatch.setattr(p4m.resource, "setrlimit", lambda *a: set_limits.append(a))
+    journal, timing = tmp_path / "journal", tmp_path / "timing"
+    p4m.job_main(ToyJob("a"), "stage", str(journal), str(timing), 1234)
+    margin = p4m.CPU_HARD_MARGIN_S
+    assert set_limits == [(p4m.resource.RLIMIT_CPU, (1234, 1234 + margin))]
+
+
+def test_no_job_starts_at_the_stop(tmp_path: Path, paths: Any) -> None:
+    """So nothing is in flight past the stop but what had already started."""
+    table = tabled()
+    plant(paths, clean(table), end=None)
+    marker = tmp_path / "ran"
+    over = p4m.CPU_STOP_HOURS * 3600 * 10**6
+    job = ToyJob("a", marker=str(marker))
+    run = driver(paths.root, [stage(job)], read_usage_usec=lambda: over)
+    assert run.run() == "cpu_stop"
+    assert not marker.exists()
+
+
+#: What each system's cell reads on the stand-in plan: the toy world's values.
+PLAN_VALUES: Final = {
+    ORACLE: -0.5,
+    B_LIB: -0.6875,
+    B_RAND: -0.75,
+    PLANTED: -0.5,
+    B_SYM_10F: -0.5,
+    B_NP: -2.0,
+}
+
+
+def standin_truths() -> tuple[Any, ...]:
+    """As ``test_p4_plan.standin``: in, ood, in, ood. Ids only, and no P4 unit."""
+    return tuple(
+        replace(
+            entry("hawkes"),
+            id=f"test-{k:03d}",
+            in_dictionary=k % 2 == 0,
+            split="test",
+        )
+        for k in range(40)
+    )
+
+
+def stand_in_cell(system: str, text: str) -> tuple[Any, Any]:
+    """A cell's reading and detail. Only keys and addresses are real here."""
+    reading = {
+        "status": 1.0,
+        "per_event": PLAN_VALUES.get(system, -0.625),
+        "certified": 1.0,
+        "exact": 0.0,
+        "distance": 0.5,
+        "has_structure": 1.0,
+        "similarity": 0.9,
+        "fits_used": 1.0,
+    }
+    detail: Rec = {"structure": None if system == B_NP else text}
+    if system == ORACLE:
+        detail |= {"oracle_underfit": False, "oracle_psi_source": "search"}
+    return reading, {"result": detail}
+
+
+def fill_plan_store(root: Path, env: Any, plan: Any, truths: Any) -> None:
+    """Every unit of the plan at its real address, sessions and scores included,
+    with one 6-point structure so that every fit is exhaustive."""
+    by_id = {t.id: t for t in truths}
+    ids = [t.id for t in truths]
+    text = render(canonicalise(truths[0].structure))
+    with ResultStore(root) as store:
+        for config in plan:
+            for unit in baseline_units(ids, config):
+                key = baseline_key(unit, by_id[unit.truth_id], env, config)
+                store.put(key, *stand_in_cell(unit.system, text))
+            for unit in llm_units(ids, config):
+                session = session_key(unit, by_id[unit.truth_id], env, config)
+                store.put(session, {"status": 1.0}, {"session": {}})
+                score = score_key(unit, session, env, config)
+                store.put(score, *stand_in_cell(unit.system, text))
+
+
+@pytest.mark.slow
+def test_the_real_plan_runs_through_the_real_store_path(
+    paths: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``toy_run`` mocks ``load_store``, ``check_table``, ``build_census`` and
+    ``contrast_rows``, and nothing else in this file calls ``p4_plan``. So a change
+    of the plan (``TUNED_GP`` enters at ``S``, after ``R2``) would pass there. This
+    is the reviewer's probe: the real four, under the real ``execute``, on a store
+    filled from the real plan on stand-in ids."""
+    env = environment()
+    given = standin_truths()
+    monkeypatch.setattr(p4m.pilot, "load_split", lambda path: given)
+    monkeypatch.setattr(p4m.pilot, "truth_entries", lambda records: records)
+    monkeypatch.setattr(p4m.pilot, "pointproc_environment", lambda records: env)
+    _, plan, truths = p4m.p4_inputs(Path("/stand-in"))
+    store = paths.root / "store"
+    fill_plan_store(store, env, plan, truths)
+
+    table, cells = p4m.load_store(store, env, plan, truths)
+    assert sum(table.planned.values()) == len(table.rows) == 1940
+    assert len(table.sessions) == 1320
+    assert table.missing == {}
+    p4m.check_table(table, cells)
+    rows = p4m.contrast_rows(plan, truths)
+    census = p4m.build_census(table, cells, env.channels, frozenset(rows))
+    assert sum(p4m.row_key(r) in census.tier1 for r in census.rows) == len(rows) == 1000
+
+    paths.manifest.write_text(json.dumps(p4m.store_manifest(store)))
+    plant(paths, control_records(), end=None)
+    real_driver = p4m.Driver
+
+    def stub_clock(p: Any, stages: Any, *, workers: int, **kw: Any) -> Any:
+        options = {"read_usage_usec": lambda: 0, "read_mem_gib": lambda: 16.0, **kw}
+        return real_driver(p, stages, workers=workers, **options)
+
+    monkeypatch.setattr(p4m, "Driver", stub_clock)
+    monkeypatch.setattr(p4m, "plan_stages", lambda *a, **k: ())
+    setup = toy_setup(paths, env=env, plan=plan, truths=truths, store=store)
+    assert p4m.execute(setup, Args()) == 0
+    assert decision_of(paths)["label"] == "CONTRASTS_SURVIVE_FOUND_MISSES"
+    stored = reads_of(paths)["stored"]
+    assert (stored["C1"]["n"], len(stored["C1"]["rows"])) == (40, 240)
+    assert stored["C4"]["reportable"] is True
+    assert (stored["C4"]["n"], len(stored["C4"]["rows"])) == (20, 120)
+
+
+# --------------------------------------------------------------------------
 # Red team 2026-11-07: D7 and D8, group E's count and control 4's words
 # --------------------------------------------------------------------------
 
@@ -5535,11 +5712,20 @@ def test_a_failed_simulation_is_counted_and_skipped(
 
 
 def test_a_rehearsal_on_a_toy_store_reads_only_at_its_terminal_step(
-    paths: Any, toy_run: Any, spy: Path
+    paths: Any, toy_run: Any, spy: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """``execute`` in the mode, end to end on a toy table."""
     table = tabled()
     plant(paths, clean(table), end=None)
+    real_step = p4m.terminal_step
+
+    def step(*args: Any, **kwargs: Any) -> Any:
+        """When: nothing has been read at the door, and the run is over."""
+        assert not spy.exists(), "a read before the terminal step"
+        assert p4m.journal_end(p4m.read_records(paths.journal)) == "complete"
+        return real_step(*args, **kwargs)
+
+    monkeypatch.setattr(p4m, "terminal_step", step)
     run = toy_run((stage(ToyJob("a")),), Args(), rehearsal=True)
     assert run == 2
     assert decision_of(paths)["label"].startswith("REHEARSAL ")

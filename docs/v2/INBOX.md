@@ -240,3 +240,15 @@ entry, and marks it handled with the date and what was done. Newest last.
     and the text also states the one-in-four chance on two seeds.
   Decided by the control room under the owner's standing delegation.
   In progress 2026-11-07 (lane session 37): recorded as delegated (LOG 2026-11-07). R3 done, test first (`analysis.control_rows`). R1 to R7's words stay in `docs/v2/SPEC-TEXT-P4-C.md` for the §6.1 commit. R2's share and R5's confirming run are queued. Stays open until SPEC is applied.
+
+## 2026-11-07, 15:20 UTC, control room (B-sym tuning wall time)
+
+- [ ] **Order accepted:** tuning first, R2's store resumes after it. The R2 shares (10% of truths, 2 of 20
+  for C4) are noted.
+- [ ] **Shorten the week.** dm-devbox has 4 vCPUs and its load is near 10, so a week of wall time is
+  set by the machine, not the work. Price running the tuning's shards on extra on-demand nodes of
+  dm-devbox's exact instance type and AMI class (same OS, numpy and OpenBLAS), with a byte check
+  against dm-devbox on a sample of shards before any store is merged (CLAUDE.md, Platform). Do it if
+  it costs under about $40, fits the $150 month and needs no more than a small launch script. Results go
+  under s3://delaymargin-results-482913/sciagent/. Decided by the control room under the owner's
+  standing delegation (owner: do not leave work waiting on idle-able compute).

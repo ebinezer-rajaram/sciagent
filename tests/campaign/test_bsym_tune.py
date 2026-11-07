@@ -1855,7 +1855,6 @@ def test_a_second_driver_on_one_store_is_refused(tmp_path: Path) -> None:
 
 
 def test_the_launch_refuses_until_the_text_is_frozen(tmp_path: Path) -> None:
-    assert bt.PREREG_SHA256 == "" and bt.F_COMMIT == ""
     with pytest.raises(bt.GuardFailure, match="not frozen"):
         bt.launch_guards(tmp_path, prereg_sha="", f_commit="", environ={})
 
@@ -2076,6 +2075,8 @@ def test_the_command_refuses_a_launch_before_the_freeze(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    monkeypatch.setattr(bt, "PREREG_SHA256", "")
+    monkeypatch.setattr(bt, "F_COMMIT", "")
     monkeypatch.setattr(bt.pilot, "ROOT", tmp_path)
     assert bt.main(["--split", str(tmp_path)]) == bt.EXIT_REFUSED
     assert "not frozen" in capsys.readouterr().out
@@ -2087,6 +2088,8 @@ def test_the_command_refuses_stage_2_before_the_freeze(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    monkeypatch.setattr(bt, "PREREG_SHA256", "")
+    monkeypatch.setattr(bt, "F_COMMIT", "")
     monkeypatch.setattr(bt.pilot, "ROOT", tmp_path)
     assert bt.main(["--stage2", "--split", str(tmp_path)]) == bt.EXIT_REFUSED
     assert "not frozen" in capsys.readouterr().out

@@ -64,9 +64,10 @@ commit. A pass (:func:`plan_stage2`) is B-sym@10F, then planted-hint, read by
 :func:`read_pass` with gaps against P3's stored ORACLE: ``gonogo``'s control 2 on all
 20 truths and control 3 on the ten. A pass not finished has failed. The winner takes a
 pass, and on failure the next rank takes one. ``final.json`` is written at the end of
-the passes, is their latch, and nothing later changes it. :func:`final_setting` is what
-stands: a winner other than ``c0`` stands only by a ``final.json`` on the rule's own
-passes. Then, as its own step on the same store and CPU count, B-sym
+the passes, is their latch, and only section 6's bug rule changes it.
+:func:`final_setting` is what stands: a winner other than ``c0`` stands only by a
+``final.json`` on the rule's own passes. Then, as its own step on the same store and
+CPU count, B-sym
 (:func:`plan_margin`, :func:`run_margin`) runs for what stands, if it is not ``c0``.
 ``margin.json`` is that step's latch, and no rule reads it: a stop or the CPU limit
 writes it with ``finished`` false, and a kill resumes by the same command, so a kill
@@ -167,9 +168,11 @@ type Cell = tuple[str, int, str]
 # --------------------------------------------------------------------------
 
 #: sha256 of the frozen pre-registration, in code, not typed by the operator.
-PREREG_SHA256: Final = ""
+PREREG_SHA256: Final = (
+    "f5ca4b9c2c41b6459fc6697b12af0aa78796129e7c4c6c99ee1b535223794b71"
+)
 #: The commit that freezes it.
-F_COMMIT: Final = ""
+F_COMMIT: Final = "5480bf98d8bfccd0e67ee9f87c967be909f76a6e"
 
 # --------------------------------------------------------------------------
 # Fixed by the text

@@ -33,12 +33,15 @@ driver per store: a second ``pilot.py`` on the same ``--root`` is refused.
 
 ``--p4-block`` runs one config of ``p4_plan`` on the whole split, and takes no
 option that would narrow or change it, nor one that would leave some of its
-units unrun (``--no-llm``, ``--no-baselines``, ``--llm-limit``). A run on a split
-with any truth outside dev, or with a P4 arm set, is refused without a block. On
-a block, a split outside dev, or a store holding a cell of a truth not in the
-split (the store's own content, read-only), ``--reuse-from`` is refused unless a
-frozen amendment has named the fingerprint in :data:`P4_REUSE_NAMED` (prereg
-2026-11-05 section 2.10).
+units unrun (``--no-llm``, ``--no-baselines``, ``--llm-limit``, ``--rescore-llm``).
+Every option of :func:`run_parser`, the parser ``main`` uses, is classified for a
+block, or a block refuses to run. A run on a split with any truth outside dev, or
+with a P4 arm set, is refused without a block. On a block, a split outside dev, or
+a store holding a cell of a truth not in the split (the store's own content,
+read-only), ``--reuse-from`` is refused unless a frozen amendment has named the
+fingerprint in :data:`P4_REUSE_NAMED` (prereg 2026-11-05 section 2.10). On any
+store whose sidecar is established and that holds no cell it is refused as well:
+there is nothing to carry.
 
 A live LLM run uses the logged-in Claude subscription (do not set
 ANTHROPIC_API_KEY; the harness refuses it).
@@ -89,8 +92,21 @@ P4_BLOCK_FIXED: Final = (
     "arm_set",
 )
 #: The run settings a P4 block fixes: ``--p4-block`` refuses any of them set, since
-#: each would leave units of the block unrun.
-P4_BLOCK_RUN_FIXED: Final = ("llm_limit", "no_llm", "no_baselines")
+#: each would leave units of the block unrun (``--rescore-llm`` launches no session).
+P4_BLOCK_RUN_FIXED: Final = ("llm_limit", "no_llm", "no_baselines", "rescore_llm")
+#: The options a P4 block takes: where it reads and writes, how fast it runs, and
+#: the reuse refusal's input. Every option of :func:`run_parser` is in exactly one
+#: of these three, or a block refuses to run (red team round 2, finding 4).
+P4_BLOCK_FREE: Final = (
+    "split",
+    "root",
+    "max_heavy",
+    "workers",
+    "llm_concurrency",
+    "wait",
+    "reuse_from",
+    "p4_block",
+)
 #: The arm sets only a P4 block runs.
 P4_ARM_SETS: Final = frozenset({"p4", "p4-sonnet"})
 #: Fingerprints a frozen amendment has named for ``--reuse-from`` on the P4 store.
@@ -410,10 +426,15 @@ def refuse_unblocked(
     from sciagent.campaign.freeze import DEV_SPLIT
 
     if args.p4_block is not None:
+        defaults = vars(run_parser().parse_args([]))
+        known = {*P4_BLOCK_FIXED, *P4_BLOCK_RUN_FIXED, *P4_BLOCK_FREE}
+        unknown = sorted(set(defaults) - known)
+        if unknown:
+            raise SystemExit(
+                f"refused: options {unknown} are not classified for a P4 block"
+            )
         narrowed = [
-            name
-            for name in P4_BLOCK_RUN_FIXED
-            if getattr(args, name) != build_parser().get_default(name)
+            name for name in P4_BLOCK_RUN_FIXED if getattr(args, name) != defaults[name]
         ]
         if narrowed:
             raise SystemExit(f"refused: a P4 block runs every unit; {narrowed} set")
@@ -440,30 +461,41 @@ def refuse_p4_reuse(
     """Exit if ``reuse_from`` would carry the P4 store across a commit (module
     docstring). ``split`` is the whole split, whatever is selected. A block, a
     truth of the split outside dev, or a cell in the store at ``root`` of a truth
-    not in ``split`` makes this the P4 store. The store is opened read-only, and
-    only when nothing else has refused."""
+    not in ``split`` makes this the P4 store. A store whose sidecar is established
+    and that holds no cell is refused too, as there is nothing to carry (red team
+    round 2, finding 3). The store is opened read-only, and only when nothing else
+    has refused."""
+    from sciagent.campaign.fingerprint import CodeFingerprintError, read_fingerprints
     from sciagent.campaign.freeze import DEV_SPLIT
     from sciagent.campaign.store import LEDGER_FILE, ResultStore
 
-    if reuse_from is None or reuse_from in P4_REUSE_NAMED:
+    if reuse_from is None:
         return
     refusal = (
         f"refused: --reuse-from {reuse_from} on the P4 store: no frozen amendment "
         "names it"
     )
-    if block is not None or any(t.split != DEV_SPLIT for t in split):
+    named = reuse_from in P4_REUSE_NAMED
+    if not named and (block is not None or any(t.split != DEV_SPLIT for t in split)):
         raise SystemExit(refusal)
-    if not (root / LEDGER_FILE).is_file():
+    #: The truth of each cell the store holds, one entry per cell.
+    held: list[str] = []
+    if (root / LEDGER_FILE).is_file():
+        with ResultStore(root, read_only=True) as store:
+            held = [str(c["key"]["config"].get("truth")) for c in store.cells()]
+    try:
+        sidecar = read_fingerprints(root)
+    except CodeFingerprintError as error:
+        raise SystemExit(f"refused: {error}") from error
+    if sidecar and not held:
+        raise SystemExit(
+            f"refused: --reuse-from {reuse_from}: {root} holds no cell, so there is "
+            "nothing to carry"
+        )
+    if named:
         return
     ids = {t.id for t in split}
-    with ResultStore(root, read_only=True) as store:
-        foreign = sorted(
-            {
-                str(c["key"]["config"].get("truth"))
-                for c in store.cells()
-                if c["key"]["config"].get("truth") not in ids
-            }
-        )
+    foreign = sorted({truth for truth in held if truth not in ids})
     if foreign:
         raise SystemExit(
             f"{refusal} ({root} holds cells of {len(foreign)} truth(s) outside the "
@@ -513,8 +545,9 @@ def campaign_config(args: argparse.Namespace) -> CampaignConfig:
     )
 
 
-def main() -> None:
-    reconfigure_stdout()
+def run_parser() -> argparse.ArgumentParser:
+    """:func:`build_parser` plus the options only a run takes: the parser
+    :func:`main` uses, and the one a block's checks read (:data:`P4_BLOCK_FREE`)."""
     parser = build_parser()
     parser.add_argument(
         "--rescore-llm",
@@ -522,7 +555,12 @@ def main() -> None:
         help="score the stored LLM sessions under the current versions; never "
         "launch a live session (P4-PROPOSAL §2.2)",
     )
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> None:
+    reconfigure_stdout()
+    args = run_parser().parse_args()
     from sciagent.campaign.driver import Campaign, DriverSettings
     from sciagent.campaign.plan import CampaignError
 

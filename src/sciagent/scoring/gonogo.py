@@ -26,7 +26,8 @@ B-sym run is its own system, :data:`B_SYM_10F`.
 
 - :func:`oracle_beats_lib`: per truth, the paired differences
   ``gap_oracle - gap_lib`` over seeds; it passes when their mean exceeds
-  their paired standard error (needs ≥ 2 seeds with finite gaps). A truth
+  their paired standard error (needs ≥ 2 paired seeds, each a finite gap or a
+  B-lib scored ``-inf``: "Non-finite gaps" below). A truth
   that fails is not identifiable and is **dropped** by the preregistered rule
   before anything else is read; if every truth is dropped, the controls fail.
   **And** (P4-PROPOSAL §2.4) the ORACLE must carry zero ``oracle_underfit``
@@ -55,8 +56,9 @@ B-sym run is its own system, :data:`B_SYM_10F`.
 
 **Non-finite gaps.** A row's gap may be ``-inf`` (a model that gives a
 held-out event zero intensity); ``nan`` and ``+inf`` are refused. Control 1
-reads finite gaps only (a ``-inf`` B-lib seed carries no SE); controls 2 and 3
-read ``-inf`` by rank.
+reads finite gaps, and a B-lib scored ``-inf``: that seed counts as ORACLE
+beating B-lib, so the truth passes at an infinite margin (control room,
+INBOX 2026-11-07, part 2). Controls 2 and 3 read ``-inf`` by rank.
 
 **Verdict** (SPEC §7.1, in precedence order).
 
@@ -121,7 +123,10 @@ class ScoreRow:
     ``gap_closed`` is None when undefined; ``in_dictionary`` is the truth's
     B-sparse dictionary membership (the same on every row of a truth).
     ``oracle_underfit`` is the ORACLE row's flag (None: not recorded, or not
-    an ORACLE row).
+    an ORACLE row). ``failed`` marks a unit that raised and is ranked against the
+    control passing (``analysis.control_rows`` sets it): its gap is ``-inf``, or
+    ``+inf`` for control 2's comparator, B-rand. Only such a row may carry ``+inf``
+    (red team round 2, finding 8).
     """
 
     truth: str
@@ -132,6 +137,7 @@ class ScoreRow:
     exact: bool
     in_dictionary: bool
     oracle_underfit: bool | None = None
+    failed: bool = False
 
 
 class Outcome(Enum):
@@ -170,9 +176,18 @@ def _index(rows: Sequence[ScoreRow]) -> dict[tuple[str, int, str], ScoreRow]:
         if key in out:
             raise ScoringError(f"duplicate row for {key}")
         # +inf is a failed unit of control 2's comparator (R3 direction, INBOX
-        # 2026-11-07; :func:`_mean_gap`): B-rand only.
+        # 2026-11-07; :func:`_mean_gap`): B-rand only, and marked as failed.
         if math.isnan(r.gap) or (r.gap == math.inf and r.system != B_RAND):
             raise ScoringError(f"gap {r.gap} in row {key}: only -inf is allowed")
+        if r.gap == math.inf and not r.failed:
+            raise ScoringError(
+                f"gap +inf in row {key} is not marked as a failed unit: only a failed "
+                "B-rand unit reads as +inf"
+            )
+        if r.failed and math.isfinite(r.gap):
+            raise ScoringError(
+                f"row {key} is marked as a failed unit and has a finite gap {r.gap}"
+            )
         if r.gap_closed is not None and not math.isfinite(r.gap_closed):
             raise ScoringError(f"non-finite gap closed in row {key}")
         if membership.setdefault(r.truth, r.in_dictionary) != r.in_dictionary:
@@ -223,12 +238,20 @@ class OracleCheck:
     passed: bool
 
 
+def control_1_reads(row: ScoreRow) -> bool:
+    """Whether control 1 reads ``row``: a finite gap, or a B-lib scored ``-inf``
+    (module docstring)."""
+    return math.isfinite(row.gap) or (row.system == B_LIB and row.gap == -math.inf)
+
+
 def oracle_beats_lib(rows: Sequence[ScoreRow]) -> tuple[OracleCheck, ...]:
     """Per truth: mean ``gap_oracle - gap_lib`` over seeds above its paired SE.
 
-    Finite gaps only (module docstring).
+    The rows :func:`control_1_reads` (module docstring). A B-lib scored ``-inf`` on
+    a paired seed makes the margin ``+inf`` and passes the truth; its SE is then
+    ``nan``, as a ``-inf`` seed carries none.
     """
-    index = _index([r for r in rows if math.isfinite(r.gap)])
+    index = _index([r for r in rows if control_1_reads(r)])
     checks: list[OracleCheck] = []
     for t in _truths(rows):
         oracle = {r.seed: r.gap for r in _system_rows(index, ORACLE, t)}
@@ -238,6 +261,9 @@ def oracle_beats_lib(rows: Sequence[ScoreRow]) -> tuple[OracleCheck, ...]:
             raise ScoringError(
                 f"truth {t!r}: ORACLE vs B-lib needs ≥ 2 paired seeds, has {len(seeds)}"
             )
+        if any(lib[s] == -math.inf for s in seeds):
+            checks.append(OracleCheck(t, math.inf, math.nan, True))
+            continue
         margin, se = paired_mean_se([oracle[s] for s in seeds], [lib[s] for s in seeds])
         checks.append(OracleCheck(t, margin, se, margin > se))
     return tuple(checks)
@@ -317,6 +343,24 @@ def _difference(planted: float, rand: float) -> float:
     return planted - rand
 
 
+def planted_differences(
+    rows: Sequence[ScoreRow], truths: Sequence[str]
+) -> tuple[float, ...]:
+    """Control 2's ``d_t``, planted-hint's minus B-rand's per-truth mean gap, for
+    each of ``truths`` in order (module docstring)."""
+    index = _index(rows)
+    return tuple(
+        _difference(_mean_gap(index, PLANTED, t), _mean_gap(index, B_RAND, t))
+        for t in truths
+    )
+
+
+def bsym_gaps(rows: Sequence[ScoreRow], truths: Sequence[str]) -> tuple[float, ...]:
+    """Control 3's per-truth mean gap of B-sym at 10xF, for each of ``truths``."""
+    index = _index(rows)
+    return tuple(_mean_gap(index, B_SYM_10F, t) for t in truths)
+
+
 def planted_beats_rand(
     rows: Sequence[ScoreRow],
     truths: Sequence[str],
@@ -327,11 +371,7 @@ def planted_beats_rand(
     """Planted-hint minus B-rand per-truth mean gaps, read by rank (docstring)."""
     if not truths:
         raise ScoringError("no truths to read control 2 on")
-    index = _index(rows)
-    d = [
-        _difference(_mean_gap(index, PLANTED, t), _mean_gap(index, B_RAND, t))
-        for t in truths
-    ]
+    d = list(planted_differences(rows, truths))
     p = signed_rank_greater(d)
     ci = bootstrap_median_ci(d, rng, resamples=resamples)
     finite = [x for x in d if math.isfinite(x)]
@@ -373,8 +413,7 @@ def bsym_approaches_oracle(
     """Median per-truth mean gap of B-sym at 10xF is ≥ ``-BSYM_TOLERANCE``."""
     if not truths:
         raise ScoringError("no truths to read B-sym at 10xF on")
-    index = _index(rows)
-    median = order_median([_mean_gap(index, B_SYM_10F, t) for t in truths])
+    median = order_median(list(bsym_gaps(rows, truths)))
     return BsymCheck(median, BSYM_TOLERANCE, median >= -BSYM_TOLERANCE)
 
 

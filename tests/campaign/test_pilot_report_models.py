@@ -464,6 +464,37 @@ def test_the_scope_is_the_whole_plans_on_any_block(
     assert "not confirmatory" not in section
 
 
+def headline_section(text: str) -> str:
+    """The go/no-go headline and controls 1 to 3: from the go/no-go heading to the
+    per-system table, less the shares table, whose arm names carry the block's own
+    fit flags."""
+    body = text.split("## Go/no-go (SPEC §7.1)", 1)[1].split("## Per-system", 1)[0]
+    return "\n".join(x for x in body.splitlines() if not x.startswith("|"))
+
+
+@pytest.mark.parametrize("block", ["haiku", "opus", "sweep-e16-f40"])
+def test_the_headline_and_controls_read_the_merged_table_on_any_block(
+    report: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, block: str
+) -> None:
+    """Red team round 2, finding 2: a block with no ORACLE printed INCOMPLETE and
+    control 1 FAIL while the gate, on the merged table, passed. The headline and
+    controls of every block are now the Sonnet block's."""
+    rows = controls()
+    (tmp_path / "s").mkdir()
+    (tmp_path / "o").mkdir()
+    sonnet = headline_section(
+        render(
+            report, tmp_path / "s", monkeypatch, "--p4-block", "sonnet", baselines=rows
+        )
+    )
+    other = headline_section(
+        render(report, tmp_path / "o", monkeypatch, "--p4-block", block, baselines=rows)
+    )
+    assert "- Controls pass: True;" in sonnet, sonnet
+    assert "**1. ORACLE beats B-lib**" in sonnet and "**PASS**" in sonnet
+    assert other == sonnet
+
+
 def test_the_scope_counts_c4s_own_truths(
     report: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -512,6 +543,33 @@ def test_the_scope_refuses_a_table_short_of_the_split(
     monkeypatch.setattr(report, "p4_merged_table", lambda *_, **__: short)
     with pytest.raises(SystemExit):
         run(report, monkeypatch, store, "--p4-block", "sonnet")
+
+
+def test_the_merge_refuses_a_table_short_of_the_split_by_itself(
+    report: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Red team round 2, finding 7: the size check had no test of its own, as the
+    ``reads.json`` refusal caught the same case. Here nothing else can refuse."""
+    whole = merged(controls())
+    short = Table(
+        {t: e for t, e in whole.truths.items() if t != TRUTHS[0].id},
+        tuple(r for r in whole.rows if r.truth != TRUTHS[0].id),
+        (),
+        {},
+        {},
+    )
+    monkeypatch.setattr(report, "store_commit", lambda _: (FINGERPRINT, COMMIT))
+    monkeypatch.setattr(report, "p4_merged_table", lambda *_, **__: short)
+    with pytest.raises(SystemExit):
+        report.p4_merged(Path("/p4"), None, TRUTHS, "stored", split_truths=len(TRUTHS))
+    assert (
+        "the merged table holds 39 truths, not the split's" in capsys.readouterr().err
+    )
+    monkeypatch.setattr(report, "p4_merged_table", lambda *_, **__: whole)
+    got = report.p4_merged(Path("/p4"), None, TRUTHS, "stored", split_truths=40)
+    assert got == (whole, COMMIT)
 
 
 def test_the_header_gives_the_blocks_seeds(

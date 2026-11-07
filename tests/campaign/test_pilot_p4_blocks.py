@@ -286,8 +286,47 @@ def test_a_block_launches_the_whole_split_with_every_unit(
     assert call["reuse_from"] is None
 
 
+def test_every_option_of_mains_parser_is_classified_for_a_block(
+    pilot: ModuleType,
+) -> None:
+    """Red team round 2, finding 4: ``--rescore-llm`` was added in ``main()`` only
+    and slipped past the block's checks. Every option of the parser ``main()``
+    uses is now fixed by a block, fixed as a run setting, or one a block takes."""
+    options = set(vars(pilot.run_parser().parse_args([])))
+    classes = (pilot.P4_BLOCK_FIXED, pilot.P4_BLOCK_RUN_FIXED, pilot.P4_BLOCK_FREE)
+    named = [name for group in classes for name in group]
+    assert len(named) == len(set(named))
+    assert options == set(named)
+    assert "rescore_llm" in pilot.P4_BLOCK_RUN_FIXED
+
+
+def test_an_option_no_one_classified_refuses_a_block(
+    launcher: tuple[ModuleType, Launched],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    pilot, launched = launcher
+    original = pilot.run_parser
+
+    def grown() -> object:
+        parser = original()
+        parser.add_argument("--new-thing", default=None)
+        return parser
+
+    monkeypatch.setattr(pilot, "run_parser", grown)
+    with pytest.raises(SystemExit, match=r"refused.*new_thing"):
+        run_main(
+            pilot,
+            monkeypatch,
+            standin(),
+            *("--root", str(tmp_path / "s"), "--p4-block", "sonnet"),
+        )
+    assert not launched.calls
+
+
 @pytest.mark.parametrize(
-    "extra", [("--no-llm",), ("--no-baselines",), ("--llm-limit", "4")]
+    "extra",
+    [("--no-llm",), ("--no-baselines",), ("--llm-limit", "4"), ("--rescore-llm",)],
 )
 def test_a_block_runs_every_unit_of_it(
     launcher: tuple[ModuleType, Launched],
@@ -390,6 +429,68 @@ def test_main_refuses_a_dev_run_reusing_the_p4_store(
             FINGERPRINT,
         )
     assert not launched.calls
+
+
+OLD = "commit=" + "0" * 40 + ",tree=clean"
+
+
+def established(root: Path, truth_ids: tuple[str, ...]) -> None:
+    """A store whose sidecar establishes ``OLD``, holding a cell of each id."""
+    from sciagent.campaign.fingerprint import guard_store
+
+    root.mkdir(parents=True, exist_ok=True)
+    guard_store(root, OLD)
+    store_with(root, truth_ids)
+
+
+def test_reuse_is_refused_on_an_established_store_with_no_cell(
+    pilot: ModuleType, tmp_path: Path
+) -> None:
+    """Red team round 2, finding 3: there is nothing to carry, and the reuse line
+    would make a later block run on that store need no flag."""
+    established(tmp_path, ())
+    with pytest.raises(SystemExit, match=r"refused.*no cell"):
+        pilot.refuse_p4_reuse(OLD, None, dev_split(2), tmp_path)
+
+
+def test_reuse_is_refused_on_an_established_sidecar_with_no_ledger(
+    pilot: ModuleType, tmp_path: Path
+) -> None:
+    from sciagent.campaign.fingerprint import guard_store
+
+    guard_store(tmp_path, OLD)
+    with pytest.raises(SystemExit, match=r"refused.*no cell"):
+        pilot.refuse_p4_reuse(OLD, None, dev_split(2), tmp_path)
+
+
+def test_reuse_of_an_established_dev_store_with_cells_stays_allowed(
+    pilot: ModuleType, tmp_path: Path
+) -> None:
+    established(tmp_path, ("dev-000",))
+    pilot.refuse_p4_reuse(OLD, None, dev_split(2), tmp_path)
+
+
+def test_main_refuses_reuse_onto_an_empty_established_store(
+    launcher: tuple[ModuleType, Launched],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The red team's case B through ``main``: no reuse line is written."""
+    from sciagent.campaign.fingerprint import read_fingerprints
+
+    pilot, launched = launcher
+    root = tmp_path / "store-p4-empty"
+    established(root, ())
+    with pytest.raises(SystemExit, match="refused"):
+        run_main(
+            pilot,
+            monkeypatch,
+            dev_split(3),
+            *("--root", str(root), "--truths", "0", "--reuse-from", OLD),
+            *("--no-llm", "--no-baselines", "--workers", "0"),
+        )
+    assert not launched.calls
+    assert [e.event for e in read_fingerprints(root)] == ["establish"]
 
 
 def test_main_passes_the_whole_split_to_the_reuse_refusal(

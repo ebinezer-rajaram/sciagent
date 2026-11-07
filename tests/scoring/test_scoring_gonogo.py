@@ -312,14 +312,29 @@ def test_paired_mean_se_matches_numpy(d: list[float]) -> None:
 
 
 def _with_gap(
-    rows: list[ScoreRow], truth: str, seed: int, system: str, gap: float
+    rows: list[ScoreRow],
+    truth: str,
+    seed: int,
+    system: str,
+    gap: float,
+    *,
+    failed: bool = False,
 ) -> list[ScoreRow]:
     return [
-        ScoreRow(r.truth, r.seed, r.system, gap, None, r.exact, r.in_dictionary, None)
+        ScoreRow(
+            r.truth, r.seed, r.system, gap, None, r.exact, r.in_dictionary, None, failed
+        )
         if (r.truth, r.seed, r.system) == (truth, seed, system)
         else r
         for r in rows
     ]
+
+
+def _crashed(
+    rows: list[ScoreRow], truth: str, seed: int, system: str, gap: float
+) -> list[ScoreRow]:
+    """A failed unit as ``analysis.control_rows`` ranks it: marked, at ``gap``."""
+    return _with_gap(rows, truth, seed, system, gap, failed=True)
 
 
 def test_control_2_takes_minus_infinity_and_outliers_by_rank() -> None:
@@ -355,32 +370,49 @@ def _difference_on(check: object, truth: str) -> float:
 def test_control_2_ranks_a_plus_inf_b_rand_against_planted() -> None:
     """R3 direction (INBOX 2026-11-07): a failed comparator unit reaches gonogo as
     a ``+inf`` B-rand gap, and the truth's difference is ``-inf``."""
-    rows = _with_gap(_table(GOOD), "t00", 0, B_RAND, float("inf"))
+    rows = _crashed(_table(GOOD), "t00", 0, B_RAND, float("inf"))
     check = planted_beats_rand(rows, TRUTHS, rng=np.random.default_rng(0))
     assert _difference_on(check, "t00") == float("-inf")
     assert check.losses == 1
+
+
+def test_a_plus_inf_b_rand_not_marked_as_a_failed_unit_is_refused() -> None:
+    """Red team round 2, finding 8: ``+inf`` reads as a crash only where a failed
+    comparator unit produced it (``ScoreRow.failed``, which ``control_rows`` sets).
+    A caller's ``+inf`` from a stored value (``bsym_tune.py`` builds B-rand rows from
+    P3's) raises instead of reading as a crash."""
+    rows = _with_gap(_table(GOOD), "t00", 0, B_RAND, float("inf"))
+    with pytest.raises(ScoringError, match="failed"):
+        planted_beats_rand(rows, TRUTHS, rng=np.random.default_rng(0))
+
+
+@pytest.mark.parametrize("gap", [0.0, -0.5])
+def test_a_failed_unit_with_a_finite_gap_is_refused(gap: float) -> None:
+    rows = _crashed(_table(GOOD), "t00", 0, PLANTED, gap)
+    with pytest.raises(ScoringError, match="failed"):
+        planted_beats_rand(rows, TRUTHS, rng=np.random.default_rng(0))
 
 
 def test_a_plus_inf_b_rand_seed_outranks_a_scored_minus_inf_one() -> None:
     """Mixed: one seed scored ``-inf``, another failed. The truth's B-rand value is
     ``+inf`` (the crash counts against the control), never NaN."""
     rows = _with_gap(_table(GOOD), "t00", 0, B_RAND, float("-inf"))
-    rows = _with_gap(rows, "t00", 1, B_RAND, float("inf"))
+    rows = _crashed(rows, "t00", 1, B_RAND, float("inf"))
     check = planted_beats_rand(rows, TRUTHS, rng=np.random.default_rng(0))
     assert _difference_on(check, "t00") == float("-inf")
     assert not any(np.isnan(check.differences))
 
 
 def test_a_planted_minus_inf_against_a_plus_inf_b_rand_is_a_loss() -> None:
-    rows = _with_gap(_table(GOOD), "t00", 0, PLANTED, float("-inf"))
-    rows = _with_gap(rows, "t00", 0, B_RAND, float("inf"))
+    rows = _crashed(_table(GOOD), "t00", 0, PLANTED, float("-inf"))
+    rows = _crashed(rows, "t00", 0, B_RAND, float("inf"))
     check = planted_beats_rand(rows, TRUTHS, rng=np.random.default_rng(0))
     assert _difference_on(check, "t00") == float("-inf")
 
 
 @pytest.mark.parametrize("system", [ORACLE, B_LIB, PLANTED, B_SYM_10F, B_SPARSE])
 def test_plus_inf_is_refused_on_every_system_but_b_rand(system: str) -> None:
-    rows = _with_gap(_table(GOOD), "t00", 0, system, float("inf"))
+    rows = _crashed(_table(GOOD), "t00", 0, system, float("inf"))
     with pytest.raises(ScoringError, match="only -inf"):
         planted_beats_rand(rows, TRUTHS, rng=np.random.default_rng(0))
     with pytest.raises(ScoringError, match="only -inf"):

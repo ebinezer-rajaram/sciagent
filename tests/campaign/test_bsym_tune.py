@@ -2560,6 +2560,19 @@ def test_control_2_is_gonogos_rank_rule_against_the_stored_b_rand() -> None:
     assert got["median"] == 0.25
 
 
+def test_the_call_path_reads_finite_and_refuses_a_stored_plus_inf_b_rand() -> None:
+    """Red team round 2, finding 8, at head: ``_stored_rows`` builds unmarked B-rand
+    rows from P3's values, which ``gonogo`` reads as before when finite. A stored
+    ``+inf`` is no failed unit, so it raises rather than read as a crash. The running
+    tuning uses its own frozen worktree; nothing here touches it."""
+    got = read_pass(stage2_readings())
+    assert got["control_2"]["passed"] and got["passed"] is True
+    from sciagent.scoring.errors import ScoringError
+
+    with pytest.raises(ScoringError, match="failed"):
+        read_pass(stage2_readings(), table=p3_rows(rand=math.inf))
+
+
 def test_control_2_fails_when_planted_does_not_beat_the_stored_b_rand() -> None:
     got = read_pass(stage2_readings(planted=-1.25))
     assert not got["control_2"]["passed"] and got["control_3"]["passed"]

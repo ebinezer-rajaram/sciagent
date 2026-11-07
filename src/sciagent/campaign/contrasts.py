@@ -48,9 +48,10 @@ that ``read_contrasts`` is not given.
    and control 2 and 3 still rank a ``-inf``. Their result on a table is a
    :class:`ControlsRead`, which :func:`read_controls` returns, so that a caller need
    not run this step itself. A truth control 1 could not reach, with fewer than 2
-   seeds on which ORACLE and B-lib both have finite gaps, is ``unchecked``: neither
-   checked nor dropped. It is not kept, as it is not in any share of the verdict,
-   and :data:`READ_UNCHECKED_TRUTHS` alone says so.
+   paired seeds of ORACLE and B-lib, is ``unchecked``: neither checked nor
+   dropped. It is not kept, as it is not in any share of the verdict, and
+   :data:`READ_UNCHECKED_TRUTHS` alone says so. Controls 2 and 3 read it where it
+   counts against them (``analysis`` docstring).
 2. The pair rule floors a copy (:func:`floor_rows`).
 3. :func:`~sciagent.campaign.analysis.derive` runs on the copy.
 4. The reads.
@@ -143,10 +144,11 @@ REFERENCES: Final = frozenset({ORACLE, B_LIB})
 #: A read needs at least this many truths.
 MIN_TRUTHS: Final = 2
 #: Whether the reads take a truth control 1 could not check: one with fewer than 2
-#: seeds on which ORACLE and B-lib both have finite gaps. On P4's two seeds a single
-#: B-lib at ``-inf``, or failed, makes one. Set by the control room before any P4
-#: data (LOG 2026-11-06; red team finding 1), and this is its one place.
-#: It moves the reads only: controls 2 and 3 read ``Verdict.kept`` either way.
+#: paired seeds of ORACLE and B-lib (a finite gap each, or B-lib scored ``-inf``).
+#: On P4's two seeds a single failed or NaN B-lib unit makes one. Set by the control
+#: room before any P4 data (LOG 2026-11-06; red team finding 1), and this is its one
+#: place. It moves the reads only: controls 2 and 3 read the kept truths and the
+#: unchecked ones that count against them either way (``analysis`` docstring).
 READ_UNCHECKED_TRUTHS: Final = False
 #: Why a read is not reportable (:meth:`ControlsRead.why_not`).
 CONTROLS_FAILED: Final = "controls 1 to 3 did not pass"

@@ -21,7 +21,9 @@ needs a full campaign. The verdict and every number come from the real
 from __future__ import annotations
 
 import importlib.util
+import math
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import ModuleType
 
@@ -190,7 +192,55 @@ def test_control_2_still_reads_every_kept_truth(
 ) -> None:
     text = _render(report, tmp_path, monkeypatch, _table())
     line = _line(text, "**2. Planted hint beats B-rand**")
-    assert "over kept truths:" in line, line
+    assert "over 5 truths (5 kept):" in line, line
+
+
+def _unchecked(table: Table, truth: str) -> Table:
+    """``table`` with ``truth``'s B-lib NaN on seeds 2 and 3: unchecked."""
+    rows = [
+        replace(r, per_event=math.nan)
+        if (r.truth, r.system) == (truth, "B-lib") and r.seed != 1
+        else r
+        for r in table.rows
+    ]
+    return replace(table, rows=tuple(derive(rows)))
+
+
+def test_controls_2_and_3_name_the_unchecked_truths_they_leave_out(
+    report: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """INBOX 2026-11-07: an unchecked truth enters controls 2 and 3 only where it
+    counts against them. Planted-hint wins and B-sym@10F is near ORACLE here, so it
+    is left out of both, and each line says which truths it read."""
+    text = _render(report, tmp_path, monkeypatch, _unchecked(_table(), TRUTHS[0]))
+    two = _line(text, "**2. Planted hint beats B-rand**")
+    assert (
+        "over 4 truths (4 kept; left out, as they could only help it pass: "
+        "unchecked ['dev-000']):" in two
+    ), two
+    three = _line(text, "**3. B-sym at 10xF approaches ORACLE**")
+    assert "median over 2 of the 4 kept truths (its declared subset; left out" in (
+        three
+    ), three
+    assert "unchecked ['dev-000'])" in three, three
+
+
+def test_control_2_states_its_limit_when_an_unchecked_loss_enters(
+    report: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    table = _unchecked(_table(), TRUTHS[4])
+    rows = [
+        replace(r, per_event=-1.0)
+        if (r.truth, r.system) == (TRUTHS[4], "planted-hint")
+        else r
+        for r in table.rows
+    ]
+    text = _render(
+        report, tmp_path, monkeypatch, replace(table, rows=tuple(derive(rows)))
+    )
+    two = _line(text, "**2. Planted hint beats B-rand**")
+    assert "over 5 truths (4 kept, 1 unchecked against it):" in two, two
+    assert "the signed-rank p is not monotone" in text, text
 
 
 def test_b_sparse_carries_no_claim_from_the_windows_run(

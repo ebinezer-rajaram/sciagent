@@ -843,7 +843,9 @@ def _two_seeds() -> World:
 
 
 def test_read_controls_holds_the_truths_of_a_table() -> None:
-    """Four truths kept: four wins of four is p = 1/16, so control 2 fails here."""
+    """Four truths kept and one unchecked. The unchecked truth is a win, so it
+    could only help control 2 and stays out of it (INBOX 2026-11-07, as the lead
+    applies the general rule): four wins of four is p = 1/16, and control 2 fails."""
     rows = world()
     for seed in SEEDS:
         score(rows, "t2", seed, B_LIB, -0.25)  # ORACLE does not beat B-lib here
@@ -857,15 +859,28 @@ def test_read_controls_holds_the_truths_of_a_table() -> None:
     assert got.naming_null is True
 
 
+def test_on_two_seeds_a_minus_inf_b_lib_keeps_the_truth() -> None:
+    """A scored ``-inf`` B-lib counts as ORACLE beating B-lib (control room, INBOX
+    2026-11-07, part 2): the truth is kept and every read takes it."""
+    rows = _two_seeds()
+    _floored_by_inf(rows, ("t3", 2, B_LIB))
+    got = controlled(tabled(rows))
+    assert got.kept == TRUTHS
+    assert got.unchecked == () and got.dropped == ()
+    assert got.controls_pass
+
+
 @pytest.mark.parametrize(
-    "outcome", [_floored_by_inf, _floored_by_failed_fit], ids=["minus-inf", "failed"]
+    "outcome",
+    [_floored_by_failed_fit, _floored_by_no_submission],
+    ids=["failed", "unsubmitted"],
 )
 def test_on_two_seeds_one_lost_b_lib_row_leaves_a_truth_unchecked(
     outcome: object,
 ) -> None:
-    """Finding 1: at ``-inf`` or failed, B-lib leaves one paired seed. Such a truth
-    is neither checked nor dropped, and it leaves all seven reads, with the controls
-    passing and nothing else on the table to show it."""
+    """Finding 1: failed or with no reading, B-lib leaves one paired seed. Such a
+    truth is neither checked nor dropped, and it leaves all seven reads, with the
+    controls passing and nothing else on the table to show it."""
     assert callable(outcome)
     rows = _two_seeds()
     outcome(rows, ("t3", 2, B_LIB))
@@ -922,7 +937,7 @@ def test_the_unchecked_rule_is_one_constant(monkeypatch: pytest.MonkeyPatch) -> 
     so: turned over, the truth is read and still listed as unchecked."""
     assert contrasts.READ_UNCHECKED_TRUTHS is False
     rows = _two_seeds()
-    score(rows, "t3", 2, B_LIB, -math.inf)
+    _floored_by_failed_fit(rows, ("t3", 2, B_LIB))
     table = tabled(rows)
     assert read(table)["C1"].n == 5
     monkeypatch.setattr(contrasts, "READ_UNCHECKED_TRUTHS", True)

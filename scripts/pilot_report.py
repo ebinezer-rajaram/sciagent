@@ -702,7 +702,8 @@ def control_1_headline(
     """Control 1's label, read from the verdict's own checks of all three parts.
 
     The margin part is ``verdict.oracle_checks`` (truths with ≥ 2 paired
-    finite seeds); a truth failing it is dropped and reported, and none kept
+    seeds, each finite or a B-lib at -inf); a truth failing it is dropped and
+    reported, and none kept
     fails the control, as in ``analysis.verdict``. A truth without the pairs
     is neither kept nor dropped: named as not checkable. With no truth checked
     the label is NOT CHECKABLE, never PASS; any failing part makes it FAIL.
@@ -713,7 +714,8 @@ def control_1_headline(
     checked = [c.truth for c in verdict.oracle_checks]
     unchecked = [t for t in truths if t not in checked]
     not_checkable = (
-        f"margin not checkable (< 2 paired finite seeds of ORACLE and B-lib) "
+        f"margin not checkable (< 2 paired seeds of ORACLE and B-lib, each finite "
+        f"or a B-lib at -inf) "
         f"for {unchecked}"
     )
     fail = gonogo.underfit_reason(underfit) + analysis.oracle_inf_reason(oracle_inf)
@@ -752,23 +754,49 @@ def verdict_line(outcome: str) -> str:
     )
 
 
-def control_3_scope(
-    kept: Sequence[str], srows: Sequence[Any], *, declared: bool
+def unchecked_parts(
+    read: Sequence[str], kept: Sequence[str], out: Sequence[str]
 ) -> str:
-    """The truths control 3 reads, against the kept ones: the kept truths with a
-    B-sym@10F row in ``srows``, which must be ``analysis.control_rows`` as the
-    verdict reads them (a failed unit ranked lowest, ruling R3). A declared subset
-    narrows them."""
-    from sciagent.campaign.plan import B_SYM_10F
+    """What a control read beyond its kept truths: the unchecked truths that count
+    against it, which it reads, and those that could only help it, which it leaves
+    out (``analysis`` docstring, INBOX 2026-11-07)."""
+    against = [t for t in read if t not in kept]
+    return (f", {len(against)} unchecked against it" if against else "") + (
+        f"; left out, as they could only help it pass: unchecked {list(out)}"
+        if out
+        else ""
+    )
 
-    have = {r.truth for r in srows if r.system == B_SYM_10F}
-    read = sum(t in have for t in kept)
+
+def control_2_scope(verdict: Any) -> str:
+    """The truths control 2 read, as ``verdict.planted.truths`` has them."""
+    read = verdict.planted.truths
+    kept = sum(t in verdict.kept for t in read)
+    parts = unchecked_parts(read, verdict.kept, verdict.unchecked_out_2)
+    return f"{len(read)} truths ({kept} kept{parts})"
+
+
+#: Printed under control 2 when an unchecked truth entered it (analysis docstring).
+CONTROL_2_LIMIT: Final = (
+    "An unchecked truth entered control 2 as a loss. A stated limit: the "
+    "signed-rank p is not monotone in adding a loss of the smallest size, so such a "
+    "truth can lower p (`analysis` docstring)."
+)
+
+
+def control_3_scope(verdict: Any, *, declared: bool) -> str:
+    """The truths control 3 read (``verdict.bsym_truths``), against the kept ones:
+    the kept truths with a B-sym@10F unit (a failed one ranked lowest, ruling R3),
+    and the unchecked ones that count against it. A declared subset narrows them."""
+    read = verdict.bsym_truths
+    kept = sum(t in read for t in verdict.kept)
     which = (
         "its declared subset"
         if declared
         else "those with a unit, a failed one ranked lowest"
     )
-    return f"{read} of the {len(kept)} kept truths ({which})"
+    parts = unchecked_parts(read, verdict.kept, verdict.unchecked_out_3)
+    return f"{kept} of the {len(verdict.kept)} kept truths ({which}{parts})"
 
 
 def interim_controls(tab: Any, resamples: int) -> list[str]:
@@ -936,24 +964,36 @@ def scope_lines(scopes: Sequence[tuple[str, Any]]) -> list[str]:
     return [*out, ""]
 
 
-def p4_lines(
+def p4_merged(
     root: Path,
     env: Any,
     truths: Sequence[Any],
     sessions: Literal["current", "stored"],
     *,
     split_truths: int,
-    recorded: Mapping[str, Any] | None,
+) -> tuple[Any, str]:
+    """The merge of every config of ``p4_plan`` on the whole split, and the commit of
+    the store's single ``establish`` line (:func:`store_commit`). The merge must hold
+    ``split_truths`` truths, or the report refuses. Every block's headline, controls
+    1 to 3, named minus anon and scope read it (red team round 2, finding 2), as the
+    gate does."""
+    fingerprint, commit = store_commit(root)
+    merged = p4_merged_table(root, env, truths, sessions, fingerprint)
+    if len(merged.truths) != split_truths:
+        refuse(f"the merged table holds {len(merged.truths)} truths, not the split's")
+    return merged, commit
+
+
+def p4_lines(
+    merged: Any, commit: str, *, recorded: Mapping[str, Any] | None
 ) -> list[str]:
     """The P4 report's named minus anon and R2's scope (red team 2026-11-07,
-    findings 2 and 3).
+    findings 2 and 3), on ``merged`` (:func:`p4_merged`).
 
-    Both read the merge of every config of ``p4_plan`` on the whole split, which
-    must hold ``split_truths`` truths. Control 4 is read at the store's commit
-    (:func:`store_commit`), and control 2 at the miss script's frozen root and
-    resamples. Where ``recorded`` holds ``reads.json``'s controls, its stored
-    controls must be the ones computed here, or the report refuses, and the scope is
-    given for its stored and its corrected table.
+    Control 4 is read at the store's commit ``commit``, and control 2 at the miss
+    script's frozen root and resamples. Where ``recorded`` holds ``reads.json``'s
+    controls, its stored controls must be the ones computed here, or the report
+    refuses, and the scope is given for its stored and its corrected table.
     """
     from naming_null_record import read_naming_null
     from p4_search_misses import READS_RESAMPLES, READS_ROOT
@@ -962,11 +1002,7 @@ def p4_lines(
     from sciagent.campaign.secondaries import read_scope
     from sciagent.scoring.errors import ScoringError
 
-    fingerprint, commit = store_commit(root)
     naming_null = read_naming_null(commit)
-    merged = p4_merged_table(root, env, truths, sessions, fingerprint)
-    if len(merged.truths) != split_truths:
-        refuse(f"the merged table holds {len(merged.truths)} truths, not the split's")
     computed = read_controls(
         merged, ScriptedControls(naming_null), READS_ROOT, READS_RESAMPLES
     )
@@ -1169,19 +1205,31 @@ def main() -> None:
         session_versions[x.env_version] = session_versions.get(x.env_version, 0) + 1
     llm_systems = config.llm_systems()
     systems = [*BASELINES, *llm_systems]
+    merged: Any = None
+    commit = ""
     if p4:
-        # The headline's control 2 draws as the reads' gate does (red team
-        # 2026-11-07, finding 2), so the two cannot disagree on one table.
+        # The headline and controls 1 to 3 read the merged table, and control 2
+        # draws as the reads' gate does (red team 2026-11-07, finding 2; round 2,
+        # finding 2), so the two cannot disagree on any block.
         from sciagent.campaign.contrasts import CONTROL_2_STREAM
 
+        merged, commit = p4_merged(
+            args.root,
+            env,
+            truths,
+            args.sessions,
+            split_truths=len(truth_entries(all_records)),
+        )
         rng = np.random.default_rng(
             np.random.SeedSequence([READS_ROOT, CONTROL_2_STREAM])
         )
     else:
         rng = np.random.default_rng(20261002)
-    verdict = analysis.verdict(tab, rng, resamples=args.resamples)
+    #: The table the headline and controls 1 to 3 read.
+    ctab = tab if merged is None else merged
+    verdict = analysis.verdict(ctab, rng, resamples=args.resamples)
 
-    baseline_missing = sum(tab.missing.get(s, 0) for s in BASELINES)
+    baseline_missing = sum(ctab.missing.get(s, 0) for s in BASELINES)
     complete = baseline_missing == 0
     L: list[str] = []
     L += ["# P3 pilot report" + (" (INTERIM)" if args.interim else ""), ""]
@@ -1323,15 +1371,16 @@ def main() -> None:
 
     # -- controls ----------------------------------------------------------
     L += ["## Positive controls (SPEC §6.4)", ""]
-    uf = analysis.underfit_check([r for r in rows if not r.llm])
-    oracle_inf = analysis.oracle_inf_units([r for r in rows if not r.llm])
+    uf = analysis.control_1_underfit([r for r in ctab.rows if not r.llm])
+    oracle_inf = analysis.oracle_inf_units([r for r in ctab.rows if not r.llm])
     L += [
         "**1. ORACLE beats B-lib** per truth: mean over seeds of gap(ORACLE) - "
-        "gap(B-lib) must exceed its paired SE (finite seeds only), **and** zero "
+        "gap(B-lib) must exceed its paired SE (finite seeds; a B-lib scored -inf "
+        "counts as ORACLE beating it, INBOX 2026-11-07), **and** zero "
         "`oracle_underfit` flags on every ORACLE unit (P4-PROPOSAL §2.4), "
         "**and** no ORACLE scoring -inf per event on held-out data on any "
         "(truth, seed) (not an upper bound; LOG 2026-10-27 item (c)): "
-        + control_1_headline(verdict, sorted(tab.truths), uf, oracle_inf)
+        + control_1_headline(verdict, sorted(ctab.truths), uf, oracle_inf)
         + ".",
         "",
     ]
@@ -1373,20 +1422,18 @@ def main() -> None:
             "**2. Planted hint beats B-rand** (Δ10 rank rule: one-sided Wilcoxon "
             f"p < {gonogo.CONTROL_2_ALPHA} **and** the median difference's CI "
             "lower end > 0), per-truth mean gap difference planted - B-rand over "
-            f"kept truths: {planted_text(verdict.planted)} → "
+            f"{control_2_scope(verdict)}: {planted_text(verdict.planted)} → "
             f"**{'PASS' if verdict.planted.passed else 'FAIL'}**.",
             "",
         ]
+        if any(t not in verdict.kept for t in verdict.planted.truths):
+            L += [CONTROL_2_LIMIT, ""]
     else:
         L += ["**2. Planted hint beats B-rand**: not computable (inconclusive).", ""]
     if verdict.bsym is not None:
         L += [
             "**3. B-sym at 10xF approaches ORACLE**: median over "
-            + control_3_scope(
-                verdict.kept,
-                analysis.control_rows([r for r in rows if not r.llm], tab.truths),
-                declared=config.control_truths is not None,
-            )
+            + control_3_scope(verdict, declared=config.control_truths is not None)
             + " of the "
             f"per-truth gap = {fmt(verdict.bsym.median_gap)} (pass if ≥ "
             f"-{gonogo.BSYM_TOLERANCE}) → "
@@ -1399,7 +1446,7 @@ def main() -> None:
 
     # -- per-system ---------------------------------------------------------
     if not complete:
-        L += interim_controls(tab, args.resamples)
+        L += interim_controls(ctab, args.resamples)
     L += ["## Per-system scores (all truths)", ""]
     L += [
         "Recovery and close shares are truth-weighted; gaps and similarity are over "
@@ -1539,13 +1586,10 @@ def main() -> None:
     ]
     L += ["### The softplus note", ""]
     L += softplus_note_table(args.root, llm_systems, tab)
-    if p4:
+    if merged is not None:
         L += p4_lines(
-            args.root,
-            env,
-            truths,
-            args.sessions,
-            split_truths=len(truth_entries(all_records)),
+            merged,
+            commit,
             recorded=(
                 recorded_controls(P4_READS) if outside_dev(all_records) else None
             ),

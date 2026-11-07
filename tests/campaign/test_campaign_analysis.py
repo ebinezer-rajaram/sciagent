@@ -302,21 +302,20 @@ def test_a_minus_infinite_blib_seed_leaves_gap_closed_undefined() -> None:
     assert by[(1, "X")].gap_closed is not None and not by[(1, "X")].closed_flagged
 
 
-def test_control_1_reads_a_minus_infinite_blib_seed_as_no_evidence() -> None:
-    """Preregistered (gonogo docstring): control 1 reads finite gaps only. A
-    truth keeps its check on its other seeds; with fewer than 2 finite pairs
-    it is not checkable (inconclusive), never kept on the infinite seed."""
-    one = _with(_table(0.0), {("hawkes", 3, "B-lib"): float("-inf")})
-    v = verdict(one, np.random.default_rng(0), resamples=200)
-    assert v.outcome == "go", v.reasons
-    assert "hawkes" in v.kept
-    two = _with(
-        _table(0.0),
-        {("hawkes", s, "B-lib"): float("-inf") for s in (2, 3)},
-    )
-    v = verdict(two, np.random.default_rng(0), resamples=200)
-    assert "hawkes" not in v.kept and "hawkes" not in v.dropped
-    assert any("hawkes" in m for m in v.inconclusive)
+def test_control_1_reads_a_minus_infinite_blib_seed_as_oracle_beating_it() -> None:
+    """A scored ``-inf`` B-lib counts as ORACLE beating B-lib (control room, INBOX
+    2026-11-07, part 2; it was no evidence before): the truth is kept at an
+    infinite margin, on one such seed or on two."""
+    for lost in ((3,), (2, 3)):
+        table = _with(
+            _table(0.0), {("hawkes", s, "B-lib"): float("-inf") for s in lost}
+        )
+        v = verdict(table, np.random.default_rng(0), resamples=200)
+        assert v.outcome == "go", v.reasons
+        assert "hawkes" in v.kept
+        check = next(c for c in v.oracle_checks if c.truth == "hawkes")
+        assert check.passed and check.margin == float("inf")
+        assert not any("hawkes" in m for m in v.inconclusive)
 
 
 def test_a_minus_infinite_oracle_seed_leaves_every_gap_there_undefined() -> None:
@@ -372,8 +371,8 @@ def test_every_oracle_minus_inf_unit_is_named() -> None:
 def test_an_oracle_minus_inf_truth_is_not_labelled_not_identifiable() -> None:
     """The old rule listed the -inf truth under "dropped as not identifiable
     (ORACLE ≤ B-lib)", which it was not shown to be. Now its ORACLE-vs-B-lib
-    check reads its finite seeds only, as for a -inf B-lib seed; with fewer
-    than 2 finite pairs it is not checkable (inconclusive)."""
+    check reads its finite seeds only; with fewer than 2 finite pairs it is not
+    checkable (inconclusive)."""
     t = _with(_table(0.0), {("hawkes", 3, "ORACLE"): float("-inf")})
     v = verdict(t, np.random.default_rng(0), resamples=200)
     assert "hawkes" not in v.dropped and "hawkes" in v.kept

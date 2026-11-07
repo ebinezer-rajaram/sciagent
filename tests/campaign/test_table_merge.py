@@ -24,6 +24,7 @@ from sciagent.campaign.p4plan import P4_TRUTHS, sweep_truths
 from sciagent.campaign.plan import B_LIB, B_SYM, B_SYM_F80, ORACLE, TruthEntry
 from sciagent.campaign.tables import (
     SWEEP_REFERENCES,
+    SweepRows,
     TableMergeError,
     TableSource,
     merge_tables,
@@ -300,13 +301,96 @@ def test_a_row_of_a_truth_the_tables_do_not_hold_is_refused() -> None:
         merge_tables([source(stray)])
 
 
+def test_a_session_of_a_truth_the_tables_do_not_hold_is_refused() -> None:
+    """Red team round 2, finding 6: only rows were checked for strays."""
+    status = VoidStatus(False, (), 0, False)
+    stray = Session("zz-999", 1, HAIKU, {}, {}, status, "env", "d")
+    with pytest.raises(TableMergeError, match="zz-999"):
+        merge_tables(
+            [source(table(sonnet_rows())), source(table([], sessions=(stray,)))]
+        )
+
+
+def test_a_telling_cell_of_a_truth_the_tables_do_not_hold_is_refused() -> None:
+    cell = {("zz-999", 1): TellingCell("cross_kernel", ())}
+    with pytest.raises(TableMergeError, match="zz-999"):
+        merge_tables([source(table(sonnet_rows())), source(table([], telling=cell))])
+
+
+def test_two_roots_under_one_fingerprint_are_refused_unless_one_store() -> None:
+    """Red team round 2, finding 6: two stores that share a fingerprint are still two
+    stores. The caller may say the two roots are one store (a path and a link to
+    it); then they merge."""
+    sources = [
+        source(table(sonnet_rows()), STORE),
+        source(table(sweep_config_rows(F80_ARMS)), OTHER_STORE),
+    ]
+    with pytest.raises(TableMergeError, match="roots"):
+        merge_tables(sources)
+    merged = merge_tables(sources, one_store=True)
+    assert len(merged.rows) == sum(len(s.table.rows) for s in sources)
+
+
 # --------------------------------------------------------------------------
 # sweep_rows: descriptive, exploratory (SPEC §6.2, "everything else")
 # --------------------------------------------------------------------------
 
+#: Control 2's root and resamples in these tests: a stand-in, not the reads' own.
+ROOT: Final = 11
+RESAMPLES: Final = 200
+
+
+def swept(merged: Table) -> SweepRows:
+    return sweep_rows(merged, seed=ROOT, resamples=RESAMPLES)
+
+
+def with_controls() -> list[Row]:
+    """The Sonnet config's rows plus what controls 2 and 3 read, all passing:
+    planted-hint 1/16 above B-rand on every truth, B-sym@10F at ORACLE."""
+    out = sonnet_rows()
+    for t in TRUTHS:
+        for seed in (1, 2):
+            out += [
+                row(t.id, seed, "B-rand", -0.75),
+                row(t.id, seed, "planted-hint", -0.75 + 1 / 16),
+            ]
+        out.append(row(t.id, 1, "B-sym@10F", -0.70))
+    return out
+
+
+def test_the_view_carries_controls_1_to_3_of_the_merged_table() -> None:
+    """Red team round 2, finding 5: nothing said control 1 had failed. The view
+    carries the gate's verdict (controls 1 to 3, as ``read_controls`` reads them),
+    so a caller prints it beside the rows."""
+    assert not swept(merge_tables(p4_sources())).controls_pass
+    sources = p4_sources()
+    sources[0] = source(table(with_controls()))
+    assert swept(merge_tables(sources)).controls_pass
+    rows = [
+        dataclasses.replace(r, per_event=-math.inf)
+        if key(r) == (SWEPT[5], 1, ORACLE)
+        else r
+        for r in with_controls()
+    ]
+    sources[0] = source(table(rows))
+    assert not swept(merge_tables(sources)).controls_pass
+
+
+@pytest.mark.parametrize("reference", SWEEP_REFERENCES)
+def test_the_view_refuses_references_narrowed_from_the_sonnet_seeds(
+    reference: str,
+) -> None:
+    """Red team round 2, finding 5: with the references on seed 1 only, the noise
+    flag of a gap closed went from True to False on the same row, silently."""
+    sources = p4_sources()
+    rows = [r for r in sonnet_rows() if key(r) != (SWEPT[7], 2, reference)]
+    sources[0] = source(table(rows))
+    with pytest.raises(TableMergeError, match=reference):
+        swept(merge_tables(sources))
+
 
 def test_the_view_holds_the_sweeps_systems_and_its_references() -> None:
-    view = sweep_rows(merge_tables(p4_sources()))
+    view = swept(merge_tables(p4_sources()))
     systems = {r.system for r in view.rows}
     assert systems == {*SWEEP_ARMS, AGC, AGO, B_SYM, B_SYM_F80, *SWEEP_REFERENCES}
     assert set(SWEEP_REFERENCES) == {ORACLE, B_LIB}
@@ -314,7 +398,7 @@ def test_the_view_holds_the_sweeps_systems_and_its_references() -> None:
 
 
 def test_the_view_is_the_sweeps_worlds_only() -> None:
-    view = sweep_rows(merge_tables(p4_sources()))
+    view = swept(merge_tables(p4_sources()))
     assert {(r.truth, r.seed) for r in view.rows} == {(t, 1) for t in SWEPT}
     assert len(SWEPT) == 20 and tuple(f"test-{k:03d}" for k in range(20)) == SWEPT
     # Every system of the view has exactly one row on each world.
@@ -323,7 +407,7 @@ def test_the_view_is_the_sweeps_worlds_only() -> None:
 
 
 def test_rows_outside_the_worlds_are_counted_not_silently_dropped() -> None:
-    view = sweep_rows(merge_tables(p4_sources()))
+    view = swept(merge_tables(p4_sources()))
     # Sonnet's systems: 80 worlds, of which the sweep's 20 are in the view.
     assert view.narrowed == {s: 60 for s in sorted((AGC, AGO, B_LIB, B_SYM, ORACLE))}
 
@@ -342,7 +426,7 @@ def test_the_view_takes_its_gaps_from_derive_on_the_whole_table() -> None:
     ]
     sources = p4_sources()
     sources[0] = source(table(rows))
-    got = one(sweep_rows(merge_tables(sources)).rows, SWEPT[0], 1, SWEEP_ARMS[0])
+    got = one(swept(merge_tables(sources)).rows, SWEPT[0], 1, SWEEP_ARMS[0])
     assert got.closed_flagged
     assert got.gap == pytest.approx(-0.73 - -0.70, abs=1e-15)
 
@@ -355,7 +439,7 @@ def test_stale_gaps_in_the_given_table_do_not_reach_the_view() -> None:
             dataclasses.replace(r, gap=None, gap_closed=None) for r in merged.rows
         ),
     )
-    assert sweep_rows(stale) == sweep_rows(merged)
+    assert swept(stale) == swept(merged)
 
 
 def test_the_view_has_no_drop_rule() -> None:
@@ -369,7 +453,7 @@ def test_the_view_has_no_drop_rule() -> None:
     ]
     sources = p4_sources()
     sources[0] = source(table(rows))
-    view = sweep_rows(merge_tables(sources))
+    view = swept(merge_tables(sources))
     assert one(view.rows, SWEPT[0], 1, SWEEP_ARMS[0]).gap is not None
 
 
@@ -378,7 +462,7 @@ def test_a_missing_sweep_row_is_counted_as_absent() -> None:
     first = sources[2].table
     kept = [r for r in first.rows if key(r) != (SWEPT[3], 1, SWEEP_ARMS[0])]
     sources[2] = source(table(kept))
-    view = sweep_rows(merge_tables(sources))
+    view = swept(merge_tables(sources))
     assert view.absent == {SWEEP_ARMS[0]: 1}
 
 
@@ -391,7 +475,7 @@ def test_a_failed_or_unsubmitted_row_stays_with_no_gap() -> None:
         for r in sources[3].table.rows
     ]
     sources[3] = source(table(rows))
-    got = one(sweep_rows(merge_tables(sources)).rows, SWEPT[1], 1, SWEEP_ARMS[2])
+    got = one(swept(merge_tables(sources)).rows, SWEPT[1], 1, SWEEP_ARMS[2])
     assert got.gap is None and not got.ok
 
 
@@ -400,7 +484,7 @@ def test_a_missing_oracle_on_a_sweep_world_is_refused() -> None:
     rows = [r for r in sonnet_rows() if key(r) != (SWEPT[5], 1, ORACLE)]
     sources[0] = source(table(rows))
     with pytest.raises(TableMergeError, match="ORACLE"):
-        sweep_rows(merge_tables(sources))
+        swept(merge_tables(sources))
 
 
 def test_an_oracle_at_minus_inf_is_a_row_and_leaves_the_gaps_undefined() -> None:
@@ -412,7 +496,7 @@ def test_an_oracle_at_minus_inf_is_a_row_and_leaves_the_gaps_undefined() -> None
         for r in sonnet_rows()
     ]
     sources[0] = source(table(rows))
-    view = sweep_rows(merge_tables(sources))
+    view = swept(merge_tables(sources))
     assert one(view.rows, SWEPT[5], 1, SWEEP_ARMS[0]).gap is None
 
 
@@ -425,14 +509,14 @@ def test_a_sweep_row_on_a_world_that_does_not_pair_is_refused(
     stray = row(world[0], world[1], system, -0.73, llm=system != B_SYM_F80)
     sources.append(source(table([stray])))
     with pytest.raises(TableMergeError, match="sweep"):
-        sweep_rows(merge_tables(sources))
+        swept(merge_tables(sources))
 
 
 def test_the_view_does_not_depend_on_row_order() -> None:
     merged = merge_tables(p4_sources())
     reordered = dataclasses.replace(merged, rows=merged.rows[::-1])
-    assert sweep_rows(reordered) == sweep_rows(merged)
-    view = sweep_rows(merged)
+    assert swept(reordered) == swept(merged)
+    view = swept(merged)
     assert list(view.rows) == sorted(view.rows, key=key)
 
 
@@ -440,4 +524,4 @@ def test_a_row_twice_in_the_given_table_is_refused() -> None:
     merged = merge_tables(p4_sources())
     doubled = dataclasses.replace(merged, rows=(*merged.rows, merged.rows[0]))
     with pytest.raises(TableMergeError, match="twice"):
-        sweep_rows(doubled)
+        swept(doubled)

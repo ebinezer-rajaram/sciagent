@@ -136,6 +136,21 @@ def test_every_b_rand_unit_crashed_fails_control_2() -> None:
     assert not any(r.reportable for r in read(tabled(rows)).values())
 
 
+def test_control_rows_marks_each_failed_unit_it_ranks() -> None:
+    """Red team round 2, finding 8: gonogo reads ``+inf`` only on a row marked as a
+    failed unit, and ``control_rows`` is what marks it; a scored row is not marked."""
+    for system, gap in (("B-rand", math.inf), ("planted-hint", -math.inf)):
+        table = changed(system, NAMES[:1], crashed)
+        added = [
+            r
+            for r in control_rows(table.rows, table.truths)
+            if (r.truth, r.system) == (NAMES[0], system)
+        ]
+        assert added and all(r.failed and r.gap == gap for r in added)
+    scored = changed("B-rand", NAMES[:1], at_minus_inf)
+    assert not any(r.failed for r in control_rows(scored.rows, scored.truths))
+
+
 def test_a_scored_minus_inf_b_rand_row_is_read_as_before() -> None:
     """A genuinely scored ``-inf`` stays as scored: no row is added for it, and its
     truth's difference is ``+inf``, as before the ruling."""

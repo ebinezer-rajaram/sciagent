@@ -22,21 +22,50 @@ in :attr:`Table.sessions` so reports count it (:func:`void_counts`).
 scores ``-inf`` per event. That is kept as a result: its gap is ``-inf``, its
 gap closed undefined (so it never closes), and it is excluded from means (and
 counted in ``nonfinite``). In the §6.4 controls it ranks lowest (control 2 and
-3, by rank; Δ10); control 1 reads finite gaps only.
+3, by rank; Δ10); control 1 reads finite gaps, and a B-lib at ``-inf`` (below).
 
 A *reference* at ``-inf`` on a (truth, seed) leaves undefined whatever is
 measured from it there. B-lib at ``-inf``: every gap closed on that seed is
-undefined (None); B-lib's own gap is ``-inf``, which control 1 does not read
-(preregistered: a ``-inf`` seed carries no SE), so the truth is checked on its
-other seeds. ORACLE at ``-inf``: every gap, gap closed and curve gap on that
-seed is undefined (None), since nothing can be referenced to it; and the
-ORACLE is then not an upper bound, so **control 1 fails** (:func:`verdict`,
-LOG 2026-10-27 item (c)), exactly as for an ``oracle_underfit`` flag, with a
-reason naming every such (truth, seed) unit (:func:`oracle_inf_reason`). The
-truth is not dropped: its ORACLE-vs-B-lib check reads its finite seeds only,
-as for a B-lib at ``-inf``, so it is never labelled "not identifiable" for
-the ``-inf`` and controls 2 and 3 still read it. (The rule from 2026-10-06
-dropped the truth instead, which shrank the samples controls 2 and 3 read.)
+undefined (None); B-lib's own gap is ``-inf``, which control 1 reads as ORACLE
+beating B-lib, so the truth passes it at an infinite margin (control room, INBOX
+2026-11-07, part 2; :func:`~sciagent.scoring.gonogo.oracle_beats_lib`). A
+failed or NaN B-lib unit is no reading: the truth is checked on its other seeds,
+and with fewer than 2 it is unchecked (part 3). ORACLE at ``-inf``: every gap,
+gap closed and curve gap on that seed is undefined (None), since nothing can be
+referenced to it; and the ORACLE is then not an upper bound, so **control 1
+fails** (:func:`verdict`, LOG 2026-10-27 item (c)), exactly as for an
+``oracle_underfit`` flag, with a reason naming every such (truth, seed) unit
+(:func:`oracle_inf_reason`). The truth is not dropped: its ORACLE-vs-B-lib check
+reads its finite seeds only, so it is never labelled "not identifiable" for the
+``-inf``. (The rule from 2026-10-06 dropped the truth instead, which shrank the
+samples controls 2 and 3 read.)
+
+**The truths controls 2 and 3 read** (control room, INBOX 2026-11-07, part 1, and
+the lead's application of that entry's general rule: a crash or missing reading
+never makes a control pass that would otherwise fail). Every truth control 1
+does not drop: a kept truth always, and an unchecked one (fewer than 2 paired
+seeds, as after a lost B-lib unit) only where it counts against the control
+passing: in control 2 where planted-hint does not beat B-rand on it (``d_t <=
+0``), in control 3 where B-sym@10F's per-truth mean gap is below
+``-BSYM_TOLERANCE``. An unchecked truth that could only help stays out, and is
+named (:attr:`Verdict.unchecked_out_2`, :attr:`Verdict.unchecked_out_3`). Control
+3's median is monotone in adding a value below its threshold, so there this is
+the worst case over every way the lost units could have come out. **Control 2's
+is not**: the exact signed-rank p can fall when a loss of the smallest size is
+added, as it takes rank 1 and moves every win up a rank (nine truths, one loss of
+9 and eight wins of 1: p = 0.074; a tenth, a loss of 0.5: p = 0.047). So an
+unchecked small loss can pass control 2 where leaving the truth out would fail
+it. A stated limit, tested; no rule here covers it.
+
+**Missing readings elsewhere in the controls** (the same general rule). An
+ORACLE unit with no reading, and a (truth, seed) on which the controls read a unit
+and there is no ORACLE row, count as unrecorded in control 1's underfit half
+(:func:`control_1_underfit`), so control 1 fails. A planned unit of planted-hint
+or B-rand not run (:attr:`Table.missing`) leaves control 2 unread, and one of
+B-sym@10F control 3: neither can pass then. A limit: where an ORACLE unit has no
+reading, controls 2 and 3 leave out the rows on its (truth, seed), which then
+have a reading and no gap (:func:`control_rows`), so one of them alone may pass;
+control 1 has failed, and the gate is closed.
 
 **Gap closed within noise** (P4-PROPOSAL T4). The denominator
 ``LL(ORACLE) - LL(B-lib)`` of one (truth, seed) can be tiny, and the ratio is
@@ -681,6 +710,13 @@ class Verdict:
     inconclusive: tuple[str, ...]
     underfit: gonogo.UnderfitCheck | None = None
     oracle_inf: tuple[tuple[str, int], ...] = ()
+    #: The truths control 3 read, sorted (control 2's are ``planted.truths``).
+    bsym_truths: tuple[str, ...] = ()
+    #: Unchecked truths control 2 left out, as they could only help it pass:
+    #: planted-hint beats B-rand on them (module docstring).
+    unchecked_out_2: tuple[str, ...] = ()
+    #: Unchecked truths control 3 left out: B-sym@10F within the tolerance.
+    unchecked_out_3: tuple[str, ...] = ()
 
 
 #: Controls 2 and 3's systems.
@@ -688,6 +724,8 @@ RANKED_SYSTEMS: Final = frozenset({PLANTED, B_RAND, B_SYM_10F})
 #: The ranked systems that are a control's comparator, not its system under test
 #: (control 2's B-rand; control 3 compares B-sym@10F with ORACLE through its gap).
 COMPARATORS: Final = frozenset({B_RAND})
+#: Every system controls 1 to 3 read.
+CONTROL_SYSTEMS: Final = frozenset({ORACLE, B_LIB, *RANKED_SYSTEMS})
 
 
 def score_rows(
@@ -723,6 +761,33 @@ def underfit_check(rows: Sequence[Row]) -> gonogo.UnderfitCheck:
             (r.truth, r.seed, r.oracle_underfit if r.ok else None)
             for r in rows
             if r.system == ORACLE and not r.llm
+        ]
+    )
+
+
+def control_1_underfit(rows: Sequence[Row]) -> gonogo.UnderfitCheck:
+    """:func:`underfit_check` as the verdict reads it, under the general rule that
+    a crash or missing reading never passes a control (INBOX 2026-11-07, last
+    entry): an ORACLE unit with no reading, and a (truth, seed) on which controls 1
+    to 3 read a unit (:data:`CONTROL_SYSTEMS`) and there is no ORACLE row, count
+    as unrecorded too."""
+    oracle = [r for r in rows if r.system == ORACLE and not r.llm]
+    have = {(r.truth, r.seed) for r in oracle}
+    read = {
+        (r.truth, r.seed) for r in rows if r.system in CONTROL_SYSTEMS and not r.llm
+    }
+    lost = sorted(read - have)
+    return gonogo.oracle_underfit_check(
+        [
+            *(
+                (
+                    r.truth,
+                    r.seed,
+                    r.oracle_underfit if r.ok and r.per_event is not None else None,
+                )
+                for r in oracle
+            ),
+            *((t, s, None) for t, s in lost),
         ]
     )
 
@@ -763,7 +828,9 @@ def control_rows(
     room rulings R3 and "R3 direction", INBOX 2026-11-07): ``-inf`` for a system
     under test (planted-hint in control 2, B-sym@10F in control 3) and ``+inf`` for
     control 2's comparator, B-rand (:data:`COMPARATORS`; gonogo reads a truth with
-    any ``+inf`` B-rand unit as ``+inf``). A scored ``-inf`` stays as scored. A row
+    any ``+inf`` B-rand unit as ``+inf``). Each such row is marked ``failed``, and
+    gonogo refuses a ``+inf`` that is not (red team round 2, finding 8). A scored
+    ``-inf`` stays as scored. A row
     with a reading and no gap is left out: its ORACLE is what is missing, and
     control 1 answers for that.
 
@@ -798,6 +865,7 @@ def control_rows(
                 exact=False,
                 in_dictionary=truths[r.truth].in_dictionary,
                 oracle_underfit=None,
+                failed=True,
             )
             for r in rows
             if r.system in RANKED_SYSTEMS and r.per_event is None
@@ -811,12 +879,12 @@ def verdict(
     """SPEC §7.1 over the non-LLM systems (module docstring)."""
     rows = [r for r in table.rows if not r.llm]
     srows = control_rows(rows, table.truths)
-    underfit = underfit_check(rows)
+    underfit = control_1_underfit(rows)
     reasons: list[str] = []
     inconclusive: list[str] = []
     seeds_of: dict[tuple[str, str], set[int]] = {}
     for r in srows:
-        if math.isfinite(r.gap):  # control 1 reads finite gaps only
+        if gonogo.control_1_reads(r):  # finite, or a B-lib scored -inf
             seeds_of.setdefault((r.truth, r.system), set()).add(r.seed)
     truths_with_pairs = [
         t
@@ -881,21 +949,46 @@ def verdict(
             oracle_inf,
         )
 
+    # Controls 2 and 3 read every truth control 1 does not drop (control room,
+    # INBOX 2026-11-07, part 1): a kept truth always, an unchecked one only where
+    # it counts against the control passing (the lead's application of that
+    # entry's general rule; module docstring).
+    held = set(unchecked)
+
     def covered(system: str) -> list[str]:
         have = {r.truth for r in srows if r.system == system}
-        return [t for t in kept if t in have]
+        return [t for t in sorted(table.truths) if t not in dropped and t in have]
 
+    pairs = [t for t in covered(PLANTED) if t in covered(B_RAND)]
+    d = dict(zip(pairs, gonogo.planted_differences(srows, pairs), strict=True))
+    both = [t for t in pairs if t not in held or d[t] <= 0.0]
+    out_2 = tuple(t for t in pairs if t not in both)
+    near = covered(B_SYM_10F)
+    g = dict(zip(near, gonogo.bsym_gaps(srows, near), strict=True))
+    c10 = [t for t in near if t not in held or g[t] < -gonogo.BSYM_TOLERANCE]
+    out_3 = tuple(t for t in near if t not in c10)
+    # A planned unit not run is a missing reading: its control is not read, so it
+    # cannot pass (the general rule, INBOX 2026-11-07, last entry).
+    not_run_2 = sum(table.missing.get(s, 0) for s in (PLANTED, B_RAND))
+    not_run_3 = table.missing.get(B_SYM_10F, 0)
     planted: gonogo.PlantedCheck | None = None
-    both = [t for t in covered(PLANTED) if t in covered(B_RAND)]
-    if len(both) >= 2:
+    if not_run_2:
+        inconclusive.append(
+            f"planted-hint vs B-rand: {not_run_2} planned unit(s) not run, so "
+            "control 2 is not read"
+        )
+    elif len(both) >= 2:
         planted = gonogo.planted_beats_rand(srows, both, rng=rng, resamples=resamples)
         if not planted.passed:
             reasons.append(gonogo.planted_reason(planted))
     else:
         inconclusive.append("planted-hint vs B-rand: fewer than 2 truths with both")
     bsym: gonogo.BsymCheck | None = None
-    c10 = covered(B_SYM_10F)
-    if c10:
+    if not_run_3:
+        inconclusive.append(
+            f"B-sym@10F: {not_run_3} planned unit(s) not run, so control 3 is not read"
+        )
+    elif c10:
         bsym = gonogo.bsym_approaches_oracle(srows, c10)
         if not bsym.passed:
             reasons.append(
@@ -903,7 +996,7 @@ def verdict(
                 f"-{gonogo.BSYM_TOLERANCE}"
             )
     else:
-        inconclusive.append("B-sym@10F: no kept truth has a result")
+        inconclusive.append("B-sym@10F: no truth it reads has a result")
     controls = (
         planted is not None
         and planted.passed
@@ -978,6 +1071,9 @@ def verdict(
         tuple(inconclusive),
         underfit,
         oracle_inf,
+        () if bsym is None else tuple(c10),
+        out_2,
+        out_3,
     )
 
 

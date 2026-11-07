@@ -110,7 +110,9 @@ def test_no_truth_kept_fails(report: ModuleType) -> None:
 def test_a_truth_without_two_finite_pairs_is_named_inconclusive(
     report: ModuleType,
 ) -> None:
-    two = _with(_table(0.0), {("hawkes", s, "B-lib"): float("-inf") for s in (2, 3)})
+    # A NaN B-lib leaves the truth unchecked; a scored -inf would keep it (control
+    # room, INBOX 2026-11-07, parts 2 and 3).
+    two = _with(_table(0.0), {("hawkes", s, "B-lib"): float("nan") for s in (2, 3)})
     text = _headline(report, two)
     assert text.startswith("**PASS**"), text
     assert "4 of 5 truths" in text, text

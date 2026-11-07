@@ -339,6 +339,7 @@ Each item says when it is done. Move finished items to the bottom section after 
   2026-11-07 (session 37): proposed words in `docs/v2/SPEC-TEXT-P4-C.md`, unreviewed, nothing applied. Next: one red-team round, then the control room for C1, C7 and C9, which change claims or ask a ruling.
 - [x] 2026-11-07 (`campaign/secondaries.py`, `pilot_report.py --read-root --naming-commit`; LOG 2026-11-07) **Named minus anon, per model, as a labelled secondary** (control room, B2; SPEC §6.2). Analysis code, frozen with `S`, test first. P4's report prints it. No read of the miss check covers it.
 - [ ] **P4b's contrasts freeze before any P4 contrast is read** (control room, B4; SPEC §6.1). So P4b's pre-registration, FSD's event cap included, lands before the miss check's terminal step, with no extra sessions. Not needed for `S`, but P4's reads wait on it.
+  2026-11-07 (session 37): red team T1: nothing in `p4_search_misses.py` enforces this, since `conclude` goes straight to the terminal step when the run ends. So the control room must choose before `R2`: P4b freezes before launch, as a procedural rule, or a guard goes into `R2`'s bytes, which is an extension of `F2`.
 
 - [ ] **AI-use disclosure for the paper.** No paper or disclosure text exists in the repository yet. When one does, it must carry the sentence in LOG 2026-11-05 ("P3 closes on GO"), as the owner asked.
 

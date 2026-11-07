@@ -2882,3 +2882,20 @@ Corrects the hand-over above: its third decision (T2 and fit/5) is no longer the
 4. Option 2 stays parked. Reopening it, so that Q6 could ever be read confirmatorily, is the owner's own call under SPEC §4.2, and it is a separate track (He² resolution, then a new control on fresh streams).
 
 **Decision needed (owner, through the control room).** Accept P4b as planned-exploratory, with K0 for telling and truthFSD and Fx for FSD, or reopen option 2 as a separate track (P4b's contrasts would still freeze now). Until then, P4b's second text is written to recommendation 1 to 3, and nothing freezes.
+
+## 2026-11-07: Lane session 38, stop point: a crashed B-lib unit can still pass control 2 (ruling needed)
+
+**Answer in one line.** A failed, NaN or scored `-inf` B-lib unit leaves its truth "unchecked" by control 1, and controls 2 and 3 read only the truths control 1 keeps. So B-lib crashing on truths hostile to planted-hint can turn a failing control 2 into a pass.
+
+**Evidence.** Round 2 of the analysis-code red team: not ready, this finding the only blocking one; every round-1 finding is fixed (`docs/v2/redteam/2026-11-07_analysis-code-round2.md`, finding 1). I reran `nice .venv/bin/python /tmp/rt-s38b/p1_blib_crash.py` and got `no crash controls_pass=False c2 n=40 p=0.222` and `B-lib crashed on seed 1 of 4 hostile truths controls_pass=True c2 n=36 p=0.00957 ... unchecked=4`. Code: `analysis.py:813-828` (control 1 reads finite gaps only) and `:880-885` (controls 2 and 3 read `kept`). It collides with INBOX 2026-11-06 ("Truths control 1 cannot check leave the reads") taken together with R3 direction's aim.
+
+**Caveats.** Stand-in rows; four B-lib crashes, placed on the four truths where planted-hint loses. R2's limit labels the reads at more than 4 of 40, so 4 of 40 stays confirmatory.
+
+**Recommendation.** B-lib enters neither control 2 nor control 3, so it should not be able to change their population.
+1. Controls 2 and 3 read every truth that control 1 does not drop: kept and unchecked alike.
+2. A scored `-inf` B-lib reading counts as ORACLE beating B-lib for control 1, since it is a real outcome and the larger gap is ORACLE's.
+3. A failed or NaN B-lib unit leaves the truth unchecked for the reads, as INBOX 2026-11-06 ruled, and counts in R2's scope as now.
+
+Code test first, before `S`.
+
+**Decision needed (control room).** Accept, or name another rule. The round's seven non-blocking findings are engineering and go to an engineer now: the headline on non-Sonnet blocks, an empty P4 store, `--rescore-llm`, `sweep_rows` reference checks, `merge_tables` strays, one test gap, and gonogo's `+inf` hardening.

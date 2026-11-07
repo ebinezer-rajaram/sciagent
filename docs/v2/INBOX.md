@@ -246,7 +246,7 @@ entry, and marks it handled with the date and what was done. Newest last.
 - [x] **Order accepted:** tuning first, R2's store resumes after it. The R2 shares (10% of truths, 2 of 20
   for C4) are noted.
   Handled 2026-11-07 (lane session 37): that is the state of the machine; the queue says so.
-- [ ] **Shorten the week.** dm-devbox has 4 vCPUs and its load is near 10, so a week of wall time is
+- [x] **Shorten the week.** dm-devbox has 4 vCPUs and its load is near 10, so a week of wall time is
   set by the machine, not the work. Price running the tuning's shards on extra on-demand nodes of
   dm-devbox's exact instance type and AMI class (same OS, numpy and OpenBLAS), with a byte check
   against dm-devbox on a sample of shards before any store is merged (CLAUDE.md, Platform). Do it if
@@ -254,10 +254,12 @@ entry, and marks it handled with the date and what was done. Newest last.
   under s3://delaymargin-results-482913/sciagent/. Decided by the control room under the owner's
   standing delegation (owner: do not leave work waiting on idle-able compute).
   Answered 2026-11-07 (lane session 37), not done: priced from the LOG's recorded figure, and two of the conditions fail, so nothing launched (LOG 2026-11-07). Stays open for the control room's reply.
+  Handled 2026-11-07 (lane session 38): the control room's reply is the entry below; closed with it.
 
 ## 2026-11-07, control room (AWS shards)
 
-- [ ] **Stay on dm-devbox for stage 1, as recommended.** No AWS shards: the exact machine class is not
+- [x] **Stay on dm-devbox for stage 1, as recommended.** No AWS shards: the exact machine class is not
   shown launchable, and the frozen text is dm-devbox only. Revisit only for stage 2, and only if stage 1
   has a winner and its wall time would exceed about three days; any such amendment is frozen before
   any stage 2 unit runs. The denied price query stays denied; do not retry it.
+  Handled 2026-11-07 (lane session 38): stage 1 stays on dm-devbox; no price query sent. The stage 2 condition is in the queue's tuning item, for the session that reads `selection.json`.

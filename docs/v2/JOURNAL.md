@@ -2834,3 +2834,19 @@ Corrects the hand-over above: its third decision (T2 and fit/5) is no longer the
 **Decision needed from the owner:** none now. Ahead: the test split and §6.1 freeze, which the owner approves. For the control room, if it wants to rule: whether a helper following a guard's own instruction to split a command counts as stopping.
 
 **After the hand-over commit.** The control room asked to shorten tuning's wall time with AWS shards (INBOX 2026-11-07, 15:20). The answer in one line: cheap on the recorded price, about $13 for the whole ceiling, but not done, because the exact type is not launchable on the record we have and sharding is an amendment and not a small script. Evidence: LOG 2026-11-07. Caveats: the price is 11 days old, since my live query was denied and I did not retry it, and I could not check the launch policy today. Recommendation: stay on dm-devbox for stage 1, and if a winner needs stage 2, decide then whether its ten 10×F units justify an amendment. Decision needed: the control room's, in its inbox. Also, the "week" was my own worst case: stage 1's guide is about 2 days.
+
+## 2026-11-07: Lane session 38, checkpoint: the slow tier's failure is the tmux server; P4b's pre-registration drafted; four helpers out
+
+**Done.**
+- **Slow tier at a42fec1 read:** `1 failed, 364 passed`, exit 1 at 16:52:59Z (`.cache/drafts/s37/slow.log`). The failure, `test_empty_takes_a_chain_far_deeper_than_open_files_allow` (`OSError: [Errno 36] File name too long` in `mkdirat` at 20,000 levels), is the environment, not the code. It reproduces on the default tmux server, whose label is `snap.amazon-ssm-agent.amazon-ssm-agent (complain)`, and the test passes unconfined at 7314241, both from this shell and under `systemd-run --user` (label `unconfined`). Session 6's journal found the same thing. Lane jobs go under `systemd-run --user` or `tmux -L sciagent`, never the default server. LEDGER row in.
+- **Inbox:** the AWS shards entries closed; stage 1 stays on dm-devbox.
+- **P4b's pre-registration drafted**, `docs/v2/prereg/2026-11-07_p4b-policies.md`, not frozen. What it found:
+  - an AG-c-S row has no `computed` field, so no telling rate can be read for an agent arm today (D1);
+  - `AG-c-S+EIG` on seed 1 is AG-S-boed's key, so the AG side is 160 sessions, not 200;
+  - control 5's power under today's at-stop rule is low on a split like dev. With 40 units and the dev share of degenerate truthFSD truths (0.5), P(pass) is 0.219 at h = 0.65 and 0.514 at h = 0.8 (`.cache/drafts/s38/c5_power.py`).
+  
+  The draft recommends measuring control 5 on dev under today's rule (CPU only, ceiling 50 CPU hours, $0, after tuning's stage 1) before the rule is chosen. That choice is the control room's.
+
+**Out.** A K0 recomputation from `runs-ctlA1.jsonl` with no draw (analyst; R5). A red team on `secondaries.py`, `control_rows` and `--p4-block`. The engineer on `merge_tables`: the sweep stays descriptive and exploratory, the lead's call under SPEC §6.2. It found that the per-model named minus anon secondary reads n = 0 for Haiku and Opus, because `pilot_report.py` loads one config, and that is now in scope. A red team on the P4b draft.
+
+**Running, $0.** `sci-bsym-tune` stage 1, `units 124/840 worlds 8/60 cpu_hours 11.79` at 21:28Z (counts only).

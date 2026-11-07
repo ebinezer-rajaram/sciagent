@@ -117,6 +117,36 @@ def _line(text: str, start: str) -> str:
     return found[0]
 
 
+def test_named_minus_anon_needs_its_root_to_be_printed(
+    report: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No root, no draw and no section, so a report without it keeps its bytes."""
+    assert "Named minus anon" not in _render(report, tmp_path, monkeypatch, _table())
+
+
+def test_named_minus_anon_refuses_a_root_with_no_commit(
+    report: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with pytest.raises(SystemExit):
+        _render(
+            report, tmp_path, monkeypatch, _table(), extra_argv=("--read-root", "11")
+        )
+
+
+def test_named_minus_anon_is_printed_with_its_root_and_a_commit(
+    report: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    text = _render(
+        report,
+        tmp_path,
+        monkeypatch,
+        _table(),
+        extra_argv=("--read-root", "11", "--naming-commit", "no-such-commit"),
+    )
+    assert "### Named minus anon" in text
+    assert "| AG-c-S | 0 | not reportable | - | - |" in text
+
+
 def test_control_3_names_the_subset_it_reads(
     report: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

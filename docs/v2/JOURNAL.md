@@ -2766,3 +2766,20 @@ Corrects the hand-over above: its third decision (T2 and fit/5) is no longer the
 3. Read the slow tier, then the rehearsal's store.
 
 **Decision needed from the owner:** none now. Ahead: the test split and §6.1 freeze, which the owner approves.
+
+## 2026-11-07: Lane session 37, checkpoint: named minus anon on v2; SPEC part C drafted; reviews and the tuning script running
+
+**Done.**
+- **Slow tier at 4c5a21c read:** `362 passed`, exit 0 at 2026-11-06T18:19:31Z (`.cache/drafts/s36/slow.log`). LEDGER row in; wall time only, as `slow.sh` did not meter CPU.
+- **Named minus anon, per model:** `campaign/secondaries.py`, six reads, test first, and a report section behind `--read-root` and `--naming-commit`. Its rules are in the LOG. Nine mutants of mine: eight killed at first, and the one survivor, a scored row with no reading, now has a test that kills it.
+- **SPEC text part C:** `docs/v2/SPEC-TEXT-P4-C.md`, the list owed before §6.1. Draft, unreviewed, `docs/SPEC.md` untouched. C1 (the sentence "never because the optimiser stalled" is false after the 25 miss rows), C7 and C9 need rulings.
+
+**Running, $0.** Red team round 2 on the tuning text; red team on `scripts/p4_search_misses.py`; an engineer's mutant pass on that script, stream guards excluded; an engineer on `scripts/bsym_tune.py`, on a branch, from an unfrozen text. Seeds 4 to 6 and root 20261113 stay undrawn.
+
+**Not verified.** The secondary has had no red team, and the report section has run only on toy tables. The P4 report that prints the contrasts does not exist, so this section has no real caller yet.
+
+**Checks.** ruff `337 files already formatted`, `All checks passed!`, mypy `no issues found in 326 source files`, fast tier `5166 passed`, exit 0 at 12:41:33Z (`.cache/drafts/s37/fast2.log`). The slow tier has not run on this change. It adds a module and a report section, and `test_pilot_report_wording.py`'s new tests run in the fast tier.
+
+**Slips.** The doubled `-q` again hid pytest's summary on my first run, which I caught and reran: `1119 passed`. The test that `--read-root` needs a commit passed before the flag existed, because argparse also exits on an unknown flag, so it was never seen failing for the right reason. The first fast tier failed, `1 failed, 5165 passed`: my help text said "the reads' root", and `test_no_option_names_the_reads_file` forbids that word in `--help`. My targeted run had missed that file. The option does not name the reads file, so I changed the words and left the test as it was.
+
+**Next.** Read the four helpers' reports, fix, freeze the tuning text, and launch it first: it is the longest pole.

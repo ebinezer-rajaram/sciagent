@@ -430,6 +430,11 @@ def fit_case(truth: str, seed: int, text: str) -> str:
     return f"{truth}|{seed}|{text}"
 
 
+def s2_case(truth: str, seed: int, text: str) -> str:
+    """PR 2.2's case for S2, on the job and on both of its searches."""
+    return f"s2|{fit_case(truth, seed, text)}"
+
+
 def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -3078,6 +3083,19 @@ def past_job_cut() -> bool:
     return time.process_time() >= JOB_CUT_HOURS * 3600.0
 
 
+class JobCut:
+    """:func:`past_job_cut`, remembering that it fired. An S2 job runs up to four
+    searches, and a job's record has to name the cut (PR 2.10, PR 6) whichever of
+    them it landed in. The clock only goes forward, so a cut stays a cut."""
+
+    def __init__(self) -> None:
+        self.fired = False
+
+    def __call__(self) -> bool:
+        self.fired = self.fired or past_job_cut()
+        return self.fired
+
+
 def refit_at(
     structure: Structure,
     datasets: Sequence[Dataset],
@@ -3967,6 +3985,7 @@ def reference_link_fit(
     k: int,
     case: str,
     root: int,
+    should_stop: Callable[[], bool],
 ) -> FitResult:
     """R0 and R1 on the training window (PR 4, S2). An exhaustive grid is settled
     by R0."""
@@ -3981,7 +4000,7 @@ def reference_link_fit(
         k=k,
         cap=S2_POINT_CAP,
         r2_max=0,
-        should_stop=past_job_cut,
+        should_stop=should_stop,
     )
     chosen = choose_point(r0_value(structure, train, channels, base), outcome.r1.best)
     if chosen is None:
@@ -4002,7 +4021,7 @@ class S2Job:
 
     @property
     def id(self) -> str:
-        return _sha(f"s2|{fit_case(self.truth.id, self.seed, self.text)}")
+        return _sha(s2_case(self.truth.id, self.seed, self.text))
 
     def run(self, sink: RecordSink) -> None:
         run_s2_job(self, sink)
@@ -4015,6 +4034,7 @@ def run_s2_job(job: S2Job, sink: RecordSink) -> None:
     train_set, validation_set = split_dataset(obs, sparse.train_fraction)
     train, validation = (train_set,), (validation_set,)
     features = parse(job.text, channels).features
+    cut = JobCut()
     payload: Record = {
         "kind": "s2",
         "truth": job.truth.id,
@@ -4034,7 +4054,8 @@ def run_s2_job(job: S2Job, sink: RecordSink) -> None:
         )
         payload |= {"r0_link": r0_link.value, "r0_scores": r0_scores}
         if r0_link.value != job.stored_link:
-            sink.record("done", {**payload, "status": "link_mismatch"})
+            status = {"status": "link_mismatch", "cpu_cut": cut.fired}
+            sink.record("done", {**payload, **status})
             return
         ref_link, ref_scores = link_choice(
             features,
@@ -4047,14 +4068,15 @@ def run_s2_job(job: S2Job, sink: RecordSink) -> None:
                 train,
                 channels,
                 k=S2_STARTS,
-                case=f"s2|{job.truth.id}|{job.seed}|{render(s)}",
+                case=s2_case(job.truth.id, job.seed, render(s)),
                 root=job.root,
+                should_stop=cut,
             ),
             blocked=frozenset(Link(x[0]) for x in r0_scores if x[1] == -math.inf),
         )
         payload |= {"reference_link": ref_link.value, "reference_scores": ref_scores}
         if ref_link is r0_link:
-            sink.record("done", {**payload, "status": "same"})
+            sink.record("done", {**payload, "status": "same", "cpu_cut": cut.fired})
             return
         structure = canonicalise(Structure(features, ref_link))
         text = render(structure)
@@ -4062,11 +4084,11 @@ def run_s2_job(job: S2Job, sink: RecordSink) -> None:
             structure,
             data.observational,
             channels,
-            reference_rng(fit_case(job.truth.id, job.seed, text), job.root),
+            reference_rng(s2_case(job.truth.id, job.seed, text), job.root),
             k=K_STARTS,
             cap=r1_cap(ref_link.value),
             r2_max=R2_GRID_MAX,
-            should_stop=past_job_cut,
+            should_stop=cut,
         )
         base = fit(structure, data.observational, channels, config=FitConfig())
         chosen = choose_point(
@@ -4091,6 +4113,7 @@ def run_s2_job(job: S2Job, sink: RecordSink) -> None:
         {
             **payload,
             "status": "differs",
+            "cpu_cut": cut.fired,
             "reference_text": text,
             "corrected_per_event": per_event,
         },

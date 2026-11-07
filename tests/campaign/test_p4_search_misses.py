@@ -4084,6 +4084,195 @@ def test_split_test_split_and_store_are_needed_for_a_run() -> None:
 
 
 # --------------------------------------------------------------------------
+# Red team 2026-11-07: D3 and D4, S2's stream and its clock (PR 2.2, 2.10, 6)
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class S2World:
+    """``run_s2_job`` with every fit stubbed and its searches watched."""
+
+    job: Any
+    streams: list[Any]
+    fires: list[bool]
+
+
+def s2_world(
+    monkeypatch: pytest.MonkeyPatch, *, stored: Link, reference: Link
+) -> S2World:
+    """R0 chooses ``stored``, and the reference ``reference`` after one training
+    search; a full-log search follows only if they differ."""
+    env = environment()
+    truth = entry("hawkes")
+    fitted = SimpleNamespace()
+    fires: list[bool] = []
+    streams: list[Any] = []
+    chosen = iter([stored, reference])
+
+    def choice(
+        features: Any,
+        train: Any,
+        validation: Any,
+        channels: Any,
+        links: Any,
+        fitter: Any,
+        **kw: Any,
+    ) -> Any:
+        link = next(chosen)
+        fitter(canonicalise(Structure(features, link)))
+        return link, [(link.value, -1.0, True)]
+
+    def search(
+        structure: Any,
+        datasets: Any,
+        channels: Any,
+        rng: Any,
+        *,
+        should_stop: Any,
+        **kw: Any,
+    ) -> Any:
+        streams.append((render(structure), rng.bit_generator.state))
+        fires.append(should_stop())
+        return SimpleNamespace(r1=SimpleNamespace(best=None), best=None)
+
+    log = SimpleNamespace(observational=("obs",))
+    monkeypatch.setattr(p4m, "observational_data", lambda *a: log)
+    monkeypatch.setattr(p4m, "split_dataset", lambda *a: ("train", "validation"))
+    monkeypatch.setattr(p4m, "parse", lambda *a: SimpleNamespace(features=SMALL))
+    monkeypatch.setattr(p4m, "link_choice", choice)
+    monkeypatch.setattr(p4m, "fit", lambda *a, **k: fitted)
+    monkeypatch.setattr(p4m, "is_exhaustive", lambda size: False)
+    monkeypatch.setattr(p4m, "reference_search", search)
+    monkeypatch.setattr(p4m, "r0_value", lambda *a: None)
+    monkeypatch.setattr(p4m, "choose_point", lambda *a: None)
+    monkeypatch.setattr(p4m, "held_out_dataset", lambda *a: "held")
+    model = SimpleNamespace(held_out_per_event=lambda held: -0.5)
+    monkeypatch.setattr(p4m, "GLMModel", lambda *a: model)
+    job = p4m.S2Job(truth, 1, "stored text", stored.value, env, TEST_ROOT)
+    return S2World(job, streams, fires)
+
+
+def text_at(link: Link) -> str:
+    return render(canonicalise(Structure(SMALL, link)))
+
+
+def test_s2s_full_log_search_draws_the_s2_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PR 2.2: "For S2, ``c = f"s2|{truth}|{seed}|{text}"``", and section 2.2
+    keeps it. The plain case is a fit's own stream."""
+    world = s2_world(monkeypatch, stored=Link.EXP, reference=Link.SOFTPLUS)
+    sink = ListSink()
+    p4m.run_s2_job(world.job, sink)
+    assert sink.only("done")["status"] == "differs"
+    text, state = world.streams[-1]
+    assert text == text_at(Link.SOFTPLUS)
+    case = f"s2|{world.job.truth.id}|1|{text}"
+    assert state == p4m.reference_rng(case, TEST_ROOT).bit_generator.state
+    plain = p4m.fit_case(world.job.truth.id, 1, text)
+    assert state != p4m.reference_rng(plain, TEST_ROOT).bit_generator.state
+
+
+def test_s2s_training_search_draws_the_s2_stream_too(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world = s2_world(monkeypatch, stored=Link.EXP, reference=Link.EXP)
+    p4m.run_s2_job(world.job, ListSink())
+    text, state = world.streams[0]
+    case = f"s2|{world.job.truth.id}|1|{text}"
+    assert state == p4m.reference_rng(case, TEST_ROOT).bit_generator.state
+
+
+def test_the_s2_case_is_the_rules_form() -> None:
+    assert p4m.s2_case("t", 3, "text") == "s2|t|3|text"
+
+
+@pytest.mark.parametrize(
+    ("reference", "status", "searches"),
+    [(Link.EXP, "same", 1), (Link.SOFTPLUS, "differs", 2)],
+)
+def test_no_cut_is_recorded_as_no_cut_on_every_status(
+    monkeypatch: pytest.MonkeyPatch, reference: Link, status: str, searches: int
+) -> None:
+    world = s2_world(monkeypatch, stored=Link.EXP, reference=reference)
+    monkeypatch.setattr(p4m, "past_job_cut", lambda: False)
+    sink = ListSink()
+    p4m.run_s2_job(world.job, sink)
+    done = sink.only("done")
+    assert done["status"] == status
+    assert len(world.fires) == searches
+    assert done["cpu_cut"] is False
+
+
+@pytest.mark.parametrize(
+    ("reference", "status", "answers"),
+    [
+        (Link.EXP, "same", [True]),
+        (Link.SOFTPLUS, "differs", [True, True]),
+        (Link.SOFTPLUS, "differs", [False, True]),
+    ],
+    ids=["training-same", "training-differs", "full-log"],
+)
+def test_a_cut_in_any_of_s2s_searches_reaches_the_record(
+    monkeypatch: pytest.MonkeyPatch, reference: Link, status: str, answers: list[bool]
+) -> None:
+    """PR 2.10: a clock-based stop can change the bytes, and "the record names
+    which", so section 6's flag has to reach ``_clock_stops``."""
+    world = s2_world(monkeypatch, stored=Link.EXP, reference=reference)
+    given = iter(answers)
+    monkeypatch.setattr(p4m, "past_job_cut", lambda: next(given))
+    sink = ListSink()
+    p4m.run_s2_job(world.job, sink)
+    done = sink.only("done")
+    assert done["status"] == status
+    assert done["cpu_cut"] is True
+    records = [{"type": "done", **done}]
+    assert p4m._clock_stops(records, [], "complete")["cpu_cut"] == 1
+
+
+def test_a_cut_stays_on_record_once_it_fires(monkeypatch: pytest.MonkeyPatch) -> None:
+    answers = iter([True, False])
+    monkeypatch.setattr(p4m, "past_job_cut", lambda: next(answers))
+    cut = p4m.JobCut()
+    assert cut.fired is False
+    assert cut() is True
+    assert cut() is True
+    assert cut.fired is True
+
+
+def test_a_stored_link_that_is_not_reproduced_ran_no_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world = s2_world(monkeypatch, stored=Link.EXP, reference=Link.EXP)
+    wrong = replace(world.job, stored_link="no-such-link")
+    sink = ListSink()
+    p4m.run_s2_job(wrong, sink)
+    done = sink.only("done")
+    assert done["status"] == "link_mismatch"
+    assert done["cpu_cut"] is False
+    assert world.fires == []
+
+
+@pytest.mark.slow
+def test_a_real_s2_job_past_the_cut_says_so(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Nothing stubbed but the clock, on a coordinate grid: an exhaustive one is
+    settled by R0 and searches nothing, so it has nothing to cut."""
+    truth, env, *_ = hawkes_setup()
+    text = text_of(MIDDLE)
+    assert not p4m.is_exhaustive(_Slots.of(parse(text, env.channels)).size)
+    monkeypatch.setattr(p4m, "past_job_cut", lambda: True)
+    first = ListSink()
+    p4m.S2Job(truth, 1, text, "no-such-link", env, TEST_ROOT).run(first)
+    link = first.only("done")["r0_link"]
+    sink = ListSink()
+    p4m.S2Job(truth, 1, text, link, env, TEST_ROOT).run(sink)
+    done = sink.only("done")
+    assert done["cpu_cut"] is True
+    records = [{"type": "done", **done}]
+    assert p4m._clock_stops(records, [], "complete")["cpu_cut"] == 1
+
+
+# --------------------------------------------------------------------------
 # Red team 2026-11-07: D2, a torn journal under --finalise (sections 2.8, 5)
 # --------------------------------------------------------------------------
 

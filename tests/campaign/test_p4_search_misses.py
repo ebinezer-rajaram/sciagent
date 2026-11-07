@@ -2535,7 +2535,7 @@ def test_no_hash_at_s_or_a_malformed_one_is_refused(tmp_path: Path) -> None:
 
 
 def test_every_path_must_be_absolute(tmp_path: Path) -> None:
-    repo = tmp_path / "repo"
+    repo = toy_git(tmp_path / "repo")
     options = {
         "split": tmp_path / "s",
         "test_split": tmp_path / "t",
@@ -2550,7 +2550,7 @@ def test_every_path_must_be_absolute(tmp_path: Path) -> None:
 
 
 def test_the_test_split_must_be_outside_the_repository(tmp_path: Path) -> None:
-    repo = tmp_path / "repo"
+    repo = toy_git(tmp_path / "repo")
     with pytest.raises(p4m.GuardFailure, match="outside"):
         p4m.check_paths(
             split=tmp_path / "s",
@@ -2565,7 +2565,7 @@ def test_the_test_split_must_be_outside_the_repository(tmp_path: Path) -> None:
 def test_the_output_must_be_outside_the_repository_and_the_store(
     tmp_path: Path, inside: str
 ) -> None:
-    repo, store = tmp_path / "repo", tmp_path / "store"
+    repo, store = toy_git(tmp_path / "repo"), tmp_path / "store"
     with pytest.raises(p4m.GuardFailure, match="outside"):
         p4m.check_paths(
             split=tmp_path / "s",
@@ -4081,6 +4081,85 @@ def test_the_hashes_for_the_log_entry_are_printed(
 def test_split_test_split_and_store_are_needed_for_a_run() -> None:
     with pytest.raises(SystemExit):
         p4m.main([])
+
+
+# --------------------------------------------------------------------------
+# Red team 2026-11-07: D5, --test-split outside the repository (section 2.10)
+# --------------------------------------------------------------------------
+
+
+def toy_git(repo: Path) -> Path:
+    repo.mkdir(parents=True)
+    git(repo, "init", "-q", "-b", "v2")
+    return repo
+
+
+@pytest.fixture
+def checkouts(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """A main checkout, and a worktree outside it and one inside it, as ``T``'s
+    may be: real ones, since the guard asks git."""
+    main = toy_git(tmp_path / "main")
+    write(main, "README", "x\n")
+    commit(main, "base")
+    beside, inside = tmp_path / "beside", main / ".claude" / "worktrees" / "t"
+    git(main, "worktree", "add", "-q", "--detach", str(beside))
+    git(main, "worktree", "add", "-q", "--detach", str(inside))
+    return main, beside, inside
+
+
+def paths_from(repo: Path, tmp_path: Path, test_split: Path) -> None:
+    p4m.check_paths(
+        split=tmp_path / "s",
+        test_split=test_split,
+        store=tmp_path / "st",
+        out=tmp_path / "o",
+        repo=repo,
+    )
+
+
+@pytest.mark.parametrize("worktree", [1, 2], ids=["beside", "inside"])
+def test_a_test_split_in_the_main_checkout_is_refused_from_a_worktree(
+    checkouts: tuple[Path, Path, Path], tmp_path: Path, worktree: int
+) -> None:
+    """The script runs in ``T``'s worktree, so ``repo`` is that worktree, and the
+    main checkout's ``data/v2/truths/test`` is not under it."""
+    main, repo = checkouts[0], checkouts[worktree]
+    with pytest.raises(p4m.GuardFailure, match="outside"):
+        paths_from(repo, tmp_path, main / "data" / "v2" / "truths" / "test")
+
+
+def test_a_link_into_the_main_checkout_is_refused(
+    checkouts: tuple[Path, Path, Path], tmp_path: Path
+) -> None:
+    main, beside, _ = checkouts
+    (main / "data").mkdir()
+    link = tmp_path / "elsewhere"
+    link.symlink_to(main / "data")
+    with pytest.raises(p4m.GuardFailure, match="outside"):
+        paths_from(beside, tmp_path, link / "test")
+
+
+def test_the_main_checkout_refuses_its_own_tree_when_it_is_the_repo(
+    checkouts: tuple[Path, Path, Path], tmp_path: Path
+) -> None:
+    """There ``--git-common-dir`` is relative."""
+    main = checkouts[0]
+    with pytest.raises(p4m.GuardFailure, match="outside"):
+        paths_from(main, tmp_path, main / "data" / "test")
+
+
+@pytest.mark.parametrize("worktree", [0, 1, 2], ids=["main", "beside", "inside"])
+def test_a_test_split_outside_every_checkout_passes(
+    checkouts: tuple[Path, Path, Path], tmp_path: Path, worktree: int
+) -> None:
+    paths_from(checkouts[worktree], tmp_path, tmp_path / "held" / "test")
+
+
+def test_a_directory_git_does_not_know_fails_closed(tmp_path: Path) -> None:
+    repo = tmp_path / "not-a-repo"
+    repo.mkdir()
+    with pytest.raises(p4m.GuardFailure, match="git"):
+        paths_from(repo, tmp_path, tmp_path / "held" / "test")
 
 
 # --------------------------------------------------------------------------

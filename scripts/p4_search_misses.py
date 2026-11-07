@@ -2766,6 +2766,15 @@ def run_guards(
     return {"F2": f2_commit, "R2": r2, "S": s, "T": t, "prereg_sha256": prereg_sha}
 
 
+def main_checkout(repo: Path) -> Path:
+    """The directory that holds the repository's ``.git``. The script runs in
+    ``T``'s worktree, so "outside the repository" means outside this one too."""
+    common = _git_out(repo, "rev-parse", "--git-common-dir")
+    if common is None:
+        raise GuardFailure(f"git knows no repository at {repo}")
+    return (repo / common).resolve().parent
+
+
 def check_paths(
     *, split: Path, test_split: Path, store: Path, out: Path, repo: Path
 ) -> None:
@@ -2773,8 +2782,9 @@ def check_paths(
     for name, path in named:
         if not path.is_absolute():
             raise GuardFailure(f"{name} must be an absolute path: {path}")
-    if test_split.resolve().is_relative_to(repo.resolve()):
-        raise GuardFailure(f"--test-split {test_split} must be outside {repo}")
+    for checkout in (repo, main_checkout(repo)):
+        if test_split.resolve().is_relative_to(checkout.resolve()):
+            raise GuardFailure(f"--test-split {test_split} must be outside {checkout}")
     for parent in (repo, store):
         if out.resolve().is_relative_to(parent.resolve()):
             raise GuardFailure(f"the output {out} must be outside {parent}")

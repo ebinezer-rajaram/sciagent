@@ -31,6 +31,11 @@ fingerprint exactly, which is recorded in ``<root>/fingerprint.jsonl``
 (``--reuse-from unrecorded`` for a store with cells and no fingerprint). One
 driver per store: a second ``pilot.py`` on the same ``--root`` is refused.
 
+``--p4-block`` runs one config of ``p4_plan`` on the whole split, and takes no
+option that would narrow or change it. On a block or a split outside dev,
+``--reuse-from`` is refused unless a frozen amendment has named the fingerprint in
+:data:`P4_REUSE_NAMED` (prereg 2026-11-05 section 2.10).
+
 A live LLM run uses the logged-in Claude subscription (do not set
 ANTHROPIC_API_KEY; the harness refuses it).
 """
@@ -67,6 +72,21 @@ DEFAULT_SPLIT: Final = ROOT / "data" / "v2" / "truths" / "dev"
 DEFAULT_ROOT: Final = ROOT / ".cache" / "pilot"
 #: The anonymised channel names SPEC §5 fixes for pointproc.
 ANON_CHANNELS: Final = {"size": "m1", "sign": "m2"}
+#: The options a P4 block fixes: ``--p4-block`` refuses any of them set.
+P4_BLOCK_FIXED: Final = (
+    "truths",
+    "ids",
+    "seeds",
+    "control_seeds",
+    "b10f_truths",
+    "systems",
+    "max_turns",
+    "arms",
+    "arm_set",
+)
+#: Fingerprints a frozen amendment has named for ``--reuse-from`` on the P4 store.
+#: None today: the only other lawful route is a new store at a new ``T``.
+P4_REUSE_NAMED: Final[frozenset[str]] = frozenset()
 #: The rendered surface of each P4 arm on pointproc at the default budgets
 #: and wall limit (``sciagent.campaign.freeze``). An arm, budget or limit not
 #: here does not launch outside the dev split. Changing a digest is unfreezing a
@@ -300,6 +320,8 @@ def select(
 
 
 def build_parser() -> argparse.ArgumentParser:
+    from sciagent.campaign.p4plan import P4_BLOCKS
+
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--split", type=Path, default=DEFAULT_SPLIT)
     p.add_argument("--root", type=Path, default=DEFAULT_ROOT)
@@ -340,13 +362,59 @@ def build_parser() -> argparse.ArgumentParser:
         "checkout's (recorded in the store); 'unrecorded' for a store written "
         "before fingerprints were kept",
     )
+    p.add_argument(
+        "--p4-block",
+        choices=P4_BLOCKS,
+        default=None,
+        help="run this config of p4_plan on the whole split",
+    )
     return p
+
+
+def p4_block_config(args: argparse.Namespace) -> CampaignConfig:
+    """The config of ``args.p4_block``, on the whole of ``args.split``."""
+    from sciagent.campaign.p4plan import p4_block
+    from sciagent.campaign.plan import CampaignError
+
+    defaults = build_parser()
+    fixed = [
+        name
+        for name in P4_BLOCK_FIXED
+        if getattr(args, name) != defaults.get_default(name)
+    ]
+    if fixed:
+        raise SystemExit(f"refused: a P4 block fixes {fixed}")
+    try:
+        return p4_block(args.p4_block, truth_entries(load_split(args.split)))
+    except CampaignError as error:
+        raise SystemExit(f"refused: {error}") from error
+
+
+def refuse_p4_reuse(
+    reuse_from: str | None,
+    block: str | None,
+    truths: Sequence[TruthRecord] | Sequence[TruthEntry],
+) -> None:
+    """Exit if ``reuse_from`` would carry the P4 store across a commit (module
+    docstring). A block, or any truth outside dev, makes this the P4 store."""
+    from sciagent.campaign.freeze import DEV_SPLIT
+
+    if reuse_from is None or reuse_from in P4_REUSE_NAMED:
+        return
+    if block is not None or any(t.split != DEV_SPLIT for t in truths):
+        raise SystemExit(
+            f"refused: --reuse-from {reuse_from} on the P4 store: no frozen "
+            "amendment names it"
+        )
 
 
 def campaign_config(args: argparse.Namespace) -> CampaignConfig:
     """The run's :class:`CampaignConfig` from :func:`build_parser`'s arguments
     (shared with ``scripts/session_check.py``, which must rebuild exactly the
     configuration a run used)."""
+    if args.p4_block is not None:
+        return p4_block_config(args)
+
     from sciagent.campaign.plan import (
         BASELINES,
         P4_ARMS,
@@ -404,6 +472,7 @@ def main() -> None:
         raise SystemExit(f"refused: {error}") from error
     print(f"code fingerprint: {fingerprint}", flush=True)
     records = select(load_split(args.split), args.truths, args.ids)
+    refuse_p4_reuse(args.reuse_from, args.p4_block, records)
     env = pointproc_environment(load_split(args.split))
     config = campaign_config(args)
     settings = DriverSettings(

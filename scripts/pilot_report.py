@@ -43,7 +43,7 @@ import statistics
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Final, NamedTuple
+from typing import Any, Final, Literal, NamedTuple
 
 from pilot import (
     ROOT,
@@ -731,6 +731,31 @@ def interim_controls(tab: Any, resamples: int) -> list[str]:
     return [*out, ""]
 
 
+def p4_merged_table(
+    root: Path,
+    env: Any,
+    truths: Sequence[Any],
+    sessions: Literal["current", "stored"],
+) -> Any:
+    """Every config of ``p4_plan`` read from ``root`` and merged. Named minus anon is
+    printed for every model (SPEC §6.2, ruling B2), and only the Sonnet config holds
+    the ORACLE. One root, so ``merge_tables``' fingerprint check cannot fail here."""
+    from sciagent.campaign import analysis
+    from sciagent.campaign.fingerprint import UNRECORDED, read_fingerprints
+    from sciagent.campaign.p4plan import p4_plan
+    from sciagent.campaign.store import ResultStore
+    from sciagent.campaign.tables import TableSource, merge_tables
+
+    recorded = read_fingerprints(root)
+    fingerprint = recorded[-1].fingerprint if recorded else UNRECORDED
+    with ResultStore(root, read_only=True) as store:
+        tables = [
+            analysis.load_rows(store, env, config, truths, sessions=sessions)
+            for config in p4_plan(truths)
+        ]
+    return merge_tables([TableSource(t, root, fingerprint) for t in tables])
+
+
 def named_minus_anon_lines(
     tab: Any, naming_null: bool, root: int, resamples: int
 ) -> list[str]:
@@ -1343,7 +1368,14 @@ def main() -> None:
         from sciagent.campaign.secondaries import read_scope
 
         naming_null = read_naming_null(args.naming_commit)
-        L += named_minus_anon_lines(tab, naming_null, args.read_root, args.resamples)
+        per_model = (
+            tab
+            if args.p4_block is None
+            else p4_merged_table(args.root, env, truths, args.sessions)
+        )
+        L += named_minus_anon_lines(
+            per_model, naming_null, args.read_root, args.resamples
+        )
         L += scope_lines(
             read_scope(
                 read_controls(

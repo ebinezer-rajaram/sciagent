@@ -270,3 +270,4 @@ entry, and marks it handled with the date and what was done. Newest last.
   the system under test and `+inf` for the comparator; a genuinely scored `-inf` stays as scored. Test
   first, before S, with R3's words in SPEC-TEXT-P4-C.md changed to match. Decided by the control room
   under the owner's standing delegation.
+  In progress 2026-11-07 (lane session 38): words changed in `SPEC-TEXT-P4-C.md` ("R3 amended"); the code change is with an engineer, test first. Stays open until it is on v2.

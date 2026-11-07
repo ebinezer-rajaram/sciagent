@@ -700,9 +700,10 @@ def decide(
     seeds: Sequence[int] = SEEDS,
     *,
     min_complete: int | None = None,
+    end: str = "complete",
 ) -> Any:
     spec = toy_spec(truths, seeds, min_complete=min_complete)
-    return bt.decide(bt.build_table(rows, spec.truths, spec.seeds), spec)
+    return bt.decide(bt.build_table(rows, spec.truths, spec.seeds), spec, end)
 
 
 def noisy_gains(rows: Sequence[Any], gains: Mapping[str, float]) -> list[Any]:
@@ -721,13 +722,80 @@ def noisy_gains(rows: Sequence[Any], gains: Mapping[str, float]) -> list[Any]:
 
 def test_selected_takes_the_highest_mean() -> None:
     got = decide(rows_for(values={"c4": -0.75, "c7": -0.5}))
-    assert (got.label, got.winner, got.stands) == ("SELECTED", "c7", "c7")
+    assert (got.label, got.winner) == ("SELECTED", "c7")
+
+
+def test_stands_holds_c0_until_stage_2_has_decided() -> None:
+    """Finding 9: a winner is no setting that stands. ``winner`` holds it."""
+    got = decide(rows_for(values={"c7": -0.5}))
+    assert (got.winner, got.stands) == ("c7", "c0")
+    body = json.loads(bt.selection_bytes(got, IDENTITY, "complete"))
+    assert (body["winner"], body["stands"]) == ("c7", "c0")
+
+
+def test_nothing_reads_selections_stands_as_the_winner() -> None:
+    """Stage 2 and the tie read ``label`` and ``winner``: a ``stands`` that said
+    otherwise changes neither."""
+    body = RANKED | {"stands": "c7"}
+    assert bt.selected_winner(body) == "c3"
+    assert bt.final_setting(body, passes(("c3", True))) == "c3"
+    assert bt.selected_winner(RANKED | {"stands": "c0"}) == "c3"
 
 
 def test_selected_c0_is_tuned_and_the_default_kept() -> None:
     got = decide(rows_for(values={"c0": -0.5}))
     assert (got.label, got.winner, got.stands) == ("SELECTED", "c0", "c0")
     assert "tuned and the default kept" in bt.label_line(got)
+
+
+def thin(truths: Sequence[str], n: int, values: Mapping[str, float]) -> list[Any]:
+    """Every world but the first ``n`` of section 8's order is complete."""
+    gone = set(bt.world_order(truths, SEEDS)[:n])
+    rows = rows_for(truths, SEEDS, values)
+    return [r for r in rows if (r.truth, r.seed) not in gone or r.setting != "c1"]
+
+
+TWENTY: Final = tuple(f"t{i}" for i in range(20))
+
+
+@pytest.mark.parametrize("missing", [1, 6])
+def test_a_stop_file_with_fewer_than_60_complete_worlds_is_incomplete(
+    missing: int,
+) -> None:
+    """Finding 4: nobody keeps a partial result by writing ``STOP``."""
+    rows = thin(TWENTY, missing, {"c3": -0.5})
+    got = decide(rows, TWENTY, min_complete=54, end="stop")
+    assert (got.label, got.stands, got.winner) == ("INCOMPLETE", "c0", None)
+
+
+def test_a_stop_file_with_all_60_complete_decides_as_ever() -> None:
+    rows = rows_for(TWENTY, SEEDS, {"c3": -0.5})
+    got = decide(rows, TWENTY, min_complete=54, end="stop")
+    assert (got.label, got.winner) == ("SELECTED", "c3")
+
+
+def test_the_cpu_stop_keeps_rule_2s_54() -> None:
+    """Only a ``STOP`` file is a person's act. The CPU stop is the budget's."""
+    rows = thin(TWENTY, 6, {"c3": -0.5})
+    got = decide(rows, TWENTY, min_complete=54, end="cpu_stop")
+    assert (got.label, got.winner) == ("SELECTED", "c3")
+
+
+def test_rule_1_still_comes_before_the_stop_files_rule() -> None:
+    rows = thin(TWENTY, 6, {"weak": -0.5})
+    assert decide(rows, TWENTY, min_complete=54, end="stop").label == "BUG_STOP"
+
+
+def test_a_failure_common_to_all_14_counts_against_the_stop_files_60() -> None:
+    rows = rows_for(TWENTY, SEEDS, {"c3": -0.5})
+    world = bt.world_order(TWENTY, SEEDS)[0]
+    rows = [
+        replace(r, why="other_failure", per_event=math.nan, curve=())
+        if (r.truth, r.seed) == world
+        else r
+        for r in rows
+    ]
+    assert decide(rows, TWENTY, min_complete=54, end="stop").label == "INCOMPLETE"
 
 
 def test_an_exact_tie_goes_to_the_lower_number_so_c0_wins_ties() -> None:
@@ -880,7 +948,7 @@ def test_selection_json_holds_what_section_10_reports() -> None:
     rows = swap(rows, reading("c2", "t1", 1, -math.inf, "cpu_limit", ()))
     body = json.loads(bt.selection_bytes(decide(rows), IDENTITY, "complete"))
     assert body["label"] == "SELECTED" and body["winner"] == "c3"
-    assert body["stands"] == "c3"
+    assert body["stands"] == "c0"
     assert set(body["means"]) == {s.name for s in bt.SETTINGS}
     assert float.fromhex(body["means"]["c3"]) == -0.5
     assert body["c0b_rank"] >= 1
@@ -938,27 +1006,27 @@ def test_the_secondary_table_is_labelled_exploratory_and_covers_every_candidate(
     ],
 )
 def test_anything_but_a_well_formed_selected_leaves_c0(body: dict[str, Any]) -> None:
-    assert bt.stands(body) == "c0"
+    assert bt.selected_winner(body) == "c0"
 
 
 def test_a_well_formed_selected_stands() -> None:
-    assert bt.stands({"label": "SELECTED", "winner": "c3"}) == "c3"
+    assert bt.selected_winner({"label": "SELECTED", "winner": "c3"}) == "c3"
 
 
 def test_no_selection_file_leaves_c0(tmp_path: Path) -> None:
-    assert bt.stands_at(tmp_path / "selection.json") == "c0"
+    assert bt.selected_winner_at(tmp_path / "selection.json") == "c0"
 
 
 def test_an_unreadable_selection_file_leaves_c0(tmp_path: Path) -> None:
     path = tmp_path / "selection.json"
     path.write_text('{"label": "SELECTED", "win', encoding="utf-8")
-    assert bt.stands_at(path) == "c0"
+    assert bt.selected_winner_at(path) == "c0"
 
 
 def test_a_selection_file_that_is_no_object_leaves_c0(tmp_path: Path) -> None:
     path = tmp_path / "selection.json"
     path.write_text('["SELECTED", "c3"]', encoding="utf-8")
-    assert bt.stands_at(path) == "c0"
+    assert bt.selected_winner_at(path) == "c0"
 
 
 # --------------------------------------------------------------------------
@@ -984,6 +1052,8 @@ class StubJob:
                 math.fsum(float(i) for i in range(1000))
         if self.behaviour == "raise":
             raise RuntimeError("a bug, not a unit failure")
+        if self.behaviour == "write_stop":
+            Path(self.marker).write_text("", encoding="utf-8")
         if self.behaviour == "die":
             os.kill(os.getpid(), signal.SIGKILL)
         if self.behaviour == "die_once" and not Path(self.marker).exists():
@@ -1312,10 +1382,99 @@ def test_a_stop_cannot_be_undone_by_removing_the_file(tmp_path: Path) -> None:
     bt.CpuLedger.begin(paths.cpu)
     journal = bt.Journal(paths.journal)
     journal.append({"type": "run_start"})
+    journal.append({"type": "stop_seen", "reason": "stop"})
     journal.append({"type": "run_end", "reason": "stop"})
     outcome = stage1(spec, plan, tmp_path)
     assert outcome.end == "stop"
     assert not [r for r in bt.read_records(paths.journal) if r["type"] == "unit"]
+
+
+def plain_driver(paths: Any, plan: Sequence[Any], **changes: Any) -> Any:
+    kwargs: dict[str, Any] = {"stop_s": 3600.0} | FAST | changes
+    jobs = tuple(u.job for u in plan)
+    return bt.Driver(paths, jobs, cpu_limit_s=60, log=lambda _line: None, **kwargs)
+
+
+def test_a_run_ended_by_stop_short_of_its_worlds_is_incomplete_end_to_end(
+    tmp_path: Path,
+) -> None:
+    """One world of two finishes, enough for rule 2's count here, and ``STOP`` is
+    written by its last unit: the label is decided on how the run ended."""
+    spec, _, plan = toy_plan((1,))
+    spec = replace(spec, min_complete=1)
+    world = plan[:14]
+    last = world[-1]
+    stop = {"behaviour": "write_stop", "marker": str(tmp_path / "STOP")}
+    outcome = stage1(
+        spec, stubbed(world, {(last.setting, last.truth, last.seed): stop}), tmp_path
+    )
+    assert outcome.end == "stop"
+    assert len(outcome.selection.complete) == 1
+    assert (outcome.selection.label, outcome.selection.winner) == ("INCOMPLETE", None)
+
+
+def test_a_stop_is_journalled_once_and_before_the_run_ends(tmp_path: Path) -> None:
+    spec, plan = stub_run()
+    (tmp_path / "STOP").write_text("", encoding="utf-8")
+    stage1(spec, plan, tmp_path)
+    kinds = [r["type"] for r in bt.read_records(tmp_path / "journal.jsonl")]
+    assert kinds.count("stop_seen") == 1
+    assert kinds.index("stop_seen") < kinds.index("run_end")
+
+
+def test_a_kill_in_the_drain_after_removing_stop_cannot_let_the_run_go_on(
+    tmp_path: Path,
+) -> None:
+    """Finding 3. The driver sees ``STOP``, is killed while units drain, so no
+    ``run_end`` is written, and ``STOP`` is removed. The record it wrote on seeing it
+    is what holds."""
+    spec, plan = stub_run()
+    paths = bt.OutPaths(tmp_path)
+    driver = plain_driver(paths, plan)
+    driver.ledger = bt.CpuLedger.begin(paths.cpu)
+    paths.stop.write_text("", encoding="utf-8")
+    assert driver._stop_reason() == "stop"
+    paths.stop.unlink()
+    assert bt.journal_end(bt.read_records(paths.journal)) == "stop"
+    outcome = stage1(spec, plan, tmp_path)
+    assert outcome.end == "stop"
+    assert not [r for r in bt.read_records(paths.journal) if r["type"] == "unit"]
+
+
+def test_a_cpu_stop_is_journalled_the_same_way(tmp_path: Path) -> None:
+    _, plan = stub_run()
+    paths = bt.OutPaths(tmp_path)
+    driver = plain_driver(paths, plan, stop_s=0.0)
+    driver.ledger = bt.CpuLedger.begin(paths.cpu)
+    assert driver._stop_reason() == "cpu_stop"
+    assert bt.journal_end(bt.read_records(paths.journal)) == "cpu_stop"
+
+
+def test_a_stop_seen_again_is_not_journalled_again(tmp_path: Path) -> None:
+    _, plan = stub_run()
+    paths = bt.OutPaths(tmp_path)
+    driver = plain_driver(paths, plan)
+    driver.ledger = bt.CpuLedger.begin(paths.cpu)
+    paths.stop.write_text("", encoding="utf-8")
+    driver._stop_reason()
+    driver._stop_reason()
+    records = bt.read_records(paths.journal)
+    assert sum(r["type"] == "stop_seen" for r in records) == 1
+
+
+def test_a_bug_in_the_drain_after_a_stop_is_still_a_bug(tmp_path: Path) -> None:
+    """The latch must not hide it, or a resume would write a label after a bug."""
+    spec, plan = stub_run()
+    paths = bt.OutPaths(tmp_path)
+    bt.CpuLedger.begin(paths.cpu)
+    journal = bt.Journal(paths.journal)
+    journal.append({"type": "run_start"})
+    journal.append({"type": "stop_seen", "reason": "stop"})
+    journal.append({"type": "run_end", "reason": "bug"})
+    assert bt.journal_end(bt.read_records(paths.journal)) == "bug"
+    with pytest.raises(bt.ResumeRefused, match="bug"):
+        stage1(spec, plan, tmp_path)
+    assert not paths.selection.exists()
 
 
 def test_a_bug_ends_the_run_with_no_selection_and_refuses_a_resume(
@@ -1798,16 +1957,49 @@ def guards(repo: Path, sha: str, commit: str, **environ: str) -> dict[str, str]:
     return out
 
 
-def test_the_launch_needs_the_scripts_commit_in_the_log(tmp_path: Path) -> None:
+def name_in_log(repo: Path, line: str) -> None:
+    (repo / bt.LOG_PATH).write_text(f"log\n{line}\n", encoding="utf-8")
+    git(repo, "commit", "-q", "-am", "name it")
+
+
+def launch_entry(commit: str, worktree: Path) -> str:
+    """The form the LOG's line takes, typed out here and not read from the script."""
+    return f"bsym-tune launch: commit {commit[:7]}, worktree {worktree.resolve()}"
+
+
+def test_the_launch_needs_the_commit_and_the_worktree_in_one_log_line(
+    tmp_path: Path,
+) -> None:
     sha, commit = toy_checkout(tmp_path)
     with pytest.raises(bt.GuardFailure, match="LOG"):
         guards(tmp_path, sha, commit)
-    log = tmp_path / bt.LOG_PATH
-    log.write_text(f"log\nscript at {commit[:7]}\n", encoding="utf-8")
-    git(tmp_path, "commit", "-q", "-am", "name it")
+    name_in_log(tmp_path, launch_entry(commit, tmp_path))
     identity = guards(tmp_path, sha, commit)
     assert identity["F"] == commit and identity["prereg_sha256"] == sha
     assert identity["fingerprint"].startswith("commit=")
+
+
+def test_the_launch_refuses_a_log_line_naming_another_worktree(tmp_path: Path) -> None:
+    sha, commit = toy_checkout(tmp_path)
+    name_in_log(tmp_path, launch_entry(commit, Path("/elsewhere")))
+    with pytest.raises(bt.GuardFailure, match="LOG"):
+        guards(tmp_path, sha, commit)
+
+
+def test_the_launch_refuses_a_log_line_naming_another_commit(tmp_path: Path) -> None:
+    sha, commit = toy_checkout(tmp_path)
+    name_in_log(tmp_path, launch_entry("0" * 40, tmp_path))
+    with pytest.raises(bt.GuardFailure, match="LOG"):
+        guards(tmp_path, sha, commit)
+
+
+def test_the_commit_and_the_worktree_on_separate_lines_are_refused(
+    tmp_path: Path,
+) -> None:
+    sha, commit = toy_checkout(tmp_path)
+    name_in_log(tmp_path, f"script at {commit[:7]}\nworktree {tmp_path.resolve()}")
+    with pytest.raises(bt.GuardFailure, match="LOG"):
+        guards(tmp_path, sha, commit)
 
 
 def test_the_launch_refuses_a_dirty_tree(tmp_path: Path) -> None:
@@ -1827,9 +2019,7 @@ def test_the_launch_refuses_a_head_not_descended_from_the_freeze(
 
 def test_the_launch_guards_read_blas_last_and_refuse_it(tmp_path: Path) -> None:
     sha, commit = toy_checkout(tmp_path)
-    log = tmp_path / bt.LOG_PATH
-    log.write_text(f"log\nscript at {commit[:7]}\n", encoding="utf-8")
-    git(tmp_path, "commit", "-q", "-am", "name it")
+    name_in_log(tmp_path, launch_entry(commit, tmp_path))
     with pytest.raises(bt.GuardFailure, match="OMP_NUM_THREADS"):
         guards(tmp_path, sha, commit, OMP_NUM_THREADS="4")
 
@@ -1940,6 +2130,13 @@ def test_the_table_is_exported_once(
 def test_the_docstring_shows_the_launch_form() -> None:
     doc = bt.__doc__
     assert "systemd-run --user" in doc and "--nice=10" in doc and "--workers 2" in doc
+
+
+def test_the_docstring_says_records_are_committed_from_the_main_checkout() -> None:
+    doc = " ".join(bt.__doc__.split())
+    assert "from the main checkout" in doc
+    assert "HEAD never moves" in doc
+    assert "Commit them after stage 2" not in doc
 
 
 def test_workers_are_at_most_2() -> None:
@@ -2426,6 +2623,12 @@ def test_a_margin_short_of_units_says_it_did_not_finish() -> None:
     assert got["finished"] is False
 
 
+def test_a_margin_that_did_not_finish_has_no_mean() -> None:
+    """Finding 6: a mean over the worlds a stop happened to leave is no margin."""
+    assert bt.margin_of(margin_rows()[1:], p3_rows(), stage2_spec())["mean"] is None
+    assert bt.margin_of([], p3_rows(), stage2_spec())["mean"] is None
+
+
 def test_the_read_repeats_and_does_not_depend_on_the_order_of_rows() -> None:
     rows = stage2_readings()
     assert read_pass(rows) == read_pass(list(reversed(rows)))
@@ -2786,7 +2989,7 @@ def test_a_stop_in_the_margin_block_writes_it_unfinished_and_changes_nothing(
     assert result_of(tmp_path)["stands"] == "c3"
     assert bt.final_setting(RANKED, result_of(tmp_path)) == "c3"
     margin = margin_record(tmp_path)
-    assert margin["finished"] is False
+    assert margin["finished"] is False and margin["mean"] is None
     assert margin["end"] == ("stop" if stop == "file" else "cpu_stop")
     assert units_run(tmp_path, B_SYM) == 0
 
@@ -2914,6 +3117,21 @@ def test_the_margin_block_shares_stage_2s_store_and_cpu_count(tmp_path: Path) ->
     run2(tmp_path, {"c3": -1.0})
     assert cells_in(tmp_path / "stage2") == 40 + 30
     assert sorted(p.name for p in tmp_path.glob("*/cpu.json")) == ["cpu.json"]
+
+
+def test_a_stop_seen_then_removed_before_a_kill_fails_the_passes(
+    tmp_path: Path,
+) -> None:
+    """Finding 3 in stage 2: nothing lets a pass carry on."""
+    store = bt.OutPaths(tmp_path / "stage2")
+    store.root.mkdir()
+    bt.CpuLedger.begin(store.cpu)
+    journal = bt.Journal(store.journal)
+    journal.append({"type": "run_start"})
+    journal.append({"type": "stop_seen", "reason": "stop"})
+    assert run2(tmp_path, {"c3": -1.0, "c7": -1.0}) == "c0"
+    assert units_run(tmp_path) == 0
+    assert [p["finished"] for p in result_of(tmp_path)["passes"]] == [False, False]
 
 
 def test_a_pass_unfinished_at_stop_has_failed_and_c0_stands(tmp_path: Path) -> None:

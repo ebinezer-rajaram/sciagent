@@ -29,9 +29,10 @@ set then, and a commit that sets them is the script's commit the LOG names.
     # section 2's table, once, read-only from a P3 store; its hash is P3_TABLE_SHA256
     uv run python scripts/bsym_tune.py --export-p3-table <store>
 
-    # section 5: each record, once written, goes to S3 and into docs/v2/bsym-tuning/.
-    # Commit them after stage 2: stage 2 refuses any other commit than the selecting
-    # one. The script does neither, and touches no AWS.
+    # section 5: the run has its own detached worktree, whose HEAD never moves.
+    # The lane copies each record to S3 and commits it under docs/v2/bsym-tuning/
+    # from the main checkout, so that cannot move the commit stage 2 checks. The
+    # script does neither, and touches no AWS.
 
 **Stage 1.** All 20 dev truths at seeds 4, 5 and 6, 60 worlds, each of the 14
 settings (:data:`SETTINGS`) on every world at F = 40. A unit runs by the framework's
@@ -176,6 +177,10 @@ F_COMMIT: Final = ""
 
 PREREG_PATH: Final = "docs/v2/prereg/2026-11-06_bsym-tuning.md"
 LOG_PATH: Final = "docs/v2/LOG.md"
+#: Section 11: the one line the LOG holds before launch. ``commit`` is the first seven
+#: characters of the last commit to touch the script; ``worktree`` the run's absolute
+#: path, resolved. Read as a substring of ``LOG_PATH`` in that worktree.
+LAUNCH_LOG_LINE: Final = "bsym-tune launch: commit {commit}, worktree {worktree}"
 SCRIPT_PATH: Final = "scripts/bsym_tune.py"
 TEST_PATH: Final = "tests/campaign/test_bsym_tune.py"
 #: Section 11: the launch's store. Every path of a run derives from this, and
@@ -898,9 +903,13 @@ class Selection:
     h1_left: tuple[World, ...]
 
 
-def decide(table: Table, spec: RunSpec) -> Selection:
+def decide(table: Table, spec: RunSpec, end: str) -> Selection:
     """Section 5's rules, in order, the first that fits. With no complete world no
-    statistic exists, so rule 1 has nothing to read and rule 2 is the one that fits."""
+    statistic exists, so rule 1 has nothing to read and rule 2 is the one that fits.
+    A run ended by a ``STOP`` file with any world short is ``INCOMPLETE`` whatever
+    rule 2's count says, so nobody keeps a partial result by stopping; the CPU stop is
+    the budget's, and keeps the count. ``stands`` holds ``c0`` until stage 2 decides:
+    a winner is in ``winner``, and only ``final.json`` makes it stand."""
     planned = len(table.truths) * len(table.seeds)
 
     def outcome(
@@ -914,7 +923,7 @@ def decide(table: Table, spec: RunSpec) -> Selection:
         return Selection(
             label,
             winner,
-            DEFAULT if winner is None else winner,
+            DEFAULT,
             means,
             ranking,
             rank,
@@ -942,7 +951,8 @@ def decide(table: Table, spec: RunSpec) -> Selection:
     )
     if not means[WEAK] < means[DEFAULT]:
         return outcome("BUG_STOP", None, means, ranking, rank, h1)
-    if len(table.complete) < spec.min_complete:
+    stopped_short = end == "stop" and len(table.complete) < planned
+    if len(table.complete) < spec.min_complete or stopped_short:
         return outcome("INCOMPLETE", None, means, ranking, rank, h1)
     if h1 is None or not h1.low > 0.0:
         return outcome("NOT_SEPARATED", None, means, ranking, rank, h1)
@@ -1041,9 +1051,10 @@ def selection_bytes(
 # --------------------------------------------------------------------------
 
 
-def stands(body: Mapping[str, Json]) -> str:
-    """Stage 1's result. Any label but ``SELECTED``, or a winner that is no
-    candidate, leaves ``c0``."""
+def selected_winner(body: Mapping[str, Json]) -> str:
+    """Stage 1's winner, read from ``label`` and ``winner`` and never from ``stands``.
+    Any label but ``SELECTED``, or a winner that is no candidate, leaves ``c0``. A
+    winner is not what stands: that is :func:`final_setting`."""
     winner = body.get("winner")
     if body.get("label") == "SELECTED" and winner in SELECTABLE:
         return str(winner)
@@ -1058,9 +1069,9 @@ def _read_body(path: Path) -> Mapping[str, Json] | None:
     return body if isinstance(body, Mapping) else None
 
 
-def stands_at(path: Path) -> str:
+def selected_winner_at(path: Path) -> str:
     body = _read_body(path)
-    return DEFAULT if body is None else stands(body)
+    return DEFAULT if body is None else selected_winner(body)
 
 
 def next_candidate(selection: Mapping[str, Json], failed: Sequence[str]) -> str | None:
@@ -1083,7 +1094,7 @@ def final_setting(
     by ``final.json``, so with none ``c0`` does: a pass not finished at that commit has
     failed. A record whose passes are not the rule's, or that names anything but what
     they give, is read as no record."""
-    candidate: str | None = stands(selection)
+    candidate: str | None = selected_winner(selection)
     if candidate == DEFAULT or final is None:
         return DEFAULT
     passes = final.get("passes")
@@ -1275,11 +1286,14 @@ class Sink:
 
 
 def journal_end(records: Sequence[Mapping[str, Json]]) -> str:
-    """How the last driver ended: "killed" if it never said. A stop stays a stop
-    through a restart, so that it cannot be undone."""
-    for reason in LATCHED_ENDS:
-        if any(r["type"] == "run_end" and r["reason"] == reason for r in records):
-            return reason
+    """How the last driver ended: "killed" if it never said. A stop stays a stop from
+    the moment it is seen, through a kill and through removing ``STOP``, so that it
+    cannot be undone. A bug outranks it: a bug is never resumed, stop or no stop."""
+    if any(r["type"] == "run_end" and r["reason"] == "bug" for r in records):
+        return "bug"
+    for r in records:
+        if r["type"] == "stop_seen":
+            return str(r["reason"])
     last = "killed"
     for r in records:
         if r["type"] == "run_start":
@@ -1455,9 +1469,11 @@ class Driver:
     """Runs units, each in its own process (sections 6, 8, 9).
 
     The driver owns no result: it reads a unit's exit and the journal, and adds
-    ``job_lost``, ``unit_failed``, ``run_start`` and ``run_end``. ``unit_failed`` ends
-    a unit: its ``reason`` is ``cpu_limit`` or ``worker_lost``, and a resume does not
-    rerun it. ``log`` receives counts and CPU and nothing else (section 9). ``on_unit``
+    ``job_lost``, ``unit_failed``, ``stop_seen``, ``run_start`` and ``run_end``.
+    ``unit_failed`` ends a unit: its ``reason`` is ``cpu_limit`` or ``worker_lost``, and
+    a resume does not rerun it. ``stop_seen`` is written the first time a stop is seen,
+    before the units in flight drain, and :func:`journal_end` latches on it. ``log``
+    receives counts and CPU and nothing else (section 9). ``on_unit``
     gets each unit record of ``jobs`` once, on the driver's own thread: a journal may
     hold other drivers' units, as stage 2's does across its blocks.
     """
@@ -1580,11 +1596,15 @@ class Driver:
             return "terminated"
         if self.latched is not None:
             return self.latched
+        reason = None
         if self.paths.stop.exists():
-            return "stop"
-        if self.ledger.total_usec >= self.stop_s * 10**6:
-            return "cpu_stop"
-        return None
+            reason = "stop"
+        elif self.ledger.total_usec >= self.stop_s * 10**6:
+            reason = "cpu_stop"
+        if reason is not None:
+            self.journal.append({"type": "stop_seen", "reason": reason})
+            self.latched = reason
+        return reason
 
     def _run_units(self) -> str:
         queue = deque(j for j in self.jobs if j.id not in self.finished)
@@ -1802,7 +1822,7 @@ def finalise(
 ) -> Selection:
     """Section 5, from the store and the journal. ``selection.json`` comes last."""
     table = build_table(load_readings(paths, plan), spec.truths, spec.seeds)
-    selection = decide(table, spec)
+    selection = decide(table, spec, end)
     halves = {u.truth: u.in_dictionary for u in plan}
     extra = secondary(table, spec, halves) if table.complete else None
     records = read_records(paths.journal)
@@ -2102,10 +2122,11 @@ def margin_of(rows: Iterable[Reading], table: P3Table, spec: Stage2Spec) -> Reco
         floored += sum(v is None or not math.isfinite(v) for v in pair)
         by_truth.setdefault(truth, []).append(one - two)
     means = [_mean(by_truth[t]) for t in sorted(by_truth)]
+    finished = all(w in readings for w in worlds)
     return {
-        "mean": _mean(means) if means else None,
+        "mean": _mean(means) if means and finished else None,
         "floored": floored,
-        "finished": all(w in readings for w in worlds),
+        "finished": finished,
     }
 
 
@@ -2216,7 +2237,7 @@ def check_same_commit(
 
 def _candidates(selection: Mapping[str, Json]) -> tuple[str, ...]:
     """The winner, and the next rank if one stands above ``c0`` (section 2)."""
-    winner = stands(selection)
+    winner = selected_winner(selection)
     second = next_candidate(selection, (winner,))
     return (winner,) if second is None else (winner, second)
 
@@ -2263,7 +2284,7 @@ def run_stage2(
     one after it."""
     if paths.final.exists():
         raise GuardFailure(f"{paths.final} exists: there is one run")
-    winner = stands(selection)
+    winner = selected_winner(selection)
     if winner == DEFAULT:
         raise GuardFailure("no stage 2: only a SELECTED winner other than c0 takes it")
     check_same_commit(selection, identity)
@@ -2477,8 +2498,9 @@ def launch_guards(
     environ: Mapping[str, str],
     packages: Sequence[Path] | None = None,
 ) -> dict[str, str]:
-    """The text frozen and unchanged, the tree clean, the script's commit in the LOG
-    (section 11), BLAS at one thread. Returns the run's identity."""
+    """The text frozen and unchanged, the tree clean, the script's commit and this
+    worktree in one LOG line (section 11, :data:`LAUNCH_LOG_LINE`), BLAS at one thread.
+    Returns the run's identity."""
     if not prereg_sha or not f_commit:
         raise GuardFailure("PREREG_SHA256 and F_COMMIT are empty: not frozen")
     prereg = repo / PREREG_PATH
@@ -2496,8 +2518,9 @@ def launch_guards(
     commit = _git(repo, "log", "-1", "--format=%H", "--", SCRIPT_PATH).stdout.strip()
     log_path = repo / LOG_PATH
     log = log_path.read_text(encoding="utf-8") if log_path.is_file() else ""
-    if not commit or commit[:7] not in log:
-        raise GuardFailure(f"the script's commit {commit[:7]} is not in the LOG")
+    entry = LAUNCH_LOG_LINE.format(commit=commit[:7], worktree=repo.resolve())
+    if not commit or entry not in log:
+        raise GuardFailure(f"the LOG does not hold the line {entry!r}")
     check_blas(environ)
     return {
         "F": f_commit,

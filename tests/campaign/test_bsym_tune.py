@@ -1498,6 +1498,7 @@ def test_the_stores_and_records_are_at_constant_paths() -> None:
     stage2 = bt.stage2_paths(Path("/repo"))
     assert stage2.store.root == root / "stage2"
     assert stage2.final == root / "final.json"
+    assert stage2.margin == root / "margin.json"
     assert bt.SELECTION_RECORD == "docs/v2/bsym-tuning/selection.json"
     assert bt.FINAL_RECORD == "docs/v2/bsym-tuning/final.json"
     assert bt.P3_TABLE_PATH == "docs/v2/bsym-tuning/p3-rows.json"
@@ -2675,8 +2676,9 @@ def run2(
     kwargs = FAST | driver
     spec = stage2_spec()
     log = kwargs.pop("log", lambda _line: None)
+    step = kwargs.pop("step", bt.run_stage2_steps)
     full = {name: values.get(name, -1.25) for name in ("c3", "c7")}
-    return bt.run_stage2(
+    return step(
         spec,
         selection,
         plan_for(full),
@@ -2693,6 +2695,13 @@ def run2(
 def result_of(tmp_path: Path) -> dict[str, Any]:
     body: dict[str, Any] = json.loads(
         (tmp_path / "final.json").read_text(encoding="utf-8")
+    )
+    return body
+
+
+def margin_record(tmp_path: Path) -> dict[str, Any]:
+    body: dict[str, Any] = json.loads(
+        (tmp_path / "margin.json").read_text(encoding="utf-8")
     )
     return body
 
@@ -2722,34 +2731,64 @@ def test_b_sym_runs_after_the_passes_for_the_setting_that_stands(
     assert len(bsym) == 30 and {r["setting"] for r in bsym} == {"c7"}
     units = [r for r in records if r["type"] == "unit"]
     assert all(r["system"] == B_SYM for r in units[-30:])
-    margin = result_of(tmp_path)["margin"]
-    assert margin["finished"] is True
+    margin = margin_record(tmp_path)
+    assert margin["setting"] == "c7" and margin["finished"] is True
     assert float.fromhex(margin["mean"]) == -1.0 - -1.125
+
+
+def test_final_json_holds_no_margin(tmp_path: Path) -> None:
+    run2(tmp_path, {"c3": -1.0})
+    assert "margin" not in result_of(tmp_path)
+
+
+def test_final_json_is_written_at_the_end_of_the_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """It exists before any B-sym unit runs, so that block cannot cost it."""
+    real = bt._run_pass
+    seen: list[bool] = []
+
+    def spy(plan: Sequence[Any], *args: Any, **kwargs: Any) -> str:
+        if plan[0].system == B_SYM:
+            seen.append((tmp_path / "final.json").exists())
+        end: str = real(plan, *args, **kwargs)
+        return end
+
+    monkeypatch.setattr(bt, "_run_pass", spy)
+    run2(tmp_path, {"c3": -1.0})
+    assert seen == [True]
 
 
 def test_no_b_sym_unit_runs_if_c0_stands(tmp_path: Path) -> None:
     run2(tmp_path, {"c3": -1.25, "c7": -1.25})
     assert units_run(tmp_path, B_SYM) == 0
-    assert result_of(tmp_path)["margin"] is None
+    assert not (tmp_path / "margin.json").exists()
 
 
-def test_a_stop_in_the_margin_block_leaves_the_setting_standing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("stop", ["file", "cpu"])
+def test_a_stop_in_the_margin_block_writes_it_unfinished_and_changes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stop: str
 ) -> None:
     """No rule reads the block: if it does not finish, the record says so."""
     real = bt._run_pass
 
     def stop_first(plan: Sequence[Any], *args: Any, **kwargs: Any) -> str:
         if plan[0].system == B_SYM:
-            (tmp_path / "stage2" / "STOP").write_text("", encoding="utf-8")
+            if stop == "file":
+                (tmp_path / "stage2" / "STOP").write_text("", encoding="utf-8")
+            else:
+                kwargs["stop_s"] = 0.0
         end: str = real(plan, *args, **kwargs)
         return end
 
     monkeypatch.setattr(bt, "_run_pass", stop_first)
     assert run2(tmp_path, {"c3": -1.0}) == "c3"
-    body = result_of(tmp_path)
-    assert body["stands"] == "c3" and body["margin"]["finished"] is False
-    assert bt.final_setting(RANKED, body) == "c3"
+    assert result_of(tmp_path)["stands"] == "c3"
+    assert bt.final_setting(RANKED, result_of(tmp_path)) == "c3"
+    margin = margin_record(tmp_path)
+    assert margin["finished"] is False
+    assert margin["end"] == ("stop" if stop == "file" else "cpu_stop")
+    assert units_run(tmp_path, B_SYM) == 0
 
 
 def test_a_failed_winner_hands_on_to_the_next_rank_once(tmp_path: Path) -> None:
@@ -2832,12 +2871,49 @@ def test_stage_2_runs_only_on_a_selected_winner_that_is_not_c0(
         run2(tmp_path, {"c3": -1.0}, selection)
 
 
-def test_stage_2_is_refused_once_final_json_exists(tmp_path: Path) -> None:
+def test_a_pass_start_is_refused_once_final_json_exists(tmp_path: Path) -> None:
     run2(tmp_path, {"c3": -1.0})
     before = (tmp_path / "final.json").read_bytes()
     with pytest.raises(bt.GuardFailure, match=r"final\.json"):
-        run2(tmp_path, {"c3": -1.0})
+        run2(tmp_path, {"c3": -1.0}, step=bt.run_stage2)
     assert (tmp_path / "final.json").read_bytes() == before
+
+
+def test_margin_json_is_the_blocks_own_latch(tmp_path: Path) -> None:
+    run2(tmp_path, {"c3": -1.0})
+    before = (tmp_path / "margin.json").read_bytes()
+    with pytest.raises(bt.GuardFailure, match=r"margin\.json"):
+        run2(tmp_path, {"c3": -1.0}, step=bt.run_margin)
+    with pytest.raises(bt.GuardFailure, match=r"margin\.json"):
+        run2(tmp_path, {"c3": -1.0})
+    assert (tmp_path / "margin.json").read_bytes() == before
+
+
+def test_with_c0_standing_the_command_has_nothing_left_to_start(tmp_path: Path) -> None:
+    run2(tmp_path, {"c3": -1.25, "c7": -1.25})
+    with pytest.raises(bt.GuardFailure, match=r"final\.json"):
+        run2(tmp_path, {"c3": -1.25, "c7": -1.25})
+    with pytest.raises(bt.GuardFailure, match="no margin"):
+        run2(tmp_path, {"c3": -1.25, "c7": -1.25}, step=bt.run_margin)
+
+
+def test_the_margin_block_needs_a_final_json(tmp_path: Path) -> None:
+    with pytest.raises(bt.GuardFailure, match="no margin"):
+        run2(tmp_path, {"c3": -1.0}, step=bt.run_margin)
+    assert units_run(tmp_path) == 0
+
+
+def test_the_margin_block_runs_at_the_selecting_commit_only(tmp_path: Path) -> None:
+    run2(tmp_path, {"c3": -1.0}, step=bt.run_stage2)
+    other = {"script_sha256": "s" * 64, "fingerprint": "another"}
+    with pytest.raises(bt.GuardFailure, match="commit"):
+        run2(tmp_path, {"c3": -1.0}, identity=other, step=bt.run_margin)
+
+
+def test_the_margin_block_shares_stage_2s_store_and_cpu_count(tmp_path: Path) -> None:
+    run2(tmp_path, {"c3": -1.0})
+    assert cells_in(tmp_path / "stage2") == 40 + 30
+    assert sorted(p.name for p in tmp_path.glob("*/cpu.json")) == ["cpu.json"]
 
 
 def test_a_pass_unfinished_at_stop_has_failed_and_c0_stands(tmp_path: Path) -> None:
@@ -2907,10 +2983,10 @@ def test_a_stage_2_resume_reads_the_finished_pass_again_and_goes_on(
     assert len(set(ids)) == len(ids)
 
 
-def test_a_stage_2_resume_after_a_killed_margin_block_finishes_it(
+def test_a_kill_in_the_margin_block_costs_a_passed_winner_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Nothing was written, so the same command goes on: final.json comes last."""
+    """``final.json`` is already written: not resuming the block leaves it standing."""
     real = bt._run_pass
 
     def killed_at_the_margin(plan: Sequence[Any], *args: Any, **kwargs: Any) -> str:
@@ -2923,9 +2999,65 @@ def test_a_stage_2_resume_after_a_killed_margin_block_finishes_it(
         patched.setattr(bt, "_run_pass", killed_at_the_margin)
         with pytest.raises(KeyboardInterrupt):
             run2(tmp_path, {"c3": -1.0})
-    assert not (tmp_path / "final.json").exists()
+    assert not (tmp_path / "margin.json").exists()
+    selection = tmp_path / "selection.json"
+    selection.write_text(json.dumps(RANKED), encoding="utf-8")
+    assert bt.final_setting_at(selection, tmp_path / "final.json") == "c3"
+
+
+def test_the_same_command_resumes_a_killed_margin_block_and_runs_no_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = bt._run_pass
+
+    def killed_at_the_margin(plan: Sequence[Any], *args: Any, **kwargs: Any) -> str:
+        if plan[0].system == B_SYM:
+            raise KeyboardInterrupt
+        end: str = real(plan, *args, **kwargs)
+        return end
+
+    with monkeypatch.context() as patched:
+        patched.setattr(bt, "_run_pass", killed_at_the_margin)
+        with pytest.raises(KeyboardInterrupt):
+            run2(tmp_path, {"c3": -1.0})
+    before = (tmp_path / "final.json").read_bytes()
+    assert units_run(tmp_path) == 40
     assert run2(tmp_path, {"c3": -1.0}) == "c3"
-    assert result_of(tmp_path)["margin"]["finished"] is True
+    assert (tmp_path / "final.json").read_bytes() == before
+    assert margin_record(tmp_path)["finished"] is True
+    assert units_run(tmp_path) == 40 + 30
+
+
+def test_a_terminated_margin_block_writes_no_margin_and_keeps_final(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = bt._run_pass
+
+    def terminated_at_the_margin(plan: Sequence[Any], *args: Any, **kwargs: Any) -> str:
+        if plan[0].system == B_SYM:
+            return "terminated"
+        end: str = real(plan, *args, **kwargs)
+        return end
+
+    monkeypatch.setattr(bt, "_run_pass", terminated_at_the_margin)
+    assert run2(tmp_path, {"c3": -1.0}) == "c3"
+    assert not (tmp_path / "margin.json").exists()
+    assert result_of(tmp_path)["stands"] == "c3"
+
+
+def test_a_margin_block_in_the_same_unit_counts_the_kernels_figure_once(
+    tmp_path: Path,
+) -> None:
+    clock = {"usec": 0}
+
+    def usage() -> int:
+        clock["usec"] += 1000
+        return clock["usec"]
+
+    run2(tmp_path, {"c3": -1.0}, read_usage_usec=usage)
+    assert units_run(tmp_path, B_SYM) == 30
+    total = bt.CpuLedger.load(tmp_path / "stage2" / "cpu.json").total_usec
+    assert total <= clock["usec"]
 
 
 def test_stage_2_prints_counts_and_cpu_until_its_result_exists(tmp_path: Path) -> None:
@@ -2938,7 +3070,10 @@ def test_stage_2_prints_counts_and_cpu_until_its_result_exists(tmp_path: Path) -
     run2(tmp_path, {"c3": -1.0}, log=log, print_s=0.0)
     before = [line for exists, line in lines if not exists]
     assert before and all(ALLOWED_LINE.fullmatch(line) for line in before)
-    assert [line for exists, line in lines if exists] == ["stage 2: c3 stands"]
+    after = [line for exists, line in lines if exists]
+    assert after[0] == "stage 2: c3 stands"
+    assert after[-1] == "margin.json written"
+    assert all(ALLOWED_LINE.fullmatch(line) for line in after[1:-1])
 
 
 def test_a_stage_2_killed_run_writes_no_result(

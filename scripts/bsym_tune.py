@@ -62,10 +62,15 @@ bytes are.
 commit. A pass (:func:`plan_stage2`) is B-sym@10F, then planted-hint, read by
 :func:`read_pass` with gaps against P3's stored ORACLE: ``gonogo``'s control 2 on all
 20 truths and control 3 on the ten. A pass not finished has failed. The winner takes a
-pass, and on failure the next rank takes one. Then B-sym (:func:`plan_margin`) runs
-for what stands, and no rule reads it. ``final.json`` comes last and is the latch,
-so a kill anywhere before it resumes. :func:`final_setting` is what stands: a winner
-other than ``c0`` stands only by a ``final.json`` on the rule's own passes.
+pass, and on failure the next rank takes one. ``final.json`` is written at the end of
+the passes, is their latch, and nothing later changes it. :func:`final_setting` is what
+stands: a winner other than ``c0`` stands only by a ``final.json`` on the rule's own
+passes. Then, as its own step on the same store and CPU count, B-sym
+(:func:`plan_margin`, :func:`run_margin`) runs for what stands, if it is not ``c0``.
+``margin.json`` is that step's latch, and no rule reads it: a stop or the CPU limit
+writes it with ``finished`` false, and a kill resumes by the same command, so a kill
+there costs a passed winner nothing. ``c0`` stands only from a pass that failed or
+did not finish.
 
 **A bug found after an outcome is read** stops every further step, and ``c0`` stands
 (section 6). Nothing here reruns it. An amendment that meets section 6's conditions
@@ -278,9 +283,10 @@ REHEARSAL_ROOTS: Final = (20261120,)
 REHEARSAL_SEEDS: Final = (1, 2, 3)
 #: 54 of 60, as a share, for a rehearsal's smaller grid.
 REHEARSAL_COMPLETE_SHARE: Final = (9, 10)
-#: ``final.json``'s place: beside ``selection.json``, not in stage 2's store. The
-#: text fixes the name and that the path is constant.
+#: ``final.json``'s and ``margin.json``'s place: beside ``selection.json``, not in
+#: stage 2's store. The text fixes the names and that the paths are constant.
 FINAL_FILE: Final = "final.json"
+MARGIN_FILE: Final = "margin.json"
 
 #: Exit codes. A label is not an exit code: any label writes ``selection.json``.
 EXIT_DONE: Final = 0
@@ -1248,6 +1254,10 @@ class Stage2Paths:
     def final(self) -> Path:
         return self.root / FINAL_FILE
 
+    @property
+    def margin(self) -> Path:
+        return self.root / MARGIN_FILE
+
 
 def stage2_paths(repo: Path) -> Stage2Paths:
     return Stage2Paths(repo / STORE_DIR)
@@ -2204,6 +2214,32 @@ def check_same_commit(
         )
 
 
+def _candidates(selection: Mapping[str, Json]) -> tuple[str, ...]:
+    """The winner, and the next rank if one stands above ``c0`` (section 2)."""
+    winner = stands(selection)
+    second = next_candidate(selection, (winner,))
+    return (winner,) if second is None else (winner, second)
+
+
+def check_stage2_store(
+    spec: Stage2Spec,
+    selection: Mapping[str, Json],
+    plan_of: Callable[[str], Sequence[PlannedUnit]],
+    margin_plan_of: Callable[[str], Sequence[PlannedUnit]],
+    store: OutPaths,
+    identity: Mapping[str, Json],
+) -> None:
+    """Section 6: stage 2's store holds this run's cells and no other's, whichever of
+    its steps is starting."""
+    units = [
+        u
+        for name in _candidates(selection)
+        for u in (*plan_of(name), *margin_plan_of(name))
+    ]
+    check_stores(store, units)
+    check_manifest(store, {"identity": identity, "spec": dataclasses.asdict(spec)})
+
+
 def run_stage2(
     spec: Stage2Spec,
     selection: Mapping[str, Json],
@@ -2219,12 +2255,12 @@ def run_stage2(
     check_code: Callable[[], None] | None = None,
     **driver: Any,
 ) -> str | None:
-    """The winner's pass, the next rank's if that fails, then B-sym for what stands
-    (section 2), on one store and one CPU count. Returns what stands, or None if a
-    kill or a bug left no result. The same command resumes: a finished block is read
-    again from the store and runs nothing, so ``final.json`` comes last. After a stop
-    the blocks still go by in order and dispatch nothing, so a pass unfinished at it
-    has failed, and so has the one after it."""
+    """The winner's pass and the next rank's if that fails (section 2), ending in
+    ``final.json``, which nothing later changes. Returns what stands, or None if a
+    kill or a bug left no result. The same command resumes: a finished pass is read
+    again from the store and runs nothing. After a stop the passes still go by in
+    order and dispatch nothing, so a pass unfinished at it has failed, and so has the
+    one after it."""
     if paths.final.exists():
         raise GuardFailure(f"{paths.final} exists: there is one run")
     winner = stands(selection)
@@ -2232,10 +2268,8 @@ def run_stage2(
         raise GuardFailure("no stage 2: only a SELECTED winner other than c0 takes it")
     check_same_commit(selection, identity)
     check_retained(table, spec, in_dictionary)
-    second = next_candidate(selection, (winner,))
-    candidates = (winner,) if second is None else (winner, second)
+    candidates = _candidates(selection)
     plans = {name: tuple(plan_of(name)) for name in candidates}
-    margins = {name: tuple(margin_plan_of(name)) for name in candidates}
     store = paths.store
     # The kernel's count for a systemd unit only grows, and each block starts its own
     # entry in the ledger: each reads from where the last ended, so none counts twice.
@@ -2262,11 +2296,8 @@ def run_stage2(
 
     results: list[Record] = []
     final = DEFAULT
-    margin: Record | None = None
     with driver_lock(store):
-        everything = [u for name in candidates for u in (*plans[name], *margins[name])]
-        check_stores(store, everything)
-        check_manifest(store, {"identity": identity, "spec": dataclasses.asdict(spec)})
+        check_stage2_store(spec, selection, plan_of, margin_plan_of, store, identity)
         end = "complete"
         for p, candidate in enumerate(candidates, start=1):
             end = block(plans[candidate])
@@ -2278,12 +2309,6 @@ def run_stage2(
             if one["passed"]:
                 final = candidate
                 break
-        if final != DEFAULT:
-            end = block(margins[final])
-            if end not in FINAL_ENDS:
-                return None
-            rows = load_readings(store, margins[final], by_system=True)
-            margin = margin_of(rows, table, spec)
     if check_code is not None:
         check_code()
     body = {
@@ -2291,13 +2316,131 @@ def run_stage2(
         "winner": winner,
         "passes": results,
         "stands": final,
-        "margin": margin,
         "end": end,
         "identity": dict(identity),
     }
     replace_file(paths.final, (canonical_json(_encode(body)) + "\n").encode("utf-8"))
     log(f"stage 2: {final} stands")
     return final
+
+
+def _standing(selection: Mapping[str, Json], paths: Stage2Paths) -> str:
+    """What ``final.json`` makes stand; ``c0`` if it is absent or off the rule."""
+    body = _read_body(paths.final)
+    return DEFAULT if body is None else final_setting(selection, body)
+
+
+def run_margin(
+    spec: Stage2Spec,
+    selection: Mapping[str, Json],
+    plan_of: Callable[[str], Sequence[PlannedUnit]],
+    margin_plan_of: Callable[[str], Sequence[PlannedUnit]],
+    table: P3Table,
+    in_dictionary: Mapping[str, bool],
+    paths: Stage2Paths,
+    identity: Mapping[str, Json],
+    *,
+    log: Callable[[str], None],
+    read_usage_usec: Callable[[], int] = read_usage_usec,
+    check_code: Callable[[], None] | None = None,
+    base: int = 0,
+    **driver: Any,
+) -> Record | None:
+    """B-sym for the setting that stands, on stage 2's store and CPU count, as its own
+    step. It reads ``final.json`` and never writes it, and no rule reads what it
+    writes. ``margin.json`` is its latch: a stop or the CPU limit writes it with
+    ``finished`` false, and a kill or a bug writes nothing, so the same command
+    resumes. ``base`` is the kernel's count where the passes left it, in the same
+    systemd unit. Returns the record, or None if nothing was written."""
+    if paths.margin.exists():
+        raise GuardFailure(f"{paths.margin} exists: there is one run")
+    name = _standing(selection, paths)
+    if name == DEFAULT:
+        raise GuardFailure("no margin: only a setting that stands over c0 takes it")
+    check_same_commit(selection, identity)
+    units = tuple(margin_plan_of(name))
+    store = paths.store
+
+    def usage() -> int:
+        return read_usage_usec() - base
+
+    with driver_lock(store):
+        check_stage2_store(spec, selection, plan_of, margin_plan_of, store, identity)
+        end = _run_pass(
+            units,
+            store,
+            stop_s=STAGE2.stop_s,
+            cpu_limit_s=STAGE2.limit_s,
+            log=log,
+            read_usage_usec=usage,
+            **driver,
+        )
+        if end not in FINAL_ENDS:
+            return None
+        rows = load_readings(store, units, by_system=True)
+    if check_code is not None:
+        check_code()
+    body = {
+        "schema": "sciagent.bsym-tune.margin/1",
+        "setting": name,
+        **margin_of(rows, table, spec),
+        "end": end,
+        "identity": dict(identity),
+    }
+    replace_file(paths.margin, (canonical_json(_encode(body)) + "\n").encode("utf-8"))
+    log(f"{MARGIN_FILE} written")
+    return body
+
+
+def run_stage2_steps(
+    spec: Stage2Spec,
+    selection: Mapping[str, Json],
+    plan_of: Callable[[str], Sequence[PlannedUnit]],
+    margin_plan_of: Callable[[str], Sequence[PlannedUnit]],
+    table: P3Table,
+    in_dictionary: Mapping[str, bool],
+    paths: Stage2Paths,
+    identity: Mapping[str, Json],
+    *,
+    log: Callable[[str], None],
+    read_usage_usec: Callable[[], int] = read_usage_usec,
+    check_code: Callable[[], None] | None = None,
+    **driver: Any,
+) -> str | None:
+    """What the ``--stage2`` command does: the passes unless ``final.json`` exists, then
+    the margin block if a setting other than ``c0`` stands. So the same command resumes
+    either step. Returns what stands, or None if the passes left no result."""
+    if paths.margin.exists():
+        raise GuardFailure(f"{paths.margin} exists: there is one run")
+    args = (spec, selection, plan_of, margin_plan_of, table, in_dictionary, paths)
+    base = 0
+    if paths.final.exists():
+        if _standing(selection, paths) == DEFAULT:
+            raise GuardFailure(f"{paths.final} exists, and c0 stands: nothing is left")
+    else:
+        passed = run_stage2(
+            *args,
+            identity,
+            log=log,
+            read_usage_usec=read_usage_usec,
+            check_code=check_code,
+            **driver,
+        )
+        if passed is None:
+            return None
+        base = read_usage_usec()
+    name = _standing(selection, paths)
+    if name != DEFAULT:
+        run_margin(
+            *args,
+            identity,
+            log=log,
+            read_usage_usec=read_usage_usec,
+            check_code=check_code,
+            base=base,
+            **driver,
+        )
+    return name
 
 
 # --------------------------------------------------------------------------
@@ -2510,20 +2653,23 @@ def _stage2(args: argparse.Namespace) -> int:
     def margin_plan_of(name: str) -> tuple[PlannedUnit, ...]:
         return plan_margin(name, spec, entries, env)
 
-    final = run_stage2(
+    paths = stage2_paths(pilot.ROOT)
+    final = run_stage2_steps(
         spec,
         selection,
         plan_of,
         margin_plan_of,
         table,
         {e.id: e.in_dictionary for e in entries},
-        stage2_paths(pilot.ROOT),
+        paths,
         identity,
         log=_print_line,
         check_code=_same_code(identity["fingerprint"]),
         workers=args.workers,
     )
-    return EXIT_NO_LABEL if final is None else EXIT_DONE
+    if final is None or (final != DEFAULT and not paths.margin.exists()):
+        return EXIT_NO_LABEL
+    return EXIT_DONE
 
 
 def _print_line(line: str) -> None:

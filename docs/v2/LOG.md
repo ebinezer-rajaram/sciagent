@@ -2711,3 +2711,23 @@ The control room asked me to price the tuning's shards on extra nodes of dm-devb
 ## 2026-11-07: The budget sweep is descriptive; P4's configs are merged for the sweep and for every model's named minus anon (session 38)
 
 The sweep is descriptive and exploratory, under SPEC §6.2's "everything else": no paired read, no CI, no floor and no drop rule of its own. SPEC and P4-PROPOSAL decision 15 give it a motive and no read, so a paired read would be a new contrast, and none is added. The lead decided this when the engineer stopped on the question. Its rows are each swept budget's arms and B-sym@F=80; the (8, 40) point, which is the main grid's AG-c-S and AG-o-S named rows on seed 1; B-sym at F = 40 beside B-sym@F=80; and ORACLE and B-lib. The rows come from one `derive` over the merged P4 configs, because only the Sonnet config holds the references. A merge narrowed to seed 1 loses the noise flag of a gap closed, as a stand-in run showed. `campaign/tables.py` holds `merge_tables` and `sweep_rows`, written test first; three mutants were killed. `merge_tables` refuses unequal fingerprints, unequal truth sets (ids or digests), a duplicate row, session or telling cell, and a row of a truth it does not hold. **Its limit:** two configs read from one store share a root and a fingerprint, so the check cannot tell them apart, and cells a `reuse` line carried over sit under that fingerprint too. A test pins this. **Found on the way:** on a P4 block, `pilot_report.py` read named minus anon from one config, so Haiku and Opus would have read n = 0, against B2's "printed for every model". On a P4 block it now reads the merge; without a block it reads the one table as before, and the Sonnet reads are the same either way, by test. `secondaries.py`'s rules are unchanged. Left open: on a Haiku or Opus block, R2's scope line still reads controls from that block's own table, which has no ORACLE. No address or version constant moves.
+
+## 2026-11-07: P4b is planned as exploratory, with K0 for telling and truthFSD and Fx for FSD; option 2 stays parked (delegated: control room, under the owner's standing delegation)
+
+Decided in INBOX 2026-11-07 ("P4b as planned-exploratory"), on the lane's stop point (JOURNAL session 38). Recorded as decided by the control room under the owner's delegation of 2026-11-05. SPEC §4.2's owner route for option 2 was not used, because option 2 is not reopened. **Why:**
+- Under today's rule, control 5 cannot realistically pass. On dev at decision 0, truthFSD (rule (a)) picks telling's d\* (rule (b)) on 3 of 14 truths, at most 6 of 14 under any tie option (`.cache/drafts/fsd-ties/draft.md`, reproduced by session 16's red team), against random's 0.207 per unit.
+- K0 is today's rule, confirmed on A1's stored streams by a run with no draw: (iii) p = 1 (`.cache/drafts/s38/k0/`).
+- By R5, P4b's reads are then exploratory.
+
+**The terms:**
+1. P4b's contrasts freeze before any P4 read, with K0 and the statement that P4b is planned as exploratory.
+2. FSD takes its own exclusion, Fx, because control B's frozen reading says FSD needs one whatever the telling rule. Fx changes neither telling nor truthFSD.
+3. No dev measurement first.
+4. Option 2 stays parked.
+
+**Also found by P4b's first red-team round** (`docs/v2/redteam/2026-11-07_p4b-policies.md`, not ready, 9 blocking), each owed in the second text's section 0:
+- the EIG decision adopted on 2026-10-28 (relative precision, full ties from the truth-keyed random draw, KL pick logged) was never built (D7, being built);
+- the AG session clock includes policy CPU time (D5);
+- an AG row records no policy `computed` (D1).
+
+The second text answers all fifteen findings. It freezes after round 2, with D1, D3, D7 and D8 in its code commit.

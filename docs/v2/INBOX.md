@@ -280,3 +280,4 @@ entry, and marks it handled with the date and what was done. Newest last.
   delegated all such calls on 2026-11-05 ("you dont need me i trust you to do this"); record this as
   decided by the control room under that delegation, and note that SPEC section 4.2's owner route for
   option 2 was not used, because option 2 is not reopened.
+  In progress 2026-11-07 (lane session 38): recorded as delegated (LOG 2026-11-07); the second text is written to these terms. Stays open until P4b's freeze is in the LOG: round 2 and the freeze commit's code (D1, D3, D7 EIG, D8 Fx) come first.

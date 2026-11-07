@@ -2,9 +2,8 @@
 
 **Status: SECOND TEXT, lane session 38, 2026-11-07. Not frozen. Nothing here has run.** The first text
 (2b05867) had one red-team round: not ready, 9 blocking (`docs/v2/redteam/2026-11-07_p4b-policies.md`).
-This text answers every finding (section 12). It is written to the lane's recommendation on the at-stop
-rule, which waits on the owner (JOURNAL 2026-11-07, session 38 stop point), so it does not freeze before
-that answer. A second round runs on this text with the code it names.
+This text answers every finding (section 12). Its at-stop rule and its planned-exploratory status were accepted by the control room under the
+owner's delegation (INBOX 2026-11-07, "P4b as planned-exploratory"; LOG 2026-11-07). A second round runs on this text with the code it names.
 
 SPEC §6.1: "P4b's contrasts, C5 and C3's AG-S-boed half, are frozen in their own commit before any P4
 contrast is read." The miss check is not launched on the P4 store until this freeze is in the LOG
@@ -123,7 +122,7 @@ C5's telling read and control 5 depend on what a policy does with a replicate th
 stops. The rule names are those of the FSD at-stop criteria, v8.1
 (`.cache/drafts/fsd-controls/criteria.md` §0).
 
-**The rule, as recommended (waiting on the owner).**
+**The rule** (accepted, INBOX 2026-11-07).
 - **Telling and truthFSD: K0, today's code.** Telling drops stopped runs (`scoring/telling.py:14-24`), and
   truthFSD counts a truncated or stopped replicate as the undefined atom.
 - **FSD: Fx.** FSD excludes a design on which either of its sides has a truncated or stopped run among its
@@ -325,8 +324,8 @@ digests; and the line `sha256: <hex>  docs/v2/prereg/2026-11-07_p4b-policies.md`
 
 1. EIG tie rule not built: D7, §2.2, and the degeneracy split in §3.
 2. Policy time inside the session clock: D5, §8.
-3. The §2.3 route: option 2 is left to the owner, the dev run is dropped, and the decision rule is the
-   owner's choice (JOURNAL stop point).
+3. The §2.3 route: option 2 stays parked and the dev run is dropped, as the control room accepted under
+   the owner's delegation (INBOX 2026-11-07).
 4. FSD failed its own control under Fa: Fx (D8, §2.3), with §1's "what the labels speak for".
 5. C5-tell-A's outcome: the policy's chosen diagnostic only, with refusal (D1, §3).
 6. Anti-conservative bootstrap on 0/1: McNemar labels (§3).

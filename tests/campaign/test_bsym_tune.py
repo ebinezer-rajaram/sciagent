@@ -1052,8 +1052,10 @@ class StubJob:
                 math.fsum(float(i) for i in range(1000))
         if self.behaviour == "raise":
             raise RuntimeError("a bug, not a unit failure")
-        if self.behaviour == "write_stop":
+        if self.behaviour in ("write_stop", "write_stop_and_hold"):
             Path(self.marker).write_text("", encoding="utf-8")
+        if self.behaviour == "write_stop_and_hold":
+            signal.pause()  # in flight until the driver terminates it
         if self.behaviour == "die":
             os.kill(os.getpid(), signal.SIGKILL)
         if self.behaviour == "die_once" and not Path(self.marker).exists():
@@ -1439,6 +1441,38 @@ def test_a_kill_in_the_drain_after_removing_stop_cannot_let_the_run_go_on(
     outcome = stage1(spec, plan, tmp_path)
     assert outcome.end == "stop"
     assert not [r for r in bt.read_records(paths.journal) if r["type"] == "unit"]
+
+
+def test_a_sigterm_in_the_drain_after_removing_stop_cannot_let_the_run_go_on(
+    tmp_path: Path,
+) -> None:
+    """Finding 3 as the reviewer read it, as a real run: a unit in flight, ``STOP``
+    seen, SIGTERM in the drain, so the run ends ``terminated`` with no ``run_end stop``.
+    ``STOP`` is then removed, and the same command must still dispatch nothing."""
+    spec, plan = stub_run()
+    target = plan[0]
+    paths = bt.OutPaths(tmp_path)
+    holding = {"behaviour": "write_stop_and_hold", "marker": str(paths.stop)}
+    held = stubbed(plan, {(target.setting, target.truth, target.seed): holding})
+
+    def usage() -> int:
+        if driver.latched == "stop":
+            driver.terminating = True
+        return 0
+
+    driver = plain_driver(paths, held, read_usage_usec=usage, workers=1)
+    assert driver.run() == "terminated"
+    records = bt.read_records(paths.journal)
+    ends = [r["reason"] for r in records if r["type"] == "run_end"]
+    assert ends == ["terminated"]
+    assert sum(r["type"] == "stop_seen" for r in records) == 1
+    paths.stop.unlink()
+    assert bt.journal_end(records) == "stop"
+    outcome = stage1(spec, plan, tmp_path)
+    assert outcome.end == "stop"
+    after = bt.read_records(paths.journal)
+    assert not [r for r in after if r["type"] == "unit"]
+    assert outcome.selection.label == "INCOMPLETE"
 
 
 def test_a_cpu_stop_is_journalled_the_same_way(tmp_path: Path) -> None:
@@ -3117,6 +3151,18 @@ def test_the_margin_block_shares_stage_2s_store_and_cpu_count(tmp_path: Path) ->
     run2(tmp_path, {"c3": -1.0})
     assert cells_in(tmp_path / "stage2") == 40 + 30
     assert sorted(p.name for p in tmp_path.glob("*/cpu.json")) == ["cpu.json"]
+
+
+def test_stage_2s_cpu_count_spans_a_restart(tmp_path: Path) -> None:
+    """119 hours in a unit that died and 2 in the next pass the 120-hour stop, which
+    neither alone does."""
+    store = bt.OutPaths(tmp_path / "stage2")
+    store.root.mkdir()
+    bt.CpuLedger.begin(store.cpu).update(usage_usec=119 * 3600 * 10**6)
+    got = run2(tmp_path, {"c3": -1.0}, read_usage_usec=lambda: 2 * 3600 * 10**6)
+    assert got == "c0"
+    assert result_of(tmp_path)["end"] == "cpu_stop"
+    assert units_run(tmp_path) == 0
 
 
 def test_a_stop_seen_then_removed_before_a_kill_fails_the_passes(

@@ -34,6 +34,7 @@ import pytest
 from investigation_support import (
     BELIEF,
     POINTPROC,
+    SEED,
     SMALL_POLICY,
     STOP,
     WALL_TIME_S,
@@ -66,6 +67,7 @@ from sciagent.investigation.policy import PolicyModeError, PolicySettings
 from sciagent.investigation.prompts import num
 from sciagent.investigation.runner import leak_terms, rendered_surface
 from sciagent.investigation.tools import LabError
+from sciagent.scoring.seeds import truth_policy_seed
 from sciagent.systems.v2.policies import (
     DecisionContext,
     EntertainedSet,
@@ -75,6 +77,7 @@ from sciagent.systems.v2.policies import (
     RandomPolicy,
     design_menu,
     diagnostic_menu,
+    random_draw,
 )
 
 #: Words that would name a policy's internals in an agent-visible text.
@@ -225,16 +228,31 @@ def test_eig_policy_session_runs_end_to_end(
     record = _check_session(_session("EIG", tmp_path), "EIG")
     for d in _decisions(record):
         summary = d["eig"]
+        # Δ11 items 3 to 5 (LOG 2026-10-27, adopted 2026-10-28) add the log
+        # weights, the cell count, the tie kind and the logged KL pick.
         assert set(summary) == {
             "weights",
+            "log_weights",
             "entropy",
             "max_eig",
             "tolerance",
             "tied",
+            "cells",
             "degenerate",
+            "full_tie",
+            "tie",
+            "kl",
         }
         assert summary["degenerate"] == (summary["max_eig"] <= summary["tolerance"])
         assert summary["weights"] == d["entertained"]["weights"]
+        assert summary["full_tie"] == (summary["tied"] == summary["cells"])
+        assert not summary["degenerate"] or summary["full_tie"]
+        if summary["full_tie"]:
+            # The random arm's draw for this (truth, seed, decision).
+            n_e, n_d = len(d["scores"]), len(d["scores"][0])
+            key = truth_policy_seed("size_excitation", SEED)
+            want = random_draw(key, d["decision"], n_e, n_d)
+            assert (d["design"]["index"], d["diagnostic"]["index"]) == want
 
 
 @pytest.mark.slow

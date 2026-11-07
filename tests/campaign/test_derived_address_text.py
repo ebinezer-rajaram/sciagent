@@ -40,9 +40,13 @@ OTHER_WH: Final = dataclasses.replace(DEFAULT, max_lag=DEFAULT.max_lag * 2)
 #: SHA-256 of each policy arm's text under ``tiny_config``, from the hand text
 #: at b7ff29b (with C5's rule), before the shared constructor. ``B-sym+truthFSD``
 #: is re-pinned by F5 point 2: its comparator text holds the library.
+#: ``B-sym+EIG`` is re-pinned by Δ11 items 2, 3 and 5 (LOG 2026-10-27, adopted
+#: 2026-10-28, built 2026-11-07 after red team P4b finding 1): its
+#: ``policy=`` field is ``EIGPolicy.config``, which now names the tie rule, the
+#: relative-precision computation and the logged KL pick (was d8d7678d…).
 POLICY_TEXT_SHA256: Final = {
     "B-sym+random": "0d3723c1e6db3989dea137f58eebd1d82cf9efce3ec41358a12a036931dc39eb",
-    "B-sym+EIG": "d8d7678d35fe62426928bd925866824dc163cf8c5973c05cc3aa02c0e35ee9b1",
+    "B-sym+EIG": "9eb66a87473a358a3c02e07a16ee9607963ac2ea3fa9fd40d05fd3993af6273a",
     "B-sym+FSD": "2c5404084a302f4448968882f028bfbb2a9138b2d5153caeabf2c9753a8e9c57",
     "B-sym+truthFSD": (
         "62647afd5745a6f849e7708d5a3f0fe43cec91b587f67563ccb562fe14436d83"

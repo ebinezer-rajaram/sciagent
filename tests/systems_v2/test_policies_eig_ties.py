@@ -1,12 +1,19 @@
-"""WP5b: EIG quadrature accuracy, the numerical tie floor, pluggable weights.
+"""WP5b and Δ11 item 3: EIG accuracy, the numerical tie floor, ties, weights.
 
 The orchestrator's decision (2026-10-06): BIC posterior weights stay the
 default; a concentrated posterior giving EIG ≈ 0 is the evidence wall itself
 (``docs/v2/evidence-wall.md`` Proposition 1), but the pick must then not be
 decided by numerical noise. So EIG values within :data:`EIG_TIE_TOL` of the
-maximum are exact ties, broken by menu order; the tolerance is derived from the
-quadrature's measured error, which these tests pin against an independent
-dense-grid reference, including extreme variance ratios.
+maximum are exact ties; the tolerance is derived from the quadrature's
+measured error, which these tests pin against an independent dense-grid
+reference, including extreme variance ratios.
+
+Ties (LOG 2026-10-27 Δ11 item 3, adopted 2026-10-28, replacing the
+2026-10-06 menu-order rule): a fully tied decision (every cell within the
+floor of the maximum, which every degenerate decision is) takes the random
+arm's draw for that decision, ``policy_seed(seed, decision, RANDOM_INDEX, 0)``,
+so on it the EIG arm equals random; a strict-subset tie draws uniformly over
+the tied cells, in menu order, from its own index :data:`TIE_INDEX`.
 """
 
 from __future__ import annotations
@@ -25,9 +32,16 @@ from hypothesis import strategies as st
 from environments.pointproc import v2
 from sciagent.glm.data import Dataset, EventLog
 from sciagent.glm.interventions import Experiment
+from sciagent.scoring.seeds import generator, policy_seed
 from sciagent.systems.v2.policies import (
     BIC_WEIGHTS,
     EIG_TIE_TOL,
+    ENTERTAINED_MAX,
+    NULL_INDEX,
+    PARAMETRIC_INDEX,
+    RANDOM_INDEX,
+    REFERENCE_INDEX,
+    TIE_INDEX,
     DecisionContext,
     EIGPolicy,
     EntertainedSet,
@@ -43,8 +57,11 @@ from sciagent.systems.v2.policies import (
     design_menu,
     diagnostic_menu,
     eig,
+    eig_choice,
     eig_table,
+    random_draw,
     tempered,
+    tied_cells,
 )
 
 # --------------------------------------------------------------------------
@@ -159,19 +176,47 @@ def test_values_all_below_the_floor_pick_the_first_cell(values: list[float]) -> 
     assert choose((tuple(values),), tolerance=EIG_TIE_TOL) == (0, 0)
 
 
-def test_degenerate_weights_pick_the_menu_first_cell_deterministically() -> None:
-    """BIC 600 apart: w = (1, e^-300). EIG ≤ ε·H(w) ≈ 0 on every cell."""
+def test_degenerate_weights_take_the_random_arms_draw_deterministically() -> None:
+    """BIC 600 apart: w = (1, e^-300). EIG ≤ ε·H(w) ≈ 0 on every cell, so the
+    decision is fully tied and takes the random arm's draw for it (Δ11 item 3;
+    until 2026-10-28 it took the menu-first cell, (0, 0))."""
     ctx = _context((("a", 1.0, 0.0), ("b", 4.0, 600.0)))
     a = EIGPolicy(seed=1, replicates=8).choose(ctx, 0)
     b = EIGPolicy(seed=1, replicates=8).choose(ctx, 0)
-    assert (a.design_index, a.diagnostic_index) == (0, 0)
+    rnd = RandomPolicy(seed=1).choose(ctx, 0)
+    assert (a.design_index, a.diagnostic_index) == (
+        rnd.design_index,
+        rnd.diagnostic_index,
+    )
     assert a == b and repr(a) == repr(b)
     assert a.scores is not None and b.scores is not None
     assert np.array(a.scores).tobytes() == np.array(b.scores).tobytes()
     assert a.eig is not None
     assert a.eig.degenerate
+    assert a.eig.full_tie and a.eig.tie == "full"
+    assert (
+        a.eig.tied == a.eig.cells == len(ctx.menu.designs) * len(ctx.menu.diagnostics)
+    )
     assert a.eig.max_eig <= EIG_TIE_TOL
     assert a.eig.entropy < 1e-100
+
+
+@pytest.mark.parametrize("seed", [1, 2, 3])
+def test_a_fully_tied_decision_is_the_random_arm_on_every_decision(seed: int) -> None:
+    """On a degenerate context the EIG arm and the random arm pick the same cell
+    at every decision, so their paired contrast there is exactly zero; and the
+    pick is not the menu order's."""
+    ctx = _context((("a", 1.0, 0.0), ("b", 4.0, 600.0)))
+    eig_arm = EIGPolicy(seed=seed, replicates=4)
+    random_arm = RandomPolicy(seed=seed)
+    picks = []
+    for decision in range(6):
+        mine = eig_arm.choose(ctx, decision)
+        theirs = random_arm.choose(ctx, decision)
+        assert mine.eig is not None and mine.eig.full_tie
+        picks.append((mine.design_index, mine.diagnostic_index))
+        assert picks[-1] == (theirs.design_index, theirs.diagnostic_index)
+    assert any(p != (0, 0) for p in picks)
 
 
 def test_a_separable_case_is_not_degenerate_and_picks_the_argmax() -> None:
@@ -182,14 +227,95 @@ def test_a_separable_case_is_not_degenerate_and_picks_the_argmax() -> None:
     assert choice.eig.max_eig == max(x for row in choice.scores for x in row)
     best = choice.scores[choice.design_index][choice.diagnostic_index]
     assert choice.eig.max_eig - best <= EIG_TIE_TOL
-    # The first cell in menu order within the tolerance of the max.
+    # A unique maximum is the pick; tied maxima are drawn from TIE_INDEX (Δ11
+    # item 3; until 2026-10-28 the first tied cell in menu order).
     flat = [x for row in choice.scores for x in row]
-    first = next(i for i, x in enumerate(flat) if choice.eig.max_eig - x <= EIG_TIE_TOL)
     n_d = len(ctx.menu.diagnostics)
-    assert (choice.design_index, choice.diagnostic_index) == divmod(first, n_d)
-    assert choice.eig.tied == sum(
-        1 for x in flat if choice.eig.max_eig - x <= EIG_TIE_TOL
+    tied = [
+        divmod(i, n_d)
+        for i, x in enumerate(flat)
+        if choice.eig.max_eig - x <= EIG_TIE_TOL
+    ]
+    assert (choice.design_index, choice.diagnostic_index) in tied
+    assert (choice.design_index, choice.diagnostic_index) == eig_choice(
+        choice.scores, EIG_TIE_TOL, 1, 0
     )
+    assert choice.eig.tied == len(tied)
+    assert choice.eig.tie == ("none" if len(tied) == 1 else "partial")
+    assert not choice.eig.full_tie
+
+
+# --------------------------------------------------------------------------
+# The tie rule (Δ11 item 3)
+# --------------------------------------------------------------------------
+
+
+def test_the_tie_index_is_reserved_and_disjoint() -> None:
+    reserved = (REFERENCE_INDEX, RANDOM_INDEX, NULL_INDEX, PARAMETRIC_INDEX)
+    assert TIE_INDEX not in reserved
+    assert ENTERTAINED_MAX <= TIE_INDEX < 2**32
+    assert len({*reserved, TIE_INDEX}) == 5
+
+
+def test_tied_cells_are_the_cells_within_the_floor_in_menu_order() -> None:
+    tol = 1e-6
+    table = ((0.5, 0.5 + 0.5 * tol, 0.1), (0.5 + 3.0 * tol, 0.5 + 2.5 * tol, 0.2))
+    assert tied_cells(table, tol) == [(1, 0), (1, 1)]
+    assert tied_cells(((0.0, 0.0), (0.0, 0.0)), tol) == [(0, 0), (0, 1), (1, 0), (1, 1)]
+    with pytest.raises(PolicyError):
+        tied_cells(((0.1, math.inf),), tol)
+    with pytest.raises(PolicyError):
+        tied_cells(((0.1,),), -1.0)
+
+
+def test_a_unique_maximum_is_the_pick() -> None:
+    table = ((0.1, 0.2, 0.3), (0.9, 0.4, 0.0))
+    for decision in range(5):
+        assert eig_choice(table, EIG_TIE_TOL, 7, decision) == (1, 0)
+
+
+@pytest.mark.parametrize("seed", [0, 7, 2**62])
+def test_a_full_tie_is_the_random_draw(seed: int) -> None:
+    table = tuple(
+        tuple(EIG_TIE_TOL * (d % 3) / 4.0 for d in range(11)) for _ in range(4)
+    )
+    for decision in range(20):
+        rng = generator(policy_seed(seed, decision, RANDOM_INDEX, 0))
+        want = divmod(int(rng.integers(4 * 11)), 11)
+        assert random_draw(seed, decision, 4, 11) == want
+        assert eig_choice(table, EIG_TIE_TOL, seed, decision) == want
+
+
+@pytest.mark.parametrize("seed", [0, 7, 2**62])
+def test_a_strict_subset_tie_draws_from_its_own_index(seed: int) -> None:
+    """Cells (0, 2), (1, 0) and (2, 3) tie; (2, 1) is below the floor of them."""
+    base = [[0.0] * 4 for _ in range(3)]
+    for e, d in ((0, 2), (1, 0), (2, 3)):
+        base[e][d] = 0.5
+    base[1][0] += 0.5 * EIG_TIE_TOL
+    base[2][1] = 0.5 - 2.0 * EIG_TIE_TOL
+    table = tuple(tuple(row) for row in base)
+    tied = [(0, 2), (1, 0), (2, 3)]
+    seen = set()
+    for decision in range(40):
+        rng = generator(policy_seed(seed, decision, TIE_INDEX, 0))
+        want = tied[int(rng.integers(len(tied)))]
+        got = eig_choice(table, EIG_TIE_TOL, seed, decision)
+        assert got == want
+        seen.add(got)
+    assert seen == set(tied)
+
+
+def test_the_tie_draws_are_not_the_random_arms() -> None:
+    """The strict-subset draw is its own stream: over decisions it does not
+    follow the random arm's draw reduced to the tied cells."""
+    seed = 11
+    same = 0
+    for decision in range(64):
+        a = generator(policy_seed(seed, decision, TIE_INDEX, 0)).integers(3)
+        b = generator(policy_seed(seed, decision, RANDOM_INDEX, 0)).integers(3)
+        same += int(a == b)
+    assert same < 40
 
 
 def test_eig_summary_reports_the_weights_entropy() -> None:
@@ -297,6 +423,28 @@ def test_policy_config_records_the_weighting_and_the_tie_floor() -> None:
     # Canonical text: sorted keys, so the same configuration is the same bytes.
     text = EIGPolicy(seed=1).config
     assert text == json.dumps(json.loads(text), sort_keys=True, separators=(",", ":"))
+
+
+def test_policy_config_records_the_tie_rule_and_the_precision() -> None:
+    """Δ11 items 2, 3 and 5 enter ``EIGPolicy.config`` and so the run key."""
+    cfg = json.loads(EIGPolicy(seed=1).config)
+    assert cfg["ties"] == {
+        "full": {"draw": "random arm", "index": RANDOM_INDEX},
+        "partial": {"draw": "uniform over tied cells, menu order", "index": TIE_INDEX},
+    }
+    assert cfg["precision"].startswith("relative")
+    assert cfg["diagnostic"].startswith("kl_pick")
+    # The random policy and FSD read none of it.
+    assert json.loads(RandomPolicy(seed=1).config) == {"policy": "random"}
+    assert "ties" not in json.loads(FSDPolicy(seed=1).config)
+
+
+def test_the_tie_index_moves_the_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    from sciagent.systems.v2 import policies
+
+    before = EIGPolicy(seed=1).config
+    monkeypatch.setattr(policies, "TIE_INDEX", TIE_INDEX - 100)
+    assert EIGPolicy(seed=1).config != before
 
 
 def test_eig_table_is_unchanged_by_the_policy_wrapper() -> None:

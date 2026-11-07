@@ -86,6 +86,11 @@ PINNED_BASELINES = {
 #: 2, as the baselines are; :data:`PINNED_SESSION_CONFIG` did not move. All
 #: four are ``v1`` arms, so the prompt's wall-limit sentence (LOG 2026-11-05,
 #: session 34), which only P4's variant states, leaves them as they were.
+#: The EIG key and its ``session_config`` are re-pinned by Δ11 items 2, 3 and 5
+#: (LOG 2026-10-27, adopted 2026-10-28; built 2026-11-07): ``EIGPolicy.config``
+#: now names the tie rule, the
+#: relative-precision computation and the logged KL pick, and ``policy_config``
+#: holds it. No EIG session has run. The other three did not move.
 PINNED_ARMS = (
     LLMArm("AG-c", "named"),
     LLMArm("AG-o", "anon"),
@@ -96,7 +101,7 @@ PINNED_SESSIONS = {
     "AG-c-H/named": "160e1721cab333ad7bc1a1cd632951299608b793a4c569263ec41d25031fbddc",
     "AG-o-H/anon": "b3afe49d0f78c00aa28e73d757db1a6d8f95dd31f8970d276cb16ea945aca3b1",
     "AG-c-H/named+policy=EIG": (
-        "3e5187a4871a97aea06fae74ad377c4b334e708356439b5727490dfaaf79ed34"
+        "161f16f57fd46ccb718b72c078f4befa65afe09d9b5bc3b0db3b0eb08dce91ed"
     ),
     "AG-c-H/named+policy=FSD": (
         "badd4173b33de541dc18bab4aa17a0e6211d32e0112f1e255a6a16aa25c93028"
@@ -129,12 +134,13 @@ MOVED_SYSTEM_CONFIG = {
 }
 #: Each arm's ``session_config`` at 2205433: F5 point 2 changes a session's
 #: versions, not what it ran, and these ``v1`` arms state no wall limit, so these
-#: stand.
+#: stand. EIG's is re-pinned by Δ11 items 2, 3 and 5 (LOG 2026-10-27): what an
+#: EIG session runs did change.
 PINNED_SESSION_CONFIG = {
     "AG-c-H/named": "87c18124f53bb21ec6afd8a7666873330f4009531cb2c85ef8a0d52296fd4133",
     "AG-o-H/anon": "828ae3fa9ca1f0aef2071aac280f2f946805e94616934ac08a931b449fc73c50",
     "AG-c-H/named+policy=EIG": (
-        "316738b88d4876befd2bd2c1c465daf0d7e7e329fd071d4fee8b90cd7c8af850"
+        "0d7cc6b06776bdd7595a7f3aa0402f5a72c7962f32085647a42a6ce5326d3049"
     ),
     "AG-c-H/named+policy=FSD": (
         "d07a77a8a7f5df76a15622fbe7d2385e30c0fe345ca049d966fe1debeafb1d94"

@@ -586,7 +586,13 @@ def test_eig_policy_choice_is_the_argmax_of_its_table() -> None:
     choice = EIGPolicy(seed=1, replicates=8).choose(ctx, 0)
     table = eig_table(ctx, 1, 0, replicates=8)
     assert choice.scores == table
-    assert (choice.design_index, choice.diagnostic_index) == choose(table)
+    # The fakes ignore the design and replicates share streams across designs,
+    # so each cell ties with its twin in the other design: the tie is drawn
+    # (Δ11 item 3), no longer the menu-first cell ``choose(table)``.
+    pick = (choice.design_index, choice.diagnostic_index)
+    assert pick == policies.eig_choice(table, policies.EIG_TIE_TOL, 1, 0)
+    assert pick in policies.tied_cells(table, policies.EIG_TIE_TOL)
+    assert table[pick[0]][pick[1]] == table[choose(table)[0]][choose(table)[1]]
     assert choice.design == ctx.menu.designs[choice.design_index]
     assert choice.diagnostic == ctx.menu.diagnostics[choice.diagnostic_index]
     assert choice.policy == "EIG"

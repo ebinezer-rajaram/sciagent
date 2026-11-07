@@ -271,14 +271,8 @@ def _json_value(value: ArgValue) -> ArgValue:
 
 
 def _eig_json(summary: EIGSummary) -> dict[str, Any]:
-    return {
-        "weights": list(summary.weights),
-        "entropy": summary.entropy,
-        "max_eig": summary.max_eig,
-        "tolerance": summary.tolerance,
-        "tied": summary.tied,
-        "degenerate": summary.degenerate,
-    }
+    """The summary's record: degeneracy, tie kind and the logged KL pick."""
+    return summary.as_json()
 
 
 def _entertained_json(entertained: EntertainedSet) -> dict[str, Any]:

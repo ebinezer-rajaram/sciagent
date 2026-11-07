@@ -41,9 +41,9 @@ intensity), and a diagnostic that cannot be computed
 (``InsufficientDataError``), are *undefined*. The key has no design index,
 so all designs of one decision use common random numbers; ``k`` indexes the
 entertained hypotheses, and :data:`REFERENCE_INDEX`,
-:data:`PARAMETRIC_INDEX`, :data:`RANDOM_INDEX` and :data:`NULL_INDEX` are
-reserved for the reference model, an injected parametric model, the random
-draw and the FSD null.
+:data:`PARAMETRIC_INDEX`, :data:`RANDOM_INDEX`, :data:`NULL_INDEX` and
+:data:`TIE_INDEX` are reserved for the reference model, an injected parametric
+model, the random draw, the FSD null and EIG's strict-subset tie draw.
 
 **Predictive** (:func:`predictive`). The R values of one (e, k, d) become an
 atom on "undefined" with weight ``u`` (the undefined share) plus a Gaussian
@@ -59,16 +59,36 @@ information between hypothesis and outcome (evidence-wall note, eq. 0), with
 ``U = Σ_j w_j u_j`` and ``c_j = log((1-u_j) N_j(y) / ((1-u_k) N_k(y)))``.
 
 *Quadrature.* The expectation is a composite Gauss-Legendre rule
-(:data:`GL_NODES` nodes per panel) on ``y = μ_k + s_k x``, ``x ∈ [-12, 12]``
-(the standard normal's mass outside is 3.6e-33). Panels break every
-:data:`PANEL_STEP` standard deviations (sd) of ``p_k`` itself and, for every
-narrower component ``j``, every :data:`PANEL_STEP` standard deviations of
-``p_j`` within ``±12 s_j`` of ``μ_j``. A narrower component puts a spike of
+(:data:`GL_NODES` nodes per panel) on ``y = μ_k + s_k x``. Panels break every
+:data:`PANEL_STEP` standard deviations (sd) of ``p_k`` over ``x ∈ [-12, 12]``
+(the standard normal's mass outside is 3.6e-33); for every other component
+``j``, every :data:`PANEL_STEP` sd of ``p_j`` within ``±12 s_j`` of ``μ_j``; and
+around each point where ``w_j p_j`` crosses ``w_k p_k``, every
+:data:`PANEL_STEP` of ``1 / |slope|`` of their log ratio there, over ±12 such
+units (clipped to the other panels' span). A narrower component puts a spike of
 width ``s_j`` into ``log p_w``; Gauss-Hermite on ``p_k`` steps over it (WP5's
 256-node rule gave 0.5009 against 0.6408 at variance ratio 1e4, shift 10 sd),
-and these panels resolve it. The rule is deterministic. A component identical
-to ``p_k`` contributes ``c_j = 0`` exactly, so identical predictives give
-EIG = 0 exactly. Each KL is clamped at 0 from below.
+and its panels resolve it. A wider one carries mass past ``p_k``'s 12 sd, which
+counts wherever ``-log p_w`` is still linear in its weight (out to 23 sd of
+``p_k`` at w = 1e-113, variance ratio 100), and the crossing is where
+``log p_w`` turns, within 0.04 sd there. The rule is deterministic. A component
+identical to ``p_k`` contributes ``c_j = 0`` exactly, so identical predictives
+give EIG = 0 exactly. Each KL is clamped at 0 from below.
+
+*Precision* (Δ11 item 2, LOG 2026-10-27). On dev the BIC weights reach
+``(1 - η, η)`` with η ≈ 1e-113, and EIG ≈ η·KL(p_runner ‖ p_top). Forming
+``log Σ_j w_j e^{c_j}`` as ``top + log(Σ …)`` rounds at ε·c, which made the
+leader's term 3.1e-18 against a true EIG of 8.1e-114. Here ``g - 1 = Σ_{j≠k}
+w_j expm1(c_j)`` (``Σ w = 1``) is summed exactly, never ``1 - w_top``; where
+``|log g| < 1/2`` the integrand is ``-(φ (g - 1)) · log1p(g - 1) / (g - 1)``
+with ``φ (g - 1)`` taken from each component's own density, elsewhere
+``-φ log g`` by log-sum-exp; and the atom's ``log(U / u_k)`` is ``log1p`` of
+``Σ_{j≠k} w_j (u_j / u_k - 1)`` near 1. The weights' logarithms
+(:func:`bic_log_weights`) give H(w) with the leader's ``-η`` and the KL pick's
+``v`` where a float weight underflows. Against a dense log1p trapezoid, EIG's
+relative error measured 5e-10 at most over variance ratios 1e-2 to 1e4, shifts
+0 to 10 sd and η from 1e-3 down to 1e-113 (2026-11-07); the tests pin 1e-8 or
+tighter (``tests/systems_v2/test_policies_eig_precision.py``).
 
 *Tie floor* (:data:`EIG_TIE_TOL`). Against an independent dense-grid reference
 (trapezoid, 2·10⁶ points per component), the rule's largest absolute error over
@@ -78,18 +98,29 @@ sd, atoms 0 to 0.4, w₁ 0.5 to 0.999, both orders) is
 rounding there. (WP5's Gauss-Hermite rule erred by up to 0.14 on the same
 grid.) The tolerance takes a factor of 100 over that, for regimes the grid does
 not cover and for the rounding of the sums at EIG's scale (up to log K),
-rounded up to a power of ten: ``EIG_TIE_TOL`` = 1e-13 nats. EIG values closer
-than that to the table's maximum cannot be ordered by the computation, so they
-are exact ties and go to menu order (:func:`choose`). When the BIC weights are
-so concentrated that ε·H(w), which bounds every EIG (the evidence wall itself),
-is below the floor, every cell ties and the pick is the menu-first cell, not
-quadrature noise; dev-008 at n ≈ 2000 has H(w) ≈ 1e-111. A posterior only
-nearly as concentrated (dev-013: H(w) ≈ 3e-13) can leave cells above the floor,
-and its pick then follows EIG values that are computed correctly but are
-negligible: that is a statement about the weights, not about the numerics, and
-:class:`Weighting` is the lever for it. The decision reports ``H(w)`` and the
-maximum EIG (:class:`EIGSummary`) so the analysis can count degenerate
-decisions.
+rounded up to a power of ten: ``EIG_TIE_TOL`` = 1e-13 nats. (That grid was
+measured on the 2026-10-06 rule; the current rule meets the same dense
+reference to the floor, ``test_policies_eig_ties.py``.) EIG values closer
+than that to the table's maximum are exact ties (:func:`eig_choice`, Δ11 item
+3, adopted 2026-10-28): a *full tie*, every cell within the floor of the
+maximum, takes the random arm's draw for the decision (:func:`random_draw` on
+:data:`RANDOM_INDEX`), so on it the EIG arm and the random arm of the same
+(truth, seed) pick the same cell and their paired contrast is exactly zero; a
+*strict-subset tie* draws one tied cell, uniform in menu order, on
+:data:`TIE_INDEX`. When the BIC weights are so concentrated that ε·H(w), which
+bounds every EIG (the evidence wall itself), is below the floor, the decision
+is *degenerate*, hence a full tie; dev-008 at n ≈ 2000 has H(w) ≈ 1e-111. A
+posterior only nearly as concentrated (dev-013: H(w) ≈ 3e-13) can leave cells
+above the floor, and its pick then follows EIG values that are computed
+correctly but are negligible: that is a statement about the weights, not about
+the numerics, and :class:`Weighting` is the lever for it. The decision reports
+``H(w)``, the maximum EIG, the tie kind and the KL-ranked pick
+(:class:`EIGSummary`) so the analysis can split degenerate decisions (item 4).
+
+*KL pick* (:func:`kl_pick`, item 5). ``Σ_{k≠top} v_k KL(p_k ‖ p_top)``, the
+η → 0 limit of EIG, from the same predictives; logged on every EIG decision,
+never chosen. It is recorded as computed: KL is ``inf`` whenever a rival
+stops in a replicate and the leader never does, and stays ``inf``.
 
 *Weights* (:class:`Weighting`). ``"bic"`` (the default, SPEC §2.4's
 posterior weights by the BIC approximation): ``w ∝ exp(-ΔBIC/2)``.
@@ -113,9 +144,10 @@ the top fit. Even with no estimation error, two R-samples of one law give
 **Random.** Uniform over the ``(e, d)`` cells, with replacement, one draw
 from ``policy_seed(seed, decision, RANDOM_INDEX, 0)``.
 
-**Choice** (:func:`choose`). The first cell in menu order (designs first, then
-diagnostics) within ``tolerance`` of the table's maximum: 0 for FSD and the
-truth-aware control, :data:`EIG_TIE_TOL` for EIG. FSD needs no floor: He² is
+**Choice.** FSD and the truth-aware control take :func:`choose`, the first
+cell in menu order (designs first, then diagnostics) at the table's maximum;
+EIG takes :func:`eig_choice` with :data:`EIG_TIE_TOL` (above). FSD needs no
+floor: He² is
 closed-form in the replicate moments (``battery.hellinger2``), so no
 numerical method stands between the samples and the value; cell-to-cell
 differences are Monte Carlo signal, and exact ties (He² saturated at 1 on a
@@ -190,6 +222,9 @@ REFERENCE_INDEX: Final = 2**32 - 1
 RANDOM_INDEX: Final = 2**32 - 2
 NULL_INDEX: Final = 2**32 - 3
 PARAMETRIC_INDEX: Final = 2**32 - 4
+#: The EIG arm's draw among cells tied at the maximum when not every cell
+#: ties (Δ11 item 3; a full tie takes :data:`RANDOM_INDEX`'s draw).
+TIE_INDEX: Final = 2**32 - 5
 #: Relative variance floor of a predictive (as ``battery.hellinger2``).
 _FLOOR: Final = 1e-9
 
@@ -203,6 +238,8 @@ _LOG_SQRT_2PI: Final = 0.5 * math.log(2.0 * math.pi)
 
 type Table = tuple[tuple[float, ...], ...]
 type Values = tuple[tuple[float | None, ...], ...]
+#: ``[e][d][k]``: hypothesis k's predictive of cell (e, d).
+type PredictiveTable = tuple[tuple[tuple[Predictive, ...], ...], ...]
 
 
 class PolicyError(SciAgentError):
@@ -342,6 +379,25 @@ def bic_weights(
     return tuple(x / total for x in raw)
 
 
+def bic_log_weights(
+    bics: Sequence[float], *, temperature: float = 1.0
+) -> tuple[float, ...]:
+    """``log w_k`` of :func:`bic_weights`, computed in log space.
+
+    ``z_k = -(BIC_k - min BIC) / (2 T)`` and ``log w_k = z_k - log Σ e^{z_j}``,
+    the normaliser taken as ``log1p`` of the sum without the first minimum's
+    term (which is exactly 1). So the leader keeps ``log w_top = -η`` where its
+    float weight rounds to 1, and a rival keeps a finite logarithm where its
+    float weight underflows to 0 (ΔBIC past about 1490).
+    """
+    bic_weights(bics, temperature=temperature)  # the same input checks
+    low = min(bics)
+    z = [-(b - low) / (2.0 * temperature) for b in bics]
+    first = z.index(max(z))
+    norm = math.log1p(math.fsum(math.exp(x) for j, x in enumerate(z) if j != first))
+    return tuple(x - norm for x in z)
+
+
 type WeightKind = Literal["bic", "tempered"]
 
 
@@ -366,6 +422,9 @@ class Weighting:
 
     def weights(self, bics: Sequence[float]) -> tuple[float, ...]:
         return bic_weights(bics, temperature=self.temperature)
+
+    def log_weights(self, bics: Sequence[float]) -> tuple[float, ...]:
+        return bic_log_weights(bics, temperature=self.temperature)
 
     @property
     def config(self) -> dict[str, object]:
@@ -507,23 +566,62 @@ def _check_weights(weights: Sequence[float], n: int) -> None:
         raise PolicyError(f"weights must sum to 1, got {math.fsum(weights)}")
 
 
-def _nodes(
-    k: int, ps: Sequence[Predictive], live: Sequence[bool]
-) -> tuple[np.ndarray, np.ndarray]:
-    """Composite Gauss-Legendre nodes ``x`` and weights for E_{N(0,1)}.
+def _crossings(
+    k: int, j: int, weights: Sequence[float], ps: Sequence[Predictive]
+) -> list[float]:
+    """The ``x`` (in ``p_k``'s standard units) where ``w_j e^{c_j(x)} = w_k``.
 
-    In ``p_k``'s standard units: its own panels every :data:`PANEL_STEP`, and
-    each narrower live component's panels every :data:`PANEL_STEP` of its
-    standard deviations (module docstring).
+    ``log(w_j / w_k) + c_j(x)`` is quadratic in x: ``a x²/2 + b x + c``.
+    """
+    pk, p = ps[k], ps[j]
+    d = pk.mean - p.mean
+    a = 1.0 - pk.var / p.var
+    b = -d * math.sqrt(pk.var) / p.var
+    c = (
+        math.log((1.0 - p.undefined) / (1.0 - pk.undefined))
+        - 0.5 * math.log(p.var / pk.var)
+        - d * d / (2.0 * p.var)
+        + math.log(weights[j])
+        - math.log(weights[k])
+    )
+    if a == 0.0:
+        return [] if b == 0.0 else [-c / b]
+    disc = b * b - 2.0 * a * c
+    if disc < 0.0:
+        return []
+    q = -(b + math.copysign(math.sqrt(disc), b))
+    return [0.0] if q == 0.0 else [q / a, 2.0 * c / q]
+
+
+def _nodes(
+    k: int, ps: Sequence[Predictive], live: Sequence[bool], weights: Sequence[float]
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Composite Gauss-Legendre nodes ``x``, panel weights and ``log φ(x)``.
+
+    In ``p_k``'s standard units: its own panels every :data:`PANEL_STEP` over
+    ``±``:data:`_RANGE`; each other live component's panels every
+    :data:`PANEL_STEP` of its standard deviations over its own ``±``:data:`_RANGE`;
+    and, around each point where that component's weighted density crosses
+    ``w_k p_k`` (where ``log p_w`` turns), panels every :data:`PANEL_STEP` over
+    ``±``:data:`_RANGE` in units of ``1 / |slope|`` of the log ratio there
+    (module docstring). ``E_{N(0,1)}[f] ≈ Σ weights · e^{log φ} · f``.
     """
     pk = ps[k]
     sk = math.sqrt(pk.var)
     breaks = [_STEPS]
-    for j, p in enumerate(ps):
-        if j == k or not live[j] or p.var >= pk.var:
-            continue
-        own = (p.mean - pk.mean + math.sqrt(p.var) * _STEPS) / sk
-        breaks.append(np.clip(own, -_RANGE, _RANGE))
+    rivals = [j for j, p in enumerate(ps) if j != k and live[j] and p != pk]
+    for j in rivals:
+        p = ps[j]
+        breaks.append((p.mean - pk.mean + math.sqrt(p.var) * _STEPS) / sk)
+    lowest = min(float(b[0]) for b in breaks)
+    highest = max(float(b[-1]) for b in breaks)
+    for j in rivals if weights[k] > 0.0 else ():
+        a = 1.0 - pk.var / ps[j].var
+        b = -(pk.mean - ps[j].mean) * sk / ps[j].var
+        for root in _crossings(k, j, weights, ps):
+            slope = abs(a * root + b)
+            if slope > 0.0 and lowest <= root <= highest:
+                breaks.append(np.clip(root + _STEPS / slope, lowest, highest))
     edges = np.unique(np.concatenate(breaks))
     lo, hi = edges[:-1], edges[1:]
     keep = hi > lo
@@ -532,43 +630,95 @@ def _nodes(
     x = ((lo + hi) * 0.5)[:, None] + half[:, None] * _GL_NODES[None, :]
     w = half[:, None] * _GL_WEIGHTS[None, :]
     x, w = x.reshape(-1), w.reshape(-1)
-    return x, w * np.exp(-0.5 * x * x - _LOG_SQRT_2PI)
+    return x, w, -0.5 * x * x - _LOG_SQRT_2PI
 
 
 def _kl_to_mixture(k: int, weights: Sequence[float], ps: Sequence[Predictive]) -> float:
-    """``KL(p_k ‖ p_w)`` (module docstring)."""
+    """``KL(p_k ‖ p_w)`` to relative precision (module docstring, *Precision*)."""
     pk = ps[k]
     kl = 0.0
     if pk.undefined > 0.0:
-        ratio = math.fsum(
-            w * (p.undefined / pk.undefined) for w, p in zip(weights, ps, strict=True)
+        # U / u_k - 1 = Σ_{j≠k} w_j (u_j / u_k - 1), as Σ w = 1: log1p of it
+        # near 1, and the log of the (non-negative) sum itself elsewhere.
+        pairs = list(enumerate(zip(weights, ps, strict=True)))
+        excess = math.fsum(
+            w * (p.undefined / pk.undefined - 1.0) for j, (w, p) in pairs if j != k
         )
-        kl -= pk.undefined * math.log(ratio)
+        if excess > -0.5:
+            kl -= pk.undefined * math.log1p(excess)
+        else:
+            ratio = math.fsum(w * (p.undefined / pk.undefined) for _, (w, p) in pairs)
+            kl -= pk.undefined * math.log(ratio)
     if pk.undefined < 1.0:
-        live = [w > 0.0 and p.undefined < 1.0 for w, p in zip(weights, ps, strict=True)]
-        x, qw = _nodes(k, ps, live)
-        y = pk.mean + math.sqrt(pk.var) * x
-        columns: list[np.ndarray] = []
-        mix: list[float] = []
-        for w, p, alive in zip(weights, ps, live, strict=True):
-            if not alive:
-                continue
-            if p == pk:
-                c = np.zeros_like(x)
-            else:
-                shift = math.log((1.0 - p.undefined) / (1.0 - pk.undefined))
-                shift -= 0.5 * math.log(p.var / pk.var)
-                c = shift - (y - p.mean) ** 2 / (2.0 * p.var) + 0.5 * x * x
-            columns.append(c)
-            mix.append(w)
-        logs = np.stack(columns, axis=1)
-        top = np.maximum(logs.max(axis=1), 0.0)
-        scaled = (
-            np.exp(logs - top[:, None]) * np.asarray(mix, dtype=np.float64)[None, :]
-        )
-        log_mix = top + np.log(reductions.row_totals(scaled))
-        kl += (1.0 - pk.undefined) * reductions.dot(qw, -log_mix)
+        kl += (1.0 - pk.undefined) * _gaussian_part(k, weights, ps)
     return max(kl, 0.0)
+
+
+def _gaussian_part(k: int, weights: Sequence[float], ps: Sequence[Predictive]) -> float:
+    """``E_{N_k}[-log g]``, ``g = Σ_j w_j e^{c_j}`` (module docstring).
+
+    ``g - 1 = Σ_{j≠k} w_j expm1(c_j)`` (``c_k = 0`` and ``Σ w = 1``). Where
+    ``|log g| < 1/2`` the integrand is ``-φ log1p(g - 1)``, written as
+    ``-(φ (g - 1)) · log1p(g - 1) / (g - 1)`` with ``φ (g - 1)`` summed from
+    each component's own density, so it neither rounds against 1 nor
+    underflows with φ; elsewhere it is ``-φ log g`` by log-sum-exp.
+    """
+    pk = ps[k]
+    live = [w > 0.0 and p.undefined < 1.0 for w, p in zip(weights, ps, strict=True)]
+    x, base, log_phi = _nodes(k, ps, live, weights)
+    y = pk.mean + math.sqrt(pk.var) * x
+    logs: list[np.ndarray] = []
+    rivals: list[tuple[float, np.ndarray | None]] = []
+    for j, (w, p, alive) in enumerate(zip(weights, ps, live, strict=True)):
+        if w <= 0.0:
+            continue
+        if not alive:
+            rivals.append((w, None))  # all undefined: e^{c_j} = 0
+            continue
+        if j == k or p == pk:
+            c = np.zeros_like(x)
+        else:
+            shift = math.log((1.0 - p.undefined) / (1.0 - pk.undefined))
+            shift -= 0.5 * math.log(p.var / pk.var)
+            c = shift - (y - p.mean) ** 2 / (2.0 * p.var) + 0.5 * x * x
+        logs.append(math.log(w) + c)
+        if j != k:
+            rivals.append((w, c))
+    a = np.stack(logs, axis=1)
+    top = a.max(axis=1)
+    log_g = top + np.log(reductions.row_totals(np.exp(a - top[:, None])))
+    near = np.abs(log_g) < 0.5
+    integrand = -np.exp(log_phi) * log_g
+    if bool(near.any()):
+        phi = log_phi[near]
+        excess: list[np.ndarray] = []  # w_j expm1(c_j), each term ≤ g < 2
+        dense: list[np.ndarray] = []  # w_j φ expm1(c_j)
+        for w, rival_c in rivals:
+            if rival_c is None:
+                excess.append(np.full(phi.shape, -w))
+                dense.append(-w * np.exp(phi))
+                continue
+            # w expm1(c) as w expm1(c) for c < 0 and as w e^c (1 - e^{-c})
+            # otherwise: both finite on these nodes (w e^c ≤ g), both exact
+            # to rounding, and 0 at c = 0.
+            cn = rival_c[near]
+            low = cn < 0.0
+            neg = np.expm1(np.minimum(cn, 0.0))
+            pos = -np.expm1(-np.maximum(cn, 0.0))
+            own = math.log(w) + np.maximum(cn, 0.0)
+            excess.append(np.where(low, w * neg, np.exp(own) * pos))
+            dense.append(np.where(low, w * np.exp(phi) * neg, np.exp(own + phi) * pos))
+        if excess:
+            gm1 = reductions.row_totals(np.stack(excess, axis=1))
+            phi_gm1 = reductions.row_totals(np.stack(dense, axis=1))
+        else:
+            gm1 = np.zeros(phi.shape)
+            phi_gm1 = np.zeros(phi.shape)
+        nonzero = gm1 != 0.0
+        ratio = np.ones(phi.shape)
+        ratio[nonzero] = np.log1p(gm1[nonzero]) / gm1[nonzero]
+        integrand[near] = -phi_gm1 * ratio
+    return reductions.dot(base, integrand)
 
 
 def eig(weights: Sequence[float], predictives: Sequence[Predictive]) -> float:
@@ -685,8 +835,7 @@ class DecisionContext:
     menu: Menu
 
 
-def choose(table: Table, *, tolerance: float = 0.0) -> tuple[int, int]:
-    """The first ``(e, d)`` in menu order within ``tolerance`` of the maximum."""
+def _check_table(table: Table, tolerance: float) -> None:
     if not table or not table[0]:
         raise PolicyError("an empty score table")
     if not (math.isfinite(tolerance) and tolerance >= 0.0):
@@ -695,21 +844,138 @@ def choose(table: Table, *, tolerance: float = 0.0) -> tuple[int, int]:
         for d, x in enumerate(row):
             if not math.isfinite(x):
                 raise PolicyError(f"score ({e}, {d}) is not finite: {x}")
+
+
+def choose(table: Table, *, tolerance: float = 0.0) -> tuple[int, int]:
+    """The first ``(e, d)`` in menu order within ``tolerance`` of the maximum."""
+    return tied_cells(table, tolerance)[0]
+
+
+def tied_cells(table: Table, tolerance: float) -> list[tuple[int, int]]:
+    """Every ``(e, d)`` within ``tolerance`` of the maximum, in menu order."""
+    _check_table(table, tolerance)
     best = max(max(row) for row in table)
-    for e, row in enumerate(table):
-        for d, x in enumerate(row):
-            if best - x <= tolerance:
-                return e, d
-    raise PolicyError("no cell attains the maximum")
+    return [
+        (e, d)
+        for e, row in enumerate(table)
+        for d, x in enumerate(row)
+        if best - x <= tolerance
+    ]
+
+
+def random_draw(
+    seed: int, decision: int, n_designs: int, n_diagnostics: int
+) -> tuple[int, int]:
+    """The random arm's cell: one integer over the cells from
+    ``policy_seed(seed, decision, RANDOM_INDEX, 0)``, designs first."""
+    rng = generator(policy_seed(seed, decision, RANDOM_INDEX, 0))
+    return divmod(int(rng.integers(n_designs * n_diagnostics)), n_diagnostics)
+
+
+def eig_choice(
+    table: Table, tolerance: float, seed: int, decision: int
+) -> tuple[int, int]:
+    """EIG's cell (Δ11 item 3): the unique cell within ``tolerance`` of the
+    maximum; on a full tie the random arm's draw (:func:`random_draw`); on a
+    strict-subset tie one tied cell, uniform in menu order, from
+    ``policy_seed(seed, decision, TIE_INDEX, 0)``."""
+    tied = tied_cells(table, tolerance)
+    n_e, n_d = len(table), len(table[0])
+    if len(tied) == n_e * n_d:
+        return random_draw(seed, decision, n_e, n_d)
+    if len(tied) == 1:
+        return tied[0]
+    rng = generator(policy_seed(seed, decision, TIE_INDEX, 0))
+    return tied[int(rng.integers(len(tied)))]
+
+
+# --------------------------------------------------------------------------
+# The KL-ranked pick (a logged diagnostic; never a choice)
+# --------------------------------------------------------------------------
+
+
+def kl_divergence(p: Predictive, q: Predictive) -> float:
+    """``KL(p ‖ q)`` for atom-plus-Gaussian predictives; ``inf`` where p puts
+    mass q does not (an atom against none, or a Gaussian part against q's
+    certain stop). Recorded as computed (LOG 2026-10-27 item 5)."""
+    if p == q:
+        return 0.0
+    if (p.undefined > 0.0 and q.undefined == 0.0) or (
+        p.undefined < 1.0 and q.undefined == 1.0
+    ):
+        return math.inf
+    kl = 0.0
+    if p.undefined > 0.0:
+        kl += p.undefined * math.log(p.undefined / q.undefined)
+    if p.undefined < 1.0:
+        r = p.var / q.var
+        gauss = (r - 1.0) - math.log1p(r - 1.0) + (p.mean - q.mean) ** 2 / q.var
+        kl += (1.0 - p.undefined) * (
+            math.log((1.0 - p.undefined) / (1.0 - q.undefined)) + 0.5 * gauss
+        )
+    return kl
+
+
+@dataclass(frozen=True)
+class KLPick:
+    """The cell maximising ``Σ_{k≠top} v_k KL(p_k ‖ p_top)``, ``v_k = w_k / (1 -
+    w_top)`` from log weights; the first in menu order on ties. ``value`` may
+    be ``inf``; ``infinite`` counts the cells whose value is."""
+
+    top: int
+    design_index: int
+    diagnostic_index: int
+    value: float
+    infinite: int
+
+    def as_json(self) -> dict[str, object]:
+        return {
+            "top": self.top,
+            "design": self.design_index,
+            "diagnostic": self.diagnostic_index,
+            "value": "inf" if math.isinf(self.value) else self.value,
+            "infinite": self.infinite,
+        }
+
+
+def kl_pick(
+    log_weights: Sequence[float], top: int, predictives: PredictiveTable
+) -> KLPick | None:
+    """The KL-ranked pick (:class:`KLPick`); None with no rival to rank."""
+    rivals = [k for k in range(len(log_weights)) if k != top]
+    if not rivals:
+        return None
+    norm = max(log_weights[k] for k in rivals)
+    norm += math.log(math.fsum(math.exp(log_weights[k] - norm) for k in rivals))
+    v = {k: math.exp(log_weights[k] - norm) for k in rivals}
+    best: tuple[float, int, int] | None = None
+    infinite = 0
+    for e, row in enumerate(predictives):
+        for d, ps in enumerate(row):
+            kls = [kl_divergence(ps[k], ps[top]) for k in rivals]
+            if any(math.isinf(x) for x in kls):
+                score = math.inf
+                infinite += 1
+            else:
+                score = math.fsum(v[k] * x for k, x in zip(rivals, kls, strict=True))
+            if best is None or score > best[0]:
+                best = (score, e, d)
+    if best is None:
+        raise PolicyError("an empty predictive table")
+    return KLPick(top, best[1], best[2], best[0], infinite)
 
 
 @dataclass(frozen=True)
 class EIGSummary:
-    """Framework-only facts of one EIG decision, for the degeneracy count.
+    """Framework-only facts of one EIG decision, for the degeneracy split.
 
-    ``entropy`` is H(w) in nats; ``max_eig`` the table's maximum; ``tied`` the
-    number of cells within ``tolerance`` of it. ``degenerate``: every cell is
-    within the tolerance of 0, so the pick is the menu-first cell.
+    ``weights`` and ``log_weights`` are the entertained set's (the second
+    finite where the first underflows); ``entropy`` is H(w) in nats from the
+    log weights; ``max_eig`` the table's maximum; ``tied`` the number of its
+    ``cells`` within ``tolerance`` of it. ``degenerate``: every cell is within
+    the tolerance of 0 (LOG 2026-10-27 item 4 splits C5 on it), which makes
+    the decision a ``full_tie``, so the pick is the random arm's draw. ``kl``
+    is the KL-ranked pick, logged only (item 5).
     """
 
     weights: tuple[float, ...]
@@ -717,10 +983,38 @@ class EIGSummary:
     max_eig: float
     tolerance: float
     tied: int
+    cells: int
+    log_weights: tuple[float, ...]
+    kl: KLPick | None
 
     @property
     def degenerate(self) -> bool:
         return self.max_eig <= self.tolerance
+
+    @property
+    def full_tie(self) -> bool:
+        return self.tied == self.cells
+
+    @property
+    def tie(self) -> Literal["none", "partial", "full"]:
+        if self.full_tie:
+            return "full"
+        return "none" if self.tied == 1 else "partial"
+
+    def as_json(self) -> dict[str, object]:
+        return {
+            "weights": list(self.weights),
+            "log_weights": list(self.log_weights),
+            "entropy": self.entropy,
+            "max_eig": self.max_eig,
+            "tolerance": self.tolerance,
+            "tied": self.tied,
+            "cells": self.cells,
+            "degenerate": self.degenerate,
+            "full_tie": self.full_tie,
+            "tie": self.tie,
+            "kl": None if self.kl is None else self.kl.as_json(),
+        }
 
 
 def weight_entropy(weights: Sequence[float]) -> float:
@@ -728,11 +1022,29 @@ def weight_entropy(weights: Sequence[float]) -> float:
     return -math.fsum(w * math.log(w) for w in weights if w > 0.0)
 
 
-def eig_summary(weights: Sequence[float], table: Table, tolerance: float) -> EIGSummary:
+def log_weight_entropy(log_weights: Sequence[float]) -> float:
+    """``H(w) = -Σ e^{l} l`` from log weights: the leader's ``-η`` is kept."""
+    return -math.fsum(math.exp(lw) * lw for lw in log_weights)
+
+
+def eig_summary(
+    weights: Sequence[float],
+    log_weights: Sequence[float],
+    table: Table,
+    tolerance: float,
+    kl: KLPick | None = None,
+) -> EIGSummary:
     """The :class:`EIGSummary` of an EIG table."""
-    best = max(max(row) for row in table)
-    tied = sum(1 for row in table for x in row if best - x <= tolerance)
-    return EIGSummary(tuple(weights), weight_entropy(weights), best, tolerance, tied)
+    return EIGSummary(
+        tuple(weights),
+        log_weight_entropy(log_weights),
+        max(max(row) for row in table),
+        tolerance,
+        len(tied_cells(table, tolerance)),
+        len(table) * len(table[0]),
+        tuple(log_weights),
+        kl,
+    )
 
 
 def _config(fields: Mapping[str, object]) -> str:
@@ -749,9 +1061,28 @@ def eig_table(
     max_events: int = POLICY_MAX_EVENTS,
 ) -> Table:
     """EIG of every (e, d): one simulation set per (e, k) for all d."""
+    predictives = eig_predictives(
+        context, seed, decision, replicates=replicates, max_events=max_events
+    )
+    return _eig_rows(context.entertained.weights, predictives)
+
+
+def _eig_rows(weights: Sequence[float], predictives: PredictiveTable) -> Table:
+    return tuple(tuple(eig(weights, ps) for ps in row) for row in predictives)
+
+
+def eig_predictives(
+    context: DecisionContext,
+    seed: int,
+    decision: int,
+    *,
+    replicates: int = REPLICATES,
+    max_events: int = POLICY_MAX_EVENTS,
+) -> PredictiveTable:
+    """``[e][d][k]``: one simulation set per (e, k), read for every d."""
     ent = context.entertained
     diagnostics = context.menu.diagnostics
-    rows: list[tuple[float, ...]] = []
+    rows: list[tuple[tuple[Predictive, ...], ...]] = []
     for design in context.menu.designs:
         per_k = [
             simulate_values(
@@ -769,7 +1100,7 @@ def eig_table(
         ]
         rows.append(
             tuple(
-                eig(ent.weights, [predictive(values[d]) for values in per_k])
+                tuple(predictive(values[d]) for values in per_k)
                 for d in range(len(diagnostics))
             )
         )
@@ -967,9 +1298,9 @@ class RandomPolicy:
 
     def choose(self, context: DecisionContext, decision: int) -> Choice:
         menu = context.menu
-        n_d = len(menu.diagnostics)
-        rng = generator(policy_seed(self.seed, decision, RANDOM_INDEX, 0))
-        e, d = divmod(int(rng.integers(len(menu.designs) * n_d)), n_d)
+        e, d = random_draw(
+            self.seed, decision, len(menu.designs), len(menu.diagnostics)
+        )
         return _choice(self.name, decision, menu, e, d, None)
 
 
@@ -978,8 +1309,12 @@ class EIGPolicy:
     """The argmax of :func:`eig_table` under its weighting, ties within the floor.
 
     The entertained set is reweighted by ``weighting`` before the table is
-    computed; ties within ``tolerance`` of the maximum go to menu order, and
-    the choice carries an :class:`EIGSummary`.
+    computed; ties within ``tolerance`` of the maximum are broken by
+    :func:`eig_choice` (a full tie is the random arm's draw for the decision,
+    a strict-subset tie a draw on :data:`TIE_INDEX`), and the choice carries an
+    :class:`EIGSummary` with the KL-ranked pick logged beside it. ``seed`` must
+    be the truth-keyed policy seed the random arm of the same (truth, seed)
+    receives, so that a full tie is that arm's pick.
     """
 
     seed: int
@@ -998,22 +1333,41 @@ class EIGPolicy:
                 "max_events": self.max_events,
                 "weights": self.weighting.config,
                 "tie_tolerance": self.tolerance,
+                "ties": {
+                    "full": {"draw": "random arm", "index": RANDOM_INDEX},
+                    "partial": {
+                        "draw": "uniform over tied cells, menu order",
+                        "index": TIE_INDEX,
+                    },
+                },
                 "quadrature": EIG_QUADRATURE,
+                "precision": (
+                    "relative: log weights; log1p where p_w/p_k is near 1; "
+                    "panels of every component and at each crossing"
+                ),
+                "diagnostic": "kl_pick: sum_k v_k KL(p_k||p_top), logged only",
             }
         )
 
     def choose(self, context: DecisionContext, decision: int) -> Choice:
         entertained = context.entertained.reweighted(self.weighting)
         weighted = dataclasses.replace(context, entertained=entertained)
-        table = eig_table(
+        log_weights = self.weighting.log_weights(
+            [h.bic for h in entertained.hypotheses]
+        )
+        predictives = eig_predictives(
             weighted,
             self.seed,
             decision,
             replicates=self.replicates,
             max_events=self.max_events,
         )
-        e, d = choose(table, tolerance=self.tolerance)
-        summary = eig_summary(entertained.weights, table, self.tolerance)
+        table = _eig_rows(entertained.weights, predictives)
+        e, d = eig_choice(table, self.tolerance, self.seed, decision)
+        kl = kl_pick(log_weights, entertained.top, predictives)
+        summary = eig_summary(
+            entertained.weights, log_weights, table, self.tolerance, kl
+        )
         return _choice(self.name, decision, context.menu, e, d, table, summary)
 
 

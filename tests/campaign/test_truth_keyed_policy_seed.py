@@ -16,12 +16,14 @@ from __future__ import annotations
 
 import dataclasses
 import json
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 import pytest
 from campaign_support import entry, environment, tiny_config
 
+from environments.pointproc import v2 as pointproc_v2
 from sciagent.campaign import execute, plan
 from sciagent.campaign.execute import BaselineJob
 from sciagent.campaign.plan import (
@@ -37,11 +39,24 @@ from sciagent.campaign.plan import (
     session_text,
     system_config_text,
 )
-from sciagent.investigation.policy import policy_config
+from sciagent.glm.data import Dataset, EventLog
+from sciagent.glm.interventions import Experiment
+from sciagent.investigation.policy import policy_config, random_cell
 from sciagent.investigation.prompts import PolicyName
 from sciagent.investigation.runner import InvestigationSpec, build_lab
 from sciagent.investigation.world import OBSERVATIONAL, World
 from sciagent.scoring.seeds import POLICY_SEED_RULE, truth_policy_seed
+from sciagent.systems.v2.policies import (
+    Choice,
+    DecisionContext,
+    EIGPolicy,
+    EntertainedSet,
+    Hypothesis,
+    Menu,
+    design_menu,
+    diagnostic_menu,
+)
+from sciagent.systems.v2.policy_search import random_choice
 
 POLICY_NAMES: tuple[PolicyName, ...] = ("random", "EIG", "FSD")
 
@@ -185,3 +200,92 @@ def test_the_seed_rule_moves_the_policy_arms_and_no_other_unit(
         assert before[system] != after[system], system
     for system in ("B-sym", "ORACLE", "telling"):
         assert before[system] == after[system], system
+
+
+# --------------------------------------------------------------------------
+# Δ11 item 3: a fully tied EIG decision is the random arm's pick, on both paths
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _Poisson:
+    """A homogeneous Poisson fake that ignores the design (cheap to simulate)."""
+
+    rate: float
+    name: str = "poisson"
+
+    def simulate_experiment(
+        self, experiment: Experiment, rng: np.random.Generator, *, label: str = "x"
+    ) -> Dataset:
+        n = int(rng.poisson(self.rate * experiment.horizon))
+        times = np.sort(rng.uniform(0.0, experiment.horizon, n))
+        rows = [pointproc_v2.mark_sampler(rng) for _ in range(n)]
+        marks = {
+            c.name: np.array([r[c.name] for r in rows], dtype=np.float64)
+            for c in pointproc_v2.CHANNELS
+        }
+        return Dataset.observational(
+            EventLog.create(times, marks, experiment.horizon), label
+        )
+
+
+def _degenerate_context() -> DecisionContext:
+    """Two hypotheses 600 BIC apart: every EIG is below the floor."""
+    channels = pointproc_v2.CHANNELS
+    exp = design_menu(channels, horizon=200.0)[0].experiment
+    log = _Poisson(1.0).simulate_experiment(exp, np.random.default_rng(0)).log
+    entertained = EntertainedSet.of(
+        (
+            Hypothesis("a", _Poisson(1.0, "a"), 0.0),
+            Hypothesis("b", _Poisson(4.0, "b"), 600.0),
+        )
+    )
+    menu = Menu(design_menu(channels, horizon=60.0)[:2], diagnostic_menu(log, channels))
+    return DecisionContext(channels, Dataset.observational(log), entertained, menu)
+
+
+def _cell(choice: Choice) -> tuple[int, int]:
+    return choice.design_index, choice.diagnostic_index
+
+
+@pytest.mark.parametrize("truth_id", ["hawkes", "size_excitation"])
+def test_b_sym_eigs_full_tie_is_b_sym_randoms_pick(
+    truth_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The seeds ``execute`` gives ``B-sym+EIG`` and ``B-sym+random`` for one
+    (truth, seed) are the same truth-keyed key, so on a fully tied decision the
+    EIG arm's cell is the random arm's, and the search's random fallback's."""
+    eig_seeds = _seeds_of_a_policy_unit(B_SYM_EIG, truth_id, 2, monkeypatch)
+    random_seeds = _seeds_of_a_policy_unit(B_SYM_RANDOM, truth_id, 2, monkeypatch)
+    assert eig_seeds["policy"] == random_seeds["policy"] == eig_seeds["policy_seed"]
+    settings = dataclasses.replace(tiny_config().policy, replicates=4)
+    eig_arm = plan.build_policy(B_SYM_EIG, eig_seeds["policy"], settings)
+    random_arm = plan.build_policy(B_SYM_RANDOM, random_seeds["policy"], settings)
+    assert isinstance(eig_arm, EIGPolicy)
+    ctx = _degenerate_context()
+    for decision in range(4):
+        mine = eig_arm.choose(ctx, decision)
+        assert mine.eig is not None and mine.eig.full_tie and mine.eig.degenerate
+        assert _cell(mine) == _cell(random_arm.choose(ctx, decision))
+        fallback = random_choice(eig_seeds["policy_seed"], decision, ctx.menu)
+        assert _cell(mine) == _cell(fallback)
+
+
+@pytest.mark.parametrize("truth_id", ["hawkes", "size_excitation"])
+def test_ag_eigs_full_tie_is_the_ag_random_arms_pick(truth_id: str) -> None:
+    """An AG-c EIG session's policy draws from the lab's truth-keyed seed,
+    which is the AG-c random session's, so on a fully tied decision it takes
+    the cell the random session's policy mode draws (``random_cell``)."""
+    eig_mode = _lab(truth_id, policy="EIG").policy_mode
+    random_mode = _lab(truth_id, policy="random").policy_mode
+    assert eig_mode is not None and random_mode is not None
+    assert eig_mode.seed == random_mode.seed == truth_policy_seed(truth_id, 1)
+    assert isinstance(eig_mode.policy, EIGPolicy)
+    assert eig_mode.policy.seed == eig_mode.seed
+    policy = dataclasses.replace(eig_mode.policy, replicates=4)
+    ctx = _degenerate_context()
+    for decision in range(4):
+        mine = policy.choose(ctx, decision)
+        assert mine.eig is not None and mine.eig.full_tie and mine.eig.degenerate
+        assert _cell(mine) == random_cell(random_mode.seed, decision, ctx.menu)
+        assert _cell(mine) == _cell(random_mode.policy.choose(ctx, decision))

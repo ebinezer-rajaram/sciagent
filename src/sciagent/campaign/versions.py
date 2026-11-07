@@ -260,10 +260,17 @@ EXEMPT_CONSTANTS: Final[dict[str, dict[str, str]]] = {
         "DEFAULT_LEVEL": _READ_TIME,
     },
     "sciagent.systems.v2.models": {"NONPARAM_NAME": _LABEL},
-    "sciagent.systems.v2.policies": dict.fromkeys(
-        ("_GL_X", "_GL_W", "_GL_NODES", "_GL_WEIGHTS", "_STEPS", "_LOG_SQRT_2PI"),
-        _DERIVED,
-    ),
+    "sciagent.systems.v2.policies": {
+        **dict.fromkeys(
+            ("_GL_X", "_GL_W", "_GL_NODES", "_GL_WEIGHTS", "_STEPS", "_LOG_SQRT_2PI"),
+            _DERIVED,
+        ),
+        "TIE_INDEX": (
+            "read only by the EIG policy, whose config text states it; that text "
+            "is in every key that runs EIG (Δ11 item 3, LOG 2026-10-27, adopted "
+            "2026-10-28)"
+        ),
+    },
     "sciagent.systems.v2.search": dict.fromkeys(
         ("B_RAND", "B_SYM", "PLANTED_HINT"), _LABEL
     ),

@@ -42,12 +42,18 @@ from test_contrasts import (
 
 from sciagent.campaign import contrasts, secondaries
 from sciagent.campaign.analysis import Session, Table
-from sciagent.campaign.contrasts import ContrastRead, ScriptedControls, read_contrasts
+from sciagent.campaign.contrasts import (
+    ContrastRead,
+    ControlsRead,
+    ScriptedControls,
+    read_contrasts,
+)
 from sciagent.campaign.plan import P4_ARMS, P4_SONNET_ARMS
 from sciagent.campaign.secondaries import (
     NAMED_MINUS_ANON,
     SECONDARY_STREAM,
     read_named_minus_anon,
+    read_scope,
 )
 from sciagent.scoring.errors import ScoringError
 from sciagent.scoring.stats import paired_bootstrap_ci
@@ -305,6 +311,81 @@ def test_the_module_writes_no_read_of_the_frozen_set() -> None:
     assert "secondaries" not in inspect.getsource(contrasts)
     assert secondaries.__doc__ is not None
     assert "exploratory" in secondaries.__doc__
+
+
+def controls_read(
+    left: tuple[str, ...], unchecked: tuple[str, ...] = ()
+) -> ControlsRead:
+    kept = tuple(t for t in FORTY if t not in {*left, *unchecked})
+    return ControlsRead(kept, left, unchecked, True, True)
+
+
+#: A split as P4's: 40 truths, the even ones in dictionary.
+FORTY = tuple(f"t{k:02d}" for k in range(40))
+OUT = frozenset(FORTY[1::2])
+IN = tuple(FORTY[0::2])
+
+
+def test_four_of_forty_leaving_is_inside_the_limit() -> None:
+    scope = read_scope(controls_read(IN[:4]), OUT)
+    assert (scope.left, scope.total) == (4, 40)
+    assert scope.confirmatory
+
+
+def test_five_of_forty_leaving_is_past_it() -> None:
+    assert not read_scope(controls_read(IN[:5]), OUT).confirmatory
+
+
+def test_unchecked_truths_count_as_leaving() -> None:
+    scope = read_scope(controls_read(IN[:3], IN[3:5]), OUT)
+    assert scope.left == 5
+    assert not scope.confirmatory
+
+
+def test_c4_has_its_own_limit_on_out_of_dictionary_truths() -> None:
+    out = tuple(sorted(OUT))
+    two = read_scope(controls_read(out[:2]), OUT)
+    assert (two.left_out_of_dictionary, two.out_of_dictionary) == (2, 20)
+    assert two.c4_confirmatory
+    three = read_scope(controls_read(out[:3]), OUT)
+    assert three.confirmatory
+    assert not three.c4_confirmatory
+
+
+def test_the_reads_past_the_limit_take_c4_with_them() -> None:
+    scope = read_scope(controls_read(IN[:5]), OUT)
+    assert not scope.confirmatory
+    assert not scope.c4_confirmatory
+
+
+def test_the_limits_scale_with_the_split_and_never_on_a_share_of_nothing() -> None:
+    assert read_scope(ControlsRead((), (), (), False, False), frozenset()).confirmatory
+
+
+def test_the_report_says_when_the_reads_are_not_confirmatory(
+    report: ModuleType,
+) -> None:
+    lines = report.scope_lines(read_scope(controls_read(IN[:5]), OUT))
+    text = "\n".join(lines)
+    assert "not confirmatory" in text
+    assert "5 of 40" in text
+    assert "the miss check's label does not change" in text
+
+
+def test_the_report_says_when_only_c4_is_past_its_limit(report: ModuleType) -> None:
+    out = tuple(sorted(OUT))
+    text = "\n".join(report.scope_lines(read_scope(controls_read(out[:3]), OUT)))
+    assert "C4 is not confirmatory" in text
+    assert "The reads are not confirmatory" not in text
+
+
+def test_the_report_gives_the_counts_when_inside_both_limits(
+    report: ModuleType,
+) -> None:
+    text = "\n".join(report.scope_lines(read_scope(controls_read(()), OUT)))
+    assert "0 of 40" in text
+    assert "0 of 20" in text
+    assert "not confirmatory" not in text
 
 
 @pytest.fixture

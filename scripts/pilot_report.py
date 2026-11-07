@@ -763,6 +763,28 @@ def named_minus_anon_lines(
     ]
 
 
+def scope_lines(scope: Any) -> list[str]:
+    """SPEC §6.4's limit on control 1's drops: a line, and it moves no read."""
+    out = [
+        "### Truths that left the reads",
+        "",
+        f"{scope.left} of {scope.total} truths left the reads, as dropped or "
+        f"unchecked, {scope.left_out_of_dictionary} of "
+        f"{scope.out_of_dictionary} of them out of dictionary.",
+    ]
+    if not scope.confirmatory:
+        out.append(
+            "The reads are not confirmatory: more than 10% of the truths left. They "
+            "are still printed, and the miss check's label does not change."
+        )
+    elif not scope.c4_confirmatory:
+        out.append(
+            "C4 is not confirmatory: more than 10% of its truths left. It is still "
+            "printed, and the miss check's label does not change."
+        )
+    return [*out, ""]
+
+
 def cost_table(root: Path, systems: Sequence[str], tab: Any) -> list[str]:
     """The LLM arms' cost and behaviour table: a row per arm with sessions.
 
@@ -1317,11 +1339,21 @@ def main() -> None:
     if args.read_root is not None:
         from naming_null_record import read_naming_null
 
-        L += named_minus_anon_lines(
-            tab,
-            read_naming_null(args.naming_commit),
-            args.read_root,
-            args.resamples,
+        from sciagent.campaign.contrasts import ScriptedControls, read_controls
+        from sciagent.campaign.secondaries import read_scope
+
+        naming_null = read_naming_null(args.naming_commit)
+        L += named_minus_anon_lines(tab, naming_null, args.read_root, args.resamples)
+        L += scope_lines(
+            read_scope(
+                read_controls(
+                    tab,
+                    ScriptedControls(naming_null=naming_null),
+                    args.read_root,
+                    args.resamples,
+                ),
+                [t for t, entry in tab.truths.items() if not entry.in_dictionary],
+            )
         )
     flagged_runs = [x for x in tab.sessions if x.void.void or x.void.stored_void]
     L += [

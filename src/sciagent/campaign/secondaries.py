@@ -19,6 +19,13 @@ two systems, and no other. So one model's failure moves no other model's read, a
 read does not depend on which other models ran, and Sonnet's reads floor exactly
 as C2's do. On complete rows Sonnet's read is C2's time read plus its names read.
 
+**Scope** (:func:`read_scope`; control room ruling R2, 2026-11-07). If more than
+:data:`MAX_LEFT_PERCENT` percent of a table's truths leave the reads, as dropped or
+unchecked, the reads are reported as not confirmatory, and C4 likewise on its
+out-of-dictionary truths alone. It is a limit on scope and not a test, set before any
+P4 data, with its reasons in ``docs/v2/SPEC-TEXT-P4-C.md``. It moves no read and no
+label: the reads are still printed.
+
 **Generators.** Read ``i`` draws from ``SeedSequence([seed, SECONDARY_STREAM + i])``,
 clear of the contrasts' streams and of control 2's.
 """
@@ -26,8 +33,8 @@ clear of the contrasts' streams and of control 2's.
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
-from dataclasses import replace
+from collections.abc import Collection, Mapping, Sequence
+from dataclasses import dataclass, replace
 from typing import Final
 
 import numpy as np
@@ -39,6 +46,7 @@ from sciagent.campaign.contrasts import (
     MIN_TRUTHS,
     ContrastRead,
     ContrastSpec,
+    ControlsRead,
     RowKey,
     ScriptedControls,
     floor_rows,
@@ -49,6 +57,8 @@ from sciagent.scoring.stats import paired_bootstrap_ci
 
 #: Read ``i`` draws stream ``SECONDARY_STREAM + i``.
 SECONDARY_STREAM: Final = 2000
+#: More than this share of truths leaving makes the reads not confirmatory.
+MAX_LEFT_PERCENT: Final = 10
 
 
 def _system(tier: str, letter: str, condition: str) -> str:
@@ -131,3 +141,37 @@ def read_named_minus_anon(
         )
         out[spec.name] = ContrastRead(ci.mean, ci.low, ci.high, True, n, pairs.rows)
     return out
+
+
+@dataclass(frozen=True)
+class Scope:
+    """How many truths left the reads of one table (module docstring)."""
+
+    left: int
+    total: int
+    left_out_of_dictionary: int
+    out_of_dictionary: int
+
+    @property
+    def confirmatory(self) -> bool:
+        return self.left * 100 <= self.total * MAX_LEFT_PERCENT
+
+    @property
+    def c4_confirmatory(self) -> bool:
+        within = (
+            self.left_out_of_dictionary * 100
+            <= self.out_of_dictionary * MAX_LEFT_PERCENT
+        )
+        return self.confirmatory and within
+
+
+def read_scope(controls: ControlsRead, out_of_dictionary: Collection[str]) -> Scope:
+    """The scope of the reads on ``controls``' table; ``out_of_dictionary`` is that
+    table's truths outside the dictionary."""
+    left = {*controls.dropped, *controls.unchecked}
+    return Scope(
+        left=len(left),
+        total=len(left) + len(controls.kept),
+        left_out_of_dictionary=len(left & set(out_of_dictionary)),
+        out_of_dictionary=len(out_of_dictionary),
+    )

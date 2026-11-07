@@ -145,6 +145,7 @@ def test_named_minus_anon_is_printed_with_its_root_and_a_commit(
     )
     assert "### Named minus anon" in text
     assert "| AG-c-S | 0 | not reportable | - | - |" in text
+    assert "0 of 5 truths left the reads" in text
 
 
 def test_control_3_names_the_subset_it_reads(

@@ -32,9 +32,13 @@ fingerprint exactly, which is recorded in ``<root>/fingerprint.jsonl``
 driver per store: a second ``pilot.py`` on the same ``--root`` is refused.
 
 ``--p4-block`` runs one config of ``p4_plan`` on the whole split, and takes no
-option that would narrow or change it. On a block or a split outside dev,
-``--reuse-from`` is refused unless a frozen amendment has named the fingerprint in
-:data:`P4_REUSE_NAMED` (prereg 2026-11-05 section 2.10).
+option that would narrow or change it, nor one that would leave some of its
+units unrun (``--no-llm``, ``--no-baselines``, ``--llm-limit``). A run on a split
+with any truth outside dev, or with a P4 arm set, is refused without a block. On
+a block, a split outside dev, or a store holding a cell of a truth not in the
+split (the store's own content, read-only), ``--reuse-from`` is refused unless a
+frozen amendment has named the fingerprint in :data:`P4_REUSE_NAMED` (prereg
+2026-11-05 section 2.10).
 
 A live LLM run uses the logged-in Claude subscription (do not set
 ANTHROPIC_API_KEY; the harness refuses it).
@@ -84,6 +88,11 @@ P4_BLOCK_FIXED: Final = (
     "arms",
     "arm_set",
 )
+#: The run settings a P4 block fixes: ``--p4-block`` refuses any of them set, since
+#: each would leave units of the block unrun.
+P4_BLOCK_RUN_FIXED: Final = ("llm_limit", "no_llm", "no_baselines")
+#: The arm sets only a P4 block runs.
+P4_ARM_SETS: Final = frozenset({"p4", "p4-sonnet"})
 #: Fingerprints a frozen amendment has named for ``--reuse-from`` on the P4 store.
 #: None today: the only other lawful route is a new store at a new ``T``.
 P4_REUSE_NAMED: Final[frozenset[str]] = frozenset()
@@ -390,21 +399,75 @@ def p4_block_config(args: argparse.Namespace) -> CampaignConfig:
         raise SystemExit(f"refused: {error}") from error
 
 
+def refuse_unblocked(
+    args: argparse.Namespace, split: Sequence[TruthRecord] | Sequence[TruthEntry]
+) -> None:
+    """Exit unless a run outside dev is a whole P4 block (module docstring).
+
+    ``split`` is the whole split, whatever ``--truths`` or ``--ids`` select. A
+    run is outside dev if any truth of it is, or if it asks for a P4 arm set.
+    """
+    from sciagent.campaign.freeze import DEV_SPLIT
+
+    if args.p4_block is not None:
+        narrowed = [
+            name
+            for name in P4_BLOCK_RUN_FIXED
+            if getattr(args, name) != build_parser().get_default(name)
+        ]
+        if narrowed:
+            raise SystemExit(f"refused: a P4 block runs every unit; {narrowed} set")
+        return
+    outside = sorted({t.split for t in split if t.split != DEV_SPLIT})
+    if outside:
+        raise SystemExit(
+            f"refused: the split holds truths outside {DEV_SPLIT} ({outside}); "
+            "only a whole --p4-block runs there"
+        )
+    if args.arm_set in P4_ARM_SETS:
+        raise SystemExit(
+            f"refused: --arm-set {args.arm_set} is P4's; only a whole --p4-block "
+            "runs it"
+        )
+
+
 def refuse_p4_reuse(
     reuse_from: str | None,
     block: str | None,
-    truths: Sequence[TruthRecord] | Sequence[TruthEntry],
+    split: Sequence[TruthRecord] | Sequence[TruthEntry],
+    root: Path,
 ) -> None:
     """Exit if ``reuse_from`` would carry the P4 store across a commit (module
-    docstring). A block, or any truth outside dev, makes this the P4 store."""
+    docstring). ``split`` is the whole split, whatever is selected. A block, a
+    truth of the split outside dev, or a cell in the store at ``root`` of a truth
+    not in ``split`` makes this the P4 store. The store is opened read-only, and
+    only when nothing else has refused."""
     from sciagent.campaign.freeze import DEV_SPLIT
+    from sciagent.campaign.store import LEDGER_FILE, ResultStore
 
     if reuse_from is None or reuse_from in P4_REUSE_NAMED:
         return
-    if block is not None or any(t.split != DEV_SPLIT for t in truths):
+    refusal = (
+        f"refused: --reuse-from {reuse_from} on the P4 store: no frozen amendment "
+        "names it"
+    )
+    if block is not None or any(t.split != DEV_SPLIT for t in split):
+        raise SystemExit(refusal)
+    if not (root / LEDGER_FILE).is_file():
+        return
+    ids = {t.id for t in split}
+    with ResultStore(root, read_only=True) as store:
+        foreign = sorted(
+            {
+                str(c["key"]["config"].get("truth"))
+                for c in store.cells()
+                if c["key"]["config"].get("truth") not in ids
+            }
+        )
+    if foreign:
         raise SystemExit(
-            f"refused: --reuse-from {reuse_from} on the P4 store: no frozen "
-            "amendment names it"
+            f"{refusal} ({root} holds cells of {len(foreign)} truth(s) outside the "
+            f"split, first {foreign[:3]})"
         )
 
 
@@ -471,9 +534,11 @@ def main() -> None:
     except CampaignError as error:
         raise SystemExit(f"refused: {error}") from error
     print(f"code fingerprint: {fingerprint}", flush=True)
-    records = select(load_split(args.split), args.truths, args.ids)
-    refuse_p4_reuse(args.reuse_from, args.p4_block, records)
-    env = pointproc_environment(load_split(args.split))
+    split = load_split(args.split)
+    refuse_unblocked(args, split)
+    records = select(split, args.truths, args.ids)
+    refuse_p4_reuse(args.reuse_from, args.p4_block, split, args.root)
+    env = pointproc_environment(split)
     config = campaign_config(args)
     settings = DriverSettings(
         workers=args.workers,

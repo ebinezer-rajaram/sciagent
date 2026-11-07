@@ -14,6 +14,7 @@ from types import ModuleType
 import pytest
 from campaign_support import entry
 
+from sciagent.campaign.driver import DriverSettings
 from sciagent.campaign.p4plan import (
     P4_BLOCKS,
     P4_SWEEP_BUDGETS,
@@ -22,9 +23,18 @@ from sciagent.campaign.p4plan import (
     p4_plan,
 )
 from sciagent.campaign.plan import CampaignError, TruthEntry
+from sciagent.campaign.store import ResultStore, key_from_json
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 FINGERPRINT = "commit=abc,tree=clean"
+
+
+def dev_split(n: int) -> tuple[TruthEntry, ...]:
+    """Stand-in dev truths, named as the sampler names a split's truths."""
+    return tuple(
+        dataclasses.replace(t, id=f"dev-{k:03d}", split="dev")
+        for k, t in enumerate(standin(n))
+    )
 
 
 def standin(n: int = P4_TRUTHS) -> tuple[TruthEntry, ...]:
@@ -120,39 +130,318 @@ def test_a_block_takes_no_option_that_narrows_or_changes_it(
         pilot.campaign_config(args)
 
 
-def test_reuse_is_refused_on_a_block(pilot: ModuleType) -> None:
+def test_reuse_is_refused_on_a_block(pilot: ModuleType, tmp_path: Path) -> None:
     with pytest.raises(SystemExit, match="refused"):
-        pilot.refuse_p4_reuse(FINGERPRINT, "sonnet", ())
+        pilot.refuse_p4_reuse(FINGERPRINT, "sonnet", (), tmp_path)
 
 
-def test_reuse_is_refused_on_a_split_outside_dev(pilot: ModuleType) -> None:
+def test_reuse_is_refused_on_a_split_outside_dev(
+    pilot: ModuleType, tmp_path: Path
+) -> None:
     with pytest.raises(SystemExit, match="refused"):
-        pilot.refuse_p4_reuse(FINGERPRINT, None, standin())
+        pilot.refuse_p4_reuse(FINGERPRINT, None, standin(), tmp_path)
 
 
-def test_unrecorded_reuse_is_refused_too(pilot: ModuleType) -> None:
+def test_unrecorded_reuse_is_refused_too(pilot: ModuleType, tmp_path: Path) -> None:
     with pytest.raises(SystemExit, match="refused"):
-        pilot.refuse_p4_reuse("unrecorded", None, standin())
+        pilot.refuse_p4_reuse("unrecorded", None, standin(), tmp_path)
 
 
-def test_reuse_on_dev_with_no_block_stays_allowed(pilot: ModuleType) -> None:
-    dev = tuple(dataclasses.replace(t, split="dev") for t in standin(2))
-    pilot.refuse_p4_reuse(FINGERPRINT, None, dev)
+def test_reuse_on_dev_with_no_block_stays_allowed(
+    pilot: ModuleType, tmp_path: Path
+) -> None:
+    pilot.refuse_p4_reuse(FINGERPRINT, None, dev_split(2), tmp_path)
 
 
-def test_no_reuse_asked_is_never_refused(pilot: ModuleType) -> None:
-    pilot.refuse_p4_reuse(None, "sonnet", standin())
+def test_no_reuse_asked_is_never_refused(pilot: ModuleType, tmp_path: Path) -> None:
+    pilot.refuse_p4_reuse(None, "sonnet", standin(), tmp_path)
 
 
 def test_a_frozen_amendment_is_the_only_way_through(
-    pilot: ModuleType, monkeypatch: pytest.MonkeyPatch
+    pilot: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """No commit is named today, and naming one is what lets it through."""
     assert frozenset() == pilot.P4_REUSE_NAMED
     monkeypatch.setattr(pilot, "P4_REUSE_NAMED", frozenset({FINGERPRINT}))
-    pilot.refuse_p4_reuse(FINGERPRINT, "sonnet", standin())
+    pilot.refuse_p4_reuse(FINGERPRINT, "sonnet", standin(), tmp_path)
     with pytest.raises(SystemExit, match="refused"):
-        pilot.refuse_p4_reuse("commit=other,tree=clean", "sonnet", standin())
+        pilot.refuse_p4_reuse("commit=other,tree=clean", "sonnet", standin(), tmp_path)
+
+
+# -- red team findings 5 and 9 (2026-11-07): stand-in truths, toy stores ---------
+
+
+def store_with(root: Path, truth_ids: tuple[str, ...]) -> None:
+    """A toy store holding one cell of each of ``truth_ids``."""
+    with ResultStore(root) as store:
+        for truth in truth_ids:
+            config = {"kind": "baseline", "system": "B-lib", "truth": truth}
+            key = key_from_json(
+                {
+                    "env_version": "toy",
+                    "config": config,
+                    "data_version": "toy",
+                    "metric_version": "toy",
+                    "seed": 1,
+                }
+            )
+            store.put(key, {"per_event": -1.0}, {})
+
+
+def test_reuse_is_refused_on_a_store_holding_a_truth_outside_the_split(
+    pilot: ModuleType, tmp_path: Path
+) -> None:
+    """A dev run pointed at the P4 store: the store's cells say what it is."""
+    store_with(tmp_path, ("dev-000", "test-000"))
+    with pytest.raises(SystemExit, match=r"refused.*test-000"):
+        pilot.refuse_p4_reuse(FINGERPRINT, None, dev_split(2), tmp_path)
+
+
+def test_reuse_reads_the_whole_split_not_the_selected_truths(
+    pilot: ModuleType, tmp_path: Path
+) -> None:
+    store_with(tmp_path, ("dev-000", "dev-001"))
+    pilot.refuse_p4_reuse(FINGERPRINT, None, dev_split(2), tmp_path)
+    with pytest.raises(SystemExit, match="refused"):
+        pilot.refuse_p4_reuse(FINGERPRINT, None, dev_split(2)[:1], tmp_path)
+    with pytest.raises(SystemExit, match="refused"):
+        pilot.refuse_p4_reuse(FINGERPRINT, None, (), tmp_path)
+
+
+def test_reading_the_store_leaves_it_as_it_was(
+    pilot: ModuleType, tmp_path: Path
+) -> None:
+    store_with(tmp_path, ("test-000",))
+    before = sorted((p.relative_to(tmp_path), p.read_bytes()) for p in files(tmp_path))
+    with pytest.raises(SystemExit, match="refused"):
+        pilot.refuse_p4_reuse(FINGERPRINT, None, dev_split(2), tmp_path)
+    after = sorted((p.relative_to(tmp_path), p.read_bytes()) for p in files(tmp_path))
+    assert before == after
+
+
+def files(root: Path) -> list[Path]:
+    return [p for p in root.rglob("*") if p.is_file()]
+
+
+@dataclasses.dataclass
+class Launched:
+    """What ``main`` handed ``Campaign``, if it got that far."""
+
+    calls: list[dict[str, object]]
+
+
+@pytest.fixture
+def launcher(
+    pilot: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> tuple[ModuleType, Launched]:
+    """``pilot.main`` with ``Campaign`` replaced by a recorder: nothing runs."""
+    import sciagent.campaign.driver as driver
+
+    launched = Launched([])
+
+    class Recorder:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            names = ("root", "env", "config", "truths", "settings")
+            launched.calls.append({**dict(zip(names, args, strict=True)), **kwargs})
+
+        def run(self) -> str:
+            return "recorded"
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(driver, "Campaign", Recorder)
+    monkeypatch.setattr(pilot, "truth_entries", lambda records: tuple(records))
+    monkeypatch.setattr(pilot, "code_fingerprint", lambda: FINGERPRINT)
+    monkeypatch.setattr(pilot, "pointproc_environment", lambda _: None)
+    return pilot, launched
+
+
+def run_main(
+    pilot: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    split: tuple[TruthEntry, ...],
+    *argv: str,
+) -> None:
+    monkeypatch.setattr(pilot, "load_split", lambda _: split)
+    monkeypatch.setattr(sys, "argv", ["pilot.py", *argv])
+    pilot.main()
+
+
+def test_a_block_launches_the_whole_split_with_every_unit(
+    launcher: tuple[ModuleType, Launched],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    pilot, launched = launcher
+    split = standin()
+    run_main(pilot, monkeypatch, split, "--root", str(tmp_path), "--p4-block", "sonnet")
+    (call,) = launched.calls
+    assert call["truths"] == split
+    assert call["config"] == p4_block("sonnet", split)
+    settings = call["settings"]
+    assert isinstance(settings, DriverSettings)
+    assert settings.run_llm and settings.run_baselines
+    assert settings.llm_limit is None
+    assert call["reuse_from"] is None
+
+
+@pytest.mark.parametrize(
+    "extra", [("--no-llm",), ("--no-baselines",), ("--llm-limit", "4")]
+)
+def test_a_block_runs_every_unit_of_it(
+    launcher: tuple[ModuleType, Launched],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    extra: tuple[str, ...],
+) -> None:
+    pilot, launched = launcher
+    with pytest.raises(SystemExit, match="refused"):
+        run_main(
+            pilot,
+            monkeypatch,
+            standin(),
+            "--root",
+            str(tmp_path / "s"),
+            "--p4-block",
+            "sonnet",
+            *extra,
+        )
+    assert not launched.calls
+    assert not (tmp_path / "s").exists()
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        (),
+        ("--truths", "0", "--reuse-from", FINGERPRINT),
+        ("--arm-set", "p4-sonnet", "--seeds", "1,2", "--truths", "3"),
+        ("--arm-set", "p4-sonnet", "--seeds", "1", "--b10f-truths", "2"),
+        ("--no-llm", "--no-baselines"),
+    ],
+    ids=["plain", "truths-0-reuse", "sonnet-narrowed", "b10f-narrowed", "nothing"],
+)
+def test_a_run_outside_dev_needs_a_block(
+    launcher: tuple[ModuleType, Launched],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    argv: tuple[str, ...],
+) -> None:
+    pilot, launched = launcher
+    with pytest.raises(SystemExit, match=r"refused.*--p4-block"):
+        run_main(pilot, monkeypatch, standin(), "--root", str(tmp_path / "s"), *argv)
+    assert not launched.calls
+    assert not (tmp_path / "s").exists()
+
+
+def test_one_truth_outside_dev_makes_the_split_outside_dev(
+    launcher: tuple[ModuleType, Launched],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    pilot, launched = launcher
+    split = (*dev_split(3), standin(1)[0])
+    with pytest.raises(SystemExit, match=r"refused.*--p4-block"):
+        run_main(pilot, monkeypatch, split, "--root", str(tmp_path), "--truths", "1")
+    assert not launched.calls
+
+
+@pytest.mark.parametrize("arm_set", ["p4", "p4-sonnet"])
+def test_a_p4_arm_set_needs_a_block_on_dev_too(
+    launcher: tuple[ModuleType, Launched],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    arm_set: str,
+) -> None:
+    pilot, launched = launcher
+    with pytest.raises(SystemExit, match=r"refused.*--p4-block"):
+        run_main(
+            pilot,
+            monkeypatch,
+            dev_split(3),
+            "--root",
+            str(tmp_path),
+            "--arm-set",
+            arm_set,
+        )
+    assert not launched.calls
+
+
+def test_main_refuses_a_dev_run_reusing_the_p4_store(
+    launcher: tuple[ModuleType, Launched],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Route 2 of finding 5: no fingerprint line is written, so a later block run
+    still needs the flag."""
+    pilot, launched = launcher
+    store_with(tmp_path, ("test-000",))
+    with pytest.raises(SystemExit, match="refused"):
+        run_main(
+            pilot,
+            monkeypatch,
+            dev_split(3),
+            "--root",
+            str(tmp_path),
+            "--truths",
+            "0",
+            "--reuse-from",
+            FINGERPRINT,
+        )
+    assert not launched.calls
+
+
+def test_main_passes_the_whole_split_to_the_reuse_refusal(
+    launcher: tuple[ModuleType, Launched],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A dev store of every dev truth, reused by a run on one of them."""
+    pilot, launched = launcher
+    split = dev_split(3)
+    store_with(tmp_path, tuple(t.id for t in split))
+    run_main(
+        pilot,
+        monkeypatch,
+        split,
+        "--root",
+        str(tmp_path),
+        "--truths",
+        "1",
+        "--reuse-from",
+        FINGERPRINT,
+    )
+    (call,) = launched.calls
+    assert call["truths"] == split[:1]
+    assert call["reuse_from"] == FINGERPRINT
+
+
+#: The dev commands of ``pilot.py``'s docstring, and the narrowing options a dev
+#: run keeps.
+DEV_COMMANDS = (
+    ("--truths", "20", "--workers", "4", "--llm-concurrency", "1"),
+    ("--truths", "2", "--seeds", "1", "--llm-limit", "4"),
+    ("--truths", "20", "--b10f-truths", "10", "--workers", "4", "--rescore-llm"),
+    ("--truths", "2", "--seeds", "1", "--no-llm", "--no-baselines"),
+    ("--ids", "dev-001", "--systems", "B-sym", "--arms", "AG-o/anon"),
+)
+
+
+@pytest.mark.parametrize("argv", DEV_COMMANDS, ids=lambda a: " ".join(a))
+def test_dev_runs_launch_as_before(
+    launcher: tuple[ModuleType, Launched],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    argv: tuple[str, ...],
+) -> None:
+    pilot, launched = launcher
+    split = dev_split(20)
+    run_main(pilot, monkeypatch, split, "--root", str(tmp_path), *argv)
+    (call,) = launched.calls
+    truths = call["truths"]
+    assert isinstance(truths, tuple) and truths
+    assert all(t.split == "dev" for t in truths)
 
 
 def test_main_refuses_before_any_store_opens(

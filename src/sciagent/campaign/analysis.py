@@ -90,7 +90,8 @@ from that module's public pieces (:func:`~sciagent.scoring.gonogo.oracle_beats_l
 so the control reads the per-truth mean over the seeds it has. Two further
 departures, both stated in the report: a *failed* unit (a system that raised
 on its unit) counts as neither recovering nor closing, and has no gap, though
-controls 2 and 3 rank it as ``-inf`` (:func:`control_rows`); and
+controls 2 and 3 rank it against the control passing (:func:`control_rows`:
+``-inf`` for planted-hint and B-sym@10F, ``+inf`` for B-rand); and
 the "too hard" clause reads every non-LLM system (the LLM arms do not cover
 every truth and seed in the pilot) -- their close shares are reported beside
 it.
@@ -680,6 +681,9 @@ class Verdict:
 
 #: Controls 2 and 3's systems.
 RANKED_SYSTEMS: Final = frozenset({PLANTED, B_RAND, B_SYM_10F})
+#: The ranked systems that are a control's comparator, not its system under test
+#: (control 2's B-rand; control 3 compares B-sym@10F with ORACLE through its gap).
+COMPARATORS: Final = frozenset({B_RAND})
 
 
 def score_rows(
@@ -750,10 +754,14 @@ def oracle_inf_reason(units: Sequence[tuple[str, int]]) -> list[str]:
 def control_rows(
     rows: Sequence[Row], truths: Mapping[str, TruthEntry]
 ) -> list[gonogo.ScoreRow]:
-    """:func:`score_rows`, plus each unit of controls 2 and 3 with no reading at
-    ``-inf``, so a crash cannot pass a control that a ``-inf`` fails (control room
-    ruling R3, INBOX 2026-11-07). A row with a reading and no gap is left out: its
-    ORACLE is what is missing, and control 1 answers for that.
+    """:func:`score_rows`, plus each unit of controls 2 and 3 with no reading,
+    ranked against the control passing, so a crash cannot pass a control (control
+    room rulings R3 and "R3 direction", INBOX 2026-11-07): ``-inf`` for a system
+    under test (planted-hint in control 2, B-sym@10F in control 3) and ``+inf`` for
+    control 2's comparator, B-rand (:data:`COMPARATORS`; gonogo reads a truth with
+    any ``+inf`` B-rand unit as ``+inf``). A scored ``-inf`` stays as scored. A row
+    with a reading and no gap is left out: its ORACLE is what is missing, and
+    control 1 answers for that.
 
     A NaN or ``+inf`` reading of a ranked system raises :class:`ScoringError`: no
     rule ranks it, and leaving it out would let it pass a control that ``-inf``
@@ -781,7 +789,7 @@ def control_rows(
                 truth=r.truth,
                 seed=r.seed,
                 system=r.system,
-                gap=-math.inf,
+                gap=math.inf if r.system in COMPARATORS else -math.inf,
                 gap_closed=None,
                 exact=False,
                 in_dictionary=truths[r.truth].in_dictionary,

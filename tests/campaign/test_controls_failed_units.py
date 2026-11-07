@@ -1,7 +1,9 @@
-"""A failed unit ranks as ``-inf`` in controls 2 and 3 (control room ruling R3,
-INBOX 2026-11-07; red team finding 3 on SPEC part C). An instrument, so these tests
-came first (SPEC §6.3): a unit that crashed left the control, so a crash could pass a
-control that a ``-inf`` fails. Toy tables only.
+"""A failed unit ranks against the control passing in controls 2 and 3 (control room
+rulings R3 and "R3 direction", INBOX 2026-11-07; red team finding 3 on SPEC part C
+and finding 1 on the analysis code): ``-inf`` for planted-hint and B-sym@10F, ``+inf``
+for B-rand, control 2's comparator. An instrument, so these tests came first (SPEC
+§6.3): a unit that crashed left the control, so a crash could pass a control that a
+``-inf`` fails. Toy tables only.
 """
 
 from __future__ import annotations
@@ -14,13 +16,16 @@ import numpy as np
 import pytest
 from test_campaign_analysis import NAMES, _table
 from test_contrasts import (
+    B_RAND,
     B_SYM_10F,
     FIT_FAILURE,
+    PLANTED,
     SEEDS,
     TRUTHS,
     failed,
     read,
     score,
+    score_all,
     tabled,
     world,
 )
@@ -31,6 +36,7 @@ from sciagent.campaign.analysis import (
     Verdict,
     control_rows,
     derive,
+    score_rows,
     verdict,
 )
 from sciagent.scoring.errors import ScoringError
@@ -98,11 +104,77 @@ def test_a_failed_planted_unit_ranks_lowest_in_control_2(change: Change) -> None
     assert gone.planted.differences == inf.planted.differences
 
 
+def difference_on(v: Verdict, truth: str) -> float:
+    assert v.planted is not None
+    return dict(zip(v.planted.truths, v.planted.differences, strict=True))[truth]
+
+
 def test_a_failed_b_rand_unit_ranks_lowest_too() -> None:
+    """Moved by the R3 direction ruling (INBOX 2026-11-07): B-rand is control 2's
+    comparator, so its failed unit ranks against the control passing, as ``+inf``,
+    where a scored ``-inf`` still ranks lowest. The two now differ."""
     gone = read_verdict(changed("B-rand", NAMES[:1], crashed))
     inf = read_verdict(changed("B-rand", NAMES[:1], at_minus_inf))
-    assert gone.planted is not None and inf.planted is not None
-    assert gone.planted.differences == inf.planted.differences
+    assert difference_on(gone, NAMES[0]) == -math.inf
+    assert difference_on(inf, NAMES[0]) == math.inf
+
+
+def test_every_b_rand_unit_crashed_fails_control_2() -> None:
+    """The red team's case (``/tmp/rt-s38/d1_controls.py`` (a)): planted-hint is
+    worse than B-rand everywhere and every B-rand unit crashed. Under R3's first
+    words control 2 passed at a median of ``+inf`` and every read was reportable."""
+    rows = world()
+    score_all(rows, PLANTED, -0.8)
+    assert not read_verdict(tabled(rows)).controls_pass
+    for t in TRUTHS:
+        for seed in SEEDS:
+            failed(rows, (t, seed, B_RAND), "boom")
+    v = read_verdict(tabled(rows))
+    assert not v.controls_pass
+    assert v.planted is not None and not v.planted.passed
+    assert all(d == -math.inf for d in v.planted.differences)
+    assert not any(r.reportable for r in read(tabled(rows)).values())
+
+
+def test_a_scored_minus_inf_b_rand_row_is_read_as_before() -> None:
+    """A genuinely scored ``-inf`` stays as scored: no row is added for it, and its
+    truth's difference is ``+inf``, as before the ruling."""
+    table = changed("B-rand", NAMES[:1], at_minus_inf)
+    rows = [r for r in table.rows if not r.llm]
+    assert control_rows(rows, table.truths) == score_rows(rows, table.truths)
+    assert difference_on(read_verdict(table), NAMES[0]) == math.inf
+
+
+def test_one_scored_minus_inf_and_one_crashed_b_rand_seed_is_plus_inf() -> None:
+    """Mixed: the crash counts against the control, never NaN."""
+    table = _table(0.0)
+
+    def mixed(r: Row) -> Row:
+        if r.system != "B-rand" or r.truth != NAMES[0]:
+            return r
+        return at_minus_inf(r) if r.seed == 1 else crashed(r) if r.seed == 2 else r
+
+    table = replace(table, rows=tuple(derive([mixed(r) for r in table.rows])))
+    gaps = {
+        r.seed: r.gap
+        for r in control_rows(table.rows, table.truths)
+        if (r.truth, r.system) == (NAMES[0], "B-rand")
+    }
+    assert gaps[1] == -math.inf and gaps[2] == math.inf
+    v = read_verdict(table)
+    assert difference_on(v, NAMES[0]) == -math.inf
+    assert v.planted is not None and not any(map(math.isnan, v.planted.differences))
+
+
+def test_a_failed_planted_unit_still_enters_at_minus_inf() -> None:
+    table = changed("planted-hint", NAMES[:1], crashed)
+    added = [
+        r
+        for r in control_rows(table.rows, table.truths)
+        if (r.truth, r.system) == (NAMES[0], "planted-hint")
+    ]
+    assert added and all(r.gap == -math.inf for r in added)
+    assert difference_on(read_verdict(table), NAMES[0]) == -math.inf
 
 
 def test_a_row_with_a_reading_and_no_oracle_is_not_a_failed_unit() -> None:

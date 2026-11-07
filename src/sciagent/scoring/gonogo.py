@@ -169,7 +169,9 @@ def _index(rows: Sequence[ScoreRow]) -> dict[tuple[str, int, str], ScoreRow]:
         key = (r.truth, r.seed, r.system)
         if key in out:
             raise ScoringError(f"duplicate row for {key}")
-        if math.isnan(r.gap) or r.gap == math.inf:
+        # +inf is a failed unit of control 2's comparator (R3 direction, INBOX
+        # 2026-11-07; :func:`_mean_gap`): B-rand only.
+        if math.isnan(r.gap) or (r.gap == math.inf and r.system != B_RAND):
             raise ScoringError(f"gap {r.gap} in row {key}: only -inf is allowed")
         if r.gap_closed is not None and not math.isfinite(r.gap_closed):
             raise ScoringError(f"non-finite gap closed in row {key}")
@@ -200,6 +202,11 @@ def _mean_gap(index: Mapping[tuple[str, int, str], ScoreRow], s: str, t: str) ->
     mine = _system_rows(index, s, t)
     if not mine:
         raise ScoringError(f"no {s} rows for truth {t!r}")
+    # A failed comparator unit (``+inf``, B-rand only: :func:`_index`) ranks
+    # against the control whatever the truth's other seeds scored, a scored -inf
+    # included, so it never gives NaN (R3 direction, INBOX 2026-11-07).
+    if any(r.gap == math.inf for r in mine):
+        return math.inf
     return _mean([r.gap for r in mine])
 
 

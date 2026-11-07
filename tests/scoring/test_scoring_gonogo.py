@@ -20,6 +20,7 @@ from sciagent.scoring.gonogo import (
     ORACLE,
     PLANTED,
     Outcome,
+    PlantedCheck,
     ScoreRow,
     bsym_approaches_oracle,
     closes,
@@ -344,6 +345,52 @@ def test_control_2_fails_when_planted_is_the_one_at_minus_infinity() -> None:
         rows = _with_gap(rows, t, 0, PLANTED, float("-inf"))
     check = planted_beats_rand(rows, TRUTHS, rng=np.random.default_rng(0))
     assert not check.passed and check.losses == 4
+
+
+def _difference_on(check: object, truth: str) -> float:
+    assert isinstance(check, PlantedCheck)
+    return dict(zip(check.truths, check.differences, strict=True))[truth]
+
+
+def test_control_2_ranks_a_plus_inf_b_rand_against_planted() -> None:
+    """R3 direction (INBOX 2026-11-07): a failed comparator unit reaches gonogo as
+    a ``+inf`` B-rand gap, and the truth's difference is ``-inf``."""
+    rows = _with_gap(_table(GOOD), "t00", 0, B_RAND, float("inf"))
+    check = planted_beats_rand(rows, TRUTHS, rng=np.random.default_rng(0))
+    assert _difference_on(check, "t00") == float("-inf")
+    assert check.losses == 1
+
+
+def test_a_plus_inf_b_rand_seed_outranks_a_scored_minus_inf_one() -> None:
+    """Mixed: one seed scored ``-inf``, another failed. The truth's B-rand value is
+    ``+inf`` (the crash counts against the control), never NaN."""
+    rows = _with_gap(_table(GOOD), "t00", 0, B_RAND, float("-inf"))
+    rows = _with_gap(rows, "t00", 1, B_RAND, float("inf"))
+    check = planted_beats_rand(rows, TRUTHS, rng=np.random.default_rng(0))
+    assert _difference_on(check, "t00") == float("-inf")
+    assert not any(np.isnan(check.differences))
+
+
+def test_a_planted_minus_inf_against_a_plus_inf_b_rand_is_a_loss() -> None:
+    rows = _with_gap(_table(GOOD), "t00", 0, PLANTED, float("-inf"))
+    rows = _with_gap(rows, "t00", 0, B_RAND, float("inf"))
+    check = planted_beats_rand(rows, TRUTHS, rng=np.random.default_rng(0))
+    assert _difference_on(check, "t00") == float("-inf")
+
+
+@pytest.mark.parametrize("system", [ORACLE, B_LIB, PLANTED, B_SYM_10F, B_SPARSE])
+def test_plus_inf_is_refused_on_every_system_but_b_rand(system: str) -> None:
+    rows = _with_gap(_table(GOOD), "t00", 0, system, float("inf"))
+    with pytest.raises(ScoringError, match="only -inf"):
+        planted_beats_rand(rows, TRUTHS, rng=np.random.default_rng(0))
+    with pytest.raises(ScoringError, match="only -inf"):
+        bsym_approaches_oracle(rows, TRUTHS)
+
+
+def test_nan_is_refused_on_b_rand_too() -> None:
+    rows = _with_gap(_table(GOOD), "t00", 0, B_RAND, float("nan"))
+    with pytest.raises(ScoringError):
+        planted_beats_rand(rows, TRUTHS, rng=np.random.default_rng(0))
 
 
 def test_control_2_needs_both_the_rank_test_and_the_median_ci() -> None:

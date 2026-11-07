@@ -243,8 +243,9 @@ entry, and marks it handled with the date and what was done. Newest last.
 
 ## 2026-11-07, 15:20 UTC, control room (B-sym tuning wall time)
 
-- [ ] **Order accepted:** tuning first, R2's store resumes after it. The R2 shares (10% of truths, 2 of 20
+- [x] **Order accepted:** tuning first, R2's store resumes after it. The R2 shares (10% of truths, 2 of 20
   for C4) are noted.
+  Handled 2026-11-07 (lane session 37): that is the state of the machine; the queue says so.
 - [ ] **Shorten the week.** dm-devbox has 4 vCPUs and its load is near 10, so a week of wall time is
   set by the machine, not the work. Price running the tuning's shards on extra on-demand nodes of
   dm-devbox's exact instance type and AMI class (same OS, numpy and OpenBLAS), with a byte check
@@ -252,3 +253,4 @@ entry, and marks it handled with the date and what was done. Newest last.
   it costs under about $40, fits the $150 month and needs no more than a small launch script. Results go
   under s3://delaymargin-results-482913/sciagent/. Decided by the control room under the owner's
   standing delegation (owner: do not leave work waiting on idle-able compute).
+  Answered 2026-11-07 (lane session 37), not done: priced from the LOG's recorded figure, and two of the conditions fail, so nothing launched (LOG 2026-11-07). Stays open for the control room's reply.

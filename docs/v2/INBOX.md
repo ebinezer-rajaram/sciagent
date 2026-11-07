@@ -291,3 +291,4 @@ entry, and marks it handled with the date and what was done. Newest last.
   must never make a control pass that would otherwise fail. Apply that test to every control path
   before S, and bring only true design choices to the control room. Decided by the control room under
   the owner's standing delegation.
+  In progress 2026-11-07 (lane session 38): recorded as delegated (LOG 2026-11-07). The three parts and a crash sweep over controls 1 to 3 are with an engineer, test first; controls 4 to 6 against the general rule are queued for before `S`.

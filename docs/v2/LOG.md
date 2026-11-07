@@ -2756,3 +2756,12 @@ From `docs/v2/redteam/2026-11-07_analysis-code.md`, findings 2, 3, 4, 7, 8 and 1
   - `read_scope` refuses a set of kept, dropped and unchecked truths that does not partition the table, and an empty table is not confirmatory.
   - The header prints the block's seeds.
 - **Why.** The reviewer showed that a typed root or commit could open the gate, and that a Haiku block's scope line read a table with no ORACLE. Mutants M1, M2 and M3 were killed. No address or version constant moves.
+
+## 2026-11-07: Controls 2 and 3 read every undropped truth; a crash never helps a control pass (delegated: control room, under the owner's standing delegation)
+
+Decided in INBOX 2026-11-07, on the lane's stop point after round 2 of the analysis-code red team (`docs/v2/redteam/2026-11-07_analysis-code-round2.md`, finding 1). The finding was that a failed, NaN or scored `-inf` B-lib unit left its truth unchecked by control 1, and controls 2 and 3 read kept truths only, so B-lib crashing on truths where planted-hint loses turned a failing control 2 into a pass (stand-in rows: p 0.222 to 0.00957). **The three parts:**
+1. Controls 2 and 3 read every truth control 1 does not drop, kept and unchecked alike.
+2. A scored `-inf` B-lib reading counts as ORACLE beating B-lib for control 1.
+3. A failed or NaN B-lib unit leaves the truth unchecked for the reads and counts in R2's scope.
+
+All three are test first, before `S`. **The general rule, from now on:** a crash or missing reading must never make a control pass that would otherwise fail. It is applied to every control path before `S`, and only real design choices go to the control room. This entry narrows INBOX 2026-11-06 ("Truths control 1 cannot check leave the reads"): such truths still leave the reads, but not controls 2 and 3.

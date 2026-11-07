@@ -42,6 +42,16 @@ every call is either wholly in the log (and so in the session's record) or
 not there at all. ``on_commit`` is called inside that gate with each logged
 call, so what a caller keeps from it stops moving when the layer closes.
 
+Framework time (P4b D5). A handler may spend time on the framework's behalf
+rather than the agent's: policy mode's decision inside ``run_experiment`` fits,
+simulates and scores the entertained set before any experiment runs. The
+handler wraps that work in :meth:`FrameworkClock.measure` on the layer's
+:attr:`ToolLayer.clock`; each logged call carries the time measured during it
+(:attr:`ToolCall.framework_s`, 0.0 for a call that measured nothing), and the
+live runner excludes it from the session's wall limit. It is a measurement, not
+an output: it is in no digest and no hashed record entry, so it moves no
+address and replay does not compare it.
+
 This module imports nothing from the Agent SDK.
 """
 
@@ -49,7 +59,9 @@ from __future__ import annotations
 
 import re
 import threading
-from collections.abc import Callable, Mapping, Sequence
+import time
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -60,6 +72,7 @@ from sciagent.harness.record import canonical_json, digest
 __all__ = [
     "BudgetMeter",
     "Footer",
+    "FrameworkClock",
     "Handler",
     "ToolCall",
     "ToolLayer",
@@ -148,7 +161,9 @@ class BudgetMeter:
 
 @dataclass(frozen=True)
 class ToolCall:
-    """One logged call, in execution order."""
+    """One logged call, in execution order. ``framework_s`` is the time the
+    handler spent inside :meth:`FrameworkClock.measure` (module docstring); it
+    is a measurement, in no digest."""
 
     index: int
     name: str
@@ -156,6 +171,67 @@ class ToolCall:
     output: ToolOutput
     charged: str | None
     budgets_after: Mapping[str, int]
+    framework_s: float = 0.0
+
+
+class FrameworkClock:
+    """Measures the time handlers spend on the framework's behalf (P4b D5).
+
+    Thread-safe: a handler measures in a worker thread while the live runner
+    reads :meth:`paused_s` and :attr:`measuring` from its event loop. A
+    listener, if set, is called (from the measuring thread, under the clock's
+    lock) each time a measurement ends, so the runner can re-arm its deadline;
+    clearing it with ``None`` waits for a running notification to finish.
+    Measurements do not nest.
+    """
+
+    __slots__ = ("_listener", "_lock", "_now", "_since", "_total")
+
+    def __init__(self, now: Callable[[], float] = time.monotonic) -> None:
+        self._now = now
+        self._lock = threading.Lock()
+        self._since: float | None = None
+        self._total = 0.0
+        self._listener: Callable[[], None] | None = None
+
+    @contextmanager
+    def measure(self) -> Iterator[None]:
+        """Count the time spent in the block as framework time."""
+        with self._lock:
+            if self._since is not None:
+                raise ToolLayerError("framework time measurements do not nest")
+            since = self._now()
+            self._since = since
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._total += self._now() - since
+                self._since = None
+                if self._listener is not None:
+                    self._listener()
+
+    @property
+    def measuring(self) -> bool:
+        """Whether a measurement is running now."""
+        with self._lock:
+            return self._since is not None
+
+    def total_s(self) -> float:
+        """Framework time of every finished measurement."""
+        with self._lock:
+            return self._total
+
+    def paused_s(self) -> float:
+        """Framework time so far, a running measurement included."""
+        with self._lock:
+            running = 0.0 if self._since is None else self._now() - self._since
+            return self._total + running
+
+    def listen(self, listener: Callable[[], None] | None) -> None:
+        """Set (or, with ``None``, clear) the end-of-measurement listener."""
+        with self._lock:
+            self._listener = listener
 
 
 class ToolLayer:
@@ -163,6 +239,7 @@ class ToolLayer:
 
     __slots__ = (
         "_calls",
+        "_clock",
         "_closed",
         "_finished",
         "_footer",
@@ -181,6 +258,7 @@ class ToolLayer:
         *,
         footer: Footer | None = None,
         on_commit: Callable[[ToolCall], None] | None = None,
+        clock: FrameworkClock | None = None,
     ) -> None:
         names = [s.name for s in specs]
         if len(set(names)) != len(names):
@@ -208,6 +286,7 @@ class ToolLayer:
         self._submission: ToolCall | None = None
         self._footer = footer
         self._on_commit = on_commit
+        self._clock = FrameworkClock() if clock is None else clock
         self._closed = False
         #: Held for the whole of a call, handler included.
         self._lock = threading.Lock()
@@ -230,6 +309,11 @@ class ToolLayer:
 
     def meter(self, name: str) -> BudgetMeter:
         return self._meters[name]
+
+    @property
+    def clock(self) -> FrameworkClock:
+        """The clock handlers measure framework time on (module docstring)."""
+        return self._clock
 
     @property
     def calls(self) -> tuple[ToolCall, ...]:
@@ -256,11 +340,13 @@ class ToolLayer:
         with self._lock:
             if self._closed:
                 return _refusal(_ENDED)
+            before = self._clock.total_s()
             output, charged, spec = self._dispatch(name, args)
+            framework_s = self._clock.total_s() - before
             with self._gate:
                 if self._closed:
                     return _refusal(_ENDED)
-                return self._commit(name, args, output, charged, spec)
+                return self._commit(name, args, output, charged, spec, framework_s)
 
     def close(self) -> None:
         """End the log now, without waiting for a running handler. Idempotent."""
@@ -284,6 +370,7 @@ class ToolLayer:
         output: ToolOutput,
         charged: str | None,
         spec: ToolSpec | None,
+        framework_s: float,
     ) -> ToolOutput:
         """Charge and log one call; return the output as logged."""
         if charged is not None:
@@ -301,6 +388,7 @@ class ToolLayer:
             output=output,
             charged=charged,
             budgets_after={n: m.used for n, m in self._meters.items()},
+            framework_s=framework_s,
         )
         self._calls.append(logged)
         if spec is not None and spec.terminal and not output.is_error:

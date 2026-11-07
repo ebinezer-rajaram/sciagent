@@ -129,6 +129,7 @@ from sciagent.harness.ledger import Prediction, PredictionLedger
 from sciagent.harness.record import canonical_json as record_json
 from sciagent.harness.tools import (
     BudgetMeter,
+    FrameworkClock,
     Handler,
     ToolCall,
     ToolLayer,
@@ -401,6 +402,9 @@ class Lab:
         #: The experiment-choice policy (P4 Δ11); None: the agent designs.
         self.policy: PolicyName | None = policy_name
         self.policy_mode: PolicyMode | None = None
+        #: The policy's decisions are measured on this, the layer's clock, and
+        #: kept off the agent's wall limit (P4b D5). Nothing else measures.
+        self.clock = FrameworkClock()
         if policy_name is not None and policy_seed is not None:
             self.policy_mode = PolicyMode(
                 policy_name,
@@ -534,11 +538,14 @@ class Lab:
             )
         datasets = self.world.datasets
         try:
-            chosen = mode.decide(
-                self.world.experiments_run,
-                self.state.belief_structures,
-                [datasets[i] for i in _ordered_ids(datasets)],
-            )
+            # Framework time (P4b D5): the decision is off the agent's clock,
+            # a fault's included; the experiment it chooses is not.
+            with self.clock.measure():
+                chosen = mode.decide(
+                    self.world.experiments_run,
+                    self.state.belief_structures,
+                    [datasets[i] for i in _ordered_ids(datasets)],
+                )
         except SciAgentError as error:
             # A fault inside the framework's decision (the policy core, its
             # fits, simulations or diagnostics), not an agent act: its message
@@ -1205,7 +1212,11 @@ class Lab:
 
     def layer(self) -> ToolLayer:
         return ToolLayer(
-            self.specs(), self.budgets(), footer=self._footer, on_commit=self._commit
+            self.specs(),
+            self.budgets(),
+            footer=self._footer,
+            on_commit=self._commit,
+            clock=self.clock,
         )
 
 

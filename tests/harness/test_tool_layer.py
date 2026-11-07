@@ -15,7 +15,13 @@ import pytest
 from harness_toy import toy_layer
 
 from sciagent.harness.errors import ToolLayerError
-from sciagent.harness.tools import BudgetMeter, ToolLayer, ToolOutput, ToolSpec
+from sciagent.harness.tools import (
+    BudgetMeter,
+    FrameworkClock,
+    ToolLayer,
+    ToolOutput,
+    ToolSpec,
+)
 
 EMPTY: dict[str, Any] = {"type": "object", "properties": {}, "required": []}
 
@@ -126,6 +132,7 @@ def test_handlers_reach_state_only_through_the_layer() -> None:
         "budgets",
         "call",
         "calls",
+        "clock",
         "close",
         "finished",
         "idle",
@@ -282,3 +289,91 @@ def test_idle_says_whether_a_handler_is_still_running() -> None:
     handler.release.set()
     thread.join(30.0)
     assert layer.idle(0.0)
+
+
+# --------------------------------------------------------------------------
+# Framework time (P4b D5)
+# --------------------------------------------------------------------------
+
+
+class Ticking:
+    """A fake monotonic clock that advances only when told to."""
+
+    def __init__(self) -> None:
+        self.now = 100.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def test_each_call_carries_the_framework_time_measured_during_it() -> None:
+    ticks = Ticking()
+    clock = FrameworkClock(ticks)
+
+    def decide(_args: Mapping[str, Any]) -> ToolOutput:
+        ticks.now += 1.0  # the handler's own time: not framework time
+        with clock.measure():
+            ticks.now += 7.5
+        return ToolOutput("chosen")
+
+    layer = ToolLayer(
+        [
+            ToolSpec("decide", "d", EMPTY, decide, budget="E"),
+            ToolSpec("plain", "p", EMPTY, Counting(), budget="E"),
+        ],
+        {"E": 5},
+        clock=clock,
+    )
+    plain = layer.call("plain", {})
+    decided = layer.call("decide", {})
+    assert [c.framework_s for c in layer.calls] == [0.0, 7.5]
+    assert clock.total_s() == 7.5
+    # a measurement, not an output: the digest is the output's alone
+    assert decided.digest == ToolOutput("chosen").digest
+    assert plain.digest == ToolOutput("call 1").digest
+
+
+def test_a_layer_without_a_clock_has_one_that_measures_nothing() -> None:
+    layer = ToolLayer([ToolSpec("probe", "p", EMPTY, Counting())], {})
+    layer.call("probe", {})
+    assert layer.clock.total_s() == 0.0
+    assert layer.calls[0].framework_s == 0.0
+
+
+def test_framework_time_is_paused_time_while_it_runs() -> None:
+    ticks = Ticking()
+    clock = FrameworkClock(ticks)
+    ended: list[float] = []
+    clock.listen(lambda: ended.append(ticks.now))
+    with clock.measure():
+        ticks.now += 2.0
+        assert clock.measuring
+        assert clock.paused_s() == 2.0
+        assert clock.total_s() == 0.0
+    assert not clock.measuring
+    assert clock.total_s() == clock.paused_s() == 2.0
+    assert ended == [102.0]
+    clock.listen(None)
+    with clock.measure():
+        ticks.now += 1.0
+    assert ended == [102.0]
+    assert clock.total_s() == 3.0
+
+
+def test_framework_time_counts_when_the_measured_work_raises() -> None:
+    ticks = Ticking()
+    clock = FrameworkClock(ticks)
+    with pytest.raises(ValueError, match="fault"), clock.measure():
+        ticks.now += 4.0
+        raise ValueError("fault")
+    assert clock.total_s() == 4.0 and not clock.measuring
+
+
+def test_framework_time_measurements_do_not_nest() -> None:
+    clock = FrameworkClock()
+    with (
+        clock.measure(),
+        pytest.raises(ToolLayerError, match="nest"),
+        clock.measure(),
+    ):
+        pass

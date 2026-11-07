@@ -50,6 +50,17 @@ Tool handlers run in a worker thread (``asyncio.to_thread``), so a sandbox call
 that takes seconds does not stall the SDK's message pump; the layer's lock fixes
 the call order.
 
+The wall limit is on the agent's clock (P4b D5): wall time since the session
+started, less the framework time handlers measured on the layer's
+:class:`~sciagent.harness.tools.FrameworkClock` (a policy decision inside
+``run_experiment``). The deadline is paused while a measurement runs and moved
+by its length when it ends (:class:`_Deadline`); the limit itself, the
+``wall_time_s`` the prompt states, does not change. The record's unhashed
+``timing`` section holds ``framework_s`` (each logged call's framework time, by
+call index; 0.0 for every call of a session without a policy) and ``agent_s``
+(``wall_s`` less all framework time), so no address moves and replay is as
+before.
+
 The end of the session is a line in the layer's log. The wall time cancels the
 await, not the thread, so the loop closes the layer as soon as the stream has
 ended and before it decides anything: every call the layer logged by then is
@@ -97,7 +108,7 @@ from sciagent.harness.errors import (
     SessionFailedError,
 )
 from sciagent.harness.record import SessionRecord, canonical_json
-from sciagent.harness.tools import ToolCall, ToolLayer, ToolOutput
+from sciagent.harness.tools import FrameworkClock, ToolCall, ToolLayer, ToolOutput
 from sciagent.harness.voids import assess, foreign_reasons
 from sciagent.systems.llm.agent_sdk_provider import (
     CONTAMINATING_VARIABLES,
@@ -151,7 +162,8 @@ class AgentConfig:
 
     ``seed`` is not used by the harness: it is recorded so a replay factory can
     rebuild the same layer. ``max_turns`` is enforced by Claude Code;
-    ``wall_time_s`` by this loop.
+    ``wall_time_s`` by this loop, on the agent's clock (framework decision
+    time excluded; module docstring).
     """
 
     model: str
@@ -374,6 +386,67 @@ _MANIFEST_KEYS: Final = (
 )
 
 
+class _Deadline:
+    """The wall limit on the agent's clock: a deadline that framework time pauses.
+
+    Agent time is wall time since ``started`` less the clock's framework time,
+    a running measurement included, so it stands still while one runs. One
+    timer is armed for when agent time would reach the limit. When it fires it
+    checks again: during a measurement it does nothing (the measurement's end
+    re-arms it, through the clock's listener, from the measuring thread), and
+    with time left it re-arms for that time. Only when agent time has reached
+    the limit is the scope's timeout set to now, which cancels the session's
+    await as a plain ``asyncio.timeout`` would. Every timer runs on the loop
+    thread; the measuring thread only enqueues a check.
+    """
+
+    def __init__(self, limit_s: float, started: float, clock: FrameworkClock) -> None:
+        self.limit_s = limit_s
+        self.started = started
+        self.clock = clock
+        self.loop: asyncio.AbstractEventLoop | None = None
+        self.scope: asyncio.Timeout | None = None
+        self.handle: asyncio.TimerHandle | None = None
+        self.stopped = False
+
+    def agent_s(self) -> float:
+        return time.monotonic() - self.started - self.clock.paused_s()
+
+    def start(self, scope: asyncio.Timeout) -> None:
+        self.loop = asyncio.get_running_loop()
+        self.scope = scope
+        self.clock.listen(self._poke)
+        self._check()
+
+    def stop(self) -> None:
+        """Disarm, before the scope exits; no check runs after this."""
+        self.clock.listen(None)
+        self.stopped = True
+        if self.handle is not None:
+            self.handle.cancel()
+            self.handle = None
+
+    def _poke(self) -> None:
+        """A measurement ended (any thread): check on the loop."""
+        if self.loop is not None:
+            self.loop.call_soon_threadsafe(self._check)
+
+    def _check(self) -> None:
+        if self.stopped or self.loop is None or self.scope is None:
+            return
+        if self.handle is not None:
+            self.handle.cancel()
+            self.handle = None
+        if self.clock.measuring:
+            return
+        remaining = self.limit_s - self.agent_s()
+        if remaining > 0:
+            self.handle = self.loop.call_later(remaining, self._check)
+            return
+        self.stopped = True
+        self.scope.reschedule(self.loop.time())
+
+
 class _Session:
     """The state of one run's message loop."""
 
@@ -545,7 +618,12 @@ class _Session:
                 **(extra or {}),
             },
         )
-        self.record.set_timing("wall_s", round(self.elapsed(), 6))
+        wall = self.elapsed()
+        self.record.set_timing("wall_s", round(wall, 6))
+        self.record.set_timing("agent_s", round(wall - self.layer.clock.paused_s(), 6))
+        self.record.set_timing(
+            "framework_s", [round(c.framework_s, 6) for c in self.layer.calls]
+        )
 
     def classify(self) -> str:
         if self.layer.finished:
@@ -623,15 +701,20 @@ class _Session:
             },
         )
         reason: str | None = None
+        deadline = _Deadline(self.config.wall_time_s, self.started, self.layer.clock)
         try:
-            async with asyncio.timeout(self.config.wall_time_s):
-                async with contextlib.aclosing(
-                    driver(self.config.prompt, options, tools)
-                ) as stream:
-                    async for message in stream:
-                        if self.fault is not None:
-                            break
-                        self.consume(message)
+            async with asyncio.timeout(None) as scope:
+                deadline.start(scope)
+                try:
+                    async with contextlib.aclosing(
+                        driver(self.config.prompt, options, tools)
+                    ) as stream:
+                        async for message in stream:
+                            if self.fault is not None:
+                                break
+                            self.consume(message)
+                finally:
+                    deadline.stop()
         except TimeoutError:
             reason = "wall_time"
         except SciAgentError:

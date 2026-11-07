@@ -624,6 +624,91 @@ def test_per_decision_wall_cost_is_reported(
 
 
 # --------------------------------------------------------------------------
+# The decision is framework time (P4b D5)
+# --------------------------------------------------------------------------
+
+#: What the stand-in decision sleeps before deciding, in seconds.
+DECISION_S: Final = 0.6
+
+
+def _slow_decisions(
+    monkeypatch: pytest.MonkeyPatch, seconds: float = DECISION_S
+) -> None:
+    """Every policy decision takes ``seconds`` longer than it would."""
+    decide = policy.PolicyMode.decide
+
+    def slow(self: policy.PolicyMode, *args: Any, **kwargs: Any) -> Any:
+        time.sleep(seconds)
+        return decide(self, *args, **kwargs)
+
+    monkeypatch.setattr(policy.PolicyMode, "decide", slow)
+
+
+def test_the_policy_decision_is_measured_as_framework_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The decision inside ``run_experiment`` is on the layer's clock; the
+    belief call and an agent-designed experiment measure nothing."""
+    _slow_decisions(monkeypatch)
+    the_lab = lab("AG-c", "named", policy="random", policy_settings=SMALL_POLICY)
+    layer = the_lab.layer()
+    assert not layer.call(*BELIEF).is_error
+    assert not layer.call("run_experiment", {}).is_error
+    assert layer.calls[0].framework_s == 0.0
+    assert layer.calls[1].framework_s >= DECISION_S
+    designed = lab("AG-c", "named").layer()
+    assert not designed.call(*BELIEF).is_error
+    assert not designed.call("run_experiment", plain_run(300.0)).is_error
+    assert [c.framework_s for c in designed.calls] == [0.0, 0.0]
+
+
+def test_a_policy_fault_is_framework_time_too(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def slow_fault(*args: Any, **kwargs: Any) -> Any:
+        time.sleep(DECISION_S)
+        raise PolicyError("forced")
+
+    monkeypatch.setattr(policy.PolicyMode, "decide", slow_fault)
+    the_lab = lab("AG-c", "named", policy="EIG", policy_settings=SMALL_POLICY)
+    layer = the_lab.layer()
+    assert not layer.call(*BELIEF).is_error
+    assert layer.call("run_experiment", {}).is_error
+    assert layer.calls[1].framework_s >= DECISION_S
+
+
+@pytest.mark.slow
+def test_policy_decisions_do_not_spend_the_agents_wall_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The limit is twice the fast run's own time (plus 0.2 s), and each of the
+    two decisions is made to take that long: under a clock that counted them
+    the session would end on ``wall_time``. It submits, its record holds each
+    decision's time, and its address is a fast run's at the same limit."""
+    clean_environment(monkeypatch)
+    probe = _session("random", tmp_path / "probe")
+    own = SessionRecord.load(probe.record_path).timing["agent_s"]
+    limit = 2 * own + 0.2
+    fast = _session("random", tmp_path / "fast", wall_time_s=limit)
+    _slow_decisions(monkeypatch, limit)
+    slow = _session("random", tmp_path / "slow", wall_time_s=limit)
+    assert slow.outcome == "submitted"
+    assert slow.head == fast.head
+    record = SessionRecord.load(slow.record_path)
+    assert record.timing["agent_s"] < limit < record.timing["wall_s"]
+    framework = record.timing["framework_s"]
+    names = [e.body["name"] for e in record.of_kind("tool_call")]
+    decided = [
+        f for n, f in zip(names, framework, strict=True) if n == "run_experiment"
+    ]
+    assert len(decided) == 2 and min(decided) >= limit
+    assert all(
+        f == 0.0 for n, f in zip(names, framework, strict=True) if n != "run_experiment"
+    )
+    replay_investigation(record, POINTPROC)
+
+
+# --------------------------------------------------------------------------
 # A fault inside the policy never reaches the agent's text
 # --------------------------------------------------------------------------
 

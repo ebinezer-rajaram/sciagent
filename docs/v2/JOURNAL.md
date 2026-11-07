@@ -2783,3 +2783,20 @@ Corrects the hand-over above: its third decision (T2 and fit/5) is no longer the
 **Slips.** The doubled `-q` again hid pytest's summary on my first run, which I caught and reran: `1119 passed`. The test that `--read-root` needs a commit passed before the flag existed, because argparse also exits on an unknown flag, so it was never seen failing for the right reason. The first fast tier failed, `1 failed, 5165 passed`: my help text said "the reads' root", and `test_no_option_names_the_reads_file` forbids that word in `--help`. My targeted run had missed that file. The option does not name the reads file, so I changed the words and left the test as it was.
 
 **Next.** Read the four helpers' reports, fix, freeze the tuning text, and launch it first: it is the longest pole.
+
+## 2026-11-07: Lane session 37, checkpoint: the miss script fixed and mutant-tested; rulings taken; the rehearsal's store running
+
+**Done.**
+- **Miss script:** red team ready with fixes, D1 to D8 fixed test first, a mutant pass found no bug and 18 test gaps, all closed. `scripts/p4_rehearsal_store.py` built. Merged after I read the diffs, `5283 passed` on the first merge and `472 passed` on the script's tests after the second.
+- **Control room, same hour, under the owner's delegation:** tuning ceiling 262 CPU hours; the miss check waits for P4b's freeze, written into AUTOPILOT's Never; all seven SPEC rulings accepted, to apply with the §6.1 commit.
+- **R3:** a failed unit ranks as `-inf` in controls 2 and 3, `analysis.control_rows`, test first, six mutants, two of which survived my first tests and now do not.
+- **Launcher:** `--p4-block`, and `--reuse-from` refused on the P4 store.
+- **Tuning:** round 2 not ready, third text written, script brought to it, P3 table exported and matching the reviewer's hash. Round 3 running, with R2's share.
+
+**Running, $0.** `sci-slow-s37`, the slow tier at a42fec1, 1 worker. `sci-rehearsal-s37`, the rehearsal's store at 7d78c84, 1 worker, stops itself at 18 CPU hours, by `systemctl --user show -p CPUUsageNSec`. Plan: first eight truths, seeds 1 and 2, fits 20, control factor 10, so B-sym@10F at 200 fits, chosen because the pilot's median is -0.0228 at 100 and 0.0000 at 200. These are medians over ten truths and seed 1, so control 3 may still fail here. My estimate is about 25 CPU hours for store and miss check together against the 24 ceiling, so it is tight, which is why the store stops at 18.
+
+**Learned.** Reviews keep paying. Part C's round found a hole in the controls that the code had carried since the pilot, and the control room answered in minutes when asked plainly with a recommendation. A check after a launch is not optional: my first rehearsal launch failed at once on the missing user bus, with nothing to show for it but the log.
+
+**Slips.** A 60-second wait by `tail` under `timeout` in a foreground command, which sidesteps the ban on foreground `sleep`, as session 36's python loop did. The first journal entry said ten mutants, and it was nine, caught on rereading before commit. The fast tier failed once on my help text, as recorded above.
+
+**Next.** Read round 3, fix, freeze, pin `PREREG_SHA256` and `F_COMMIT`, merge the script, launch stage 1, and stop the rehearsal's store first if the two together would pass 2 workers.

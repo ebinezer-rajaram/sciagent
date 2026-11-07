@@ -1,6 +1,6 @@
 # SPEC text for P4, part C: the rest of what §6.1 needs (proposed words, stop point)
 
-**Status: DRAFT, lane session 37, 2026-11-07, not reviewed, nothing applied. `docs/SPEC.md` is unchanged.** This is the list "text still owed before §6.1" at the end of `docs/v2/SPEC-TEXT-P4.md`. The control room's rule stands: one red-team round, and any wording that changes what the paper claims comes back. Most of this writes down what P4-PROPOSAL §5's decisions approved (LOG 2026-10-03) and what the code on v2 does. Each entry says which it is. Items marked **claim** change what the paper can say and are put as rulings.
+**Status: DRAFT, lane session 37, 2026-11-07, one round run, nothing applied. `docs/SPEC.md` is unchanged. Do not apply this text as it stands: the round found 13 blocking, and the section "After the round" at the end says which words replace these.** This is the list "text still owed before §6.1" at the end of `docs/v2/SPEC-TEXT-P4.md`. The control room's rule stands: one red-team round, and any wording that changes what the paper claims comes back. Most of this writes down what P4-PROPOSAL §5's decisions approved (LOG 2026-10-03) and what the code on v2 does. Each entry says which it is. Items marked **claim** change what the paper can say and are put as rulings.
 
 ## C1. §2.2, ψ search (Δ1): **claim**
 
@@ -106,4 +106,30 @@ This belongs to P4b's freeze, so it could wait for that commit. §6.1 lists the 
 
 ## What this does not cover
 
-Named minus anon's code, P4b's own pre-registration, and FSD's event cap: each is its own queue item. §6.2 and §7 were applied on 2026-11-06.
+P4b's own pre-registration and FSD's event cap: each is its own queue item. Named minus anon's code is done (`campaign/secondaries.py`). fit/6 stays a SPEC item for after P4. §6.2 and §7 were applied on 2026-11-06.
+
+## After the round
+
+`docs/v2/redteam/2026-11-07_spec-text-p4-c.md`: ready with fixes, 13 blocking, 16 non-blocking, each with replacement words. **Those words replace this file's wherever they differ**, with the line wraps of `docs/SPEC.md` matched on applying (finding 29). I checked findings 3 and 8 against the code and the stored score, and did not check the rest.
+
+**Taken as the reviewer gives them, since they make a sentence true and change no claim:** findings 5 (C5), 7 (C2), 12 (§2.2's sums), 14, 15, 17, 18, 19, 22, 23, 24, 25, 26, 27.
+
+**Rulings for the control room, because they change what the paper claims.** My recommendation on each is the reviewer's words.
+
+| Ruling | Finding | What it decides |
+|---|---|---|
+| R1 | 1, 13 | §2.2 and §1 say the miss check sizes a loss in the submitted fit's own score only, and nothing about selection or what would have been submitted |
+| R2 | 2 | Control 1 as the code has it, and **no limit on how many truths drop**: say so, or set a limit before any P4 data. On two seeds a truth with no real difference passes one time in four |
+| R3 | 3 | **Failed units in controls 2 and 3.** Today they leave the control, so stand-in rows with 7 of 12 B-sym@10F units failed passed where the same units at `-inf` failed. I recommend the code fix: a failed unit ranks as `-inf`, test first, before `S`. This was a declared departure for the pilot (`campaign/analysis.py`'s docstring) and was never decided for P4 |
+| R4 | 4 | Controls 2 and 3's proof sentences narrow: no control tests the efficiency curve, and control 3 speaks for at least half the kept truths |
+| R5 | 8 | §4.2's parking words, and with them a fact for P4b: **today's telling rule scored p = 1 on control 5's own test** on A1's planted truth (`score-ctlA1.txt`: K0 (iii) p=1; K5 p=0.03516). So control 5, which gates C5 and C3's AG-S-boed half, has no passing evidence under the rule that would run |
+| R6 | 9, 10, 11 | What `predict` and `fit` really offer, and that experiments never reach the scored fit, which bears on how C3 and the budget sweep are read |
+| R7 | 16, 20, 21, 28 | Milder: belief entries declared as a measurement intervention; ORACLE an upper bound on training likelihood only; what "scanned" means; Haiku 4.5 beside Sonnet and Opus 5.5 declared under Q5 |
+
+**R2's share, proposed by the lane, for the reviewer.** Accepted by the control room in principle (INBOX 2026-11-07), and the share is ours to pick with the reviewer. Add to control 1, after its last sentence:
+
+> On two seeds a truth with no real difference passes one time in four. If more than 10% of the test truths leave the reads, as dropped or unchecked, that is more than 4 of 40, the reads are reported as not confirmatory.
+
+Why 10%, set before any P4 data. On P3's dev rows (`docs/v2/bsym-tuning/p3-rows.json`), ORACLE minus B-lib is positive on all 60 worlds, the smallest 0.017 nats per event, so on each of the three pairs of seeds no truth drops. So the expected count on an identifiable population is near 0, and 0 of 60 bounds a world's failure at about 5% (rule of three), which gives a truth's at about 10%. More than that says the test population differs from dev, or that the rule is selecting on noise, and either way a read over what remains does not stand for the split. A stricter limit would fire on one or two noisy truths: if 10% of truths truly had no difference, more than 2 of 40 would leave with chance 0.59, more than 4 with 0.18 and more than 6 with 0.03. So this limit is not sensitive to a small unidentifiable share: it catches a large one. The test split is not sampled and nothing is known of it. The reads are still printed, and the label of the miss check does not change, since this is a line in P4's report.
+
+**For information (finding 6):** the void policy's "only" in decision 6 does not hold, since the harness also voids an aborted or hard-timeout run. A `hard_timeout` is absent from the reads while a `wall_time` end with no submission takes the floor.

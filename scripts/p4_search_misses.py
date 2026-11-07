@@ -36,7 +36,7 @@ journal, which nobody reads before the run ends (PR 9, point 4).
 **The rehearsal** (``--rehearsal --rehearsal-plan <json>``) changes exactly section
 2.10's list, runs only on the allowlist of :func:`check_rehearsal` and
 :func:`rehearsal_records`, and prefixes its label. The plan is JSON with the keys
-:data:`REHEARSAL_PLAN_KEYS`, and only ``truths`` is required.
+:data:`REHEARSAL_PLAN_KEYS`, and ``truths`` and ``seeds`` are required.
 
 **Processes and records** are as PR: a job is one fit in one process
 (:class:`Driver`), ``journal.jsonl`` is appended and fsynced by whichever process
@@ -233,6 +233,9 @@ DEV_SPLIT: Final = "dev"
 DRAFTS: Final = Path(".cache") / "drafts"
 REHEARSAL_DIR: Final = "p4-search-misses-rehearsal"
 REHEARSAL_HUNT_SIZE: Final = 5
+#: "the first eight dev truths by sorted id ... two seeds".
+REHEARSAL_TRUTHS: Final = 8
+REHEARSAL_SEEDS: Final = 2
 REHEARSAL_MIN_KEPT: Final = 6
 REHEARSAL_MIN_OUT_OF_DICTIONARY: Final = 2
 REHEARSAL_PLAN_KEYS: Final = (
@@ -427,6 +430,11 @@ def fit_case(truth: str, seed: int, text: str) -> str:
     return f"{truth}|{seed}|{text}"
 
 
+def s2_case(truth: str, seed: int, text: str) -> str:
+    """PR 2.2's case for S2, on the job and on both of its searches."""
+    return f"s2|{fit_case(truth, seed, text)}"
+
+
 def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -591,7 +599,9 @@ def read_records(path: Path) -> list[Record]:
 
 
 def repair_tail(path: Path) -> None:
-    """Before a resume appends: drop a torn fragment, which was never a record."""
+    """Before a resume or the terminal step appends: drop a torn fragment, which
+    was never a record. Appended to, it would merge with the new line into one that
+    ends in a newline, so nothing could tell it was torn and no label could follow."""
     if not path.exists():
         return
     data = path.read_bytes()
@@ -2423,6 +2433,7 @@ def terminal_step(
             faults.append("read_exception")
             fault = f"{type(error).__name__}: {error}"
         if faults:
+            repair_tail(paths.journal)
             Journal(paths.journal).append(
                 {"type": "terminal_fault", "kind": faults[-1], "reason": fault[:2000]}
             )
@@ -2511,6 +2522,7 @@ def finalise(
                 "--end, on the owner's or the control room's authority"
             )
         read_end_note(paths)
+        repair_tail(paths.journal)
         Journal(paths.journal).append({"type": "run_end", "reason": AUTHORISED_END})
         end = AUTHORISED_END
     elif end_flag:
@@ -2754,6 +2766,15 @@ def run_guards(
     return {"F2": f2_commit, "R2": r2, "S": s, "T": t, "prereg_sha256": prereg_sha}
 
 
+def main_checkout(repo: Path) -> Path:
+    """The directory that holds the repository's ``.git``. The script runs in
+    ``T``'s worktree, so "outside the repository" means outside this one too."""
+    common = _git_out(repo, "rev-parse", "--git-common-dir")
+    if common is None:
+        raise GuardFailure(f"git knows no repository at {repo}")
+    return (repo / common).resolve().parent
+
+
 def check_paths(
     *, split: Path, test_split: Path, store: Path, out: Path, repo: Path
 ) -> None:
@@ -2761,8 +2782,9 @@ def check_paths(
     for name, path in named:
         if not path.is_absolute():
             raise GuardFailure(f"{name} must be an absolute path: {path}")
-    if test_split.resolve().is_relative_to(repo.resolve()):
-        raise GuardFailure(f"--test-split {test_split} must be outside {repo}")
+    for checkout in (repo, main_checkout(repo)):
+        if test_split.resolve().is_relative_to(checkout.resolve()):
+            raise GuardFailure(f"--test-split {test_split} must be outside {checkout}")
     for parent in (repo, store):
         if out.resolve().is_relative_to(parent.resolve()):
             raise GuardFailure(f"the output {out} must be outside {parent}")
@@ -3069,6 +3091,19 @@ def past_job_cut() -> bool:
     """This process's CPU against :data:`JOB_CUT_HOURS`: a clock, so a fit it fires
     on is ``cpu_cut`` and the record says so."""
     return time.process_time() >= JOB_CUT_HOURS * 3600.0
+
+
+class JobCut:
+    """:func:`past_job_cut`, remembering that it fired. An S2 job runs up to four
+    searches, and a job's record has to name the cut (PR 2.10, PR 6) whichever of
+    them it landed in. The clock only goes forward, so a cut stays a cut."""
+
+    def __init__(self) -> None:
+        self.fired = False
+
+    def __call__(self) -> bool:
+        self.fired = self.fired or past_job_cut()
+        return self.fired
 
 
 def refit_at(
@@ -3960,6 +3995,7 @@ def reference_link_fit(
     k: int,
     case: str,
     root: int,
+    should_stop: Callable[[], bool],
 ) -> FitResult:
     """R0 and R1 on the training window (PR 4, S2). An exhaustive grid is settled
     by R0."""
@@ -3974,7 +4010,7 @@ def reference_link_fit(
         k=k,
         cap=S2_POINT_CAP,
         r2_max=0,
-        should_stop=past_job_cut,
+        should_stop=should_stop,
     )
     chosen = choose_point(r0_value(structure, train, channels, base), outcome.r1.best)
     if chosen is None:
@@ -3995,7 +4031,7 @@ class S2Job:
 
     @property
     def id(self) -> str:
-        return _sha(f"s2|{fit_case(self.truth.id, self.seed, self.text)}")
+        return _sha(s2_case(self.truth.id, self.seed, self.text))
 
     def run(self, sink: RecordSink) -> None:
         run_s2_job(self, sink)
@@ -4008,6 +4044,7 @@ def run_s2_job(job: S2Job, sink: RecordSink) -> None:
     train_set, validation_set = split_dataset(obs, sparse.train_fraction)
     train, validation = (train_set,), (validation_set,)
     features = parse(job.text, channels).features
+    cut = JobCut()
     payload: Record = {
         "kind": "s2",
         "truth": job.truth.id,
@@ -4027,7 +4064,8 @@ def run_s2_job(job: S2Job, sink: RecordSink) -> None:
         )
         payload |= {"r0_link": r0_link.value, "r0_scores": r0_scores}
         if r0_link.value != job.stored_link:
-            sink.record("done", {**payload, "status": "link_mismatch"})
+            status = {"status": "link_mismatch", "cpu_cut": cut.fired}
+            sink.record("done", {**payload, **status})
             return
         ref_link, ref_scores = link_choice(
             features,
@@ -4040,14 +4078,15 @@ def run_s2_job(job: S2Job, sink: RecordSink) -> None:
                 train,
                 channels,
                 k=S2_STARTS,
-                case=f"s2|{job.truth.id}|{job.seed}|{render(s)}",
+                case=s2_case(job.truth.id, job.seed, render(s)),
                 root=job.root,
+                should_stop=cut,
             ),
             blocked=frozenset(Link(x[0]) for x in r0_scores if x[1] == -math.inf),
         )
         payload |= {"reference_link": ref_link.value, "reference_scores": ref_scores}
         if ref_link is r0_link:
-            sink.record("done", {**payload, "status": "same"})
+            sink.record("done", {**payload, "status": "same", "cpu_cut": cut.fired})
             return
         structure = canonicalise(Structure(features, ref_link))
         text = render(structure)
@@ -4055,11 +4094,11 @@ def run_s2_job(job: S2Job, sink: RecordSink) -> None:
             structure,
             data.observational,
             channels,
-            reference_rng(fit_case(job.truth.id, job.seed, text), job.root),
+            reference_rng(s2_case(job.truth.id, job.seed, text), job.root),
             k=K_STARTS,
             cap=r1_cap(ref_link.value),
             r2_max=R2_GRID_MAX,
-            should_stop=past_job_cut,
+            should_stop=cut,
         )
         base = fit(structure, data.observational, channels, config=FitConfig())
         chosen = choose_point(
@@ -4084,6 +4123,7 @@ def run_s2_job(job: S2Job, sink: RecordSink) -> None:
         {
             **payload,
             "status": "differs",
+            "cpu_cut": cut.fired,
             "reference_text": text,
             "corrected_per_event": per_event,
         },
@@ -4283,9 +4323,10 @@ def build_census(
 
 def print_counts(census: Census, table: Table) -> None:
     """Section 2.1: counts only. No score, ``oracle_*`` or ``certified`` value, and
-    nothing of group E, whose selection reads a P4 row."""
+    of group E, whose selection reads a P4 row, only the count (section 2.9)."""
     print(f"classes: {_count(r.klass for r in census.rows)}", flush=True)
     print(f"void sessions: {analysis.void_counts(table)}", flush=True)
+    print(f"group E cases: {sum(r.group_e for r in census.rows)}", flush=True)
 
 
 def hunt_jobs(*, log_root: int, size: int = HUNT_SIZE) -> tuple[HuntJob, ...]:
@@ -4484,7 +4525,9 @@ def rehearsal_records(
     path: Path, records: Sequence[Any]
 ) -> tuple[list[Any], Mapping[str, Json]]:
     """The plan's truths, each a record of ``--split`` with ``split`` equal to
-    ``dev``, so a truth file cannot be brought in by the plan alone."""
+    ``dev``, so a truth file cannot be brought in by the plan alone. They are the
+    first eight dev truths by sorted id, on two seeds: section 2.10 lets a short
+    rehearsal raise its budget, and not swap its truths."""
     try:
         spec = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
@@ -4502,13 +4545,30 @@ def rehearsal_records(
         if by_id[truth].split != DEV_SPLIT:
             raise GuardFailure(f"{truth} is of split {by_id[truth].split}, not dev")
         chosen.append(by_id[truth])
+    dev = sorted(r.id for r in records if r.split == DEV_SPLIT)
+    first = dev[:REHEARSAL_TRUTHS]
+    if spec["truths"] != first:
+        raise GuardFailure(
+            f"a rehearsal runs on the first eight dev truths by sorted id, {first}, "
+            f"and the plan names {spec['truths']}"
+        )
+    seeds = spec.get("seeds")
+    distinct = (
+        isinstance(seeds, list)
+        and len(seeds) == REHEARSAL_SEEDS
+        and all(type(seed) is int for seed in seeds)
+        and len(set(seeds)) == REHEARSAL_SEEDS
+    )
+    if not distinct:
+        raise GuardFailure(f"a rehearsal runs on two seeds, and the plan has {seeds!r}")
     return chosen, spec
 
 
 def rehearsal_configs(spec: Mapping[str, Json]) -> tuple[CampaignConfig, ...]:
     """The plan as one Sonnet config at the stated budget: P4's contrast systems
-    and baselines, at reduced budget (section 2.10). A key left out keeps its
-    default, so the store's maker and this script build the same addresses."""
+    and baselines, at reduced budget (section 2.10). ``seeds`` is required, and any
+    other key left out keeps its default. ``scripts/p4_rehearsal_store.py`` calls
+    this too, so the store's maker and this script build the same addresses."""
     config = CampaignConfig(
         llm_arms=P4_SONNET_ARMS,
         llm_model=MODELS["sonnet"],
@@ -4523,7 +4583,7 @@ def rehearsal_configs(spec: Mapping[str, Json]) -> tuple[CampaignConfig, ...]:
     return (
         replace(
             config,
-            seeds=tuple(spec.get("seeds", config.seeds)),
+            seeds=tuple(spec["seeds"]),
             control_seeds=tuple(spec.get("control_seeds", config.control_seeds)),
             gp=replace(config.gp, **gp),
             **plain,
@@ -4531,18 +4591,32 @@ def rehearsal_configs(spec: Mapping[str, Json]) -> tuple[CampaignConfig, ...]:
     )
 
 
+def rehearsal_world(
+    plan: Path, split: Path
+) -> tuple[CampaignEnvironment, tuple[CampaignConfig, ...], tuple[TruthEntry, ...]]:
+    """The environment, the configs and the truths of a rehearsal plan on ``split``.
+    ``scripts/p4_rehearsal_store.py`` builds its store from this too, so what it
+    writes and what this script reads are one address."""
+    records = pilot.load_split(split)
+    chosen, spec = rehearsal_records(plan, records)
+    return (
+        pilot.pointproc_environment(records),
+        rehearsal_configs(spec),
+        pilot.truth_entries(tuple(chosen)),
+    )
+
+
 def rehearsal_setup(args: argparse.Namespace, repo: Path) -> Setup:
     """The mode changes exactly section 2.10's list. The commit-chain guards do not
-    run; the fit, tree and BLAS guards do. Control 4 has its own dev record, at
-    HEAD, since there is no ``T`` here."""
+    run; the fit, tree and BLAS guards do. Control 4 is False, and no record is read:
+    the list does not change it, and there is no ``T`` here (LOG 2026-11-06)."""
     check_rehearsal(
         repo, split=args.split, store=args.store, test_split=args.test_split
     )
     check_tree(repo, None)
     check_fit(repo, BASE_COMMIT, FIT_DIFF_SHA256, REDUCTIONS_BLOB)
     check_blas(initial_environment())
-    records = pilot.load_split(args.split)
-    chosen, spec = rehearsal_records(args.rehearsal_plan, records)
+    env, plan, truths = rehearsal_world(args.rehearsal_plan, args.split)
     truth, dev_env = group_b_inputs(args.split)
     head = head_commit(repo)
     plan_sha = hashlib.sha256(args.rehearsal_plan.read_bytes()).hexdigest()
@@ -4552,9 +4626,9 @@ def rehearsal_setup(args: argparse.Namespace, repo: Path) -> Setup:
         paths=OutPaths(repo / DRAFTS / name),
         roots=REHEARSAL_ROOTS,
         hunt_size=REHEARSAL_HUNT_SIZE,
-        env=pilot.pointproc_environment(records),
-        plan=rehearsal_configs(spec),
-        truths=pilot.truth_entries(tuple(chosen)),
+        env=env,
+        plan=plan,
+        truths=truths,
         # Section 2.10's list does not change control 4, and a rehearsal has no
         # ``T``, so section 2.7's rule gives False and the C2 reads stay unreportable.
         controls=ScriptedControls(naming_null=False),
@@ -4604,6 +4678,21 @@ def frozen_setup(args: argparse.Namespace) -> Setup:
     )
 
 
+def take_manifest(paths: OutPaths, store: Path) -> None:
+    """PR 2.8's "before", which is the first start's. It is written before
+    ``cpu.json``, so a ledger with no manifest means a record was deleted, and a
+    new baseline would hide what changed the store before this resume."""
+    if paths.manifest.exists():
+        return
+    if paths.cpu.exists():
+        raise ResumeRefused(
+            f"{paths.cpu} exists and {paths.manifest} does not: a resume takes no "
+            "new manifest, since the store's first one is what it is checked against"
+        )
+    body = canonical_json(store_manifest(store))
+    replace_file(paths.manifest, (body + "\n").encode("utf-8"))
+
+
 def _manifest_failures(paths: OutPaths, store: Path) -> list[str]:
     if not paths.manifest.exists():
         return ["no manifest was taken before the run"]
@@ -4638,9 +4727,7 @@ def execute(setup: Setup, args: argparse.Namespace) -> int:
         else:
             check_start(paths)
             CpuLedger.load(paths.cpu)
-            if not paths.manifest.exists():
-                body = canonical_json(store_manifest(setup.store))
-                replace_file(paths.manifest, (body + "\n").encode("utf-8"))
+            take_manifest(paths, setup.store)
         table, cells = load_store(setup.store, setup.env, setup.plan, setup.truths)
         check_table(table, cells)
         plan_rows = contrast_rows(setup.plan, setup.truths)

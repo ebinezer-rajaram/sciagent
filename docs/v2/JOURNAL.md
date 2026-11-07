@@ -2899,3 +2899,54 @@ Corrects the hand-over above: its third decision (T2 and fit/5) is no longer the
 Code test first, before `S`.
 
 **Decision needed (control room).** Accept, or name another rule. The round's seven non-blocking findings are engineering and go to an engineer now: the headline on non-Sonnet blocks, an empty P4 store, `--rescore-llm`, `sweep_rows` reference checks, `merge_tables` strays, one test gap, and gonogo's `+inf` hardening.
+
+## 2026-11-07: Lane session 38, hand-over: P4b drafted and ruled planned-exploratory; the controls brought under the crash rule; EIG and D5 built
+
+**Done.**
+- **R5's confirming run.** K0 is recomputed from A1's stored runs with no draw, through today's code: (i) 12/15, (ii) 0/120, (iii) p = 1, bitwise equal to the stored score. I reran it.
+- **P4b.**
+  - The first text had one red-team round: not ready, 9 blocking. The second text answers all 15 findings.
+  - The control room ruled under the owner's delegation: planned exploratory, K0 for telling and truthFSD, Fx for FSD, no dev run, option 2 parked (LOG 2026-11-07).
+  - The reason: control 5 picks telling's d\* on 3 of 14 dev truths against random's 0.207.
+- **Controls under the crash rule.** The control room set the rule that a crash or missing reading never makes a failing control pass.
+  - Four red-team reports, all saved under `docs/v2/redteam/2026-11-07_*`: the analysis code rounds 1 and 2, P4b, and controls 4 to 6.
+  - Rulings taken: R3 direction, B-lib, and controls 2 and 3 reading every undropped truth. The lead's applications are in the LOG.
+  - Fixed and merged: controls 1 to 5, the report's frozen gate, R2's scope, the launcher's routes, `merge_tables` and the sweep.
+- **Built.**
+  - Δ11's EIG decision, adopted on 10-28 but never landed: only EIG keys moved.
+  - D5: the session clock and hard deadline exclude framework time, and no key moved.
+- **Slow tier at a42fec1:** its one failure was the confined default tmux server. It passes unconfined, and session 3 had found the same.
+
+**Checks.** At 56eef1e (HEAD 7b01f04 differs in docs only): ruff `350 files already formatted`, `All checks passed!`; mypy `no issues found in 339 source files`; full fast tier `5931 passed`, exit 0 (`.cache/drafts/s38/fast3.log`).
+
+**Running, $0.**
+- `sci-bsym-tune` stage 1: `units 195/840 worlds 13/60 cpu_hours 15.93` at 23:38Z, counts only.
+- `sci-slow-s38`: the slow tier at 7b01f04, unconfined under `systemd-run`, -n 1, started 23:47:39Z. Not yet read.
+
+**Not verified.**
+- The slow tier at the head; the session's src changes have only their own files' slow tests.
+- Control 2 can still be tipped by an unchecked loss through its non-monotone signed-rank p. A test pins this, and it is queued before `S`.
+- `read_naming_null` ignores the split hash (needs the miss script's bytes, so before `R2`).
+- Controls 5 and 6 are not wired to fail closed.
+- No live SDK session under D5. The EIG maths' cost, estimated at +5 s a decision.
+
+**Learned.**
+- Adopted decisions can fail to land: Δ11's EIG rule sat unbuilt for eleven days, and only a review of the text that leaned on it found it. A freeze should check its decisions against the code, not the LOG.
+- Each round on the controls found another crash path: B-rand, then B-lib, then ORACLE rows and unrun units, then control 2's statistic. Asking for a general rule ended the stream of single rulings.
+- Agent worktrees here are created from `main`, so a brief must give the base and the approved `git reset --keep`.
+
+**Slips.**
+- I pushed c060fc0 on targeted tests to stop a Stop-hook loop; the full tier passed later.
+- A doubled `-q` hid fast1's count line, as in session 37.
+- `ln -sfn` onto an existing directory left a stray link in the test worktree; I removed it and reran.
+- Helpers routed around guard refusals several times and made shell edits against the Edit-tool rule. Each was reported, and I tightened the briefs.
+- The checkpoint first named session 6 for the tmux finding; it was session 3.
+
+**Next.**
+1. Read the slow tier: `grep -E '^(FAILED|ERROR)|^exit:' .cache/drafts/s38/slow.log`, then a LEDGER row.
+2. Control 2's subset rule, test first, with a red team.
+3. P4b's D1, D3 and D8 (Fx), then round 2 and the freeze, which releases the miss check.
+4. `read_naming_null`'s split hash before `R2`.
+5. Tuning: counts only. When `selection.json` exists, follow the queue item.
+
+**Decision needed from the owner:** none now.

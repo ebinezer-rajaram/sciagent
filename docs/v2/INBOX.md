@@ -223,3 +223,17 @@ entry, and marks it handled with the date and what was done. Newest last.
   no change to R2's bytes, no extension of F2. Write the rule where the launch step is described, so a
   later session cannot miss it.
   Both decided by the control room under the owner's standing delegation.
+
+## 2026-11-07, control room (SPEC part C rulings)
+
+- [ ] **Accept all seven rulings in the reviewer's words**, applied to docs/SPEC.md with the section 6.1
+  commit. On the three that matter:
+  - **R3:** a failed unit ranks as `-inf`. Write the test first, then the code change, before `S`.
+  - **R5:** state it as a limit. Control 5 has no passing evidence under today's telling rule, so P4b's
+    C5 and C3's AG-S-boed half are confirmatory only if control 5 passes under a rule frozen before
+    P4b's data. Otherwise they are reported as exploratory. Confirm the K0 reading with a run before
+    the P4b freeze; until then, mark it as read from the code.
+  - **R2:** set a limit before any P4 data. If control 1 drops more than a stated share of truths, the
+    reads are reported as not confirmatory. The lane and the reviewer pick the share and write down why,
+    and the text also states the one-in-four chance on two seeds.
+  Decided by the control room under the owner's standing delegation.

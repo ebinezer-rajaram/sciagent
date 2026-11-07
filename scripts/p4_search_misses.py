@@ -4663,6 +4663,21 @@ def frozen_setup(args: argparse.Namespace) -> Setup:
     )
 
 
+def take_manifest(paths: OutPaths, store: Path) -> None:
+    """PR 2.8's "before", which is the first start's. It is written before
+    ``cpu.json``, so a ledger with no manifest means a record was deleted, and a
+    new baseline would hide what changed the store before this resume."""
+    if paths.manifest.exists():
+        return
+    if paths.cpu.exists():
+        raise ResumeRefused(
+            f"{paths.cpu} exists and {paths.manifest} does not: a resume takes no "
+            "new manifest, since the store's first one is what it is checked against"
+        )
+    body = canonical_json(store_manifest(store))
+    replace_file(paths.manifest, (body + "\n").encode("utf-8"))
+
+
 def _manifest_failures(paths: OutPaths, store: Path) -> list[str]:
     if not paths.manifest.exists():
         return ["no manifest was taken before the run"]
@@ -4697,9 +4712,7 @@ def execute(setup: Setup, args: argparse.Namespace) -> int:
         else:
             check_start(paths)
             CpuLedger.load(paths.cpu)
-            if not paths.manifest.exists():
-                body = canonical_json(store_manifest(setup.store))
-                replace_file(paths.manifest, (body + "\n").encode("utf-8"))
+            take_manifest(paths, setup.store)
         table, cells = load_store(setup.store, setup.env, setup.plan, setup.truths)
         check_table(table, cells)
         plan_rows = contrast_rows(setup.plan, setup.truths)

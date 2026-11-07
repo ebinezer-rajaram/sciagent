@@ -3906,6 +3906,8 @@ def toy_run(paths: Any, monkeypatch: pytest.MonkeyPatch) -> Callable[[Any, Any],
     store = paths.root / "store"
     store.mkdir()
     (store / "cell").write_text("x")
+    # What a first start took: a planted run has ``cpu.json``, so it needs this.
+    paths.manifest.write_text(json.dumps(p4m.store_manifest(store)))
     census = planted_census(table)
 
     def load(*args: Any) -> Any:
@@ -4081,6 +4083,75 @@ def test_the_hashes_for_the_log_entry_are_printed(
 def test_split_test_split_and_store_are_needed_for_a_run() -> None:
     with pytest.raises(SystemExit):
         p4m.main([])
+
+
+# --------------------------------------------------------------------------
+# Red team 2026-11-07: D6, the store's manifest before and after (PR 2.8)
+# --------------------------------------------------------------------------
+
+
+def test_a_resume_with_its_manifest_deleted_is_refused(
+    paths: Any, toy_run: Any
+) -> None:
+    """A new baseline would hide whatever changed the store before the resume, and
+    PR 2.8's "before" is the first start's: the one route toward an unearned pass
+    the reviewer found."""
+    table = tabled()
+    plant(paths, clean(table), end=None)
+    (paths.root / "store" / "cell").write_text("changed before the resume")
+    paths.manifest.unlink()
+    assert toy_run((stage(ToyJob("a")),), Args()) == p4m.NO_LABEL_EXIT
+    assert not paths.manifest.exists()
+    assert not paths.reads.exists()
+    assert list(decision_of(paths)) == ["refusal"]
+    assert "manifest" in decision_of(paths)["refusal"]
+
+
+def test_a_fresh_start_takes_the_manifest_of_the_store(
+    paths: Any, toy_run: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Before the ledger exists, so a real run never has ``cpu.json`` alone."""
+    paths.manifest.unlink()
+    wrapped = SimpleNamespace(run=lambda: "terminated")
+    monkeypatch.setattr(p4m, "Driver", lambda *a, **k: wrapped)
+    assert toy_run((), Args()) == p4m.NO_LABEL_EXIT
+    store = p4m.store_manifest(paths.root / "store")
+    assert json.loads(paths.manifest.read_text()) == store
+
+
+def test_the_manifest_comes_before_the_ledger_on_a_real_first_start(
+    paths: Any, toy_run: Any
+) -> None:
+    paths.manifest.unlink()
+    seen: list[bool] = []
+
+    class Looks:
+        id = "looks"
+
+        def run(self, sink: Any) -> None:
+            sink.record("done", {"kind": "toy"})
+
+    real_begin = p4m.CpuLedger.begin
+
+    def begin(*args: Any) -> Any:
+        seen.append(paths.manifest.exists())
+        return real_begin(*args)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(p4m.CpuLedger, "begin", begin)
+        toy_run((stage(Looks()),), Args())
+    assert seen == [True]
+
+
+def test_finalise_with_no_manifest_is_byte_fail_and_writes_no_read(
+    paths: Any, toy_run: Any
+) -> None:
+    table = tabled()
+    plant(paths, clean(table), end="complete")
+    paths.manifest.unlink()
+    assert toy_run((), Args(finalise=True)) == 3
+    assert decision_of(paths)["byte_failures"] == ["store_manifest"]
+    assert not paths.reads.exists()
 
 
 # --------------------------------------------------------------------------

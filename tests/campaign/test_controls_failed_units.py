@@ -109,7 +109,7 @@ def difference_on(v: Verdict, truth: str) -> float:
     return dict(zip(v.planted.truths, v.planted.differences, strict=True))[truth]
 
 
-def test_a_failed_b_rand_unit_ranks_lowest_too() -> None:
+def test_a_failed_b_rand_unit_ranks_against_control_2() -> None:
     """Moved by the R3 direction ruling (INBOX 2026-11-07): B-rand is control 2's
     comparator, so its failed unit ranks against the control passing, as ``+inf``,
     where a scored ``-inf`` still ranks lowest. The two now differ."""

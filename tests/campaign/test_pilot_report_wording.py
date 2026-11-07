@@ -117,35 +117,50 @@ def _line(text: str, start: str) -> str:
     return found[0]
 
 
-def test_named_minus_anon_needs_its_root_to_be_printed(
+def test_named_minus_anon_is_a_p4_blocks_section(
     report: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """No root, no draw and no section, so a report without it keeps its bytes."""
-    assert "Named minus anon" not in _render(report, tmp_path, monkeypatch, _table())
+    """Without a P4 block, no draw and no section, so a dev report keeps its bytes;
+    the P4 path is ``test_pilot_report_models``."""
+    text = _render(report, tmp_path, monkeypatch, _table())
+    assert "Named minus anon" not in text
+    assert "Truths that left the reads" not in text
 
 
-def test_named_minus_anon_refuses_a_root_with_no_commit(
-    report: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    "option",
+    [("--read-root", "11"), ("--naming-commit", "no-such-commit")],
+    ids=["read-root", "naming-commit"],
+)
+def test_the_secondarys_root_and_commit_are_not_options(
+    report: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    option: tuple[str, str],
 ) -> None:
+    """Red team 2026-11-07 finding 2: neither can be typed."""
     with pytest.raises(SystemExit):
-        _render(
-            report, tmp_path, monkeypatch, _table(), extra_argv=("--read-root", "11")
-        )
+        _render(report, tmp_path, monkeypatch, _table(), extra_argv=option)
 
 
-def test_named_minus_anon_is_printed_with_its_root_and_a_commit(
+def test_control_3_counts_a_failed_unit_as_the_verdict_does(
     report: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    text = _render(
-        report,
-        tmp_path,
-        monkeypatch,
-        _table(),
-        extra_argv=("--read-root", "11", "--naming-commit", "no-such-commit"),
+    """Finding 8: a failed B-sym@10F unit is ranked by the verdict (ruling R3), so
+    the line counts its truth."""
+    table = _table()
+    rows = tuple(
+        row(r.truth, r.seed, r.system, None, ok=False)
+        if (r.truth, r.system) == (TRUTHS[0], "B-sym@10F")
+        else r
+        for r in table.rows
     )
-    assert "### Named minus anon" in text
-    assert "| AG-c-S | 0 | not reportable | - | - |" in text
-    assert "0 of 5 truths left the reads" in text
+    failed = Table(table.truths, tuple(derive(list(rows))), (), {}, {})
+    line = _line(
+        _render(report, tmp_path, monkeypatch, failed),
+        "**3. B-sym at 10xF approaches ORACLE**",
+    )
+    assert "median over 3 of the 5 kept truths (its declared subset)" in line, line
 
 
 def test_control_3_names_the_subset_it_reads(
@@ -166,7 +181,7 @@ def test_control_3_without_a_declared_subset_does_not_claim_one(
         report, tmp_path, monkeypatch, _table(subset=len(TRUTHS)), subset=None
     )
     line = _line(text, "**3. B-sym at 10xF approaches ORACLE**")
-    assert "median over 5 of the 5 kept truths (those with a result)" in line, line
+    assert "median over 5 of the 5 kept truths (those with a unit" in line, line
     assert "declared" not in line, line
 
 

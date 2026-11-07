@@ -176,13 +176,31 @@ def test_no_selection_or_mode_gets_past_the_refusal(
     _assert_refused(report, monkeypatch, tmp_path, capsys, split, *extra)
 
 
-def test_a_non_dev_split_with_reads_goes_on_to_the_store(
-    report: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_a_non_dev_split_with_reads_gets_past_this_refusal_to_the_block_one(
+    report: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """With ``reads.json`` the next stop is that a split outside dev needs
+    ``--p4-block`` (red team 2026-11-07, finding 4). A block needs P4's 40 truths,
+    which dev has not, so a block run that reaches the store is in
+    ``test_pilot_report_models``, on stand-in truths."""
     reads = tmp_path / "reads.json"
     reads.write_text("not read", encoding="utf-8")
-    with pytest.raises(Reached):
+    with pytest.raises(SystemExit) as stop:
         _main(report, monkeypatch, tmp_path, _all_test(tmp_path), reads)
+    assert stop.value.code == 2
+    err = capsys.readouterr().err
+    assert "--p4-block" in err
+    assert "reads.json" not in err
+
+
+def test_a_dev_split_goes_on_to_the_store(
+    report: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    with pytest.raises(Reached):
+        _main(report, monkeypatch, tmp_path, SPLIT, tmp_path / "reads.json")
 
 
 def test_reads_json_is_a_file_not_a_directory(

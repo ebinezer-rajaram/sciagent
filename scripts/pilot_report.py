@@ -33,6 +33,16 @@ and 0 enter a share.
 Prereg 2026-11-05 §2.8: a split holding a truth outside dev is refused until
 ``reads.json`` exists (:func:`refuse_unread`), since on P4 the first reading of
 the store is the miss script's terminal step. No option changes this.
+
+**A P4 report** (``--p4-block``, required on a split outside dev; red team
+2026-11-07): named minus anon (SPEC §6.2) and R2's scope line, both on the merge of
+every config of ``p4_plan`` over the whole split, whichever block is named. Nothing
+typed reaches their gate: control 2 draws from the miss script's frozen
+``READS_ROOT`` and ``READS_RESAMPLES`` (the headline's control 2 too, and
+``--resamples`` must be that), and control 4 is read at the commit of the store's
+single ``establish`` line (:func:`store_commit`). Where ``reads.json`` exists its
+stored controls must be the ones the report computes, and the scope is given for its
+stored and its corrected table. Header seeds are the block's.
 """
 
 from __future__ import annotations
@@ -43,7 +53,7 @@ import statistics
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Final, Literal, NamedTuple
+from typing import Any, Final, Literal, NamedTuple, NoReturn
 
 from pilot import (
     ROOT,
@@ -128,6 +138,86 @@ def refuse_unread(records: Sequence[Any], reads: Path) -> None:
             file=sys.stderr,
         )
         raise SystemExit(2)
+
+
+def refuse(message: str) -> NoReturn:
+    print(f"refused: {message}", file=sys.stderr)
+    raise SystemExit(2)
+
+
+def outside_dev(records: Sequence[Any]) -> bool:
+    """Whether the split holds a truth outside dev: P4's test split, whatever
+    ``--ids`` or ``--truths`` select."""
+    from sciagent.campaign.freeze import DEV_SPLIT
+
+    return any(r.split != DEV_SPLIT for r in records)
+
+
+def refuse_unblocked(records: Sequence[Any], block: str | None) -> None:
+    """Exit if the split holds a truth outside dev and no ``--p4-block`` is given.
+
+    Without a block the report reads one config, and the per-model secondary and the
+    scope need every config of ``p4_plan`` on the whole split (red team 2026-11-07,
+    findings 3 and 4). A block also refuses ``--ids`` and ``--truths``.
+    """
+    if outside_dev(records) and block is None:
+        refuse("a split outside dev is P4's: its report needs --p4-block")
+
+
+def store_commit(root: Path) -> tuple[str, str]:
+    """The store's code fingerprint and the commit it names.
+
+    Control 4 is read at this commit, as the miss script reads it at ``T``, which its
+    store witness requires to be the commit of the store's single ``establish``
+    line. So the sidecar must be exactly that line, naming a full commit; anything
+    else is refused, and no option names the commit instead.
+    """
+    from p4_search_misses import FINGERPRINT_COMMIT
+
+    from sciagent.campaign.fingerprint import CodeFingerprintError, read_fingerprints
+
+    try:
+        entries = read_fingerprints(root)
+    except CodeFingerprintError as error:
+        refuse(f"unreadable fingerprint sidecar: {error}")
+    if len(entries) != 1 or entries[0].event != "establish":
+        refuse(f"{root}'s fingerprint sidecar must be one establish line and no reuse")
+    found = FINGERPRINT_COMMIT.match(entries[0].fingerprint)
+    if found is None:
+        refuse(f"the store's fingerprint {entries[0].fingerprint} names no commit")
+    return entries[0].fingerprint, found.group(1)
+
+
+def _names(value: object, where: str) -> tuple[str, ...]:
+    if not isinstance(value, list) or not all(isinstance(t, str) for t in value):
+        refuse(f"{where} is not a list of truth ids")
+    return tuple(value)
+
+
+def recorded_controls(path: Path) -> dict[str, Any]:
+    """The stored and the corrected table's controls in the miss script's
+    ``reads.json`` (its ``controls_json``), as ``ControlsRead``; anything else in
+    the file is not read."""
+    from sciagent.campaign.contrasts import ControlsRead
+
+    try:
+        body = json.loads(path.read_bytes())
+    except (OSError, ValueError) as error:
+        refuse(f"{path} is unreadable: {error}")
+    out: dict[str, Any] = {}
+    for name in ("stored", "fixed"):
+        where = f"{path} controls.{name}"
+        try:
+            part = body["controls"][name]
+            flags = (part["controls_pass"], part["naming_null"])
+            lists = [_names(part[k], f"{where}.{k}") for k in ("kept", "dropped")]
+            unchecked = _names(part["unchecked"], f"{where}.unchecked")
+        except (KeyError, TypeError) as error:
+            refuse(f"{where} is missing or malformed: {error!r}")
+        if not all(isinstance(flag, bool) for flag in flags):
+            refuse(f"{where}: controls_pass and naming_null must be booleans")
+        out[name] = ControlsRead(lists[0], lists[1], unchecked, flags[0], flags[1])
+    return out
 
 
 def timing_lines(root: Path) -> list[dict[str, Any]]:
@@ -666,12 +756,18 @@ def control_3_scope(
     kept: Sequence[str], srows: Sequence[Any], *, declared: bool
 ) -> str:
     """The truths control 3 reads, against the kept ones: the kept truths with a
-    B-sym@10F score (``analysis.verdict``), which a declared subset narrows."""
+    B-sym@10F row in ``srows``, which must be ``analysis.control_rows`` as the
+    verdict reads them (a failed unit ranked lowest, ruling R3). A declared subset
+    narrows them."""
     from sciagent.campaign.plan import B_SYM_10F
 
     have = {r.truth for r in srows if r.system == B_SYM_10F}
     read = sum(t in have for t in kept)
-    which = "its declared subset" if declared else "those with a result"
+    which = (
+        "its declared subset"
+        if declared
+        else "those with a unit, a failed one ranked lowest"
+    )
     return f"{read} of the {len(kept)} kept truths ({which})"
 
 
@@ -736,18 +832,17 @@ def p4_merged_table(
     env: Any,
     truths: Sequence[Any],
     sessions: Literal["current", "stored"],
+    fingerprint: str,
 ) -> Any:
     """Every config of ``p4_plan`` read from ``root`` and merged. Named minus anon is
     printed for every model (SPEC §6.2, ruling B2), and only the Sonnet config holds
-    the ORACLE. One root, so ``merge_tables``' fingerprint check cannot fail here."""
+    the ORACLE. One root and its one fingerprint (:func:`store_commit`), so
+    ``merge_tables``' fingerprint check cannot fail here."""
     from sciagent.campaign import analysis
-    from sciagent.campaign.fingerprint import UNRECORDED, read_fingerprints
     from sciagent.campaign.p4plan import p4_plan
     from sciagent.campaign.store import ResultStore
     from sciagent.campaign.tables import TableSource, merge_tables
 
-    recorded = read_fingerprints(root)
-    fingerprint = recorded[-1].fingerprint if recorded else UNRECORDED
     with ResultStore(root, read_only=True) as store:
         tables = [
             analysis.load_rows(store, env, config, truths, sessions=sessions)
@@ -756,17 +851,35 @@ def p4_merged_table(
     return merge_tables([TableSource(t, root, fingerprint) for t in tables])
 
 
-def named_minus_anon_lines(
-    tab: Any, naming_null: bool, root: int, resamples: int
-) -> list[str]:
-    """SPEC §6.2's labelled secondary, one line per tier and model. ``root`` is the
-    reads' root, and ``naming_null`` control 4's pass state."""
-    from sciagent.campaign.contrasts import ScriptedControls
-    from sciagent.campaign.secondaries import read_named_minus_anon
+def named_minus_anon_lines(tab: Any, naming_null: bool) -> list[str]:
+    """SPEC §6.2's labelled secondary, one line per tier and model, each with its
+    floored rows and the read without them. ``naming_null`` is control 4's pass
+    state. Control 2 and the reads draw from the miss script's frozen root and
+    resamples, which no caller chooses (red team 2026-11-07, finding 2)."""
+    from p4_search_misses import READS_RESAMPLES, READS_ROOT
 
-    reads = read_named_minus_anon(
-        tab, ScriptedControls(naming_null=naming_null), root, resamples
+    from sciagent.campaign.contrasts import ScriptedControls, read_controls
+    from sciagent.campaign.secondaries import (
+        read_named_minus_anon,
+        read_named_minus_anon_floors,
+        why_not,
     )
+    from sciagent.scoring.errors import ScoringError
+
+    scripted = ScriptedControls(naming_null=naming_null)
+    controls = read_controls(tab, scripted, READS_ROOT, READS_RESAMPLES)
+    reads = read_named_minus_anon(tab, scripted, READS_ROOT, READS_RESAMPLES)
+    floors = read_named_minus_anon_floors(tab, scripted, READS_ROOT, READS_RESAMPLES)
+
+    def cells(r: Any) -> list[str]:
+        reasons = why_not(controls, r.n)
+        if r.reportable == bool(reasons):
+            raise ScoringError(f"a read's gate {r.reportable} is not {reasons}")
+        if reasons:
+            return [str(r.n), "not reportable: " + "; ".join(reasons), "-", "-"]
+        return [str(r.n), fmt(r.point), fmt(r.low), fmt(r.high)]
+
+    left_out = ("truths", "mean", "low", "high")
     return [
         "### Named minus anon, per model",
         "",
@@ -774,40 +887,102 @@ def named_minus_anon_lines(
         "held-out gap, paired by truth, 95% bootstrap CI. It mixes names and time, so "
         "it bounds reliance on recall and does not measure it. It is not covered by "
         "the miss check, and its gates are C2's. A floor comes from the contrast rows "
-        "and the read's own two systems.",
+        "and the read's own two systems. Beside each read: how many of its rows took "
+        "a floor, then the read with the floored rows left out (SPEC §6.2). Read on "
+        "every config of the plan, at the miss script's frozen root and resamples.",
         "",
         *table(
-            ["read", "truths", "mean", "low", "high"],
+            [*("read", "truths", "mean", "low", "high", "floored"), *left_out],
             [
-                [name, str(r.n), fmt(r.point), fmt(r.low), fmt(r.high)]
-                if r.reportable
-                else [name, str(r.n), "not reportable", "-", "-"]
+                [
+                    name,
+                    *cells(r),
+                    str(floors[name].floored),
+                    *cells(floors[name].without),
+                ]
                 for name, r in reads.items()
             ],
         ),
     ]
 
 
-def scope_lines(scope: Any) -> list[str]:
-    """SPEC §6.4's limit on control 1's drops: a line, and it moves no read."""
-    out = [
-        "### Truths that left the reads",
-        "",
-        f"{scope.left} of {scope.total} truths left the reads, as dropped or "
-        f"unchecked, {scope.left_out_of_dictionary} of "
-        f"{scope.out_of_dictionary} of them out of dictionary.",
+def scope_lines(scopes: Sequence[tuple[str, Any]]) -> list[str]:
+    """SPEC §6.4's limit on control 1's drops, for each named table's
+    :class:`~sciagent.campaign.secondaries.Scope`: lines, and they move no read."""
+    from sciagent.campaign.secondaries import MAX_LEFT_PERCENT
+
+    out = ["### Truths that left the reads", ""]
+    out += [
+        f"- {name} table: {s.left} of {s.total} truths left the reads, as dropped or "
+        f"unchecked, {s.left_out_of_dictionary} of {s.out_of_dictionary} of them out "
+        "of dictionary."
+        for name, s in scopes
     ]
-    if not scope.confirmatory:
-        out.append(
-            "The reads are not confirmatory: more than 10% of the truths left. They "
-            "are still printed, and the miss check's label does not change."
-        )
-    elif not scope.c4_confirmatory:
-        out.append(
-            "C4 is not confirmatory: more than 10% of its truths left. It is still "
-            "printed, and the miss check's label does not change."
-        )
+    out.append("")
+    for name, s in scopes:
+        if not s.confirmatory:
+            out.append(
+                f"On the {name} table the reads are not confirmatory: more than "
+                f"{MAX_LEFT_PERCENT}% of the truths left, or it has none. They are "
+                "still printed, and the miss check's label does not change."
+            )
+        elif not s.c4_confirmatory:
+            out.append(
+                f"On the {name} table C4 is not confirmatory: more than "
+                f"{MAX_LEFT_PERCENT}% of its out-of-dictionary truths left, or it has "
+                "none. It is still printed, and the miss check's label does not "
+                "change."
+            )
     return [*out, ""]
+
+
+def p4_lines(
+    root: Path,
+    env: Any,
+    truths: Sequence[Any],
+    sessions: Literal["current", "stored"],
+    *,
+    split_truths: int,
+    recorded: Mapping[str, Any] | None,
+) -> list[str]:
+    """The P4 report's named minus anon and R2's scope (red team 2026-11-07,
+    findings 2 and 3).
+
+    Both read the merge of every config of ``p4_plan`` on the whole split, which
+    must hold ``split_truths`` truths. Control 4 is read at the store's commit
+    (:func:`store_commit`), and control 2 at the miss script's frozen root and
+    resamples. Where ``recorded`` holds ``reads.json``'s controls, its stored
+    controls must be the ones computed here, or the report refuses, and the scope is
+    given for its stored and its corrected table.
+    """
+    from naming_null_record import read_naming_null
+    from p4_search_misses import READS_RESAMPLES, READS_ROOT
+
+    from sciagent.campaign.contrasts import ScriptedControls, read_controls
+    from sciagent.campaign.secondaries import read_scope
+    from sciagent.scoring.errors import ScoringError
+
+    fingerprint, commit = store_commit(root)
+    naming_null = read_naming_null(commit)
+    merged = p4_merged_table(root, env, truths, sessions, fingerprint)
+    if len(merged.truths) != split_truths:
+        refuse(f"the merged table holds {len(merged.truths)} truths, not the split's")
+    computed = read_controls(
+        merged, ScriptedControls(naming_null), READS_ROOT, READS_RESAMPLES
+    )
+    tables: list[tuple[str, Any]] = [("stored", computed)]
+    if recorded is not None:
+        if recorded["stored"] != computed:
+            refuse(
+                "reads.json's stored controls are not the ones this report computes "
+                f"at the frozen root: {recorded['stored']} against {computed}"
+            )
+        tables.append(("fixed", recorded["fixed"]))
+    try:
+        scopes = [(name, read_scope(c, merged.truths)) for name, c in tables]
+    except ScoringError as error:
+        refuse(str(error))
+    return [*named_minus_anon_lines(merged, naming_null), *scope_lines(scopes)]
 
 
 def cost_table(root: Path, systems: Sequence[str], tab: Any) -> list[str]:
@@ -939,20 +1114,14 @@ def main() -> None:
         default="stored",
         help="find LLM sessions by enumeration (rescore) or at the current address",
     )
-    parser.add_argument(
-        "--read-root",
-        type=int,
-        help="the contrasts' frozen root: print named minus anon, which draws from it",
-    )
-    parser.add_argument(
-        "--naming-commit",
-        default="",
-        help="the commit control 4's record must name, needed with --read-root",
-    )
     reconfigure_stdout()
     args = parser.parse_args()
-    if args.read_root is not None and not args.naming_commit:
-        parser.error("--read-root needs --naming-commit")
+    p4 = args.p4_block is not None
+    if p4:
+        from p4_search_misses import READS_RESAMPLES, READS_ROOT
+
+        if args.resamples != READS_RESAMPLES:
+            refuse(f"a P4 block reads at the frozen {READS_RESAMPLES} resamples")
     if not (args.root / "ledger.sqlite").is_file():
         # A reader: the store is opened read-only below and never created.
         print(f"{args.root}: not a campaign store", file=sys.stderr)
@@ -973,10 +1142,11 @@ def main() -> None:
     records = select(load_split(args.split), args.truths, args.ids)
     all_records = load_split(args.split)
     refuse_unread(all_records, P4_READS)
+    refuse_unblocked(all_records, args.p4_block)
     env = pointproc_environment(all_records)
-    seeds = tuple(int(s) for s in args.seeds.split(","))
-    control = tuple(int(s) for s in args.control_seeds.split(",") if int(s) in seeds)
     config = campaign_config(args)
+    seeds = config.seeds
+    control = tuple(s for s in config.control_seeds if s in seeds)
     truths = truth_entries(records)
     with ResultStore(args.root, read_only=True) as store:
         tab = analysis.load_rows(store, env, config, truths, sessions=args.sessions)
@@ -999,9 +1169,17 @@ def main() -> None:
         session_versions[x.env_version] = session_versions.get(x.env_version, 0) + 1
     llm_systems = config.llm_systems()
     systems = [*BASELINES, *llm_systems]
-    verdict = analysis.verdict(
-        tab, np.random.default_rng(20261002), resamples=args.resamples
-    )
+    if p4:
+        # The headline's control 2 draws as the reads' gate does (red team
+        # 2026-11-07, finding 2), so the two cannot disagree on one table.
+        from sciagent.campaign.contrasts import CONTROL_2_STREAM
+
+        rng = np.random.default_rng(
+            np.random.SeedSequence([READS_ROOT, CONTROL_2_STREAM])
+        )
+    else:
+        rng = np.random.default_rng(20261002)
+    verdict = analysis.verdict(tab, rng, resamples=args.resamples)
 
     baseline_missing = sum(tab.missing.get(s, 0) for s in BASELINES)
     complete = baseline_missing == 0
@@ -1206,7 +1384,7 @@ def main() -> None:
             "**3. B-sym at 10xF approaches ORACLE**: median over "
             + control_3_scope(
                 verdict.kept,
-                analysis.score_rows(rows, tab.truths),
+                analysis.control_rows([r for r in rows if not r.llm], tab.truths),
                 declared=config.control_truths is not None,
             )
             + " of the "
@@ -1361,31 +1539,16 @@ def main() -> None:
     ]
     L += ["### The softplus note", ""]
     L += softplus_note_table(args.root, llm_systems, tab)
-    if args.read_root is not None:
-        from naming_null_record import read_naming_null
-
-        from sciagent.campaign.contrasts import ScriptedControls, read_controls
-        from sciagent.campaign.secondaries import read_scope
-
-        naming_null = read_naming_null(args.naming_commit)
-        per_model = (
-            tab
-            if args.p4_block is None
-            else p4_merged_table(args.root, env, truths, args.sessions)
-        )
-        L += named_minus_anon_lines(
-            per_model, naming_null, args.read_root, args.resamples
-        )
-        L += scope_lines(
-            read_scope(
-                read_controls(
-                    tab,
-                    ScriptedControls(naming_null=naming_null),
-                    args.read_root,
-                    args.resamples,
-                ),
-                [t for t, entry in tab.truths.items() if not entry.in_dictionary],
-            )
+    if p4:
+        L += p4_lines(
+            args.root,
+            env,
+            truths,
+            args.sessions,
+            split_truths=len(truth_entries(all_records)),
+            recorded=(
+                recorded_controls(P4_READS) if outside_dev(all_records) else None
+            ),
         )
     flagged_runs = [x for x in tab.sessions if x.void.void or x.void.stored_void]
     L += [

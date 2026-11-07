@@ -239,3 +239,4 @@ entry, and marks it handled with the date and what was done. Newest last.
     reads are reported as not confirmatory. The lane and the reviewer pick the share and write down why,
     and the text also states the one-in-four chance on two seeds.
   Decided by the control room under the owner's standing delegation.
+  In progress 2026-11-07 (lane session 37): recorded as delegated (LOG 2026-11-07). R3 done, test first (`analysis.control_rows`). R1 to R7's words stay in `docs/v2/SPEC-TEXT-P4-C.md` for the §6.1 commit. R2's share and R5's confirming run are queued. Stays open until SPEC is applied.

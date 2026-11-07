@@ -89,7 +89,8 @@ from that module's public pieces (:func:`~sciagent.scoring.gonogo.oracle_beats_l
 (truth, seed); the pilot runs it on one seed only (a declared cost saving),
 so the control reads the per-truth mean over the seeds it has. Two further
 departures, both stated in the report: a *failed* unit (a system that raised
-on its unit) counts as neither recovering nor closing, and has no gap; and
+on its unit) counts as neither recovering nor closing, and has no gap, though
+controls 2 and 3 rank it as ``-inf`` (:func:`control_rows`); and
 the "too hard" clause reads every non-LLM system (the LLM arms do not cover
 every truth and seed in the pilot) -- their close shares are reported beside
 it.
@@ -676,6 +677,10 @@ class Verdict:
     oracle_inf: tuple[tuple[str, int], ...] = ()
 
 
+#: Controls 2 and 3's systems.
+RANKED_SYSTEMS: Final = frozenset({PLANTED, B_RAND, B_SYM_10F})
+
+
 def score_rows(
     rows: Sequence[Row], truths: Mapping[str, TruthEntry]
 ) -> list[gonogo.ScoreRow]:
@@ -741,12 +746,38 @@ def oracle_inf_reason(units: Sequence[tuple[str, int]]) -> list[str]:
     ]
 
 
+def control_rows(
+    rows: Sequence[Row], truths: Mapping[str, TruthEntry]
+) -> list[gonogo.ScoreRow]:
+    """:func:`score_rows`, plus each unit of controls 2 and 3 with no reading at
+    ``-inf``, so a crash cannot pass a control that a ``-inf`` fails (control room
+    ruling R3, INBOX 2026-11-07). A row with a reading and no gap is left out: its
+    ORACLE is what is missing, and control 1 answers for that."""
+    return [
+        *score_rows(rows, truths),
+        *(
+            gonogo.ScoreRow(
+                truth=r.truth,
+                seed=r.seed,
+                system=r.system,
+                gap=-math.inf,
+                gap_closed=None,
+                exact=False,
+                in_dictionary=truths[r.truth].in_dictionary,
+                oracle_underfit=None,
+            )
+            for r in rows
+            if r.system in RANKED_SYSTEMS and r.per_event is None
+        ),
+    ]
+
+
 def verdict(
     table: Table, rng: np.random.Generator, *, resamples: int = DEFAULT_RESAMPLES
 ) -> Verdict:
     """SPEC §7.1 over the non-LLM systems (module docstring)."""
     rows = [r for r in table.rows if not r.llm]
-    srows = score_rows(rows, table.truths)
+    srows = control_rows(rows, table.truths)
     underfit = underfit_check(rows)
     reasons: list[str] = []
     inconclusive: list[str] = []

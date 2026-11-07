@@ -56,6 +56,7 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from multiprocessing.connection import Connection
+from multiprocessing.sharedctypes import SynchronizedArray
 from pathlib import Path
 from typing import Any, Final
 
@@ -78,6 +79,7 @@ from sciagent.harness.errors import (
 )
 from sciagent.harness.live import SessionDriver
 from sciagent.harness.record import SessionRecord
+from sciagent.harness.tools import FrameworkClock
 from sciagent.investigation.runner import run
 from sciagent.investigation.view import make_view
 from sciagent.sandbox import SandboxError, image_tag, recover_run_dirs
@@ -108,9 +110,18 @@ EXIT_GRACE_S: Final = 10.0
 RETRY_OUTCOMES: Final = ("session_error",)
 #: What a session outcome carries beside its cell, for its ``timing.jsonl``
 #: line (:attr:`SessionOutcome.timing`): the harness's own elapsed time and the
-#: API's figures, all from the record's unhashed ``timing`` section; ``None``
-#: where the session has no such value (an abort, a hard timeout).
-SESSION_TIMING_FIELDS: Final = ("harness_wall_s", "duration_api_ms", "total_cost_usd")
+#: API's figures, then (P4b D5) each tool call's framework decision time, by
+#: call index, and the agent's time (the harness's less all framework time),
+#: all from the record's unhashed ``timing`` section; ``None`` where the
+#: session has no such value (an abort, a hard timeout, a record from before
+#: D5).
+SESSION_TIMING_FIELDS: Final = (
+    "harness_wall_s",
+    "duration_api_ms",
+    "total_cost_usd",
+    "framework_s",
+    "agent_s",
+)
 
 _USAGE_FIELDS: Final = (
     "input_tokens",
@@ -145,10 +156,14 @@ def session_timing(record: SessionRecord | None) -> dict[str, Json]:
     lacks it, so an abort's missing harness time is stated, not taken as 0."""
     times: Mapping[str, Any] = {} if record is None else record.timing
     wall = times.get("wall_s")
+    agent = times.get("agent_s")
+    framework = times.get("framework_s")
     return {
         "harness_wall_s": None if wall is None else float(wall),
         "duration_api_ms": times.get("duration_api_ms"),
         "total_cost_usd": times.get("total_cost_usd"),
+        "framework_s": None if framework is None else [float(f) for f in framework],
+        "agent_s": None if agent is None else float(agent),
     }
 
 
@@ -194,8 +209,11 @@ def run_session(
     *,
     driver: SessionDriver | None = None,
     sandbox_root: Path | None = None,
+    clock: FrameworkClock | None = None,
 ) -> SessionOutcome:
-    """Run one LLM unit and read its record (module docstring)."""
+    """Run one LLM unit and read its record (module docstring). ``clock`` is
+    the lab's framework clock (P4b D5), passed by an isolated session's
+    process so its parent can read it."""
     spec = env.investigation
     if spec is None:
         raise CampaignError("the environment has no investigation spec")
@@ -221,6 +239,7 @@ def run_session(
             policy_settings=None
             if arm.policy is None
             else session_policy_settings(config.policy),
+            clock=clock,
         )
     except (SessionFailedError, ServedModelError, SandboxError) as error:
         return _retry(unit, error, start)
@@ -331,6 +350,7 @@ def _child(
     config: CampaignConfig,
     out_dir: Path,
     sandbox_root: Path | None,
+    clock: FrameworkClock | None = None,
 ) -> None:
     """Entry point of an isolated session's process: run it, send the outcome.
 
@@ -340,9 +360,13 @@ def _child(
     ``cpu_s``, and in ``cpu_children_s`` the children it reaped (the
     ``claude`` CLI, ``docker`` clients; not the containers' processes, see
     :mod:`sciagent.campaign.cpu`). A retryable attempt keeps its empty timing.
+    ``clock`` becomes the lab's framework clock, which the parent reads
+    (:func:`_session_process`).
     """
     mark = cpu.cpu_mark()
-    outcome = run_session(unit, truth, env, config, out_dir, sandbox_root=sandbox_root)
+    outcome = run_session(
+        unit, truth, env, config, out_dir, sandbox_root=sandbox_root, clock=clock
+    )
     if not outcome.retryable:
         timing = {**outcome.timing, **cpu.cpu_since(mark)}
         outcome = dataclasses.replace(outcome, timing=timing)
@@ -360,14 +384,44 @@ SessionTarget = Callable[
         CampaignConfig,
         Path,
         Path | None,
+        FrameworkClock,
     ],
     None,
 ]
+
+#: The child's framework clock as the parent reads it: ``[total, since]``,
+#: seconds, ``since`` the running decision's start on ``time.monotonic`` (one
+#: system-wide clock on the platforms the campaign runs on), or
+#: :data:`_NOT_MEASURING`.
+type SharedClock = SynchronizedArray[float]
+_NOT_MEASURING: Final = -1.0
+
+
+def _mirror(shared: SharedClock) -> Callable[[float, float | None], None]:
+    """A :class:`FrameworkClock` publisher writing to ``shared``."""
+
+    def publish(total: float, since: float | None) -> None:
+        with shared.get_lock():
+            shared[0] = total
+            shared[1] = _NOT_MEASURING if since is None else since
+
+    return publish
+
+
+def _framework_s(shared: SharedClock, now: float) -> tuple[float, bool]:
+    """The child's framework time at ``now`` (a running decision included),
+    and whether a decision is running."""
+    with shared.get_lock():
+        total, since = shared[0], shared[1]
+    if since == _NOT_MEASURING:
+        return total, False
+    return total + max(0.0, now - since), True
 
 
 def _session_process(
     target: SessionTarget,
     conn: Connection,
+    shared: SharedClock,
     unit: Unit,
     truth: TruthEntry,
     env: CampaignEnvironment,
@@ -378,11 +432,14 @@ def _session_process(
     """Entry point of an isolated session's process.
 
     It first leads a process group of its own, so the parent can kill it
-    together with every process it started (:func:`_kill_session`).
+    together with every process it started (:func:`_kill_session`). The
+    session's framework clock mirrors itself to ``shared``, which the parent
+    reads to place its hard deadline (:func:`_run_isolated`).
     """
     if sys.platform != "win32":
         os.setpgid(0, 0)
-    target(conn, unit, truth, env, config, out_dir, sandbox_root)
+    clock = FrameworkClock(publish=_mirror(shared))
+    target(conn, unit, truth, env, config, out_dir, sandbox_root, clock)
 
 
 def _kill_session(process: multiprocessing.process.BaseProcess) -> None:
@@ -419,9 +476,17 @@ def run_session_isolated(
     whose simulation takes hours) cannot be cancelled, and ``asyncio.run``
     waits for it before returning. Measured in the pilot: an AG-o session
     stuck past its 3,600 s wall time inside ``run_experiment``. Here the
-    session gets ``wall_time_s + grace_s``; past that its process is killed and
-    the unit is recorded as ``hard_timeout`` (void, nothing scored, no record
-    saved), so one runaway experiment cannot block the campaign. A process
+    session gets ``wall_time_s + grace_s`` of its own time; past that its
+    process is killed and the unit is recorded as ``hard_timeout`` (void,
+    nothing scored, no record saved), so one runaway experiment cannot block
+    the campaign. Its own time excludes framework decision time (P4b D5), as
+    the harness's wall limit does: the child's framework clock is mirrored to
+    a shared array (:func:`_session_process`), and the parent's deadline
+    pauses while a decision runs (:func:`_answered`). A shared array rather
+    than the pipe: the pipe carries one message, the outcome, and the parent
+    can read the array at any moment without the child's help. A decision
+    that never ends is therefore never killed here; bounding it is left to the
+    policy arms' driver and its CPU meter (P4b D6). A process
     that dies without an answer is retryable. A process that has answered gets
     :data:`EXIT_GRACE_S` to exit and is then killed: its outcome and record are
     in hand, and all that can keep it alive is a tool call that outlived the
@@ -483,6 +548,32 @@ def _release_session_root(root: Path) -> str | None:
     return None
 
 
+#: How often the parent looks again while the child is inside a decision, in
+#: seconds: a kill can come at most this late after a decision ends.
+DECISION_POLL_S: Final = 1.0
+
+
+def _answered(
+    receive: Connection, shared: SharedClock, began: float, deadline: float
+) -> bool:
+    """Wait for the child's answer until its own time passes ``deadline``.
+
+    The child's own time is the time since ``began`` less its framework
+    decision time (P4b D5), read from ``shared``; it stands still while a
+    decision runs, so a decision is never cut by the hard deadline, and the
+    grace bounds only what the session spends outside decisions. Raises
+    ``EOFError`` as :meth:`Connection.poll` does.
+    """
+    while True:
+        now = time.monotonic()
+        framework, deciding = _framework_s(shared, now)
+        left = deadline - (now - began - framework)
+        if left <= 0:
+            return False
+        if receive.poll(max(left, DECISION_POLL_S) if deciding else left):
+            return True
+
+
 def _run_isolated(
     unit: Unit,
     truth: TruthEntry,
@@ -501,17 +592,19 @@ def _run_isolated(
     """
     ctx = multiprocessing.get_context("spawn")
     receive, send = ctx.Pipe(duplex=False)
+    shared: SharedClock = ctx.Array("d", [0.0, _NOT_MEASURING])
     process = ctx.Process(
         target=_session_process,
-        args=(target, send, unit, truth, env, config, out_dir, sandbox_root),
+        args=(target, send, shared, unit, truth, env, config, out_dir, sandbox_root),
         daemon=True,
     )
     start = time.perf_counter()
+    began = time.monotonic()
     process.start()
     send.close()
     deadline = config.wall_time_s + grace_s
     try:
-        if receive.poll(deadline):
+        if _answered(receive, shared, began, deadline):
             outcome: SessionOutcome = receive.recv()
             process.join(exit_grace_s)
             if process.is_alive():
@@ -528,9 +621,10 @@ def _run_isolated(
     detail: dict[str, Json] = {
         "outcome": "hard_timeout",
         "error": "HardTimeout",
-        "message": f"the session did not end within {deadline:.0f} s (wall time "
-        f"{config.wall_time_s:.0f} s plus {grace_s:.0f} s): a tool call kept "
-        f"running past the wall time; the process was killed",
+        "message": f"the session did not end within {deadline:.0f} s of its own "
+        f"time (wall time {config.wall_time_s:.0f} s plus {grace_s:.0f} s; "
+        f"framework decision time not counted): a tool call kept running past "
+        f"the wall time; the process was killed",
     }
     reading = {
         "status": 0.0,

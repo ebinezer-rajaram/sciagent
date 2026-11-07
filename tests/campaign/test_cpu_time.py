@@ -250,7 +250,13 @@ def test_an_isolated_sessions_process_measures_its_own_cpu_time(
 ) -> None:
     clean(monkeypatch)
     unit = Unit("hawkes", 1, "AG-c-H/named")
-    harness = {"harness_wall_s": 0.5, "duration_api_ms": 7, "total_cost_usd": 0.1}
+    harness = {
+        "harness_wall_s": 0.5,
+        "duration_api_ms": 7,
+        "total_cost_usd": 0.1,
+        "framework_s": [0.0, 0.0],
+        "agent_s": 0.5,
+    }
 
     def session(*args: object, **kwargs: object) -> llm.SessionOutcome:
         _burn(0.2)

@@ -369,6 +369,7 @@ class Lab:
         policy_settings: PolicySettings | None = None,
         policy_seed: int | None = None,
         marks: MarkSampler | None = None,
+        clock: FrameworkClock | None = None,
     ) -> None:
         if arm not in ("AG-c", "AG-o"):
             raise LabError(f"arm must be 'AG-c' or 'AG-o', got {arm!r}")
@@ -403,8 +404,10 @@ class Lab:
         self.policy: PolicyName | None = policy_name
         self.policy_mode: PolicyMode | None = None
         #: The policy's decisions are measured on this, the layer's clock, and
-        #: kept off the agent's wall limit (P4b D5). Nothing else measures.
-        self.clock = FrameworkClock()
+        #: kept off the agent's wall limit (P4b D5). Nothing else measures. A
+        #: caller passes one to read it from outside (an isolated session's
+        #: process mirrors it to the campaign's parent).
+        self.clock = FrameworkClock() if clock is None else clock
         if policy_name is not None and policy_seed is not None:
             self.policy_mode = PolicyMode(
                 policy_name,

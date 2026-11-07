@@ -35,6 +35,7 @@ from sciagent.campaign.plan import (
 )
 from sciagent.campaign.store import TIMING_FILE, cell_bytes
 from sciagent.harness.scripted import ScriptedDriver
+from sciagent.harness.tools import FrameworkClock
 from sciagent.systems.v2.sparse import SparseConfig
 
 pytestmark = pytest.mark.slow
@@ -149,6 +150,8 @@ def test_an_isolated_session_past_its_hard_deadline_is_killed_and_voided(
         "harness_wall_s": None,
         "duration_api_ms": None,
         "total_cost_usd": None,
+        "framework_s": None,
+        "agent_s": None,
     }
     assert out.wall_s >= 0.5
 
@@ -161,6 +164,7 @@ def _starts_a_client_and_hangs(
     config: CampaignConfig,
     out_dir: Path,
     sandbox_root: Path | None,
+    clock: FrameworkClock,
 ) -> None:
     """Stands in for a session stuck in a ``python`` call: a Docker client
     (here ``sleep``) running under the session's process."""
@@ -221,6 +225,7 @@ def _answers_at_once(
     config: CampaignConfig,
     out_dir: Path,
     sandbox_root: Path | None,
+    clock: FrameworkClock,
 ) -> None:
     """Stands in for a session that ends at once, claiming no time at all."""
     reading = {"status": 1.0, "void": 0.0}
@@ -260,11 +265,12 @@ def _answers_and_leaves_a_thread_behind(
     config: CampaignConfig,
     out_dir: Path,
     sandbox_root: Path | None,
+    clock: FrameworkClock,
 ) -> None:
     """Stands in for a session cut with a fit still running: the outcome goes
     out, and a non-daemon thread keeps the process from exiting."""
     threading.Thread(target=threading.Event().wait).start()
-    _answers_at_once(conn, unit, truth, env, config, out_dir, sandbox_root)
+    _answers_at_once(conn, unit, truth, env, config, out_dir, sandbox_root, clock)
 
 
 def test_a_thread_outliving_the_answer_does_not_hold_the_campaign(
@@ -288,3 +294,91 @@ def test_a_thread_outliving_the_answer_does_not_hold_the_campaign(
     )
     assert out.detail["outcome"] == "submitted"
     assert out.timing == _TIMING
+
+
+# --------------------------------------------------------------------------
+# The hard deadline allows for framework decision time (P4b D5)
+# --------------------------------------------------------------------------
+
+#: The hard deadline's grace in these tests: above the child's spawn and
+#: imports (about 4 s measured on the loaded reference machine), which count as
+#: the session's own time.
+GRACE_S = 10.0
+#: A stand-in decision longer than the grace.
+LONG_DECISION_S = GRACE_S + 2.0
+#: A stand-in decision before a hang.
+SHORT_DECISION_S = 2.0
+
+
+def _decides_past_the_grace(
+    conn: Connection,
+    unit: Unit,
+    truth: TruthEntry,
+    env: CampaignEnvironment,
+    config: CampaignConfig,
+    out_dir: Path,
+    sandbox_root: Path | None,
+    clock: FrameworkClock,
+) -> None:
+    """Stands in for an FSD session: one decision longer than the grace, on
+    the clock the parent reads, then an answer."""
+    with clock.measure():
+        time.sleep(LONG_DECISION_S)
+    _answers_at_once(conn, unit, truth, env, config, out_dir, sandbox_root, clock)
+
+
+def _decides_then_hangs(
+    conn: Connection,
+    unit: Unit,
+    truth: TruthEntry,
+    env: CampaignEnvironment,
+    config: CampaignConfig,
+    out_dir: Path,
+    sandbox_root: Path | None,
+    clock: FrameworkClock,
+) -> None:
+    """Stands in for a session that decides, then hangs outside a decision."""
+    with clock.measure():
+        time.sleep(SHORT_DECISION_S)
+    time.sleep(600)
+
+
+def test_framework_decisions_longer_than_the_grace_are_not_killed(
+    tmp_path: Path,
+) -> None:
+    """Wall time 0 s, grace 10 s, and a 12 s decision: a deadline on the
+    process's wall clock kills it at 10 s and voids it; the child's reported
+    framework time moves the deadline, so it answers."""
+    out = llm._run_isolated(
+        Unit("hawkes", 1, "AG-c-H/named"),
+        entry("hawkes"),
+        environment(),
+        tiny_config(seeds=(1,), wall_time_s=0.0),
+        tmp_path,
+        None,
+        GRACE_S,
+        target=_decides_past_the_grace,
+    )
+    assert out.detail["outcome"] == "submitted"
+    assert out.reading["void"] == 0.0
+    assert out.wall_s >= LONG_DECISION_S
+
+
+def test_a_session_hanging_outside_a_decision_is_still_killed(
+    tmp_path: Path,
+) -> None:
+    """The grace still bounds the session's own time: a 2 s decision, then a
+    hang, is killed once its time outside decisions passes the grace."""
+    out = llm._run_isolated(
+        Unit("hawkes", 1, "AG-c-H/named"),
+        entry("hawkes"),
+        environment(),
+        tiny_config(seeds=(1,), wall_time_s=0.0),
+        tmp_path,
+        None,
+        GRACE_S,
+        target=_decides_then_hangs,
+    )
+    assert out.detail["outcome"] == "hard_timeout"
+    assert out.reading["void"] == 1.0
+    assert GRACE_S + SHORT_DECISION_S <= out.wall_s < GRACE_S + SHORT_DECISION_S + 15

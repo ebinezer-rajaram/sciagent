@@ -360,6 +360,18 @@ def test_framework_time_is_paused_time_while_it_runs() -> None:
     assert clock.total_s() == 3.0
 
 
+def test_a_clock_publishes_each_start_and_end() -> None:
+    ticks = Ticking()
+    published: list[tuple[float, float | None]] = []
+    clock = FrameworkClock(ticks, publish=lambda t, s: published.append((t, s)))
+    with clock.measure():
+        ticks.now += 2.0
+    ticks.now += 5.0
+    with clock.measure():
+        ticks.now += 1.0
+    assert published == [(0.0, 100.0), (2.0, None), (2.0, 107.0), (3.0, None)]
+
+
 def test_framework_time_counts_when_the_measured_work_raises() -> None:
     ticks = Ticking()
     clock = FrameworkClock(ticks)

@@ -32,14 +32,18 @@ from sciagent.harness.scripted import ScriptedDriver
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 #: The values the record's unhashed ``timing`` section holds.
-UNHASHED = ("wall_s", "duration_api_ms", "total_cost_usd")
+UNHASHED = ("wall_s", "duration_api_ms", "total_cost_usd", "framework_s", "agent_s")
 
 
 def test_the_timing_fields_are_the_harness_time_and_the_api_figures() -> None:
+    """And, since P4b D5, the framework's decision time per call and the
+    agent's time (the harness's wall time less it)."""
     assert SESSION_TIMING_FIELDS == (
         "harness_wall_s",
         "duration_api_ms",
         "total_cost_usd",
+        "framework_s",
+        "agent_s",
     )
 
 
@@ -64,6 +68,14 @@ def test_a_completed_session_keeps_its_times_out_of_the_cell(
     harness = out.timing["harness_wall_s"]
     assert isinstance(harness, float) and 0.0 <= harness <= out.wall_s + 1e-6
     assert out.timing["duration_api_ms"] == 0  # the scripted driver's result
+    # No policy: every call's framework time is zero, and agent time is the
+    # harness's wall time (P4b D5).
+    framework = out.timing["framework_s"]
+    assert isinstance(framework, list) and framework
+    assert all(f == 0.0 for f in framework)
+    assert out.timing["agent_s"] == harness
+    record = SessionRecord.load(tmp_path / str(out.detail["record"]))
+    assert framework == record.timing["framework_s"]
 
 
 @pytest.mark.parametrize("harness_wall_s", [2.5, None])
@@ -90,6 +102,8 @@ def test_an_aborted_session_states_its_harness_time_or_its_absence(
         "harness_wall_s": harness_wall_s,
         "duration_api_ms": None,
         "total_cost_usd": None,
+        "framework_s": None,
+        "agent_s": None,
     }
     assert out.wall_s >= 0.0
 

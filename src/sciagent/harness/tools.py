@@ -183,12 +183,23 @@ class FrameworkClock:
     lock) each time a measurement ends, so the runner can re-arm its deadline;
     clearing it with ``None`` waits for a running notification to finish.
     Measurements do not nest.
+
+    ``publish``, if given, is called under the lock with ``(total, since)`` as
+    each measurement starts (``since`` its start on ``now``) and ends
+    (``since`` ``None``): an isolated session's process mirrors its clock to
+    the parent this way (:func:`sciagent.campaign.llm.run_session_isolated`).
     """
 
-    __slots__ = ("_listener", "_lock", "_now", "_since", "_total")
+    __slots__ = ("_listener", "_lock", "_now", "_publish", "_since", "_total")
 
-    def __init__(self, now: Callable[[], float] = time.monotonic) -> None:
+    def __init__(
+        self,
+        now: Callable[[], float] = time.monotonic,
+        *,
+        publish: Callable[[float, float | None], None] | None = None,
+    ) -> None:
         self._now = now
+        self._publish = publish
         self._lock = threading.Lock()
         self._since: float | None = None
         self._total = 0.0
@@ -202,12 +213,16 @@ class FrameworkClock:
                 raise ToolLayerError("framework time measurements do not nest")
             since = self._now()
             self._since = since
+            if self._publish is not None:
+                self._publish(self._total, since)
         try:
             yield
         finally:
             with self._lock:
                 self._total += self._now() - since
                 self._since = None
+                if self._publish is not None:
+                    self._publish(self._total, None)
                 if self._listener is not None:
                     self._listener()
 

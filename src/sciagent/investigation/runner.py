@@ -51,7 +51,7 @@ from sciagent.harness.errors import (
 from sciagent.harness.live import AgentConfig, SessionDriver, run_investigation
 from sciagent.harness.record import SessionRecord
 from sciagent.harness.replay import LayerFactory, ReplayReport, replay
-from sciagent.harness.tools import ToolLayer
+from sciagent.harness.tools import FrameworkClock, ToolLayer
 from sciagent.harness.voids import INFRASTRUCTURE, assess, foreign_reasons
 from sciagent.harness.voids import OUT_OF_BOUNDS as OUT_OF_BOUNDS_REASON
 from sciagent.investigation.policy import NEEDS_MARKS, PolicySettings
@@ -316,11 +316,13 @@ def build_lab(
     sandbox_root: Path | None = None,
     fit_workers: int = 1,
     image: str | None = None,
+    clock: FrameworkClock | None = None,
 ) -> Lab:
     """A fresh lab: the world from (truth id, seed), the view, the sandbox.
 
     ``image`` names the sandbox image without asking Docker (for building a
     lab only to render its prompts); by default :func:`ensure_image` is used.
+    ``clock`` is the lab's framework clock (P4b D5); by default its own.
     """
     if spec.environment != env.name:
         raise LabError(
@@ -356,6 +358,7 @@ def build_lab(
         policy_settings=spec.policy_settings,
         policy_seed=truth_policy_seed(spec.truth_id, spec.seed),
         marks=env.marks,
+        clock=clock,
     )
 
 
@@ -567,6 +570,7 @@ def run(
     prompt_variant: str = "v1",
     policy: str | None = None,
     policy_settings: PolicySettings | None = None,
+    clock: FrameworkClock | None = None,
 ) -> InvestigationOutcome:
     """Run one investigation, save its record under ``out_dir``, and return it.
 
@@ -585,7 +589,9 @@ def run(
     the sandbox in place, since removing it under a running call could fail
     and void the run for a call the record does not hold: the session's owner
     recovers it once the process is gone
-    (:func:`sciagent.campaign.llm.run_session_isolated`).
+    (:func:`sciagent.campaign.llm.run_session_isolated`). ``clock`` is the
+    lab's framework clock (P4b D5), for a caller that reads it while the
+    session runs; it changes nothing recorded.
 
     Everything returned is read from the record or from the lab's committed
     read-outs (:class:`~sciagent.investigation.tools.Committed`), so a call
@@ -617,7 +623,9 @@ def run(
         policy=policy_name,
         policy_settings=policy_settings,
     )
-    lab = build_lab(spec, env, sandbox_root=sandbox_root, fit_workers=fit_workers)
+    lab = build_lab(
+        spec, env, sandbox_root=sandbox_root, fit_workers=fit_workers, clock=clock
+    )
     system, opening = _prompts(lab, wall_time_s)
     try:
         investigation = investigation_json(spec, lab)

@@ -2741,3 +2741,18 @@ From `docs/v2/redteam/2026-11-07_analysis-code.md`, in an engineer's branch I re
 - **Finding 9:** a split with any truth outside dev, or a P4 arm set (even on dev), needs `--p4-block`, and a block refuses `--no-llm`, `--no-baselines` and `--llm-limit`. Mutants M15 and M16 were applied by hand and killed.
 
 No address or version constant moves. Findings 2, 3, 7 (part), 8 and 10 to 13 are with a second engineer, on `pilot_report.py` and `secondaries.py`.
+
+## 2026-11-07: The P4 report's gate takes no typed input; R2's scope and named minus anon read the whole plan (session 38)
+
+From `docs/v2/redteam/2026-11-07_analysis-code.md`, findings 2, 3, 4, 7, 8 and 10 to 13. An engineer's branch, reviewed and merged as 8d27554, each fix test first.
+- **What changed.** `--read-root` and `--naming-commit` are gone. They supersede the entry above on named minus anon, which named them.
+  - Control 2 draws from the miss script's frozen `READS_ROOT` and `READS_RESAMPLES`, on a P4 block for the headline too. Dev reports keep 20261002. This is one step beyond the brief, accepted so that the headline and the secondary's gate cannot disagree.
+  - Control 4 is read at the commit of the store's single `establish` line; anything else is refused.
+  - Where `reads.json` exists, its stored controls must equal the report's, or the report refuses.
+- **Scope.** A split outside dev needs `--p4-block`. Named minus anon and R2's scope read the merge of every `p4_plan` config over the whole split, on any block, and the scope is given for both of `reads.json`'s tables.
+- **Smaller fixes.**
+  - Control 3's line counts as the verdict does.
+  - Every secondary read prints its floored count and the read with those rows left out, and "not reportable" says why.
+  - `read_scope` refuses a set of kept, dropped and unchecked truths that does not partition the table, and an empty table is not confirmatory.
+  - The header prints the block's seeds.
+- **Why.** The reviewer showed that a typed root or commit could open the gate, and that a Haiku block's scope line read a table with no ORACLE. Mutants M1, M2 and M3 were killed. No address or version constant moves.

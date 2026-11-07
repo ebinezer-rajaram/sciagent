@@ -263,3 +263,10 @@ entry, and marks it handled with the date and what was done. Newest last.
   has a winner and its wall time would exceed about three days; any such amendment is frozen before
   any stage 2 unit runs. The denied price query stays denied; do not retry it.
   Handled 2026-11-07 (lane session 38): stage 1 stays on dm-devbox; no price query sent. The stage 2 condition is in the queue's tuning item, for the session that reads `selection.json`.
+
+## 2026-11-07, control room (R3 direction)
+
+- [ ] **Accept: a failed unit with no reading ranks against the control passing.** That is `-inf` for
+  the system under test and `+inf` for the comparator; a genuinely scored `-inf` stays as scored. Test
+  first, before S, with R3's words in SPEC-TEXT-P4-C.md changed to match. Decided by the control room
+  under the owner's standing delegation.

@@ -2774,3 +2774,15 @@ P4b's D5 (`docs/v2/redteam/2026-11-07_p4b-policies.md`, finding 2). An engineer'
 - **The record.** Per-call `framework_s` and the session's `agent_s` go in the record's unhashed timing and in `timing.jsonl`, so no content address moves, replay is unchanged, and `HARNESS_VERSION` stays `harness/2`. Sessions with no policy record 0.0 per call.
 - **Caveats.** A decision that never ends is no longer bounded by the hard deadline; D6's CPU meter must bound it before P4b launches. The stored `hard_timeout` message's wording changed for future cells, and no key moved.
 - **Checks.** Merged, `3790 passed` on harness, investigation and campaign (fast), and the six isolation slow tests passed on the branch.
+
+## 2026-11-07: Δ11's EIG decision built, eleven days after its adoption (session 38)
+
+The decision adopted on 2026-10-28 (LOG 2026-10-27, items 2, 3 and 5) never landed; P4b's first red-team round found it (finding 1). An engineer's branch, reviewed and merged as one commit after 0b3fd12, written test first.
+- **Item 2.** EIG is computed to relative precision: `g − 1` is summed exactly with `expm1`/`log1p` instead of `1 − w_top`, and the weights come from BICs in log space. Cell B at η = 1e-113 now gives 8.07e-114 where the old code gave 3.1e-18.
+- **Item 3.** A full tie takes the random arm's truth-keyed draw (`RANDOM_INDEX`), so on a degenerate decision EIG equals random. A strict-subset tie draws one tied cell on a new reserved index, `TIE_INDEX = 2**32 − 5`. The rule enters `EIGPolicy.config` and so the run key.
+- **Item 5.** The KL-ranked pick is logged in `EIGSummary` as a diagnostic, with infinite KL kept as `"inf"`. `EIGSummary` also carries `full_tie` and the tie kind, which item 4's degenerate split reads.
+- **Keys.** Only EIG keys moved: `PINNED_SESSIONS` and `PINNED_SESSION_CONFIG` for `AG-c-H/named+policy=EIG`, and `POLICY_TEXT_SHA256` for `B-sym+EIG`. All 8 `PINNED_BASELINES`, the other pinned sessions (FSD's included) and the random, FSD and truthFSD texts are unchanged. No EIG unit has run for record, so nothing stored moves.
+- **`TIE_INDEX`.** It is listed in `versions.EXEMPT_CONSTANTS`, not `METRIC_CONSTANTS`, because tabling it would move `METRIC_VERSION` and so every unit key. Its value enters `EIGPolicy.config`, which every EIG key holds, and a test checks that a change to it changes the config.
+- **Assertions moved by design**, none deleted: menu-order tie picks became the random arm's pick, and the argmax test reads `eig_choice`.
+- **Not verified.** The new maths costs about 5× per cell, estimated at about 5 s more per decision and not measured; how often ties and infinite KL occur on real dev decisions is unknown.
+- **Checks.** Merged: `4063 passed` (systems_v2, investigation, campaign, scoring; fast); the touched files' slow tests passed on the branch (`12 passed`).

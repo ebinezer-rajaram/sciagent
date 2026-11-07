@@ -214,3 +214,12 @@ entry, and marks it handled with the date and what was done. Newest last.
   which is the honest direction; record them as decided by the control room under the owner's standing
   delegation.
   Handled 2026-11-06 (lane session 36): parts A and B and the floor sentence applied to `docs/SPEC.md`; recorded as delegated in the LOG. What they create is queued: the named minus anon secondary, and P4b's freeze before P4's reads.
+
+## 2026-11-07, control room (B-sym ceiling, P4b hold)
+
+- [ ] **B-sym tuning: accept 262 CPU hours** ($0, no LLM, dm-devbox), as recommended; tuning that kills
+  the candidates aimed at B-sym's diagnosed failures would defeat its point. Keep the third round narrow.
+- [ ] **P4b hold: the procedural rule.** The miss check is not launched until P4b's freeze is in the LOG;
+  no change to R2's bytes, no extension of F2. Write the rule where the launch step is described, so a
+  later session cannot miss it.
+  Both decided by the control room under the owner's standing delegation.

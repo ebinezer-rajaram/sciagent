@@ -138,9 +138,10 @@ entry, and marks it handled with the date and what was done. Newest last.
 - [x] **Check (b) of the FSD seed lead: YES.** The owner approves the ctlA1-boot-r2 guard bypass for this
   check only.
   Handled 2026-11-05 (lane session 33): run; D0 rung 2 reproduced exactly, exploratory (LOG 2026-11-05). An unapproved rung-0 draw happened during testing; see the entries below.
-- [ ] **Standing (owner): never leave compute idle while waiting on Claude.** If the lane is waiting on its
+- [x] **Standing (owner): never leave compute idle while waiting on Claude.** If the lane is waiting on its
   usage share, it starts frozen CPU or GPU work first.
   Noted 2026-11-05 (lane session 33): standing, so it stays open. This machine has no GPU and no AWS launch is approved for this lane, so it applies to CPU here; the rescore and the slow tier ran through the session.
+  Closed for v2 2026-11-08 (lane session 40): the owner's stop below ends all sciagent compute; nothing new is started.
 
 ## 2026-11-05, control room (check (b) scope)
 
@@ -193,11 +194,12 @@ entry, and marks it handled with the date and what was done. Newest last.
 
 ## 2026-11-06, control room (B-sym tuning and the P4 SPEC text)
 
-- [ ] **B-sym: tune, do not waive.** Before the section 6.1 freeze, tune B-sym on dev only, CPU only.
+- [x] **B-sym: tune, do not waive.** Before the section 6.1 freeze, tune B-sym on dev only, CPU only.
   Write the effort budget first: at least the effort the agent arms get, in the same units. Freeze the
   tuned settings in the 6.1 commit. Record P3's untuned run as a deviation from SPEC section 9, and
   say in P3's write-up that its B-sym was untuned.
   In progress 2026-11-06 (lane session 36): deviation recorded in PILOT.md and the LOG; effort budget written first, in `docs/v2/prereg/2026-11-06_bsym-tuning.md` (draft). Red team: not ready, 6 blocking; among them, the first budget undercounted the agents, 524 sessions and not 280. Second text answers them, its second round still to run. Nothing has run. Stays open until the tuned settings are frozen in the §6.1 commit.
+  Closed 2026-11-08 (lane session 40), unfinished: superseded by the owner's stop of v2 below; not to be worked. State as it stood: `docs/v2/QUEUE.md`.
 - [x] **SPEC-TEXT-P4.md: accept as drafted**, provided it has had one red-team round. If it has not, run
   one first and fix any blocking findings. Any wording that changes what the paper claims comes back
   here.
@@ -228,7 +230,7 @@ entry, and marks it handled with the date and what was done. Newest last.
 
 ## 2026-11-07, control room (SPEC part C rulings)
 
-- [ ] **Accept all seven rulings in the reviewer's words**, applied to docs/SPEC.md with the section 6.1
+- [x] **Accept all seven rulings in the reviewer's words**, applied to docs/SPEC.md with the section 6.1
   commit. On the three that matter:
   - **R3:** a failed unit ranks as `-inf`. Write the test first, then the code change, before `S`.
   - **R5:** state it as a limit. Control 5 has no passing evidence under today's telling rule, so P4b's
@@ -240,6 +242,7 @@ entry, and marks it handled with the date and what was done. Newest last.
     and the text also states the one-in-four chance on two seeds.
   Decided by the control room under the owner's standing delegation.
   In progress 2026-11-07 (lane session 37): recorded as delegated (LOG 2026-11-07). R3 done, test first (`analysis.control_rows`). R1 to R7's words stay in `docs/v2/SPEC-TEXT-P4-C.md` for the §6.1 commit. R2's share and R5's confirming run are queued. Stays open until SPEC is applied.
+  Closed 2026-11-08 (lane session 40), unfinished: superseded by the owner's stop of v2 below; not to be worked. State as it stood: `docs/v2/QUEUE.md`.
 
 ## 2026-11-07, 15:20 UTC, control room (B-sym tuning wall time)
 
@@ -266,25 +269,27 @@ entry, and marks it handled with the date and what was done. Newest last.
 
 ## 2026-11-07, control room (R3 direction)
 
-- [ ] **Accept: a failed unit with no reading ranks against the control passing.** That is `-inf` for
+- [x] **Accept: a failed unit with no reading ranks against the control passing.** That is `-inf` for
   the system under test and `+inf` for the comparator; a genuinely scored `-inf` stays as scored. Test
   first, before S, with R3's words in SPEC-TEXT-P4-C.md changed to match. Decided by the control room
   under the owner's standing delegation.
   In progress 2026-11-07 (lane session 38): words changed in `SPEC-TEXT-P4-C.md` ("R3 amended"); the code change is with an engineer, test first. Stays open until it is on v2.
+  Closed 2026-11-08 (lane session 40), unfinished: superseded by the owner's stop of v2 below; not to be worked. State as it stood: `docs/v2/QUEUE.md`.
 
 ## 2026-11-07, control room (P4b as planned-exploratory)
 
-- [ ] **Accept P4b as planned-exploratory, on the lane's four terms.** (1) Freeze P4b's contrasts now
+- [x] **Accept P4b as planned-exploratory, on the lane's four terms.** (1) Freeze P4b's contrasts now
   with today's telling and truthFSD rule, stating that P4b is planned as exploratory. (2) Give FSD its
   own exclusion, Fx. (3) Skip the dev measurement. (4) Option 2 stays parked; it is not reopened. Owner
   delegated all such calls on 2026-11-05 ("you dont need me i trust you to do this"); record this as
   decided by the control room under that delegation, and note that SPEC section 4.2's owner route for
   option 2 was not used, because option 2 is not reopened.
   In progress 2026-11-07 (lane session 38): recorded as delegated (LOG 2026-11-07); the second text is written to these terms. Stays open until P4b's freeze is in the LOG: round 2 and the freeze commit's code (D1, D3, D7 EIG, D8 Fx) come first.
+  Closed 2026-11-08 (lane session 40), unfinished: superseded by the owner's stop of v2 below; not to be worked. State as it stood: `docs/v2/QUEUE.md`.
 
 ## 2026-11-07, control room (controls 2 and 3 scope)
 
-- [ ] **Accept all three parts.** (1) Controls 2 and 3 read every truth control 1 does not drop, kept and
+- [x] **Accept all three parts.** (1) Controls 2 and 3 read every truth control 1 does not drop, kept and
   unchecked alike. (2) A scored `-inf` B-lib counts as ORACLE beating B-lib for control 1. (3) A failed
   or NaN B-lib unit leaves the truth unchecked for the reads and counts in R2's scope. Test first,
   before S. General rule from here, so these need not come back one by one: a crash or missing reading
@@ -292,20 +297,23 @@ entry, and marks it handled with the date and what was done. Newest last.
   before S, and bring only true design choices to the control room. Decided by the control room under
   the owner's standing delegation.
   In progress 2026-11-07 (lane session 38): recorded as delegated (LOG 2026-11-07). The three parts and a crash sweep over controls 1 to 3 are with an engineer, test first; controls 4 to 6 against the general rule are queued for before `S`.
+  Closed 2026-11-08 (lane session 40), unfinished: superseded by the owner's stop of v2 below; not to be worked. State as it stood: `docs/v2/QUEUE.md`.
 
 ## 2026-11-08, about 12:00 UTC (owner, via the control-room session)
 
-- [ ] **OWNER: actual results, not more rule work.** "id like some actual results please". No new rulings
+- [x] **OWNER: actual results, not more rule work.** "id like some actual results please". No new rulings
   questions; apply the general rules already set and decide the rest yourself. At most one more review
   round per open item. Freeze section 6.1 and launch P4 right after the Wednesday 11 November reset,
   then report its numbers plainly.
+  Closed 2026-11-08 (lane session 40), unfinished: superseded by the owner's stop of v2 below; not to be worked. State as it stood: `docs/v2/QUEUE.md`.
 
 ## 2026-11-08, owner (standing, via the control-room session)
 
-- [ ] **Exactly one red-team round per item, then freeze.** Fix blocking findings yourself; no second
+- [x] **Exactly one red-team round per item, then freeze.** Fix blocking findings yourself; no second
   rounds and no rulings sent to the control room. Decide design details yourself and record why. Only
   spend beyond the cap or a change to what the work claims goes to the owner. Shared preregister
   skill updated to match.
+  Closed 2026-11-08 (lane session 40), unfinished: superseded by the owner's stop of v2 below; not to be worked. State as it stood: `docs/v2/QUEUE.md`.
 
 ## 2026-11-08, about 13:00 UTC (owner, via the control-room session): STOP v2 AFTER ONE CLOSING SESSION
 

@@ -4,6 +4,13 @@ The unattended lane (`docs/v2/AUTOPILOT.md`) and interactive sessions take work 
 this list. Status: `[ ]` open, `[~]` in progress, `[x]` done (date), `[!]` blocked (say on what).
 Each item says when it is done. Move finished items to the bottom section after a week.
 
+> **v2 is stopped by the owner (2026-11-08, INBOX "STOP v2 AFTER ONE CLOSING SESSION").** The
+> pilot's agent arms showed no advantage over cheap non-LLM baselines, so the Claude usage moves
+> to agent-control. The closing record is `docs/v2/RESULTS.md`. Every open item below is left as
+> it stood and is **not to be worked**: no P4, no P4b, no §6.1 freeze, nothing new. The B-sym
+> tuning run was stopped by a `STOP` file at 2026-11-08T18:41:50Z (lane session 40). Stores, raw
+> files and branches are kept; nothing was deleted. Restarting v2 is the owner's call alone.
+
 ## Platform (first)
 
 - [x] 2026-10-27 **Docker on dm-devbox.** Rootless Docker 29.9.2 installed by the owner's

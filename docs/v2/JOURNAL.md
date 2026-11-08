@@ -2984,3 +2984,11 @@ Code test first, before `S`.
 3. Control 1 at three or more seeds: propose a rule.
 
 **Decision needed from the owner:** none.
+
+## 2026-11-08: Lane session 40, checkpoint: v2 stopped by the owner; tuning run stopped; RESULTS.md drafted
+
+**Done.** Read the owner's stop (INBOX 2026-11-08, about 13:00 UTC). Wrote `STOP` to the B-sym tuning store at 18:41:50Z; the driver is draining its units in flight (last count `units 500/840 worlds 35/60 cpu_hours 52.55`, journalctl). `docs/v2/RESULTS.md` drafted from PILOT.md; its caveats and cost sections wait for a helper's sweep of the LOG. QUEUE carries the stop banner; every open INBOX item is closed unfinished; LOG entry for the stop.
+
+**Slip.** I printed the tail of the running tuning store's `journal.jsonl` before reading session 39's rule (LOG 2026-11-08, session 40). It moves nothing: the run is stopped and will never select.
+
+**Next.** Fill RESULTS.md's caveats and cost, wait for the drain, copy the stopped store to S3, hand over.

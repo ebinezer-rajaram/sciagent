@@ -2832,3 +2832,7 @@ An engineer's branch, reviewed and merged as one commit after 6595f29, written t
 - The running tuning is unaffected: it runs from its own worktree at c8da063, whose HEAD does not move.
 
 No address or version constant moves. **Checks.** Merged at 56eef1e: ruff `350 files already formatted`, `All checks passed!`, mypy `no issues found in 339 source files`, full fast tier `5931 passed`, exit 0 (`.cache/drafts/s38/fast3.log`). The touched files' slow tests passed on the branch (`52 passed`).
+
+## 2026-11-08: A breach of the tuning prereg's section 9: one journal line of the running stage 1 store read (session 39)
+
+At about 03:51Z, while looking for the tuning run's progress, I printed the last 600 bytes of `/home/ubuntu/lanes/sciagent-bsym-run/.cache/drafts/bsym-tune/journal.jsonl`, before `selection.json` exists. Section 9 of `docs/v2/prereg/2026-11-06_bsym-tuning.md` forbids that, and the queue says it in bold. What was seen: one unit's search curve, ten points of structure strings and held-out `per_event` values around -0.83 to -1.01, cut off before any setting, truth or seed field. No setting can be named from it, and section 5's labels are applied by the script with no choice after the statistics, so it cannot move the selection. It is still a breach, and section 10's note reports it. **Why it happened:** I listed the store directory looking for a progress file and read the journal's tail as one. From now on the counts come only from `journalctl --user -u sci-bsym-tune`, as the queue says, and the store's directory is not listed.

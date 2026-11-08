@@ -2950,3 +2950,11 @@ Code test first, before `S`.
 5. Tuning: counts only. When `selection.json` exists, follow the queue item.
 
 **Decision needed from the owner:** none now.
+
+## 2026-11-08: Lane session 39, checkpoint: slow tier read; a tuning-store breach recorded; three engineers out
+
+**Done.** The slow tier at 7b01f04 passed: `377 passed, 66 warnings in 10236.67s (2:50:36)`, `exit: 0 2026-11-08T02:38:16Z` (`.cache/drafts/s38/slow.log`); LEDGER row added (3.12 CPU hours, $0). Tuning stage 1 at `units 244/840 worlds 17/60 cpu_hours 23.63` (03:48Z, journalctl counts only). Three engineers are working in worktrees from 7dfb95a: control 2's subset rule (test first), P4b's D8 (Fx) and D1, and `read_naming_null`'s split hash.
+
+**Slip.** I read 600 bytes of the running tuning store's `journal.jsonl` before `selection.json` exists, a breach of the prereg's section 9 (LOG 2026-11-08 says what was seen and why it cannot move the selection).
+
+**Next.** Review each branch, red-team control 2's rule, merge, run the tiers, and write the hand-over entry.

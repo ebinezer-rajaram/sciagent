@@ -11,6 +11,7 @@ dev truths, into a temporary directory.
 from __future__ import annotations
 
 import importlib
+import inspect
 import json
 import math
 import os
@@ -18,6 +19,7 @@ import subprocess
 import sys
 from collections.abc import Callable, Mapping
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Final
@@ -29,7 +31,7 @@ from sciagent.campaign.execute import UnitResult
 from sciagent.campaign.llm import SessionOutcome
 from sciagent.campaign.plan import CampaignError, Unit
 from sciagent.harness.record import SessionRecord
-from sciagent.scenarios.records import TruthRecord, read_split
+from sciagent.scenarios.records import TruthRecord, read_split, records_digest
 from sciagent.scoring.controls_p4 import (
     NAMING_CONDITIONS,
     FitFact,
@@ -45,6 +47,10 @@ SCRIPTS: Final = ROOT / "scripts"
 SPLIT: Final = ROOT / "data" / "v2" / "truths" / "dev"
 COMMIT: Final = "0123456789abcdef0123456789abcdef01234567"
 OTHER: Final = "89abcdef0123456789abcdef0123456789abcdef"
+#: The split hash a record holds, and another split's (red team 2026-11-07,
+#: controls 4-6, finding 7).
+SPLIT_SHA: Final = "5a" * 32
+OTHER_SHA: Final = "6b" * 32
 
 
 @pytest.fixture
@@ -64,6 +70,7 @@ def _body(record_module: ModuleType, split: str = "test") -> dict[str, Any]:
         "schema": record_module.SCHEMA,
         "commit": COMMIT,
         "split": split,
+        "split_sha256": SPLIT_SHA,
         "seed": 1,
         "verdicts": [
             {"truth": f"{split}-000", "half": "in", "passed": True},
@@ -133,7 +140,10 @@ def test_a_pass_on_both_truths_at_the_commit_is_true(
     record_module: ModuleType, tmp_path: Path
 ) -> None:
     path = _written(tmp_path / "r.json", _body(record_module))
-    assert record_module.read_naming_null(COMMIT, path=path) is True
+    assert (
+        record_module.read_naming_null(COMMIT, split_sha256=SPLIT_SHA, path=path)
+        is True
+    )
 
 
 def test_the_reader_defaults_to_the_constant_of_section_2_7(
@@ -148,13 +158,89 @@ def test_the_reader_defaults_to_the_constant_of_section_2_7(
     assert defaults["split"] == "test"
 
 
+def test_the_split_hash_is_required_and_has_no_default(
+    record_module: ModuleType, tmp_path: Path
+) -> None:
+    """Finding 7: no call can leave the split hash unchecked."""
+    parameter = inspect.signature(record_module.read_naming_null).parameters[
+        "split_sha256"
+    ]
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+    assert parameter.default is inspect.Parameter.empty
+    path = _written(tmp_path / "r.json", _body(record_module))
+    with pytest.raises(TypeError, match="split_sha256"):
+        record_module.read_naming_null(COMMIT, path=path)
+
+
+@pytest.mark.parametrize(
+    "held",
+    [OTHER_SHA, "x", "", SPLIT_SHA.upper(), None, 5, [SPLIT_SHA]],
+    ids=["another", "x", "empty", "upper-case", "null", "number", "list"],
+)
+def test_a_record_of_another_split_hash_is_false(
+    record_module: ModuleType, tmp_path: Path, held: object
+) -> None:
+    """Finding 7: a record from another split, labelled ``test`` at the same
+    commit, does not open C2's gate."""
+    body = _body(record_module)
+    body["split_sha256"] = held
+    path = _written(tmp_path / "r.json", body)
+    assert (
+        record_module.read_naming_null(COMMIT, split_sha256=SPLIT_SHA, path=path)
+        is False
+    )
+
+
+def test_a_record_without_a_split_hash_is_false(
+    record_module: ModuleType, tmp_path: Path
+) -> None:
+    body = _body(record_module)
+    del body["split_sha256"]
+    path = _written(tmp_path / "r.json", body)
+    assert (
+        record_module.read_naming_null(COMMIT, split_sha256=SPLIT_SHA, path=path)
+        is False
+    )
+
+
+def test_the_record_reads_true_only_at_its_own_split_hash(
+    record_module: ModuleType, tmp_path: Path
+) -> None:
+    path = _written(tmp_path / "r.json", _body(record_module))
+    read = record_module.read_naming_null
+    assert read(COMMIT, split_sha256=SPLIT_SHA, path=path) is True
+    assert read(COMMIT, split_sha256=OTHER_SHA, path=path) is False
+
+
+def test_an_empty_expected_split_hash_matches_nothing(
+    record_module: ModuleType, tmp_path: Path
+) -> None:
+    body = _body(record_module)
+    body["split_sha256"] = ""
+    path = _written(tmp_path / "r.json", body)
+    assert record_module.read_naming_null(COMMIT, split_sha256="", path=path) is False
+
+
+def test_the_writers_split_hash_is_the_one_the_callers_compute() -> None:
+    """The runner records the manifest's ``records_sha256``; the miss script and
+    the report pass ``records_digest`` of the records they read. They agree."""
+    records, manifest = read_split(SPLIT)
+    assert records_digest(records) == manifest["records_sha256"]
+
+
 def test_a_missing_file_is_false(record_module: ModuleType, tmp_path: Path) -> None:
     path = tmp_path / "absent.json"
-    assert record_module.read_naming_null(COMMIT, path=path) is False
+    assert (
+        record_module.read_naming_null(COMMIT, split_sha256=SPLIT_SHA, path=path)
+        is False
+    )
 
 
 def test_a_directory_is_false(record_module: ModuleType, tmp_path: Path) -> None:
-    assert record_module.read_naming_null(COMMIT, path=tmp_path) is False
+    assert (
+        record_module.read_naming_null(COMMIT, split_sha256=SPLIT_SHA, path=tmp_path)
+        is False
+    )
 
 
 @pytest.mark.parametrize(
@@ -187,7 +273,10 @@ def test_an_unreadable_file_is_false(
 ) -> None:
     path = tmp_path / "r.json"
     path.write_bytes(raw)
-    assert record_module.read_naming_null(COMMIT, path=path) is False
+    assert (
+        record_module.read_naming_null(COMMIT, split_sha256=SPLIT_SHA, path=path)
+        is False
+    )
 
 
 def _set(key: str, value: Any) -> Callable[[dict[str, Any]], None]:
@@ -239,6 +328,8 @@ def _both_failed(body: dict[str, Any]) -> None:
         pytest.param(_drop("commit"), id="no-commit"),
         pytest.param(_set("split", "dev"), id="another-split"),
         pytest.param(_drop("split"), id="no-split"),
+        pytest.param(_set("split_sha256", OTHER_SHA), id="another-split-hash"),
+        pytest.param(_drop("split_sha256"), id="no-split-hash"),
         pytest.param(_set("seed", 2), id="another-seed"),
         pytest.param(_drop("seed"), id="no-seed"),
         pytest.param(_set("schema", "sciagent.p4.naming-null/0"), id="another-schema"),
@@ -273,7 +364,10 @@ def test_anything_but_a_pass_on_both_truths_at_the_commit_is_false(
     body = _body(record_module)
     edit(body)
     path = _written(tmp_path / "r.json", body)
-    assert record_module.read_naming_null(COMMIT, path=path) is False
+    assert (
+        record_module.read_naming_null(COMMIT, split_sha256=SPLIT_SHA, path=path)
+        is False
+    )
 
 
 def test_an_empty_expected_commit_matches_nothing(
@@ -282,15 +376,18 @@ def test_an_empty_expected_commit_matches_nothing(
     body = _body(record_module)
     body["commit"] = ""
     path = _written(tmp_path / "r.json", body)
-    assert record_module.read_naming_null("", path=path) is False
+    assert (
+        record_module.read_naming_null("", split_sha256=SPLIT_SHA, path=path) is False
+    )
 
 
 def test_a_dev_record_reads_true_only_when_dev_is_asked_for(
     record_module: ModuleType, tmp_path: Path
 ) -> None:
     path = _written(tmp_path / "r.json", _body(record_module, "dev"))
-    assert record_module.read_naming_null(COMMIT, split="dev", path=path) is True
-    assert record_module.read_naming_null(COMMIT, path=path) is False
+    read = record_module.read_naming_null
+    assert read(COMMIT, split_sha256=SPLIT_SHA, split="dev", path=path) is True
+    assert read(COMMIT, split_sha256=SPLIT_SHA, path=path) is False
 
 
 def test_the_reader_imports_without_the_runner_or_numpy() -> None:
@@ -339,7 +436,10 @@ def test_write_record_gives_what_the_reader_passes(
 ) -> None:
     path = tmp_path / "r.json"
     record_module.write_record(path, _body(record_module))
-    assert record_module.read_naming_null(COMMIT, path=path) is True
+    assert (
+        record_module.read_naming_null(COMMIT, split_sha256=SPLIT_SHA, path=path)
+        is True
+    )
     assert path.read_bytes().endswith(b"}\n")
 
 
@@ -637,6 +737,8 @@ def test_a_real_run_end_to_end_on_dev_truths(
     assert body["schema"] == record_module.SCHEMA
     assert body["commit"] == COMMIT
     assert body["split"] == "dev"
+    split_sha = records_digest(_records())
+    assert body["split_sha256"] == split_sha
     assert body["seed"] == 1
     assert [(v["truth"], v["half"]) for v in body["verdicts"]] == [
         ("dev-000", "in"),
@@ -658,11 +760,13 @@ def test_a_real_run_end_to_end_on_dev_truths(
         ]
         assert named["submission"] is not None
 
-    # The reader: true at its commit and split, and nowhere else.
-    read = record_module.read_naming_null
+    # The reader: true at its commit, split and split hash, and nowhere else.
+    read = partial(record_module.read_naming_null, split_sha256=split_sha)
     assert read(COMMIT, split="dev", path=path) is True
     assert read(OTHER, split="dev", path=path) is False
     assert read(COMMIT, path=path) is False
+    other = record_module.read_naming_null
+    assert other(COMMIT, split_sha256=OTHER_SHA, split="dev", path=path) is False
 
     # A second run is refused and leaves the bytes.
     before = path.read_bytes()

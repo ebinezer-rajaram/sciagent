@@ -76,6 +76,7 @@ from sciagent.glm.grammar import (
 from sciagent.glm.grids import grid
 from sciagent.glm.simulate import Coefficients, simulate
 from sciagent.glm.syntax import parse, render
+from sciagent.scenarios.records import read_split
 from sciagent.systems.v2.models import GLMModel
 from sciagent.systems.v2.sparse import SparseConfig, _choose_link, split_dataset
 
@@ -2645,11 +2646,17 @@ def test_the_manifest_sees_a_changed_an_added_and_a_removed_file(
 # --------------------------------------------------------------------------
 
 
+#: The split hash a control 4 record holds (red team 2026-11-07, controls 4-6,
+#: finding 7).
+NAMING_SPLIT_SHA: Final = "5" * 64
+
+
 def naming_record(**over: Any) -> Rec:
     return {
         "schema": record_module.SCHEMA,
         "commit": "t" * 40,
         "split": "test",
+        "split_sha256": NAMING_SPLIT_SHA,
         "seed": 1,
         "verdicts": [
             {"truth": "a", "half": "in", "passed": True},
@@ -2659,27 +2666,41 @@ def naming_record(**over: Any) -> Rec:
     }
 
 
+def naming_controls(path: Path, split_sha256: str = NAMING_SPLIT_SHA) -> Any:
+    return p4m.scripted_controls("t" * 40, split_sha256=split_sha256, path=path)
+
+
 def test_a_pass_on_both_truths_at_t_is_true(tmp_path: Path) -> None:
     path = tmp_path / "naming-null.json"
     record_module.write_record(path, naming_record())
-    assert p4m.scripted_controls("t" * 40, path=path) == ScriptedControls(True)
+    assert naming_controls(path) == ScriptedControls(True)
 
 
 def test_a_missing_record_gives_false(tmp_path: Path) -> None:
-    got = p4m.scripted_controls("t" * 40, path=tmp_path / "none.json")
+    got = naming_controls(tmp_path / "none.json")
     assert got == ScriptedControls(False)
 
 
 def test_an_unreadable_record_gives_false(tmp_path: Path) -> None:
     path = tmp_path / "naming-null.json"
     path.write_text("{not json")
-    assert p4m.scripted_controls("t" * 40, path=path) == ScriptedControls(False)
+    assert naming_controls(path) == ScriptedControls(False)
 
 
 def test_a_record_of_another_commit_gives_false(tmp_path: Path) -> None:
     path = tmp_path / "naming-null.json"
     record_module.write_record(path, naming_record(commit="u" * 40))
-    assert p4m.scripted_controls("t" * 40, path=path) == ScriptedControls(False)
+    assert naming_controls(path) == ScriptedControls(False)
+
+
+def test_a_record_of_another_split_hash_gives_false(tmp_path: Path) -> None:
+    """Finding 7: a record from another split labelled ``test`` at ``T``."""
+    path = tmp_path / "naming-null.json"
+    record_module.write_record(path, naming_record())
+    assert naming_controls(path, "6" * 64) == ScriptedControls(False)
+    other = tmp_path / "other.json"
+    record_module.write_record(other, naming_record(split_sha256="x"))
+    assert naming_controls(other) == ScriptedControls(False)
 
 
 def test_anything_but_a_pass_on_both_gives_false(tmp_path: Path) -> None:
@@ -2689,13 +2710,16 @@ def test_anything_but_a_pass_on_both_gives_false(tmp_path: Path) -> None:
         {"truth": "b", "half": "out", "passed": False},
     ]
     record_module.write_record(path, naming_record(verdicts=failed))
-    assert p4m.scripted_controls("t" * 40, path=path) == ScriptedControls(False)
+    assert naming_controls(path) == ScriptedControls(False)
 
 
 def test_the_default_path_is_the_records_constant() -> None:
     signature = inspect.signature(p4m.scripted_controls)
     assert signature.parameters["path"].default == record_module.NAMING_NULL_RECORD
     assert signature.parameters["split"].default == "test"
+    split_sha256 = signature.parameters["split_sha256"]
+    assert split_sha256.kind is inspect.Parameter.KEYWORD_ONLY
+    assert split_sha256.default is inspect.Parameter.empty
 
 
 # --------------------------------------------------------------------------
@@ -4091,10 +4115,10 @@ def test_nothing_is_touched_before_the_guards_pass(
 def test_the_naming_null_is_read_at_t_and_not_at_head(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    seen: list[str] = []
+    seen: list[tuple[str, str]] = []
 
-    def controls(commit: str) -> Any:
-        seen.append(commit)
+    def controls(commit: str, *, split_sha256: str) -> Any:
+        seen.append((commit, split_sha256))
         return PASS
 
     monkeypatch.setattr(p4m, "OUT_DIR", tmp_path / "out")
@@ -4106,13 +4130,17 @@ def test_the_naming_null_is_read_at_t_and_not_at_head(
     monkeypatch.setattr(p4m, "p4_inputs", lambda p: ("env", ("plan",), ("truths",)))
     monkeypatch.setattr(p4m, "group_b_inputs", lambda p: ("truth", "env"))
     monkeypatch.setattr(p4m, "group_b_job", lambda *a: "job")
+    # A real split in the test split's place: the hash control 4 is read at is
+    # the one its runner records for that split (finding 7).
+    split = REPO / "data" / "v2" / "truths" / "dev"
+    _, manifest = read_split(split)
     args = SimpleNamespace(
         split=Path("/s"),
-        test_split=Path("/t"),
+        test_split=split,
         store=Path("/st"),
     )
     setup = p4m.frozen_setup(args)
-    assert seen == [IDENTITY["T"]]
+    assert seen == [(IDENTITY["T"], manifest["records_sha256"])]
     assert setup.roots == p4m.FROZEN_ROOTS
     assert setup.paths.root == tmp_path / "out"
     assert setup.controls == PASS
@@ -5943,12 +5971,14 @@ def test_the_launch_checks_both_splits_and_the_paths_before_reading_a_truth(
     monkeypatch.setattr(
         p4m, "test_split_expected", note("test_split_expected", expected)
     )
-    monkeypatch.setattr(p4m, "scripted_controls", lambda commit: PASS)
+    monkeypatch.setattr(p4m, "scripted_controls", lambda commit, **k: PASS)
     monkeypatch.setattr(
         p4m, "p4_inputs", note("p4_inputs", ("env", ("plan",), ("truths",)))
     )
     monkeypatch.setattr(p4m, "group_b_inputs", note("group_b", ("truth", "env")))
     monkeypatch.setattr(p4m, "group_b_job", lambda *a: "job")
+    records, _ = read_split(REPO / "data" / "v2" / "truths" / "dev")
+    monkeypatch.setattr(p4m.pilot, "load_split", note("load_split", records))
     dev, test, store = Path("/s"), Path("/t"), Path("/st")
     p4m.frozen_setup(SimpleNamespace(split=dev, test_split=test, store=store))
     assert calls == [
@@ -5965,6 +5995,7 @@ def test_the_launch_checks_both_splits_and_the_paths_before_reading_a_truth(
         ("check_split", test, expected, p4m.TEST_RELATIVE),
         ("p4_inputs", test),
         ("group_b", dev),
+        ("load_split", test),
     ]
 
 

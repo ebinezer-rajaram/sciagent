@@ -985,15 +985,21 @@ def p4_merged(
 
 
 def p4_lines(
-    merged: Any, commit: str, *, recorded: Mapping[str, Any] | None
+    merged: Any,
+    commit: str,
+    *,
+    split_sha256: str,
+    recorded: Mapping[str, Any] | None,
 ) -> list[str]:
     """The P4 report's named minus anon and R2's scope (red team 2026-11-07,
     findings 2 and 3), on ``merged`` (:func:`p4_merged`).
 
-    Control 4 is read at the store's commit ``commit``, and control 2 at the miss
-    script's frozen root and resamples. Where ``recorded`` holds ``reads.json``'s
-    controls, its stored controls must be the ones computed here, or the report
-    refuses, and the scope is given for its stored and its corrected table.
+    Control 4 is read at the store's commit ``commit`` and at ``split_sha256``, the
+    records hash of the report's split (controls 4-6, finding 7), and control 2 at
+    the miss script's frozen root and resamples. Where ``recorded`` holds
+    ``reads.json``'s controls, its stored controls must be the ones computed here,
+    or the report refuses, and the scope is given for its stored and its corrected
+    table.
     """
     from naming_null_record import read_naming_null
     from p4_search_misses import READS_RESAMPLES, READS_ROOT
@@ -1002,7 +1008,7 @@ def p4_lines(
     from sciagent.campaign.secondaries import read_scope
     from sciagent.scoring.errors import ScoringError
 
-    naming_null = read_naming_null(commit)
+    naming_null = read_naming_null(commit, split_sha256=split_sha256)
     computed = read_controls(
         merged, ScriptedControls(naming_null), READS_ROOT, READS_RESAMPLES
     )
@@ -1587,9 +1593,12 @@ def main() -> None:
     L += ["### The softplus note", ""]
     L += softplus_note_table(args.root, llm_systems, tab)
     if merged is not None:
+        from sciagent.scenarios.records import records_digest
+
         L += p4_lines(
             merged,
             commit,
+            split_sha256=records_digest(all_records),
             recorded=(
                 recorded_controls(P4_READS) if outside_dev(all_records) else None
             ),

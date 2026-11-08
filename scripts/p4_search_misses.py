@@ -156,7 +156,7 @@ from sciagent.glm.simulate import (
 )
 from sciagent.glm.syntax import parse, render
 from sciagent.harness.live import MODELS
-from sciagent.scenarios.records import canonical_json
+from sciagent.scenarios.records import canonical_json, records_digest
 from sciagent.scoring import gonogo
 from sciagent.scoring.heldout import held_out_dataset
 from sciagent.systems.v2.models import GLMModel
@@ -2844,12 +2844,19 @@ def manifest_diff(before: Mapping[str, str], after: Mapping[str, str]) -> list[s
 
 
 def scripted_controls(
-    t_commit: str, *, split: str = TEST_SPLIT, path: Path = NAMING_NULL_RECORD
+    t_commit: str,
+    *,
+    split_sha256: str,
+    split: str = TEST_SPLIT,
+    path: Path = NAMING_NULL_RECORD,
 ) -> ScriptedControls:
     """Control 4's pass state, from its record alone (section 2.7). ``t_commit`` is
-    ``T`` and not HEAD, because a ``T2`` run differs from it. No option reaches
-    this: only ``main`` calls it, with constants."""
-    return ScriptedControls(read_naming_null(t_commit, split=split, path=path))
+    ``T`` and not HEAD, because a ``T2`` run differs from it, and ``split_sha256``
+    is the test split's records hash, so a record of another split is False. No
+    option reaches this: only ``main`` calls it, with constants and the split."""
+    return ScriptedControls(
+        read_naming_null(t_commit, split_sha256=split_sha256, split=split, path=path)
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -4672,7 +4679,10 @@ def frozen_setup(args: argparse.Namespace) -> Setup:
         env=env,
         plan=plan,
         truths=truths,
-        controls=scripted_controls(identity["T"]),
+        controls=scripted_controls(
+            identity["T"],
+            split_sha256=records_digest(pilot.load_split(args.test_split)),
+        ),
         group_b=group_b_job(truth, dev_env, FROZEN_ROOTS.seed),
         store=args.store,
     )

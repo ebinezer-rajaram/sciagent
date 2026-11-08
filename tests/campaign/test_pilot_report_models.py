@@ -7,7 +7,8 @@ Opus configs hold no ORACLE, and the Sonnet config no Haiku or Opus row. R2's sc
 line reads the same merged table over the whole split, for the stored table and the
 corrected one ``reads.json`` holds. Nothing the operator types decides the gate:
 control 2's root and resamples are the miss script's frozen ones, and control 4 is
-read at the commit of the store's single ``establish`` line.
+read at the commit of the store's single ``establish`` line and at the hash of the
+split the report reads (red team 2026-11-07, controls 4-6, finding 7).
 
 Stand-in truths and tables only: ``load_rows`` is replaced per config, the store is
 an empty one with a fingerprint sidecar, and control 4's record and ``reads.json``
@@ -16,6 +17,7 @@ are scratch files under ``tmp_path``. No real store or record is read.
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 import importlib.util
 import json
@@ -47,6 +49,7 @@ from sciagent.campaign.plan import CampaignConfig, TruthEntry
 from sciagent.campaign.secondaries import read_named_minus_anon
 from sciagent.campaign.store import ResultStore
 from sciagent.campaign.tables import TableSource, merge_tables
+from sciagent.scenarios import records as scenario_records
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 TRUTHS = standin()
@@ -73,6 +76,16 @@ class Record:
 
 
 RECORDS = tuple(Record(t.id, t.split) for t in TRUTHS)
+
+
+def stand_in_digest(records: Sequence[Record]) -> str:
+    """``records_digest`` for the stand-in records, which are not ``TruthRecord``s:
+    a hash of their ids, so that it names the records it was given."""
+    return hashlib.sha256(",".join(r.id for r in records).encode()).hexdigest()
+
+
+#: The stand-in split's hash: what control 4's record holds when it is this split's.
+SPLIT_SHA = stand_in_digest(RECORDS)
 
 
 @pytest.fixture
@@ -195,12 +208,15 @@ def prepare(
     baselines: list[Row],
     *,
     record_commit: str = COMMIT,
+    record_split_sha256: str | None = SPLIT_SHA,
     fingerprints: Sequence[str] = (FINGERPRINT,),
     stored: ControlsRead | None = None,
     fixed: ControlsRead | None = None,
 ) -> Store:
-    """A scratch store, control 4's record at ``record_commit`` and ``reads.json``
-    as the miss script would write it at the store's commit."""
+    """A scratch store, control 4's record at ``record_commit`` and
+    ``record_split_sha256`` (``None``: the record holds no split hash) and
+    ``reads.json`` as the miss script would write it at the store's commit and the
+    split's hash."""
     store = tmp_path / "store"
     store.mkdir()
     previous: str | None = None
@@ -211,12 +227,14 @@ def prepare(
         pass
     records: Any = importlib.import_module("naming_null_record")
     path = tmp_path / "naming-null.json"
+    held = {} if record_split_sha256 is None else {"split_sha256": record_split_sha256}
     path.write_bytes(
         records.record_bytes(
             {
                 "schema": records.SCHEMA,
                 "commit": record_commit,
                 "split": "test",
+                **held,
                 "seed": records.NAMING_SEED,
                 "verdicts": [
                     {"truth": TRUTHS[0].id, "half": "in", "passed": True},
@@ -227,11 +245,12 @@ def prepare(
     )
     original = records.read_naming_null
 
-    def read_naming_null(commit: str, **_: object) -> bool:
-        return bool(original(commit, path=path))
+    def read_naming_null(commit: str, *, split_sha256: str, **_: object) -> bool:
+        return bool(original(commit, split_sha256=split_sha256, path=path))
 
     monkeypatch.setattr(records, "read_naming_null", read_naming_null)
-    naming_null = read_naming_null(COMMIT)
+    monkeypatch.setattr(scenario_records, "records_digest", stand_in_digest)
+    naming_null = read_naming_null(COMMIT, split_sha256=SPLIT_SHA)
     first = stored or stored_controls(baselines, naming_null)
     m = misses()
     reads = tmp_path / "reads.json"
@@ -271,9 +290,17 @@ def render(
     *extra: str,
     baselines: list[Row] | None = None,
     record_commit: str = COMMIT,
+    record_split_sha256: str | None = SPLIT_SHA,
 ) -> str:
     rows = references() if baselines is None else baselines
-    store = prepare(report, tmp_path, monkeypatch, rows, record_commit=record_commit)
+    store = prepare(
+        report,
+        tmp_path,
+        monkeypatch,
+        rows,
+        record_commit=record_commit,
+        record_split_sha256=record_split_sha256,
+    )
     return run(report, monkeypatch, store, *extra)
 
 
@@ -404,6 +431,57 @@ def test_control_4_is_read_at_the_stores_commit(
     )
     for name in READS:
         assert f"not reportable: {NAMING_NULL_FAILED}" in read_line(text, name)[2]
+
+
+@pytest.mark.parametrize(
+    "held", ["6" * 64, "x", None], ids=["another-split", "x", "no-split-hash"]
+)
+def test_control_4_is_read_at_the_hash_of_the_reports_split(
+    report: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    held: str | None,
+) -> None:
+    """Controls 4-6 finding 7: a record from another split, labelled ``test`` at the
+    store's commit, does not open the gate."""
+    text = render(
+        report,
+        tmp_path,
+        monkeypatch,
+        "--p4-block",
+        "sonnet",
+        baselines=controls(),
+        record_split_sha256=held,
+    )
+    for name in READS:
+        assert f"not reportable: {NAMING_NULL_FAILED}" in read_line(text, name)[2]
+
+
+def test_the_split_hash_is_the_digest_of_the_split_the_report_reads(
+    report: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The report hashes the records of ``--split``, the ones it loads, with the
+    split loader's own digest, and passes that hash to the reader."""
+    store = prepare(report, tmp_path, monkeypatch, controls())
+    digested: list[Sequence[Record]] = []
+    passed: list[str] = []
+
+    def digest(records: Sequence[Record]) -> str:
+        digested.append(records)
+        return stand_in_digest(records)
+
+    module: Any = importlib.import_module("naming_null_record")
+    reader = module.read_naming_null
+
+    def read(commit: str, *, split_sha256: str, **kwargs: object) -> bool:
+        passed.append(split_sha256)
+        return bool(reader(commit, split_sha256=split_sha256, **kwargs))
+
+    monkeypatch.setattr(scenario_records, "records_digest", digest)
+    monkeypatch.setattr(module, "read_naming_null", read)
+    run(report, monkeypatch, store, "--p4-block", "sonnet")
+    assert digested == [RECORDS]
+    assert passed == [SPLIT_SHA]
 
 
 def test_the_record_at_the_stores_commit_opens_the_gate(

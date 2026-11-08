@@ -8,8 +8,8 @@ source"). No option sets the value, so the only way to True is this file.
 The answer gates the four C2 reads, so a doubt about the file is False: control
 4 was not shown to pass, and SPEC §6.4 allows no comparison without its control.
 That covers a missing or unreadable file, a commit other than the expected one,
-a split, seed or schema that is not the rule's, and anything but a pass on one
-truth of each half.
+a split, split hash, seed or schema that is not the rule's, and anything but a
+pass on one truth of each half.
 
 Standard library only, so importing this file loads neither the runner nor
 numpy.
@@ -82,20 +82,31 @@ def _passed_on_both_halves(verdicts: object) -> bool:
 
 
 def read_naming_null(
-    commit: str, *, split: str = TEST_SPLIT, path: Path = NAMING_NULL_RECORD
+    commit: str,
+    *,
+    split_sha256: str,
+    split: str = TEST_SPLIT,
+    path: Path = NAMING_NULL_RECORD,
 ) -> bool:
     """Control 4's pass state: ``True`` only for a pass on both truths of
-    ``split`` at exactly ``commit`` (module docstring)."""
+    ``split`` at exactly ``commit`` (module docstring), on the split whose records
+    hash to ``split_sha256``.
+
+    ``split_sha256`` is the caller's split's ``records_sha256``, what the runner
+    records; it has no default, so no call skips it. A record of another split
+    labelled ``split`` at the same commit is False (red team 2026-11-07, controls
+    4-6, finding 7)."""
     try:
         body = json.loads(path.read_bytes())
     except (OSError, ValueError, RecursionError):
         return False
-    if not commit or not isinstance(body, dict):
+    if not commit or not split_sha256 or not isinstance(body, dict):
         return False
     return (
         body.get("schema") == SCHEMA
         and body.get("commit") == commit
         and body.get("split") == split
+        and body.get("split_sha256") == split_sha256
         and body.get("seed") == NAMING_SEED
         and _passed_on_both_halves(body.get("verdicts"))
     )

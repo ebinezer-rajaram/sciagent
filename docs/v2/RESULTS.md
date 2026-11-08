@@ -202,11 +202,11 @@ validated instrument the pilot gave no sign of an advantage worth the main campa
 ## Cost
 
 **AWS: $0.** No AWS compute was launched in v2. S3 holds copies of the stores, logged at $0.
-`LEDGER.csv` has 52 rows, all on `dm-devbox`, summing to 244.85 hours. That figure mixes CPU
+`LEDGER.csv` has 53 rows, all on `dm-devbox`, summing to 297.64 hours. That figure mixes CPU
 hours, elapsed hours and estimates, so read it as a rough size, not a CPU count. The pilot's
 LLM half took 24.8 h elapsed for 240 Sonnet 5.5 sessions under the Max subscription, at
-concurrency 1. No usage credits or API keys were used. The stopped B-sym tuning run had used
-52.55 CPU hours by its own count at the stop and has no ledger row (see the hand-over).
+concurrency 1. No usage credits or API keys were used. The stopped B-sym tuning run used 52.79
+CPU hours of its 262-hour ceiling (502 of 840 units) and is the last row.
 
 ## Where the data are
 
@@ -218,6 +218,7 @@ concurrency 1. No usage credits or API keys were used. The stopped B-sym tuning 
   `PILOT.md`: its "How this file was made" section, at the commit it names (the p4-deltas merge
   changed the readers; regenerate from the merge's first parent).
 - Miss check: `docs/v2/PILOT-MISSES.md`; records under `p3-linux/search-misses-3226f9b…/`.
-- B-sym tuning store, stopped and incomplete: `~/lanes/sciagent-bsym-run/.cache/drafts/bsym-tune/`
-  (no result is read from it).
+- B-sym tuning store, stopped and `INCOMPLETE`: `~/lanes/sciagent-bsym-run/.cache/drafts/bsym-tune/`,
+  copied to `s3://delaymargin-results-482913/sciagent/bsym-tune-25b3654-stopped/` (512 files). No
+  result is read from it.
 - Nothing was deleted.

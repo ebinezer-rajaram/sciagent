@@ -2992,3 +2992,19 @@ Code test first, before `S`.
 **Slip.** I printed the tail of the running tuning store's `journal.jsonl` before reading session 39's rule (LOG 2026-11-08, session 40). It moves nothing: the run is stopped and will never select.
 
 **Next.** Fill RESULTS.md's caveats and cost, wait for the drain, copy the stopped store to S3, hand over.
+
+## 2026-11-08: Lane session 40, hand-over: v2 closed; RESULTS.md written; tuning run stopped
+
+**Done.**
+- **Owner's stop, items 1 to 3.** B-sym tuning stopped by `STOP` (18:41:50Z); the driver drained and ended at 18:48:41Z with `run ended: stop`, `INCOMPLETE: c0 stands`, `units 502/840 worlds 35/60 cpu_hours 52.79`. No other sciagent job was running (`systemctl --user list-units 'sci-*'` showed only this one; the tmux `claude` session is the control room's, left alone). Store kept and copied to S3, `bsym-tune-25b3654-stopped/`, 512 of 512 files; LEDGER row (52.79 h, $0).
+- **`docs/v2/RESULTS.md`**: the question, what ran, the controls, the pilot's numbers from PILOT.md (descriptive, dev, B-sym untuned), deviations and incidents, what was not tested (P4, P4b, P5, Q3 to Q7, tuned B-sym), cost ($0 AWS; ledger 297.64 mixed hours), where the data are. Conclusion as the owner asked: no advantage over cheap baselines, stated as a reading of the pilot and not a tested contrast, since no control covers an LLM comparison. One helper (general-purpose) swept LOG and JOURNAL for deviations, incidents and ledger sums; I checked the figures I used against LOG lines 2261 and 2718, PILOT-AUDIT and the ledger (`52 244.85 0.0` before the new row, `53 297.64 0.0` after). No red-team round, as the owner said.
+- **QUEUE** carries the stop banner; every open INBOX item is closed unfinished; LOG entry 2026-11-08 (session 40).
+- **Checks.** Docs only, no code touched: `ruff format --check` `350 files already formatted`, `ruff check` `All checks passed!`. mypy and pytest not run, since nothing they check changed.
+
+**Learned.** On the pilot, out-of-dictionary truths were where the agents did worst (0% exact in all four arms; closing 7 to 13% against B-sparse's 23%), which is the case Q1 was about.
+
+**Slip.** I printed the tail of the running tuning store's journal before stopping it, the same slip as session 39 (LOG). It moves nothing: the run never selected.
+
+**Next.** None. v2 is stopped by the owner; the control room pauses the lane. Do not start P4, P4b or anything else.
+
+**Decision needed from the owner:** none.

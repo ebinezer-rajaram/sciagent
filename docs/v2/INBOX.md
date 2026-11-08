@@ -306,3 +306,18 @@ entry, and marks it handled with the date and what was done. Newest last.
   rounds and no rulings sent to the control room. Decide design details yourself and record why. Only
   spend beyond the cap or a change to what the work claims goes to the owner. Shared preregister
   skill updated to match.
+
+## 2026-11-08, about 13:00 UTC (owner, via the control-room session): STOP v2 AFTER ONE CLOSING SESSION
+
+- [ ] **The owner has stopped sciagent v2.** In the pilot the agent arms did not beat cheap non-LLM
+  baselines (gap closed 0.62 to 0.72 against B-sparse 0.90; exact recovery 12 to 17% against
+  B-sym@10F's 50%), and v1 tied retrieval exactly, so the owner reads it as a null and moves the Claude
+  usage to agent-control. In ONE closing session, with no red-team round, two helpers at most:
+  1. Stop the B-sym tuning and any other running job cleanly (keep every store and raw file; delete
+     nothing).
+  2. Write `docs/v2/RESULTS.md`, a few pages in the style of docs/v1/RESULTS.md: the question, what ran,
+     the pilot's numbers as recorded (descriptive, dev data, B-sym untuned), the controls, the
+     deviations and incidents, and the plain conclusion that the agents showed no advantage over cheap
+     baselines. Clearly state what was NOT tested (P4 never ran).
+  3. Update QUEUE.md to say v2 is stopped by the owner, commit, push and hand over. Do not start P4,
+     P4b or anything new. The control room then pauses the lane.

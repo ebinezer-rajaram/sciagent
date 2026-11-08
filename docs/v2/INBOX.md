@@ -299,3 +299,10 @@ entry, and marks it handled with the date and what was done. Newest last.
   questions; apply the general rules already set and decide the rest yourself. At most one more review
   round per open item. Freeze section 6.1 and launch P4 right after the Wednesday 11 November reset,
   then report its numbers plainly.
+
+## 2026-11-08, owner (standing, via the control-room session)
+
+- [ ] **Exactly one red-team round per item, then freeze.** Fix blocking findings yourself; no second
+  rounds and no rulings sent to the control room. Decide design details yourself and record why. Only
+  spend beyond the cap or a change to what the work claims goes to the owner. Shared preregister
+  skill updated to match.
